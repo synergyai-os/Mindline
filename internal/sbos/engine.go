@@ -138,6 +138,10 @@ func NewMemoryCandidateStore() *MemoryCandidateStore {
 	return &MemoryCandidateStore{recordsByIdempotencyKey: map[string]StoredRecord{}}
 }
 
+func ValidateCandidate(candidate Candidate) error {
+	return candidate.validate()
+}
+
 func (s *MemoryCandidateStore) GetByIdempotencyKey(key string) (StoredRecord, bool) {
 	record, ok := s.recordsByIdempotencyKey[key]
 	return record, ok

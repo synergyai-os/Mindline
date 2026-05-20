@@ -142,6 +142,37 @@ func TestSlackNormalizeUsageAndInputErrors(t *testing.T) {
 	}
 }
 
+func TestSlackNormalizeRejectsInvalidNormalizedCandidate(t *testing.T) {
+	fs := NewMemoryFS()
+	fs.WriteFile("bad-visibility.json", []byte(`{
+	  "source": {"workspace": "synergyai-os", "channel_id": "DSELF", "adapter_id": "slack"},
+	  "messages": [
+	    {
+	      "ts": "1710000000.000001",
+	      "user": "U123",
+	      "author_name": "Randy",
+	      "text": "publish this",
+	      "capture_metadata": {
+	        "desired_visibility_hint": "public"
+	      }
+	    }
+	  ]
+	}`))
+
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(fs).Run([]string{"slack", "normalize", "bad-visibility.json"}, &stdout, &stderr)
+
+	if code != ExitProcess {
+		t.Fatalf("expected process exit, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if stdout.String() != "" {
+		t.Fatalf("expected empty stdout, got %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "invalid desired_visibility") {
+		t.Fatalf("expected candidate validation error, got %q", stderr.String())
+	}
+}
+
 func TestSlackNormalizeWriteFailureReturnsArtifactWrite(t *testing.T) {
 	fs := NewMemoryFS()
 	fs.WriteFile("slack.json", []byte(slackExportJSON()))

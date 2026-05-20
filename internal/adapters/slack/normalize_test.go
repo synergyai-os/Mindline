@@ -35,6 +35,23 @@ func TestNormalizeSortsMessagesOldToNewAndBuildsCheckpoint(t *testing.T) {
 	if result.Checkpoint.BatchOrder != "old_to_new" || result.Checkpoint.FirstTS != "1710000000.000001" || result.Checkpoint.LastTS != "1710000002.000001" {
 		t.Fatalf("bad checkpoint: %#v", result.Checkpoint)
 	}
+	if result.Checkpoint.NextOldestExclusiveTS != "1710000000.000001" {
+		t.Fatalf("next oldest cursor got %q want oldest processed ts", result.Checkpoint.NextOldestExclusiveTS)
+	}
+}
+
+func TestNormalizeRejectsMismatchedAdapterID(t *testing.T) {
+	payload := slack.Payload{
+		Source: slack.Source{Workspace: "synergyai-os", ChannelID: "DSELF", AdapterID: "not-slack"},
+		Messages: []slack.Message{
+			{TS: "1710000000.000001", User: "U1", AuthorName: "Randy", Text: "hello"},
+		},
+	}
+
+	_, err := slack.Normalize(payload)
+	if err == nil || !strings.Contains(err.Error(), "source.adapter_id") {
+		t.Fatalf("expected adapter id validation error, got %v", err)
+	}
 }
 
 func TestNormalizeMapsSafetyAndPrivateProvenance(t *testing.T) {
@@ -191,6 +208,43 @@ func TestNormalizeRedactsSecretLikeURLFields(t *testing.T) {
 	}
 	if route(t, candidate) != sbos.StateSkipped {
 		t.Fatalf("expected skipped route, got %s", route(t, candidate))
+	}
+}
+
+func TestNormalizeReplacesPrivateSlackFileURLsEverywhere(t *testing.T) {
+	payload := slack.Payload{
+		Source: slack.Source{Workspace: "synergyai-os", ChannelID: "DSELF"},
+		Messages: []slack.Message{
+			{
+				TS:         "1710000000.000001",
+				User:       "U1",
+				AuthorName: "Randy",
+				Text:       "Review " + privateFileURL(),
+				Attachments: []slack.Attachment{{
+					ID:        "A123",
+					Title:     "Private file mention",
+					TitleLink: privateFileURL(),
+					FromURL:   privateFileURL(),
+					Text:      "Attachment body " + privateFileURL(),
+				}},
+			},
+		},
+	}
+
+	result, err := slack.Normalize(payload)
+	if err != nil {
+		t.Fatalf("normalize: %v", err)
+	}
+	candidate := result.Candidates[0]
+	body := marshalCandidate(t, candidate)
+	if strings.Contains(body, privateFileMarker()) || strings.Contains(body, privateFileURL()) {
+		t.Fatalf("private Slack file URL leaked in candidate: %s", body)
+	}
+	if !candidate.Safety.PrivateProvenance {
+		t.Fatalf("expected private provenance for private file URL sentinel: %#v", candidate.Safety)
+	}
+	if !strings.Contains(body, "slack-file-private://redacted") {
+		t.Fatalf("expected redacted private file sentinel in candidate: %s", body)
 	}
 }
 

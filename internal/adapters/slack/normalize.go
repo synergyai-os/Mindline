@@ -11,6 +11,9 @@ import (
 )
 
 var urlPattern = regexp.MustCompile(`https?://[^\s<>"']+`)
+var privateSlackFileURLPattern = regexp.MustCompile(`https?://files\.slack\.com/[^\s<>"']*files-pri[^\s<>"']*`)
+
+const privateSlackFileSentinel = "slack-file-private://redacted"
 
 var secretPatterns = []string{
 	"password=",
@@ -25,6 +28,9 @@ func Normalize(payload Payload) (Result, error) {
 	adapterID := strings.TrimSpace(payload.Source.AdapterID)
 	if adapterID == "" {
 		adapterID = "slack"
+	}
+	if adapterID != "slack" {
+		return Result{}, fmt.Errorf("source.adapter_id must be slack for Slack normalization")
 	}
 	channelID := strings.TrimSpace(payload.Source.ChannelID)
 	if channelID == "" {
@@ -65,13 +71,16 @@ func Normalize(payload Payload) (Result, error) {
 		if err != nil {
 			return Result{}, err
 		}
+		if err := sbos.ValidateCandidate(candidate); err != nil {
+			return Result{}, err
+		}
 		result.Candidates = append(result.Candidates, candidate)
 	}
 	result.Checkpoint.CandidateCount = len(result.Candidates)
 	if len(messages) > 0 {
 		result.Checkpoint.FirstTS = messages[0].TS
 		result.Checkpoint.LastTS = messages[len(messages)-1].TS
-		result.Checkpoint.NextOldestExclusiveTS = messages[len(messages)-1].TS
+		result.Checkpoint.NextOldestExclusiveTS = messages[0].TS
 	}
 
 	return result, nil
@@ -92,6 +101,7 @@ func normalizeMessage(source Source, adapterID, channelID string, message Messag
 	secretLike := isSecretLike(message)
 	emptyContent := isEmpty(message)
 	text := strings.TrimSpace(message.Text)
+	text, textHadPrivateFileURL := replacePrivateSlackFileURLs(text)
 	if secretLike {
 		text = "[REDACTED SECRET-LIKE CONTENT]"
 	} else if emptyContent {
@@ -107,7 +117,7 @@ func normalizeMessage(source Source, adapterID, channelID string, message Messag
 
 	urls := collectURLs(text)
 	attachments := []string{}
-	privateProvenance := visibility == "private"
+	privateProvenance := visibility == "private" || textHadPrivateFileURL
 	for _, file := range message.Files {
 		if strings.TrimSpace(file.ID) != "" {
 			attachments = appendUnique(attachments, file.ID)
@@ -134,14 +144,31 @@ func normalizeMessage(source Source, adapterID, channelID string, message Messag
 			attachments = appendUnique(attachments, sanitizeSecret(attachment.Title, secretLike))
 		}
 		if strings.TrimSpace(attachment.Text) != "" && !secretLike {
-			attachments = appendUnique(attachments, attachment.Text)
-			urls = appendURLs(urls, attachment.Text)
+			attachmentText, hadPrivateFileURL := replacePrivateSlackFileURLs(attachment.Text)
+			if hadPrivateFileURL {
+				privateProvenance = true
+				attachments = appendUnique(attachments, privateSlackFileSentinel)
+			}
+			attachments = appendUnique(attachments, attachmentText)
+			urls = appendURLs(urls, attachmentText)
 		}
 		if strings.TrimSpace(attachment.TitleLink) != "" && !secretLike {
-			urls = appendUnique(urls, strings.TrimSpace(attachment.TitleLink))
+			titleLink, hadPrivateFileURL := replacePrivateSlackFileURLs(attachment.TitleLink)
+			if hadPrivateFileURL {
+				privateProvenance = true
+				attachments = appendUnique(attachments, privateSlackFileSentinel)
+			} else {
+				urls = appendUnique(urls, strings.TrimSpace(titleLink))
+			}
 		}
 		if strings.TrimSpace(attachment.FromURL) != "" && !secretLike {
-			urls = appendUnique(urls, strings.TrimSpace(attachment.FromURL))
+			fromURL, hadPrivateFileURL := replacePrivateSlackFileURLs(attachment.FromURL)
+			if hadPrivateFileURL {
+				privateProvenance = true
+				attachments = appendUnique(attachments, privateSlackFileSentinel)
+			} else {
+				urls = appendUnique(urls, strings.TrimSpace(fromURL))
+			}
 		}
 	}
 
@@ -258,9 +285,20 @@ func collectURLs(text string) []string {
 
 func appendURLs(urls []string, text string) []string {
 	for _, match := range urlPattern.FindAllString(text, -1) {
-		urls = appendUnique(urls, strings.TrimRight(match, ".,);]"))
+		url := strings.TrimRight(match, ".,);]")
+		if privateSlackFileURLPattern.MatchString(url) {
+			continue
+		}
+		urls = appendUnique(urls, url)
 	}
 	return urls
+}
+
+func replacePrivateSlackFileURLs(value string) (string, bool) {
+	if !privateSlackFileURLPattern.MatchString(value) {
+		return value, false
+	}
+	return privateSlackFileURLPattern.ReplaceAllString(value, privateSlackFileSentinel), true
 }
 
 func appendUnique(values []string, value string) []string {
