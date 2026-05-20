@@ -1,0 +1,33 @@
+{
+  "source": {
+    "workspace": "synergyai-os",
+    "channel_id": "DSELF",
+    "channel_name": "self-dm",
+    "adapter_id": "slack"
+  },
+  "messages": [
+    {
+      "ts": "1710000000.000001",
+      "user": "U123",
+      "author_name": "Randy",
+      "text": "Review https://example.com/page",
+      "permalink": "https://workspace.slack.com/archives/DSELF/p1710000000000001",
+      "files": [
+        {
+          "id": "F123",
+          "title": "Design PDF",
+          "url_private": "https://files.slack.com/files-pri/T/F123/design.pdf",
+          "url_public": "https://files.example/public/design.pdf"
+        }
+      ],
+      "attachments": [
+        {
+          "id": "A123",
+          "title": "Article",
+          "title_link": "https://article.example/post",
+          "from_url": "https://source.example/root"
+        }
+      ]
+    }
+  ]
+}

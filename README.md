@@ -30,9 +30,16 @@ go run ./cmd/mindline process candidate.json
 go run ./cmd/mindline process candidate.json --out ./dry-run
 ```
 
+It can also normalize local Slack-like dry-run exports into candidate JSON plus checkpoint metadata:
+
+```bash
+go run ./cmd/mindline slack normalize examples/slack/reverse-ordered-batch.json
+go run ./cmd/mindline slack normalize examples/slack/reverse-ordered-batch.json --out ./dry-run
+```
+
 By default, it prints a deterministic JSON result envelope to stdout and writes no files. With `--out`, it writes only emitted dry-run artifacts to the requested directory and reports their paths in stdout.
 
-No live Slack, Tolaria, network, auth, database, or provider integration is wired into this slice.
+Slack normalization is local dry-run processing only: no live Slack API calls, no Tolaria writes, and no destination writes.
 
 ## Candidate Contract
 
