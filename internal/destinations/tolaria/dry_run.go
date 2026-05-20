@@ -38,14 +38,15 @@ func planOne(result destinations.InputResult) (destinations.Operation, error) {
 		}
 		return baseOperation(result, destinations.OperationCreateNote, destinations.VisibilityPublish, "30-resources/"+safeSlug(result)+".md", "Processed source "+safeDisplayID(result), body, nil), nil
 	case "attention_ready":
-		if len(privacyBlockers(result.Safety)) > 0 {
-			return baseOperation(result, destinations.OperationBlocked, destinations.VisibilityBlocked, "", "Attention preview blocked", "", privacyBlockers(result.Safety)), nil
-		}
 		body, ok := artifactBody(result, "attention_preview")
 		if !ok {
 			return destinations.Operation{}, fmt.Errorf("attention_ready requires attention_preview artifact")
 		}
-		return baseOperation(result, destinations.OperationAttentionPreview, destinations.VisibilityAttention, "00-inbox/"+safeSlug(result)+".md", "Attention needed "+safeDisplayID(result), body, []string{"needs_attention"}), nil
+		if result.Safety.SecretLike {
+			return baseOperation(result, destinations.OperationBlocked, destinations.VisibilityBlocked, "", "Attention preview blocked", "", privacyBlockers(result.Safety)), nil
+		}
+		blockers := append([]string{"needs_attention"}, privacyBlockers(result.Safety)...)
+		return baseOperation(result, destinations.OperationAttentionPreview, destinations.VisibilityAttention, "00-inbox/"+safeSlug(result)+".md", "Attention needed "+safeDisplayID(result), body, blockers), nil
 	case "background_ready":
 		return baseOperation(result, destinations.OperationBackgroundRecord, destinations.VisibilityBackground, "40-archives/background/"+safeSlug(result)+".json", "Background record "+safeDisplayID(result), "state: background_ready\nsource_candidate_id: "+safeDisplayID(result)+"\n", privacyBlockers(result.Safety)), nil
 	case "skipped":

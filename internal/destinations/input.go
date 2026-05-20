@@ -59,10 +59,13 @@ type destinationInputArtifact struct {
 }
 
 type processResultEnvelope struct {
-	State        string                     `json:"state"`
-	RecordID     string                     `json:"record_id"`
-	Artifacts    []destinationInputArtifact `json:"artifacts"`
-	AuthorityIDs []string                   `json:"authority_ids"`
+	State             string                     `json:"state"`
+	RecordID          string                     `json:"record_id"`
+	SourceCandidateID string                     `json:"source_candidate_id"`
+	IdempotencyKey    string                     `json:"idempotency_key"`
+	Safety            InputSafety                `json:"safety"`
+	Artifacts         []destinationInputArtifact `json:"artifacts"`
+	AuthorityIDs      []string                   `json:"authority_ids"`
 }
 
 func ParseDestinationInput(input []byte, opts ParseOptions) (InputResult, error) {
@@ -87,10 +90,11 @@ func parseProcessResultEnvelope(input []byte, opts ParseOptions) (InputResult, e
 	result := destinationInputResult{
 		State:             envelope.State,
 		RecordID:          envelope.RecordID,
-		SourceCandidateID: envelope.RecordID,
-		IdempotencyKey:    "record:" + envelope.RecordID,
+		SourceCandidateID: envelope.SourceCandidateID,
+		IdempotencyKey:    envelope.IdempotencyKey,
 		AuthorityIDs:      envelope.AuthorityIDs,
 		Artifacts:         envelope.Artifacts,
+		Safety:            envelope.Safety,
 		AllowNoArtifacts:  true,
 	}
 	return buildInputResult(result, opts)

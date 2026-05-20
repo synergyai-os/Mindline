@@ -58,11 +58,14 @@ type FileSystem interface {
 }
 
 type ResultEnvelope struct {
-	State         string             `json:"state"`
-	RecordID      string             `json:"record_id"`
-	ArtifactCount int                `json:"artifact_count"`
-	Artifacts     []ArtifactEnvelope `json:"artifacts"`
-	AuthorityIDs  []string           `json:"authority_ids"`
+	State             string                   `json:"state"`
+	RecordID          string                   `json:"record_id"`
+	SourceCandidateID string                   `json:"source_candidate_id"`
+	IdempotencyKey    string                   `json:"idempotency_key"`
+	Safety            destinations.InputSafety `json:"safety"`
+	ArtifactCount     int                      `json:"artifact_count"`
+	Artifacts         []ArtifactEnvelope       `json:"artifacts"`
+	AuthorityIDs      []string                 `json:"authority_ids"`
 }
 
 type ArtifactEnvelope struct {
@@ -156,8 +159,15 @@ func (r Runner) Run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	envelope := ResultEnvelope{
-		State:         string(result.State),
-		RecordID:      result.RecordID,
+		State:             string(result.State),
+		RecordID:          result.RecordID,
+		SourceCandidateID: result.SourceCandidateID,
+		IdempotencyKey:    result.IdempotencyKey,
+		Safety: destinations.InputSafety{
+			PrivateProvenance: result.Safety.PrivateProvenance,
+			RedactionRequired: result.Safety.RedactionRequired,
+			SecretLike:        result.Safety.SecretLike,
+		},
 		ArtifactCount: len(result.Artifacts),
 		AuthorityIDs:  authorityIDs(),
 	}

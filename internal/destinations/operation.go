@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"unicode"
 )
@@ -75,6 +76,9 @@ func ValidateOperation(operation Operation) error {
 			return fmt.Errorf("%s is required", field.name)
 		}
 	}
+	if operation.SchemaVersion != OperationSchemaVersion {
+		return fmt.Errorf("schema_version must be %q", OperationSchemaVersion)
+	}
 	if operation.WriteMode != WriteModeDryRun {
 		return fmt.Errorf("write_mode must be %q", WriteModeDryRun)
 	}
@@ -83,8 +87,14 @@ func ValidateOperation(operation Operation) error {
 	}
 	switch operation.OperationType {
 	case OperationCreateNote, OperationAttentionPreview, OperationBackgroundRecord:
+		if err := validateVisibilityLane(operation.OperationType, operation.VisibilityLane); err != nil {
+			return err
+		}
 		if strings.TrimSpace(operation.PlannedLocator) == "" {
 			return fmt.Errorf("planned_locator is required for %s", operation.OperationType)
+		}
+		if err := validatePlannedLocator(operation.PlannedLocator); err != nil {
+			return err
 		}
 		if strings.TrimSpace(operation.Title) == "" {
 			return fmt.Errorf("title is required for %s", operation.OperationType)
@@ -96,6 +106,9 @@ func ValidateOperation(operation Operation) error {
 			return fmt.Errorf("blockers must be empty for create_note")
 		}
 	case OperationSkip:
+		if err := validateVisibilityLane(operation.OperationType, operation.VisibilityLane); err != nil {
+			return err
+		}
 		if operation.PlannedLocator != "" {
 			return fmt.Errorf("planned_locator must be empty for skip")
 		}
@@ -109,6 +122,9 @@ func ValidateOperation(operation Operation) error {
 			return fmt.Errorf("blockers are required for skip")
 		}
 	case OperationBlocked:
+		if err := validateVisibilityLane(operation.OperationType, operation.VisibilityLane); err != nil {
+			return err
+		}
 		if operation.PlannedLocator != "" {
 			return fmt.Errorf("planned_locator must be empty for blocked")
 		}
@@ -120,6 +136,31 @@ func ValidateOperation(operation Operation) error {
 		}
 	default:
 		return fmt.Errorf("operation_type is invalid: %q", operation.OperationType)
+	}
+	return nil
+}
+
+func validateVisibilityLane(operationType OperationType, lane VisibilityLane) error {
+	want := map[OperationType]VisibilityLane{
+		OperationCreateNote:       VisibilityPublish,
+		OperationAttentionPreview: VisibilityAttention,
+		OperationBackgroundRecord: VisibilityBackground,
+		OperationSkip:             VisibilitySkip,
+		OperationBlocked:          VisibilityBlocked,
+	}[operationType]
+	if lane != want {
+		return fmt.Errorf("visibility_lane must be %q for %s", want, operationType)
+	}
+	return nil
+}
+
+func validatePlannedLocator(locator string) error {
+	if filepath.IsAbs(locator) {
+		return fmt.Errorf("planned_locator must be destination-relative")
+	}
+	normalized := filepath.ToSlash(filepath.Clean(locator))
+	if normalized == "." || normalized == ".." || strings.HasPrefix(normalized, "../") || strings.Contains(normalized, "/../") {
+		return fmt.Errorf("planned_locator must not traverse parent directories")
 	}
 	return nil
 }

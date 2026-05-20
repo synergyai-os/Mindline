@@ -28,8 +28,16 @@ func TestValidateDestinationOperation(t *testing.T) {
 		want      string
 	}{
 		{name: "missing schema", operation: mutate(valid[0], func(o *Operation) { o.SchemaVersion = "" }), want: "schema_version"},
+		{name: "unsupported schema", operation: mutate(valid[0], func(o *Operation) { o.SchemaVersion = "destination-operation/v9" }), want: "schema_version"},
 		{name: "missing operation id", operation: mutate(valid[0], func(o *Operation) { o.OperationID = "" }), want: "operation_id"},
 		{name: "wrong write mode", operation: mutate(valid[0], func(o *Operation) { o.WriteMode = "live" }), want: "write_mode"},
+		{name: "wrong create lane", operation: mutate(valid[0], func(o *Operation) { o.VisibilityLane = VisibilityAttention }), want: "visibility_lane"},
+		{name: "wrong attention lane", operation: mutate(valid[1], func(o *Operation) { o.VisibilityLane = VisibilityPublish }), want: "visibility_lane"},
+		{name: "wrong background lane", operation: mutate(valid[2], func(o *Operation) { o.VisibilityLane = VisibilityPublish }), want: "visibility_lane"},
+		{name: "wrong skip lane", operation: mutate(valid[3], func(o *Operation) { o.VisibilityLane = VisibilityBlocked }), want: "visibility_lane"},
+		{name: "wrong blocked lane", operation: mutate(valid[4], func(o *Operation) { o.VisibilityLane = VisibilitySkip }), want: "visibility_lane"},
+		{name: "absolute locator", operation: mutate(valid[0], func(o *Operation) { o.PlannedLocator = "/tmp/source.md" }), want: "planned_locator"},
+		{name: "parent traversal locator", operation: mutate(valid[0], func(o *Operation) { o.PlannedLocator = "../source.md" }), want: "planned_locator"},
 		{name: "skip with locator", operation: mutate(valid[3], func(o *Operation) { o.PlannedLocator = "00-inbox/nope.md" }), want: "planned_locator"},
 		{name: "skip without blocker", operation: mutate(valid[3], func(o *Operation) { o.Blockers = nil }), want: "blockers"},
 		{name: "blocked with body", operation: mutate(valid[4], func(o *Operation) { o.Body = "leaky body" }), want: "body"},

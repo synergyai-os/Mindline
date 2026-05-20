@@ -124,6 +124,36 @@ func TestPlanAttentionDoesNotPretendToBeProcessedSource(t *testing.T) {
 	}
 }
 
+func TestPlanAllowsRedactedAttentionPreviewWithPrivacyBlockers(t *testing.T) {
+	operations, err := Plan(inputResult("attention_ready", "attention_preview", "Redaction required\n- Source: [redacted]\n", destinations.InputSafety{PrivateProvenance: true}))
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	got := operations[0]
+	if got.OperationType != destinations.OperationAttentionPreview || got.VisibilityLane != destinations.VisibilityAttention {
+		t.Fatalf("expected attention preview, got %#v", got)
+	}
+	assertContains(t, got.Blockers, "private_provenance")
+	if strings.Contains(got.SourceCandidateID, "candidate-1") || strings.Contains(got.IdempotencyKey, "slack:candidate-1") {
+		t.Fatalf("private identifiers leaked: %#v", got)
+	}
+	if err := destinations.ValidateOperation(got); err != nil {
+		t.Fatalf("operation failed validation: %v\n%#v", err, got)
+	}
+}
+
+func TestPlanBlocksSecretLikeAttentionPreview(t *testing.T) {
+	operations, err := Plan(inputResult("attention_ready", "attention_preview", "xoxb-super-secret-token", destinations.InputSafety{SecretLike: true}))
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	got := operations[0]
+	if got.OperationType != destinations.OperationBlocked || got.Body != "" {
+		t.Fatalf("expected secret-like attention to be blocked without body, got %#v", got)
+	}
+	assertContains(t, got.Blockers, "secret_like")
+}
+
 func TestPlanResolvesDuplicateLocatorsAndIdempotency(t *testing.T) {
 	first := inputResult("dry_run_published", "dry_run_publish", publishBody(), destinations.InputSafety{})
 	first.RecordID = "same"
@@ -163,4 +193,14 @@ func inputResult(state, artifactKind, body string, safety destinations.InputSafe
 
 func publishBody() string {
 	return "# CODE workflow source\n\n## Snapshot\nUseful source.\n\n## Source Content\n- Source\n\n## Key Details\n- Detail\n\n## Relevance\nRelevant.\n\n## Signals\n- signal\n\n## Related Sources\n- source\n\n## Next Action\nKeep."
+}
+
+func assertContains(t *testing.T, values []string, want string) {
+	t.Helper()
+	for _, value := range values {
+		if value == want {
+			return
+		}
+	}
+	t.Fatalf("expected %q in %#v", want, values)
 }

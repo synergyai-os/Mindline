@@ -1,6 +1,8 @@
 package sbos
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -59,11 +61,14 @@ type MemoryCandidateStore struct {
 }
 
 type ProcessResult struct {
-	State        State
-	RecordID     string
-	StoredRecord StoredRecord
-	Artifacts    []Artifact
-	AuthorityIDs []string
+	State             State
+	RecordID          string
+	SourceCandidateID string
+	IdempotencyKey    string
+	Safety            Safety
+	StoredRecord      StoredRecord
+	Artifacts         []Artifact
+	AuthorityIDs      []string
 }
 
 type StoredRecord struct {
@@ -168,13 +173,20 @@ func (e *Engine) ProcessCandidate(input []byte) (ProcessResult, error) {
 	if err := candidate.validate(); err != nil {
 		return ProcessResult{State: StateError, AuthorityIDs: authorityIDs()}, err
 	}
+	effectiveSafety := candidate.Safety
+	if candidate.hasPrivatePublishProvenance() {
+		effectiveSafety.PrivateProvenance = true
+	}
 
 	if existing, ok := e.store.GetByIdempotencyKey(candidate.IdempotencyKey); ok {
 		return ProcessResult{
-			State:        StateValidated,
-			RecordID:     existing.ID,
-			StoredRecord: existing,
-			AuthorityIDs: authorityIDs(),
+			State:             StateValidated,
+			RecordID:          existing.ID,
+			SourceCandidateID: candidate.CandidateID,
+			IdempotencyKey:    candidate.IdempotencyKey,
+			Safety:            effectiveSafety,
+			StoredRecord:      existing,
+			AuthorityIDs:      authorityIDs(),
 		}, nil
 	}
 
@@ -185,18 +197,21 @@ func (e *Engine) ProcessCandidate(input []byte) (ProcessResult, error) {
 	e.store.Save(candidate.IdempotencyKey, record)
 
 	result := ProcessResult{
-		State:        StateValidated,
-		RecordID:     record.ID,
-		StoredRecord: record,
-		AuthorityIDs: authorityIDs(),
+		State:             StateValidated,
+		RecordID:          record.ID,
+		SourceCandidateID: candidate.CandidateID,
+		IdempotencyKey:    candidate.IdempotencyKey,
+		Safety:            effectiveSafety,
+		StoredRecord:      record,
+		AuthorityIDs:      authorityIDs(),
 	}
 
-	if candidate.Safety.EmptyContent || candidate.Safety.SecretLike {
+	if effectiveSafety.EmptyContent || effectiveSafety.SecretLike {
 		result.State = StateSkipped
 		return result, nil
 	}
 
-	if candidate.Safety.RedactionRequired || candidate.Safety.PrivateProvenance || candidate.hasPrivatePublishProvenance() {
+	if effectiveSafety.RedactionRequired || effectiveSafety.PrivateProvenance {
 		if candidate.DesiredVisibility == "attention" || candidate.DesiredVisibility == "clarify" {
 			result.State = StateAttentionReady
 			result.Artifacts = []Artifact{{Kind: ArtifactAttentionPreview, Body: renderAttention(candidate, true, "Redaction required")}}
@@ -319,6 +334,12 @@ func renderAttention(candidate Candidate, redacted bool, reason string) string {
 	source := safeValue(candidate.Provenance.Permalink, redacted)
 	author := safeValue(candidate.Provenance.Author, redacted)
 	body := safeText(candidate.Content.Text, redacted)
+	title := titleOrFallback(candidate)
+	candidateID := candidate.CandidateID
+	if redacted {
+		title = "Attention needed"
+		candidateID = "source-" + stableFingerprint(candidate.CandidateID)
+	}
 
 	return fmt.Sprintf(`# %s
 
@@ -328,7 +349,7 @@ func renderAttention(candidate Candidate, redacted bool, reason string) string {
 - Source: %s
 - Author: %s
 - Detail: %s
-`, titleOrFallback(candidate), reason, candidate.CandidateID, source, author, body)
+`, title, reason, candidateID, source, author, body)
 }
 
 func renderPublish(candidate Candidate) string {
@@ -398,6 +419,11 @@ func safeText(value string, redacted bool) string {
 		return "[redacted]"
 	}
 	return value
+}
+
+func stableFingerprint(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])[:16]
 }
 
 func authorityIDs() []string {

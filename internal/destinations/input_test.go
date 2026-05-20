@@ -138,6 +138,23 @@ func TestParseDestinationInputRejectsInvalidEnvelope(t *testing.T) {
 	}
 }
 
+func TestParseProcessResultEnvelopeRequiresDestinationFields(t *testing.T) {
+	input := `{
+  "state": "dry_run_published",
+  "record_id": "candidate-publish",
+  "artifact_count": 1,
+  "artifacts": [{"kind": "dry_run_publish", "body": "body"}],
+  "authority_ids": ["WP-5", "DEC-12"]
+}`
+	_, err := ParseDestinationInput([]byte(input), ParseOptions{})
+	if err == nil {
+		t.Fatalf("expected legacy process result to be rejected")
+	}
+	if !strings.Contains(err.Error(), "source_candidate_id") {
+		t.Fatalf("expected source_candidate_id error, got %v", err)
+	}
+}
+
 func destinationInputWithArtifactPath(path string) string {
 	return `{
 		"schema_version": "destination-input/v0.1",

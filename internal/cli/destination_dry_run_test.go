@@ -202,9 +202,9 @@ func TestDestinationDryRunDoesNotLeakPrivateFlaggedOrdinaryIdentifiers(t *testin
 	}
 }
 
-func TestDestinationDryRunSuppressesUnsafeAttentionPreview(t *testing.T) {
+func TestDestinationDryRunWritesRedactedAttentionPreview(t *testing.T) {
 	fs := NewMemoryFS()
-	fs.WriteFile("result.json", []byte(destinationInput("attention_ready", "candidate-attention", "client-followup-42", "attention_preview", "private client context", true, false, false)))
+	fs.WriteFile("result.json", []byte(destinationInput("attention_ready", "candidate-attention", "client-followup-42", "attention_preview", "Redaction required\n- Source: [redacted]\n", true, false, false)))
 
 	var stdout, stderr bytes.Buffer
 	code := NewRunner(fs).Run([]string{"destination", "dry-run", "result.json", "--adapter", "tolaria", "--out", "dry-run"}, &stdout, &stderr)
@@ -217,18 +217,20 @@ func TestDestinationDryRunSuppressesUnsafeAttentionPreview(t *testing.T) {
 		t.Fatalf("decode stdout: %v", err)
 	}
 	item := summary.Operations[0]
-	if item.OperationType != "blocked" || item.PreviewPath != "" || !item.Blocked {
-		t.Fatalf("expected blocked operation with no preview, got %+v", item)
+	if item.OperationType != "attention_preview" || item.PreviewPath == "" || item.Blocked {
+		t.Fatalf("expected attention preview with preview path, got %+v", item)
 	}
-	if strings.Contains(strings.Join(fs.Paths(), "\n"), "/previews/") {
-		t.Fatalf("expected no preview files, got paths %v", fs.Paths())
+	if !strings.Contains(strings.Join(fs.Paths(), "\n"), "/previews/") {
+		t.Fatalf("expected preview file, got paths %v", fs.Paths())
 	}
 	for _, path := range fs.Paths() {
 		if path == "result.json" {
 			continue
 		}
-		if strings.Contains(string(fs.MustReadFileIfFile(path)), "private client context") {
-			t.Fatalf("unsafe attention body leaked in %q", path)
+		for _, leaked := range []string{"candidate-attention", "client-followup-42"} {
+			if strings.Contains(string(fs.MustReadFileIfFile(path)), leaked) || strings.Contains(path, leaked) {
+				t.Fatalf("private identifier %q leaked in %q", leaked, path)
+			}
 		}
 	}
 }
@@ -347,6 +349,9 @@ func TestDestinationDryRunAcceptsProcessOutResultEnvelope(t *testing.T) {
 	input := `{
   "state": "dry_run_published",
   "record_id": "candidate-publish",
+  "source_candidate_id": "candidate-publish",
+  "idempotency_key": "slack:publish",
+  "safety": {"private_provenance": false, "redaction_required": false, "secret_like": false},
   "artifact_count": 1,
   "artifacts": [{"kind": "dry_run_publish", "path": "publish.md", "body": ""}],
   "authority_ids": ["WP-5", "DEC-12"]
@@ -372,6 +377,9 @@ func TestDestinationDryRunAcceptsProcessOutNoArtifactStates(t *testing.T) {
 	input := `{
   "state": "skipped",
   "record_id": "candidate-skipped",
+  "source_candidate_id": "candidate-skipped",
+  "idempotency_key": "slack:skipped",
+  "safety": {"private_provenance": false, "redaction_required": false, "secret_like": true},
   "artifact_count": 0,
   "artifacts": [],
   "authority_ids": ["WP-5", "DEC-12"]
@@ -388,6 +396,40 @@ func TestDestinationDryRunAcceptsProcessOutNoArtifactStates(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), `"operation_type": "skip"`) {
 		t.Fatalf("expected skip summary, got %s", stdout.String())
+	}
+}
+
+func TestDestinationDryRunPreservesProcessOutSafetyAndIdempotency(t *testing.T) {
+	fs := NewMemoryFS()
+	fs.WriteFile("candidate.json", []byte(candidateWithSafety("private-client-note-42", "redaction_required", "attention")))
+
+	var processStdout, processStderr bytes.Buffer
+	processCode := NewRunner(fs).Run([]string{"process", "candidate.json"}, &processStdout, &processStderr)
+	if processCode != ExitOK {
+		t.Fatalf("process expected exit %d, got %d stderr=%s", ExitOK, processCode, processStderr.String())
+	}
+	fs.WriteFile("result.json", processStdout.Bytes())
+
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(fs).Run([]string{"destination", "dry-run", "result.json", "--adapter", "tolaria", "--out", "dry-run"}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("destination expected exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+	for _, leaked := range []string{"private-client-note-42", "slack:private-client-note-42"} {
+		if strings.Contains(stdout.String(), leaked) {
+			t.Fatalf("stdout leaked %q:\n%s", leaked, stdout.String())
+		}
+		for _, path := range fs.Paths() {
+			if path == "candidate.json" || path == "result.json" {
+				continue
+			}
+			if strings.Contains(path, leaked) || strings.Contains(string(fs.MustReadFileIfFile(path)), leaked) {
+				t.Fatalf("destination output leaked %q in %q", leaked, path)
+			}
+		}
+	}
+	if !strings.Contains(stdout.String(), `"operation_type": "attention_preview"`) {
+		t.Fatalf("expected attention preview summary, got %s", stdout.String())
 	}
 }
 
