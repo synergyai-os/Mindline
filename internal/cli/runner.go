@@ -10,6 +10,8 @@ import (
 	"unicode"
 
 	slackadapter "github.com/synergyai-os/Mindline/internal/adapters/slack"
+	"github.com/synergyai-os/Mindline/internal/destinations"
+	tolariadestination "github.com/synergyai-os/Mindline/internal/destinations/tolaria"
 	"github.com/synergyai-os/Mindline/internal/sbos"
 )
 
@@ -20,7 +22,9 @@ const (
 	ExitArtifactWrite = 3
 )
 
-const usage = "usage: mindline process <candidate.json> [--out <dir>]\nusage: mindline slack normalize <slack-export.json> [--out <dir>]\n"
+const usage = "usage: mindline process <candidate.json> [--out <dir>]\nusage: mindline slack normalize <slack-export.json> [--out <dir>]\nusage: mindline destination dry-run <sbos-result.json> --adapter tolaria --out <dir>\n"
+
+const tolariaVaultPath = "/Users/randyhereman/Young Human Club Dropbox/02. Areas/PKM - Tolaria"
 
 var cliAuthorityIDs = []string{
 	"DEC-4",
@@ -38,7 +42,8 @@ var cliAuthorityIDs = []string{
 }
 
 type Runner struct {
-	fs FileSystem
+	fs             FileSystem
+	protectedRoots []string
 }
 
 type FileSystem interface {
@@ -48,14 +53,19 @@ type FileSystem interface {
 	CanWriteDir(path string) error
 	WriteFile(path string, data []byte) error
 	Getwd() (string, error)
+	RealPath(path string) (string, error)
+	IsSymlink(path string) (bool, error)
 }
 
 type ResultEnvelope struct {
-	State         string             `json:"state"`
-	RecordID      string             `json:"record_id"`
-	ArtifactCount int                `json:"artifact_count"`
-	Artifacts     []ArtifactEnvelope `json:"artifacts"`
-	AuthorityIDs  []string           `json:"authority_ids"`
+	State             string                   `json:"state"`
+	RecordID          string                   `json:"record_id"`
+	SourceCandidateID string                   `json:"source_candidate_id"`
+	IdempotencyKey    string                   `json:"idempotency_key"`
+	Safety            destinations.InputSafety `json:"safety"`
+	ArtifactCount     int                      `json:"artifact_count"`
+	Artifacts         []ArtifactEnvelope       `json:"artifacts"`
+	AuthorityIDs      []string                 `json:"authority_ids"`
 }
 
 type ArtifactEnvelope struct {
@@ -72,13 +82,35 @@ type SlackNormalizeEnvelope struct {
 	AuthorityIDs   []string                      `json:"authority_ids"`
 }
 
+type DestinationDryRunSummary struct {
+	DestinationAdapterID string                         `json:"destination_adapter_id"`
+	WriteMode            string                         `json:"write_mode"`
+	OperationCount       int                            `json:"operation_count"`
+	BlockedCount         int                            `json:"blocked_count"`
+	Operations           []DestinationDryRunSummaryItem `json:"operations"`
+	AuthorityIDs         []string                       `json:"authority_ids"`
+}
+
+type DestinationDryRunSummaryItem struct {
+	OperationID       string `json:"operation_id"`
+	OperationType     string `json:"operation_type"`
+	VisibilityLane    string `json:"visibility_lane"`
+	OperationJSONPath string `json:"operation_json_path"`
+	PreviewPath       string `json:"preview_path"`
+	Blocked           bool   `json:"blocked"`
+}
+
 type SlackNormalizeCandidateItem struct {
 	Path      string          `json:"path"`
 	Candidate *sbos.Candidate `json:"candidate,omitempty"`
 }
 
 func NewRunner(fileSystem FileSystem) Runner {
-	return Runner{fs: fileSystem}
+	return NewRunnerWithProtectedRoots(fileSystem, []string{tolariaVaultPath})
+}
+
+func NewRunnerWithProtectedRoots(fileSystem FileSystem, protectedRoots []string) Runner {
+	return Runner{fs: fileSystem, protectedRoots: append([]string(nil), protectedRoots...)}
 }
 
 func (r Runner) Run(args []string, stdout, stderr io.Writer) int {
@@ -88,6 +120,9 @@ func (r Runner) Run(args []string, stdout, stderr io.Writer) int {
 	}
 	if args[0] == "slack" {
 		return r.runSlack(args[1:], stdout, stderr)
+	}
+	if args[0] == "destination" {
+		return r.runDestination(args[1:], stdout, stderr)
 	}
 	if args[0] != "process" {
 		fmt.Fprint(stderr, usage)
@@ -124,8 +159,15 @@ func (r Runner) Run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	envelope := ResultEnvelope{
-		State:         string(result.State),
-		RecordID:      result.RecordID,
+		State:             string(result.State),
+		RecordID:          result.RecordID,
+		SourceCandidateID: result.SourceCandidateID,
+		IdempotencyKey:    result.IdempotencyKey,
+		Safety: destinations.InputSafety{
+			PrivateProvenance: result.Safety.PrivateProvenance,
+			RedactionRequired: result.Safety.RedactionRequired,
+			SecretLike:        result.Safety.SecretLike,
+		},
 		ArtifactCount: len(result.Artifacts),
 		AuthorityIDs:  authorityIDs(),
 	}
@@ -147,6 +189,88 @@ func (r Runner) Run(args []string, stdout, stderr io.Writer) int {
 	encoder := json.NewEncoder(stdout)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(envelope); err != nil {
+		fmt.Fprintf(stderr, "write stdout: %v\n", err)
+		return ExitUsage
+	}
+	return ExitOK
+}
+
+func (r Runner) runDestination(args []string, stdout, stderr io.Writer) int {
+	inputPath, adapterID, outDir, parseError := parseDestinationDryRunArgs(args)
+	if parseError != parseErrorNone {
+		fmt.Fprint(stderr, usage)
+		return ExitUsage
+	}
+	if adapterID != tolariadestination.AdapterID {
+		fmt.Fprint(stderr, usage)
+		return ExitUsage
+	}
+	if err := r.validateDestinationOutDir(outDir); err != nil {
+		fmt.Fprintf(stderr, "invalid --out: %v\n", err)
+		return ExitUsage
+	}
+
+	input, err := r.fs.ReadFile(inputPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "read destination input: %v\n", err)
+		return ExitUsage
+	}
+	inputRealPath, err := r.fs.RealPath(inputPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "resolve destination input: %v\n", err)
+		return ExitUsage
+	}
+	result, err := destinations.ParseDestinationInput(input, destinations.ParseOptions{BaseDir: filepath.Dir(inputRealPath)})
+	if err != nil {
+		fmt.Fprintf(stderr, "parse destination input: %v\n", err)
+		return ExitProcess
+	}
+	operations, err := tolariadestination.Plan(result)
+	if err != nil {
+		fmt.Fprintf(stderr, "plan destination dry-run: %v\n", err)
+		return ExitProcess
+	}
+
+	summary := DestinationDryRunSummary{
+		DestinationAdapterID: tolariadestination.AdapterID,
+		WriteMode:            string(destinations.WriteModeDryRun),
+		OperationCount:       len(operations),
+		AuthorityIDs:         result.AuthorityIDs,
+	}
+	for _, operation := range operations {
+		operationJSONPath, err := r.writeDestinationOperation(outDir, operation)
+		if err != nil {
+			fmt.Fprintf(stderr, "write destination operation: %v\n", err)
+			return ExitArtifactWrite
+		}
+		previewPath := ""
+		if destinationOperationHasPreview(operation) {
+			previewPath, err = r.writeDestinationPreview(outDir, operation)
+			if err != nil {
+				fmt.Fprintf(stderr, "write destination preview: %v\n", err)
+				return ExitArtifactWrite
+			}
+		}
+		blocked := operation.OperationType == destinations.OperationBlocked || operation.OperationType == destinations.OperationSkip
+		if blocked {
+			summary.BlockedCount++
+		}
+		summary.Operations = append(summary.Operations, DestinationDryRunSummaryItem{
+			OperationID:       operation.OperationID,
+			OperationType:     string(operation.OperationType),
+			VisibilityLane:    string(operation.VisibilityLane),
+			OperationJSONPath: operationJSONPath,
+			PreviewPath:       previewPath,
+			Blocked:           blocked,
+		})
+	}
+	if err := r.writeDestinationSummary(outDir, summary); err != nil {
+		fmt.Fprintf(stderr, "write destination summary: %v\n", err)
+		return ExitArtifactWrite
+	}
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(summary); err != nil {
 		fmt.Fprintf(stderr, "write stdout: %v\n", err)
 		return ExitUsage
 	}
@@ -257,6 +381,33 @@ func parseProcessArgs(args []string) (candidatePath string, outDir string, err p
 	return candidatePath, args[2], parseErrorNone
 }
 
+func parseDestinationDryRunArgs(args []string) (inputPath string, adapterID string, outDir string, err parseError) {
+	if len(args) != 6 {
+		return "", "", "", parseErrorUsage
+	}
+	if args[0] != "dry-run" || strings.TrimSpace(args[1]) == "" {
+		return "", "", "", parseErrorUsage
+	}
+	inputPath = args[1]
+	for i := 2; i < len(args); i += 2 {
+		if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+			return "", "", "", parseErrorUsage
+		}
+		switch args[i] {
+		case "--adapter":
+			adapterID = args[i+1]
+		case "--out":
+			outDir = args[i+1]
+		default:
+			return "", "", "", parseErrorUsage
+		}
+	}
+	if adapterID == "" || outDir == "" {
+		return "", "", "", parseErrorUsage
+	}
+	return inputPath, adapterID, outDir, parseErrorNone
+}
+
 func (r Runner) validateOutDir(outDir string) error {
 	info, err := r.fs.Stat(outDir)
 	if err == nil {
@@ -276,6 +427,40 @@ func (r Runner) validateOutDir(outDir string) error {
 		return fmt.Errorf("%s is not a directory", outDir)
 	}
 	return r.fs.CanWriteDir(outDir)
+}
+
+func (r Runner) validateDestinationOutDir(outDir string) error {
+	realOut, err := r.fs.RealPath(outDir)
+	if err != nil {
+		return err
+	}
+	if err := r.rejectProtectedPath(realOut, outDir); err != nil {
+		return err
+	}
+	if err := r.validateOutDir(outDir); err != nil {
+		return err
+	}
+	realOut, err = r.fs.RealPath(outDir)
+	if err != nil {
+		return err
+	}
+	return r.rejectProtectedPath(realOut, outDir)
+}
+
+func (r Runner) rejectProtectedPath(realPath, displayPath string) error {
+	for _, protectedRoot := range r.protectedRoots {
+		if strings.TrimSpace(protectedRoot) == "" {
+			continue
+		}
+		realRoot, err := r.fs.RealPath(protectedRoot)
+		if err != nil {
+			continue
+		}
+		if isSameOrInside(realRoot, realPath) {
+			return fmt.Errorf("protected output root: %s", displayPath)
+		}
+	}
+	return nil
 }
 
 func (r Runner) writeArtifact(outDir string, recordID string, artifact sbos.Artifact) (string, error) {
@@ -316,6 +501,121 @@ func (r Runner) writeCheckpoint(outDir string, checkpoint slackadapter.Checkpoin
 	}
 	data = append(data, '\n')
 	return r.fs.WriteFile(target, data)
+}
+
+func (r Runner) writeDestinationOperation(outDir string, operation destinations.Operation) (string, error) {
+	if err := r.ensureOutputChildDir(outDir, "operations"); err != nil {
+		return "", err
+	}
+	target := filepath.Join(outDir, "operations", sanitizeFilenameBase(operation.OperationID)+".json")
+	if !isInside(outDir, target) {
+		return "", fmt.Errorf("operation path escaped output directory")
+	}
+	if err := r.rejectUnsafeOutputFile(outDir, target); err != nil {
+		return "", err
+	}
+	data, err := json.MarshalIndent(operation, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	data = append(data, '\n')
+	if err := r.fs.WriteFile(target, data); err != nil {
+		return "", err
+	}
+	return displayPath(r.fs, target), nil
+}
+
+func (r Runner) writeDestinationPreview(outDir string, operation destinations.Operation) (string, error) {
+	if err := r.ensureOutputChildDir(outDir, "previews"); err != nil {
+		return "", err
+	}
+	target := filepath.Join(outDir, "previews", sanitizeFilenameBase(operation.OperationID)+".md")
+	if !isInside(outDir, target) {
+		return "", fmt.Errorf("preview path escaped output directory")
+	}
+	if err := r.rejectUnsafeOutputFile(outDir, target); err != nil {
+		return "", err
+	}
+	if err := r.fs.WriteFile(target, []byte(operation.Body)); err != nil {
+		return "", err
+	}
+	return displayPath(r.fs, target), nil
+}
+
+func (r Runner) writeDestinationSummary(outDir string, summary DestinationDryRunSummary) error {
+	target := filepath.Join(outDir, "destination-summary.json")
+	if !isInside(outDir, target) {
+		return fmt.Errorf("summary path escaped output directory")
+	}
+	if err := r.rejectUnsafeOutputFile(outDir, target); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(summary, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	return r.fs.WriteFile(target, data)
+}
+
+func (r Runner) ensureOutputChildDir(outDir, child string) error {
+	targetDir := filepath.Join(outDir, child)
+	if !isInside(outDir, targetDir) {
+		return fmt.Errorf("%s path escaped output directory", child)
+	}
+	if err := r.fs.MkdirAll(targetDir, 0o755); err != nil {
+		return err
+	}
+	realOut, err := r.fs.RealPath(outDir)
+	if err != nil {
+		return err
+	}
+	realTarget, err := r.fs.RealPath(targetDir)
+	if err != nil {
+		return err
+	}
+	if !isSameOrInside(realOut, realTarget) || realOut == realTarget {
+		return fmt.Errorf("%s path escaped output directory", child)
+	}
+	for _, protectedRoot := range r.protectedRoots {
+		if strings.TrimSpace(protectedRoot) == "" {
+			continue
+		}
+		realRoot, err := r.fs.RealPath(protectedRoot)
+		if err != nil {
+			continue
+		}
+		if isSameOrInside(realRoot, realTarget) {
+			return fmt.Errorf("protected output root: %s", targetDir)
+		}
+	}
+	return nil
+}
+
+func (r Runner) rejectUnsafeOutputFile(outDir, target string) error {
+	isSymlink, err := r.fs.IsSymlink(target)
+	if err != nil {
+		return err
+	}
+	if isSymlink {
+		return fmt.Errorf("file path escaped output directory")
+	}
+	realOut, err := r.fs.RealPath(outDir)
+	if err != nil {
+		return err
+	}
+	realTarget, err := r.fs.RealPath(target)
+	if err != nil {
+		return err
+	}
+	if !isSameOrInside(realOut, realTarget) || realOut == realTarget {
+		return fmt.Errorf("file path escaped output directory")
+	}
+	return r.rejectProtectedPath(realTarget, target)
+}
+
+func destinationOperationHasPreview(operation destinations.Operation) bool {
+	return operation.Body != "" && (operation.OperationType == destinations.OperationCreateNote || operation.OperationType == destinations.OperationAttentionPreview)
 }
 
 func artifactFilename(recordID string, kind sbos.ArtifactKind) string {
@@ -359,6 +659,16 @@ func isInside(outDir, target string) bool {
 		return false
 	}
 	return rel != "." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".." && !filepath.IsAbs(rel)
+}
+
+func isSameOrInside(root, target string) bool {
+	cleanRoot := filepath.Clean(root)
+	cleanTarget := filepath.Clean(target)
+	rel, err := filepath.Rel(cleanRoot, cleanTarget)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (!strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".." && !filepath.IsAbs(rel))
 }
 
 func displayPath(fileSystem FileSystem, target string) string {

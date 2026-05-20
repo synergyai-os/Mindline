@@ -100,6 +100,14 @@ func (m *MemoryFS) Getwd() (string, error) {
 	return ".", nil
 }
 
+func (m *MemoryFS) RealPath(path string) (string, error) {
+	return filepath.Clean(path), nil
+}
+
+func (m *MemoryFS) IsSymlink(string) (bool, error) {
+	return false, nil
+}
+
 func (m *MemoryFS) Exists(path string) bool {
 	clean := filepath.Clean(path)
 	_, fileExists := m.files[clean]
@@ -112,6 +120,17 @@ func (m *MemoryFS) MustReadFile(path string) []byte {
 		panic(err)
 	}
 	return data
+}
+
+func (m *MemoryFS) MustReadFileIfFile(path string) []byte {
+	clean := filepath.Clean(path)
+	data, ok := m.files[clean]
+	if !ok {
+		return nil
+	}
+	copyData := make([]byte, len(data))
+	copy(copyData, data)
+	return copyData
 }
 
 func (m *MemoryFS) WriteCountExcept(except string) int {

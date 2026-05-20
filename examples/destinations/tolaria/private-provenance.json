@@ -1,0 +1,21 @@
+{
+  "schema_version": "destination-input/v0.1",
+  "result": {
+    "state": "dry_run_published",
+    "record_id": "candidate-private-provenance",
+    "source_candidate_id": "private-client-note-42",
+    "idempotency_key": "client-followup-42",
+    "authority_ids": ["WP-5", "DEC-12"],
+    "artifacts": [
+      {
+        "kind": "dry_run_publish",
+        "body": "# Private source\n\nThis fixture must be blocked by safety metadata.\n"
+      }
+    ],
+    "safety": {
+      "private_provenance": true,
+      "redaction_required": false,
+      "secret_like": false
+    }
+  }
+}

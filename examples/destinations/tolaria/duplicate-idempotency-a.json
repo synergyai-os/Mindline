@@ -1,0 +1,21 @@
+{
+  "schema_version": "destination-input/v0.1",
+  "result": {
+    "state": "dry_run_published",
+    "record_id": "duplicate-a",
+    "source_candidate_id": "duplicate-a",
+    "idempotency_key": "slack:duplicate-idempotency",
+    "authority_ids": ["WP-5", "DEC-12"],
+    "artifacts": [
+      {
+        "kind": "dry_run_publish",
+        "body": "---\ntype: Source\nstatus: dry_run\n---\n\n# Duplicate A\n\n## Snapshot\nFirst duplicate idempotency fixture.\n\n## Source Content\n- Source: fixture\n\n## Key Details\n- First operation wins in batch conflict resolution.\n\n## Relevance\nConflict metadata must be deterministic.\n\n## Signals\n- conflict\n\n## Related Sources\n- fixture\n\n## Next Action\nNo immediate action.\n"
+      }
+    ],
+    "safety": {
+      "private_provenance": false,
+      "redaction_required": false,
+      "secret_like": false
+    }
+  }
+}

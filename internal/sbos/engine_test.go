@@ -220,7 +220,7 @@ func TestProcessCandidateRedactsPrivateFieldsInAttentionPreview(t *testing.T) {
 		t.Fatalf("expected one attention artifact, got %d", len(result.Artifacts))
 	}
 	body := result.Artifacts[0].Body
-	for _, leaked := range []string{"https://private.example/source", "Randy Private", "secret body"} {
+	for _, leaked := range []string{"candidate-redacted-attention", "https://private.example/source", "Randy Private", "secret body"} {
 		if strings.Contains(body, leaked) {
 			t.Fatalf("expected private value %q to be redacted from artifact:\n%s", leaked, body)
 		}

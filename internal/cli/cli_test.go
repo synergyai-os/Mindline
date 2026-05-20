@@ -28,6 +28,13 @@ func TestProcessPrintsDeterministicEnvelopeToStdoutByDefault(t *testing.T) {
 	expected := `{
   "state": "dry_run_published",
   "record_id": "candidate-publish",
+  "source_candidate_id": "candidate-publish",
+  "idempotency_key": "slack:publish",
+  "safety": {
+    "private_provenance": false,
+    "redaction_required": false,
+    "secret_like": false
+  },
   "artifact_count": 1,
   "artifacts": [
     {

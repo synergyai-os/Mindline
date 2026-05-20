@@ -1,0 +1,21 @@
+{
+  "schema_version": "destination-input/v0.1",
+  "result": {
+    "state": "attention_ready",
+    "record_id": "candidate-redaction",
+    "source_candidate_id": "candidate-redaction",
+    "idempotency_key": "slack:redaction",
+    "authority_ids": ["WP-5", "DEC-12"],
+    "artifacts": [
+      {
+        "kind": "attention_preview",
+        "body": "This preview is intentionally suppressed because redaction is required.\n"
+      }
+    ],
+    "safety": {
+      "private_provenance": false,
+      "redaction_required": true,
+      "secret_like": false
+    }
+  }
+}

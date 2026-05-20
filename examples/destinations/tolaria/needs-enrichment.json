@@ -1,0 +1,21 @@
+{
+  "schema_version": "destination-input/v0.1",
+  "result": {
+    "state": "needs_enrichment",
+    "record_id": "candidate-needs-enrichment",
+    "source_candidate_id": "candidate-needs-enrichment",
+    "idempotency_key": "slack:needs-enrichment",
+    "authority_ids": ["WP-5", "DEC-12"],
+    "artifacts": [
+      {
+        "kind": "processing_record",
+        "body": "The source needs enrichment before a destination can publish it."
+      }
+    ],
+    "safety": {
+      "private_provenance": false,
+      "redaction_required": false,
+      "secret_like": false
+    }
+  }
+}

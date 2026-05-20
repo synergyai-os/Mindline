@@ -1,0 +1,21 @@
+{
+  "schema_version": "destination-input/v0.1",
+  "result": {
+    "state": "background_ready",
+    "record_id": "candidate-background",
+    "source_candidate_id": "candidate-background",
+    "idempotency_key": "slack:background",
+    "authority_ids": ["WP-5", "DEC-12"],
+    "artifacts": [
+      {
+        "kind": "processing_record",
+        "body": "No visible Tolaria Inbox output is required."
+      }
+    ],
+    "safety": {
+      "private_provenance": false,
+      "redaction_required": false,
+      "secret_like": false
+    }
+  }
+}
