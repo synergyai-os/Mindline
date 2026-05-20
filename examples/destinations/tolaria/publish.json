@@ -1,0 +1,21 @@
+{
+  "schema_version": "destination-input/v0.1",
+  "result": {
+    "state": "dry_run_published",
+    "record_id": "candidate-publish",
+    "source_candidate_id": "candidate-publish",
+    "idempotency_key": "slack:publish",
+    "authority_ids": ["WP-5", "DEC-12"],
+    "artifacts": [
+      {
+        "kind": "dry_run_publish",
+        "body": "---\ntype: Source\nstatus: dry_run\ndomain: Tolaria PKM OS\ntopics:\n  - knowledge-management\nsource_adapter: slack\nconfidence: high\nprocessing_status: dry_run_published\nvisibility: publish\nschema_version: v0.1\ncandidate_id: candidate-publish\n---\n\n# CODE workflow source\n\n## Snapshot\nA useful source about CODE workflow.\n\n## Source Content\n- Source: https://public.example/source\n- Captured from: slack\n\n## Key Details\n- Captured source is ready for later reuse.\n\n## Relevance\nUseful for Mindline/Tolaria workflow design.\n\n## Signals\n- knowledge-management\n\n## Related Sources\n- https://public.example/source\n\n## Next Action\nNo immediate action. Keep as processed source reference.\n"
+      }
+    ],
+    "safety": {
+      "private_provenance": false,
+      "redaction_required": false,
+      "secret_like": false
+    }
+  }
+}

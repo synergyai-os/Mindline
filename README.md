@@ -21,6 +21,8 @@ The current Go core validates normalized JSON candidates and applies determinist
 - enrichment blocking
 - clarification, background, attention, and publish routing
 - deterministic dry-run Markdown artifact rendering
+- destination-neutral dry-run operation planning
+- Tolaria dry-run previews without Tolaria vault writes
 - PB authority metadata for the build contract
 
 The CLI can run one normalized candidate fixture through that core:
@@ -40,6 +42,26 @@ go run ./cmd/mindline slack normalize examples/slack/reverse-ordered-batch.json 
 By default, it prints a deterministic JSON result envelope to stdout and writes no files. With `--out`, it writes only emitted dry-run artifacts to the requested directory and reports their paths in stdout.
 
 Slack normalization is local dry-run processing only: no live Slack API calls, no Tolaria writes, and no destination writes.
+
+## Destination Dry-Run
+
+Destination adapters consume a versioned destination input envelope and plan local operations. The contract is destination-neutral: operation ids, write mode, visibility lane, planned locator, blockers, metadata, and authority ids are shared across future destinations.
+
+Tolaria is the first destination adapter, but WP-5 only supports dry-run planning. It never writes to the Tolaria vault, never calls live destination APIs, and never requires Slack, auth, network, PB runtime access, or provider credentials.
+
+```bash
+go run ./cmd/mindline destination dry-run examples/destinations/tolaria/publish.json --adapter tolaria --out ./dry-run
+go run ./cmd/mindline destination dry-run examples/destinations/tolaria/attention.json --adapter tolaria --out ./dry-run
+go run ./cmd/mindline destination dry-run examples/destinations/tolaria/background.json --adapter tolaria --out ./dry-run
+```
+
+The command requires `--out` and writes only under that directory:
+
+- `operations/<operation_id>.json` for every planned operation
+- `previews/<operation_id>.md` only when a publish or attention preview body is safe to inspect
+- `destination-summary.json` with the same deterministic summary printed to stdout
+
+Background, skipped, and blocked operations do not create Markdown previews. Conflict-blocked operations keep their original operation id for traceability, clear their preview body, and report stable blocker metadata.
 
 ## Candidate Contract
 

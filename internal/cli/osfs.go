@@ -3,6 +3,7 @@ package cli
 import (
 	"io/fs"
 	"os"
+	"path/filepath"
 )
 
 type OSFileSystem struct{}
@@ -43,4 +44,43 @@ func (OSFileSystem) WriteFile(path string, data []byte) error {
 
 func (OSFileSystem) Getwd() (string, error) {
 	return os.Getwd()
+}
+
+func (OSFileSystem) RealPath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	if real, err := filepath.EvalSymlinks(abs); err == nil {
+		return filepath.Abs(real)
+	}
+
+	current := abs
+	var missing []string
+	for {
+		if real, err := filepath.EvalSymlinks(current); err == nil {
+			resolved := real
+			for i := len(missing) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, missing[i])
+			}
+			return filepath.Abs(resolved)
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return abs, nil
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+	}
+}
+
+func (OSFileSystem) IsSymlink(path string) (bool, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return info.Mode()&os.ModeSymlink != 0, nil
 }

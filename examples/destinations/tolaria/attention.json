@@ -1,0 +1,21 @@
+{
+  "schema_version": "destination-input/v0.1",
+  "result": {
+    "state": "attention_ready",
+    "record_id": "candidate-attention",
+    "source_candidate_id": "candidate-attention",
+    "idempotency_key": "slack:attention",
+    "authority_ids": ["WP-5", "DEC-12"],
+    "artifacts": [
+      {
+        "kind": "attention_preview",
+        "body": "# Clarify capture intent\n\nThis item needs Randy's attention before it becomes a durable source note.\n"
+      }
+    ],
+    "safety": {
+      "private_provenance": false,
+      "redaction_required": false,
+      "secret_like": false
+    }
+  }
+}

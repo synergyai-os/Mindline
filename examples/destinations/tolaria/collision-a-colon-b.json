@@ -1,0 +1,21 @@
+{
+  "schema_version": "destination-input/v0.1",
+  "result": {
+    "state": "dry_run_published",
+    "record_id": "a:b",
+    "source_candidate_id": "a:b",
+    "idempotency_key": "slack:collision-a-colon-b",
+    "authority_ids": ["WP-5", "DEC-12"],
+    "artifacts": [
+      {
+        "kind": "dry_run_publish",
+        "body": "---\ntype: Source\nstatus: dry_run\n---\n\n# Collision A:B\n\n## Snapshot\nCollision fixture.\n\n## Source Content\n- Source: fixture\n\n## Key Details\n- Second sanitized collision candidate.\n\n## Relevance\nOperation id fingerprint must prevent overwrite.\n\n## Signals\n- collision\n\n## Related Sources\n- fixture\n\n## Next Action\nNo immediate action.\n"
+      }
+    ],
+    "safety": {
+      "private_provenance": false,
+      "redaction_required": false,
+      "secret_like": false
+    }
+  }
+}
