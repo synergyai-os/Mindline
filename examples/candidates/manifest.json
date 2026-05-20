@@ -1,0 +1,169 @@
+{
+  "cases": [
+    {
+      "file": "publish-ready.json",
+      "valid": true,
+      "exit_code": 0,
+      "expected_state": "dry_run_published",
+      "artifact_count": 1,
+      "stderr_contains": "",
+      "assertions": ["dry_run_publish_artifact"],
+      "private_values": [],
+      "expected_body_text": ["Reusable candidate contract source", "https://example.com/source"]
+    },
+    {
+      "file": "attention-needed.json",
+      "valid": true,
+      "exit_code": 0,
+      "expected_state": "attention_ready",
+      "artifact_count": 1,
+      "stderr_contains": "",
+      "assertions": ["attention_preview_artifact", "no_publish_markdown"],
+      "private_values": [],
+      "expected_body_text": ["Attention needed"]
+    },
+    {
+      "file": "clarify-needed.json",
+      "valid": true,
+      "exit_code": 0,
+      "expected_state": "attention_ready",
+      "artifact_count": 1,
+      "stderr_contains": "",
+      "assertions": ["attention_preview_artifact", "no_publish_markdown"],
+      "private_values": [],
+      "expected_body_text": ["Clarification needed", "Need Randy to choose target domain"]
+    },
+    {
+      "file": "background-only.json",
+      "valid": true,
+      "exit_code": 0,
+      "expected_state": "background_ready",
+      "artifact_count": 0,
+      "stderr_contains": "",
+      "assertions": ["no_artifact_with_out"],
+      "private_values": [],
+      "expected_body_text": []
+    },
+    {
+      "file": "needs-enrichment.json",
+      "valid": true,
+      "exit_code": 0,
+      "expected_state": "needs_enrichment",
+      "artifact_count": 0,
+      "stderr_contains": "",
+      "assertions": ["no_artifact_with_out"],
+      "private_values": [],
+      "expected_body_text": []
+    },
+    {
+      "file": "enrichment-clarify.json",
+      "valid": true,
+      "exit_code": 0,
+      "expected_state": "attention_ready",
+      "artifact_count": 1,
+      "stderr_contains": "",
+      "assertions": ["attention_preview_artifact", "no_publish_markdown"],
+      "private_values": [],
+      "expected_body_text": ["Enrichment blocker"]
+    },
+    {
+      "file": "skipped-secret-like.json",
+      "valid": true,
+      "exit_code": 0,
+      "expected_state": "skipped",
+      "artifact_count": 0,
+      "stderr_contains": "",
+      "assertions": ["no_artifact_with_out"],
+      "private_values": ["sk-test-secret-value"],
+      "expected_body_text": []
+    },
+    {
+      "file": "skipped-empty-content.json",
+      "valid": true,
+      "exit_code": 0,
+      "expected_state": "skipped",
+      "artifact_count": 0,
+      "stderr_contains": "",
+      "assertions": ["no_artifact_with_out"],
+      "private_values": [],
+      "expected_body_text": []
+    },
+    {
+      "file": "private-provenance.json",
+      "valid": true,
+      "exit_code": 0,
+      "expected_state": "background_ready",
+      "artifact_count": 0,
+      "stderr_contains": "",
+      "assertions": ["no_artifact_with_out", "private_values_absent_with_out"],
+      "private_values": ["slack://D123/private-message", "Randy Private"],
+      "expected_body_text": []
+    },
+    {
+      "file": "redaction-required-attention.json",
+      "valid": true,
+      "exit_code": 0,
+      "expected_state": "attention_ready",
+      "artifact_count": 1,
+      "stderr_contains": "",
+      "assertions": ["attention_preview_artifact", "private_values_absent_with_out"],
+      "private_values": ["private redaction body", "Randy Private"],
+      "expected_body_text": ["[redacted]"]
+    },
+    {
+      "file": "invalid-schema-version.json",
+      "valid": false,
+      "exit_code": 2,
+      "expected_state": "error",
+      "artifact_count": 0,
+      "stderr_contains": "unsupported schema_version",
+      "assertions": [],
+      "private_values": [],
+      "expected_body_text": []
+    },
+    {
+      "file": "invalid-missing-required.json",
+      "valid": false,
+      "exit_code": 2,
+      "expected_state": "error",
+      "artifact_count": 0,
+      "stderr_contains": "missing required field",
+      "assertions": [],
+      "private_values": [],
+      "expected_body_text": []
+    },
+    {
+      "file": "save-intent-linked-page.json",
+      "valid": true,
+      "exit_code": 0,
+      "expected_state": "dry_run_published",
+      "artifact_count": 1,
+      "stderr_contains": "",
+      "assertions": ["dry_run_publish_artifact"],
+      "private_values": [],
+      "expected_body_text": ["LinkedIn post about AI workflows", "https://example.com/outbound-report"]
+    },
+    {
+      "file": "slack-empty-artifact.json",
+      "valid": true,
+      "exit_code": 0,
+      "expected_state": "skipped",
+      "artifact_count": 0,
+      "stderr_contains": "",
+      "assertions": ["no_artifact_with_out"],
+      "private_values": [],
+      "expected_body_text": []
+    },
+    {
+      "file": "path-safety-edge.json",
+      "valid": true,
+      "exit_code": 0,
+      "expected_state": "dry_run_published",
+      "artifact_count": 1,
+      "stderr_contains": "",
+      "assertions": ["dry_run_publish_artifact", "path_contained_with_out"],
+      "private_values": [],
+      "expected_body_text": ["Path safety source"]
+    }
+  ]
+}

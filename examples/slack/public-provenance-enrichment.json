@@ -1,0 +1,22 @@
+{
+  "source": {
+    "workspace": "synergyai-os",
+    "channel_id": "DSELF",
+    "channel_name": "self-dm",
+    "adapter_id": "slack"
+  },
+  "messages": [
+    {
+      "ts": "1710000000.000001",
+      "user": "U123",
+      "author_name": "Randy",
+      "text": "Read https://public.example/source",
+      "permalink": "https://public.example/slack-source",
+      "capture_metadata": {
+        "desired_visibility_hint": "publish",
+        "provenance_visibility_hint": "public",
+        "public_provenance_assertion": "fixture-approved-public-provenance"
+      }
+    }
+  ]
+}

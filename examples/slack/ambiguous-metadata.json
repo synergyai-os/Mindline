@@ -1,0 +1,20 @@
+{
+  "source": {
+    "workspace": "synergyai-os",
+    "channel_id": "DSELF",
+    "channel_name": "self-dm",
+    "adapter_id": "slack"
+  },
+  "messages": [
+    {
+      "ts": "1710000000.000001",
+      "user": "U123",
+      "author_name": "Randy",
+      "text": "Not sure whether I wanted the post or the linked page",
+      "capture_metadata": {
+        "save_intent_status": "ambiguous",
+        "clarification_reason": "Need to know whether Randy wanted the post or linked page"
+      }
+    }
+  ]
+}

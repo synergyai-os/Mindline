@@ -1,0 +1,20 @@
+{
+  "source": {
+    "workspace": "synergyai-os",
+    "channel_id": "DSELF",
+    "channel_name": "self-dm",
+    "adapter_id": "slack"
+  },
+  "messages": [
+    {
+      "ts": "1710000000.000001",
+      "user": "U123",
+      "author_name": "Randy",
+      "text": "Publish this source",
+      "permalink": "",
+      "capture_metadata": {
+        "desired_visibility_hint": "publish"
+      }
+    }
+  ]
+}

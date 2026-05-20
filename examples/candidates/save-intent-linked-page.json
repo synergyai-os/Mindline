@@ -1,0 +1,36 @@
+{
+  "schema_version": "v0.1",
+  "candidate_id": "save-intent-linked-page",
+  "adapter_id": "fixture",
+  "external_id": "fixture-save-intent-linked-page",
+  "captured_at": "2026-05-20T10:12:00Z",
+  "provenance": {
+    "permalink": {"value": "https://linkedin.example/post/123", "visibility": "public"},
+    "native_timestamp": {"value": "2026-05-20T10:12:00Z", "visibility": "public"},
+    "author": {"value": "Fixture Author", "visibility": "public"},
+    "raw_locator": {"value": "fixture://save-intent-linked-page", "visibility": "public"}
+  },
+  "content": {
+    "text": "LinkedIn post about AI workflows points to an outbound report that should be preserved as save intent.",
+    "urls": ["https://linkedin.example/post/123", "https://example.com/outbound-report"],
+    "attachments": [],
+    "source_title": "LinkedIn post about AI workflows"
+  },
+  "enrichment_status": "complete",
+  "classification": {
+    "type": "Source",
+    "domain": "Research Landscape",
+    "topics": ["ai-tools", "save-intent"],
+    "confidence": "high",
+    "needs_clarification": false,
+    "clarification_reason": ""
+  },
+  "safety": {
+    "redaction_required": false,
+    "secret_like": false,
+    "empty_content": false,
+    "private_provenance": false
+  },
+  "desired_visibility": "publish",
+  "idempotency_key": "fixture:save-intent-linked-page"
+}

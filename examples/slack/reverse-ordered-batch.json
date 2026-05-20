@@ -1,0 +1,31 @@
+{
+  "source": {
+    "workspace": "synergyai-os",
+    "channel_id": "DSELF",
+    "channel_name": "self-dm",
+    "adapter_id": "slack"
+  },
+  "messages": [
+    {
+      "ts": "1710000002.000001",
+      "user": "U123",
+      "author_name": "Randy",
+      "text": "Third capture",
+      "permalink": "https://workspace.slack.com/archives/DSELF/p1710000002000001"
+    },
+    {
+      "ts": "1710000000.000001",
+      "user": "U123",
+      "author_name": "Randy",
+      "text": "First capture",
+      "permalink": "https://workspace.slack.com/archives/DSELF/p1710000000000001"
+    },
+    {
+      "ts": "1710000001.000001",
+      "user": "U123",
+      "author_name": "Randy",
+      "text": "Second capture",
+      "permalink": "https://workspace.slack.com/archives/DSELF/p1710000001000001"
+    }
+  ]
+}
