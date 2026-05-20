@@ -8,7 +8,7 @@ It is not a notes app, vault, or UI. Mindline is the engine layer between captur
 - the core normalizes candidates, preserves provenance, applies safety gates, tracks processing state, and decides visibility
 - destination adapters publish only useful outputs to surfaces such as Tolaria, Obsidian, Notion, Mem, a local folder, or a custom app
 
-The first implementation slice is intentionally small and validation-only. It proves the core contract without live source ingestion or live destination writes.
+The first implementation slices are intentionally small. They prove the core contract and expose a dry-run developer interface without live source ingestion or live destination writes.
 
 ## Current Slice
 
@@ -23,7 +23,16 @@ The current Go core validates normalized JSON candidates and applies determinist
 - deterministic dry-run Markdown artifact rendering
 - PB authority metadata for the build contract
 
-No live Slack, Tolaria, network, or filesystem publishing is wired into this slice.
+The CLI can run one normalized candidate fixture through that core:
+
+```bash
+go run ./cmd/mindline process candidate.json
+go run ./cmd/mindline process candidate.json --out ./dry-run
+```
+
+By default, it prints a deterministic JSON result envelope to stdout and writes no files. With `--out`, it writes only emitted dry-run artifacts to the requested directory and reports their paths in stdout.
+
+No live Slack, Tolaria, network, auth, database, or provider integration is wired into this slice.
 
 ## Verify
 

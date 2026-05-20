@@ -190,8 +190,7 @@ func TestProcessCandidateBlocksPrivateOrRedactedPublishArtifacts(t *testing.T) {
 
 func TestProcessCandidateDerivesPrivateProvenanceBlockFromFieldVisibility(t *testing.T) {
 	input := publishCandidate("candidate-private-derived", "slack:private-derived")
-	input = strings.Replace(input, `"permalink": {"value": "https://public.example/source", "visibility": "public"}`, `"permalink": {"value": "https://private.example/source", "visibility": "private"}`, 1)
-	input = strings.Replace(input, `"author": {"value": "Randy", "visibility": "public"}`, `"author": {"value": "Randy Private", "visibility": "private"}`, 1)
+	input = strings.Replace(input, `"raw_locator": {"value": "slack://D123/msg-1", "visibility": "public"}`, `"raw_locator": {"value": "slack://D123/private", "visibility": "private"}`, 1)
 
 	result, err := NewEngine().ProcessCandidate([]byte(input))
 
@@ -348,7 +347,7 @@ func TestProcessCandidateCarriesPBAuthorityMetadata(t *testing.T) {
 		t.Fatalf("process: %v", err)
 	}
 
-	for _, required := range []string{"DEC-4", "DEC-3", "DEC-2", "DEC-1", "FEAT-1", "STD-1", "STD-7", "STD-10", "STD-11", "FEAT-4", "WP-1"} {
+	for _, required := range []string{"DEC-4", "DEC-3", "DEC-2", "DEC-1", "FEAT-1", "STD-1", "STD-7", "STD-10", "STD-11", "STD-12", "FEAT-4", "WP-1"} {
 		if !contains(result.AuthorityIDs, required) {
 			t.Fatalf("missing PB authority id %q in %#v", required, result.AuthorityIDs)
 		}
@@ -366,7 +365,7 @@ func publishCandidate(candidateID, idempotencyKey string) string {
 			"permalink": {"value": "https://public.example/source", "visibility": "public"},
 			"native_timestamp": {"value": "2026-05-20T10:00:00Z", "visibility": "public"},
 			"author": {"value": "Randy", "visibility": "public"},
-			"raw_locator": {"value": "slack://D123/msg-1", "visibility": "private"}
+			"raw_locator": {"value": "slack://D123/msg-1", "visibility": "public"}
 		},
 		"content": {
 			"text": "A useful source about CODE workflow.",

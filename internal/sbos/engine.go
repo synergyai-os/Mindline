@@ -39,6 +39,7 @@ var requiredAuthorityIDs = []string{
 	"STD-7",
 	"STD-10",
 	"STD-11",
+	"STD-12",
 	"FEAT-4",
 	"WP-1",
 }
@@ -304,7 +305,10 @@ func (c Candidate) recordContent() string {
 }
 
 func (c Candidate) hasPrivatePublishProvenance() bool {
-	return c.Provenance.Permalink.Visibility == "private" || c.Provenance.Author.Visibility == "private"
+	return c.Provenance.Permalink.Visibility == "private" ||
+		c.Provenance.NativeTimestamp.Visibility == "private" ||
+		c.Provenance.Author.Visibility == "private" ||
+		c.Provenance.RawLocator.Visibility == "private"
 }
 
 func renderAttention(candidate Candidate, redacted bool, reason string) string {
