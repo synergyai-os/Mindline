@@ -34,6 +34,16 @@ By default, it prints a deterministic JSON result envelope to stdout and writes 
 
 No live Slack, Tolaria, network, auth, database, or provider integration is wired into this slice.
 
+## Candidate Contract
+
+Source adapters emit normalized candidate JSON. The public contract is documented in [docs/candidate-contract.md](docs/candidate-contract.md), with runnable examples in [examples/candidates](examples/candidates).
+
+The fixture manifest is the conformance source for examples:
+
+```bash
+go test -count=1 ./...
+```
+
 ## Verify
 
 ```bash

@@ -1,0 +1,35 @@
+{
+  "schema_version": "v0.1",
+  "adapter_id": "fixture",
+  "external_id": "fixture-invalid-missing-required",
+  "captured_at": "2026-05-20T10:11:00Z",
+  "provenance": {
+    "permalink": {"value": "https://example.com/invalid-missing", "visibility": "public"},
+    "native_timestamp": {"value": "2026-05-20T10:11:00Z", "visibility": "public"},
+    "author": {"value": "Fixture Author", "visibility": "public"},
+    "raw_locator": {"value": "fixture://invalid-missing-required", "visibility": "public"}
+  },
+  "content": {
+    "text": "Missing candidate id fixture.",
+    "urls": [],
+    "attachments": [],
+    "source_title": "Invalid missing required fixture"
+  },
+  "enrichment_status": "complete",
+  "classification": {
+    "type": "Source",
+    "domain": "Inbox / Unknown",
+    "topics": ["invalid"],
+    "confidence": "high",
+    "needs_clarification": false,
+    "clarification_reason": ""
+  },
+  "safety": {
+    "redaction_required": false,
+    "secret_like": false,
+    "empty_content": false,
+    "private_provenance": false
+  },
+  "desired_visibility": "publish",
+  "idempotency_key": "fixture:invalid-missing-required"
+}

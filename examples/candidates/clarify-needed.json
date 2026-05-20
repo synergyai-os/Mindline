@@ -1,0 +1,36 @@
+{
+  "schema_version": "v0.1",
+  "candidate_id": "clarify-needed",
+  "adapter_id": "fixture",
+  "external_id": "fixture-clarify-needed",
+  "captured_at": "2026-05-20T10:02:00Z",
+  "provenance": {
+    "permalink": {"value": "https://example.com/clarify", "visibility": "public"},
+    "native_timestamp": {"value": "2026-05-20T10:02:00Z", "visibility": "public"},
+    "author": {"value": "Fixture Author", "visibility": "public"},
+    "raw_locator": {"value": "fixture://clarify-needed", "visibility": "public"}
+  },
+  "content": {
+    "text": "Need Randy to choose target domain before this candidate can be routed.",
+    "urls": ["https://example.com/clarify"],
+    "attachments": [],
+    "source_title": "Clarification fixture"
+  },
+  "enrichment_status": "complete",
+  "classification": {
+    "type": "Source",
+    "domain": "Inbox / Unknown",
+    "topics": ["uncertain-routing"],
+    "confidence": "low",
+    "needs_clarification": true,
+    "clarification_reason": "Need Randy to choose target domain"
+  },
+  "safety": {
+    "redaction_required": false,
+    "secret_like": false,
+    "empty_content": false,
+    "private_provenance": false
+  },
+  "desired_visibility": "clarify",
+  "idempotency_key": "fixture:clarify-needed"
+}

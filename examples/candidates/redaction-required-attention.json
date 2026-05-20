@@ -1,0 +1,36 @@
+{
+  "schema_version": "v0.1",
+  "candidate_id": "redaction-required-attention",
+  "adapter_id": "fixture",
+  "external_id": "fixture-redaction-required-attention",
+  "captured_at": "2026-05-20T10:09:00Z",
+  "provenance": {
+    "permalink": {"value": "https://example.com/redaction", "visibility": "public"},
+    "native_timestamp": {"value": "2026-05-20T10:09:00Z", "visibility": "public"},
+    "author": {"value": "Randy Private", "visibility": "private"},
+    "raw_locator": {"value": "fixture://redaction-required-attention", "visibility": "private"}
+  },
+  "content": {
+    "text": "private redaction body",
+    "urls": ["https://example.com/redaction"],
+    "attachments": [],
+    "source_title": "Redaction attention fixture"
+  },
+  "enrichment_status": "complete",
+  "classification": {
+    "type": "Source",
+    "domain": "Inbox / Unknown",
+    "topics": ["redaction"],
+    "confidence": "high",
+    "needs_clarification": false,
+    "clarification_reason": ""
+  },
+  "safety": {
+    "redaction_required": true,
+    "secret_like": false,
+    "empty_content": false,
+    "private_provenance": false
+  },
+  "desired_visibility": "attention",
+  "idempotency_key": "fixture:redaction-required-attention"
+}

@@ -1,0 +1,36 @@
+{
+  "schema_version": "v0.1",
+  "candidate_id": "background-only",
+  "adapter_id": "fixture",
+  "external_id": "fixture-background-only",
+  "captured_at": "2026-05-20T10:03:00Z",
+  "provenance": {
+    "permalink": {"value": "https://example.com/background", "visibility": "public"},
+    "native_timestamp": {"value": "2026-05-20T10:03:00Z", "visibility": "public"},
+    "author": {"value": "Fixture Author", "visibility": "public"},
+    "raw_locator": {"value": "fixture://background-only", "visibility": "public"}
+  },
+  "content": {
+    "text": "Useful background source that should not appear as an attention artifact.",
+    "urls": ["https://example.com/background"],
+    "attachments": [],
+    "source_title": "Background fixture"
+  },
+  "enrichment_status": "complete",
+  "classification": {
+    "type": "Source",
+    "domain": "Research Landscape",
+    "topics": ["background"],
+    "confidence": "medium",
+    "needs_clarification": false,
+    "clarification_reason": ""
+  },
+  "safety": {
+    "redaction_required": false,
+    "secret_like": false,
+    "empty_content": false,
+    "private_provenance": false
+  },
+  "desired_visibility": "background",
+  "idempotency_key": "fixture:background-only"
+}
