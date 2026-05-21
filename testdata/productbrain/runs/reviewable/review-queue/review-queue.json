@@ -1,0 +1,20 @@
+{
+  "schema_version": "review-queue/v0.1",
+  "run_id": "run-0123456789abcdef",
+  "queue_count": 2,
+  "items": [
+    {
+      "record_id": "review-decision",
+      "state": "needs_clarification",
+      "reason": "decision_rationale_ready",
+      "review_item_path": "items/review-decision.json"
+    },
+    {
+      "record_id": "review-blocked",
+      "state": "blocked",
+      "reason": "missing_required_context",
+      "review_item_path": "items/review-blocked.json"
+    }
+  ],
+  "authority_ids": ["PROD-1", "DEC-17", "DEC-15", "WP-8"]
+}

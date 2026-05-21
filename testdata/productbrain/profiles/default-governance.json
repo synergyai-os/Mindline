@@ -1,0 +1,77 @@
+{
+  "schema_version": "productbrain-workspace-profile/v0.1",
+  "workspace": {
+    "external_id": "workspace-default",
+    "slug": "default-governance",
+    "name": "Default Governance Workspace"
+  },
+  "kernel_contract": {
+    "supports_write_entry": true,
+    "supports_upsert_by_external_ref": true,
+    "supports_external_ref": true,
+    "supports_idempotency_key": true,
+    "supports_actor_authority": true,
+    "supports_provenance": true
+  },
+  "collections": [
+    {
+      "slug": "decisions",
+      "name": "Decisions",
+      "purpose": "Significant decisions with rationale and context",
+      "governed": true,
+      "platform_only": false,
+      "valid_workflow_statuses": ["pending", "active"],
+      "default_workflow_status": "pending",
+      "classification_signals": ["decision", "rationale", "settled choice"],
+      "usage_guidance": "Use for durable choices with rationale.",
+      "quality_criteria": ["has rationale", "has authority"],
+      "fields": [
+        {
+          "key": "rationale",
+          "label": "Rationale",
+          "type": "text",
+          "required": true,
+          "semantic_role": "rationale",
+          "writing_guidance": "Explain why the choice was made."
+        }
+      ]
+    },
+    {
+      "slug": "insights",
+      "name": "Insights",
+      "purpose": "Durable learnings and reusable patterns",
+      "governed": false,
+      "platform_only": false,
+      "valid_workflow_statuses": ["pending", "active"],
+      "default_workflow_status": "pending",
+      "classification_signals": ["learning", "pattern", "insight"],
+      "usage_guidance": "Use for reusable learnings.",
+      "quality_criteria": ["has evidence"],
+      "fields": [
+        {
+          "key": "description",
+          "label": "Description",
+          "type": "text",
+          "required": true,
+          "semantic_role": "summary"
+        }
+      ]
+    }
+  ],
+  "intent_mappings": [
+    {
+      "intent": "durable_decision",
+      "collection_slug": "decisions",
+      "field_map": {
+        "rationale": "rationale"
+      }
+    },
+    {
+      "intent": "reusable_insight",
+      "collection_slug": "insights",
+      "field_map": {
+        "summary": "description"
+      }
+    }
+  ]
+}

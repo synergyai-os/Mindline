@@ -1,0 +1,15 @@
+{
+  "schema_version": "review-queue-item/v0.1",
+  "run_id": "run-0123456789abcdef",
+  "record_id": "review-decision",
+  "state": "needs_clarification",
+  "priority": "normal",
+  "reason": "decision_rationale_ready",
+  "suggested_next_action": "Review item before Product Brain proposal.",
+  "safe_title": "Choose Product Brain workspace profile bridge",
+  "safe_context": "Decision: use Product Brain workspace profiles before live writes.",
+  "links": {
+    "ledger_item": "ledger/items/review-decision.json"
+  },
+  "authority_ids": ["PROD-1", "DEC-17", "DEC-15", "WP-8"]
+}

@@ -88,6 +88,24 @@ Each pipeline dry-run also writes a local run ledger and derived review queue:
 
 Text-only publish previews are excluded from the review queue. Private provenance alone is retained as background ledger evidence, not a review item. Secret-like content is skipped without readable body content. Reusing an output directory for the same deterministic run is allowed; reusing it for a different run is refused before new ledger or review queue files are written.
 
+## Product Brain Proposal Dry-Run
+
+Mindline can turn a local run review queue into Product Brain proposal artifacts without writing to Product Brain:
+
+```bash
+go run ./cmd/mindline product-brain propose testdata/productbrain/runs/reviewable --profile testdata/productbrain/profiles/default-governance.json --out /tmp/mindline-pb-proposals
+```
+
+The profile is a workspace contract, not a hardcoded adapter. It describes the target workspace identity, kernel write affordances, collections, fields, workflow statuses, guidance, quality criteria, and `intent_mappings`. The adapter resolves Mindline semantic intents through that profile so custom workspaces can use renamed collections and fields.
+
+The command writes only under `--out`:
+
+- `productbrain-proposals/proposal-summary.json`
+- `productbrain-proposals/proposals/<proposal_id>.json`
+- `productbrain-proposals/previews/<proposal_id>.md` for every proposal
+
+WP-9 is proposal-only. It does not call Product Brain runtime services, Convex, `pb`, Slack, Tolaria, network APIs, auth providers, schedulers, LLMs, or browsers. Future live application must treat `externalRef` as source/object identity, `idempotencyKey` as proposal retry/application identity, and preserve actor authority plus provenance for kernel auditability.
+
 ## Candidate Contract
 
 Source adapters emit normalized candidate JSON. The public contract is documented in [docs/candidate-contract.md](docs/candidate-contract.md), with runnable examples in [examples/candidates](examples/candidates).

@@ -1,0 +1,76 @@
+{
+  "schema_version": "productbrain-workspace-profile/v0.1",
+  "workspace": {
+    "external_id": "workspace-custom",
+    "slug": "custom-operating-memory",
+    "name": "Custom Operating Memory"
+  },
+  "kernel_contract": {
+    "supports_write_entry": true,
+    "supports_upsert_by_external_ref": true,
+    "supports_external_ref": true,
+    "supports_idempotency_key": true,
+    "supports_actor_authority": true,
+    "supports_provenance": true
+  },
+  "collections": [
+    {
+      "slug": "choices",
+      "name": "Choices",
+      "purpose": "Workspace-specific durable choices",
+      "governed": true,
+      "platform_only": false,
+      "valid_workflow_statuses": ["proposed", "accepted"],
+      "default_workflow_status": "proposed",
+      "classification_signals": ["choice", "rationale"],
+      "usage_guidance": "Use for decisions in this custom workspace.",
+      "quality_criteria": ["has why"],
+      "fields": [
+        {
+          "key": "why",
+          "label": "Why",
+          "type": "text",
+          "required": true,
+          "semantic_role": "rationale"
+        }
+      ]
+    },
+    {
+      "slug": "learning-items",
+      "name": "Learning Items",
+      "purpose": "Custom reusable learning inventory",
+      "governed": false,
+      "platform_only": false,
+      "valid_workflow_statuses": ["triage", "ready"],
+      "default_workflow_status": "triage",
+      "classification_signals": ["learning", "pattern"],
+      "usage_guidance": "Use for safe reusable learning.",
+      "quality_criteria": ["has summary"],
+      "fields": [
+        {
+          "key": "takeaway",
+          "label": "Takeaway",
+          "type": "text",
+          "required": true,
+          "semantic_role": "summary"
+        }
+      ]
+    }
+  ],
+  "intent_mappings": [
+    {
+      "intent": "durable_decision",
+      "collection_slug": "choices",
+      "field_map": {
+        "rationale": "why"
+      }
+    },
+    {
+      "intent": "reusable_insight",
+      "collection_slug": "learning-items",
+      "field_map": {
+        "summary": "takeaway"
+      }
+    }
+  ]
+}

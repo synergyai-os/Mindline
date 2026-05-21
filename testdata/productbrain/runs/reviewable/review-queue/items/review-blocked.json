@@ -1,0 +1,15 @@
+{
+  "schema_version": "review-queue-item/v0.1",
+  "run_id": "run-0123456789abcdef",
+  "record_id": "review-blocked",
+  "state": "blocked",
+  "priority": "high",
+  "reason": "unknown_product_brain_intent",
+  "suggested_next_action": "Review blocker before retrying this item.",
+  "safe_title": "Unmapped note",
+  "safe_context": "This item is useful but has no Product Brain target intent.",
+  "links": {
+    "ledger_item": "ledger/items/review-blocked.json"
+  },
+  "authority_ids": ["PROD-1", "DEC-17", "DEC-15", "WP-8"]
+}
