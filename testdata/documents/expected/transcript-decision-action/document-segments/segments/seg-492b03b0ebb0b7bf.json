@@ -1,0 +1,30 @@
+{
+  "authority_ids": [
+    "PROD-1",
+    "DOMAIN-1",
+    "DEC-15",
+    "WP-8",
+    "WP-9",
+    "WP-10"
+  ],
+  "blockers": [],
+  "confidence": "medium",
+  "evidence": {
+    "kind": "location",
+    "heading_path": [
+      "Actions"
+    ],
+    "line_start": 16,
+    "line_end": 16,
+    "content_hash": "sha256:f248b714690e8fb3d38187a4e39441acfc36eca993b147dc84af9bee6a0c5f5c"
+  },
+  "review_status": "ready",
+  "run_id": "run-doc-f548e3343b9d956b",
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-492b03b0ebb0b7bf",
+  "semantic_type": "action",
+  "source_document_id": "doc-transcript-decision-action",
+  "source_kind": "markdown",
+  "summary": "Support Lead to schedule the support handover session.",
+  "title": "Support Lead to schedule the support handover session"
+}

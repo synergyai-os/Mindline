@@ -1,0 +1,87 @@
+{
+  "authority_ids": [
+    "PROD-1",
+    "DOMAIN-1",
+    "DEC-15",
+    "WP-8",
+    "WP-9",
+    "WP-10"
+  ],
+  "needs_review_count": 1,
+  "run_id": "run-doc-dc28525bad06e31b",
+  "schema_version": "document-segment-summary/v0.1",
+  "segment_count": 7,
+  "segments": [
+    {
+      "segment_id": "seg-18c313ca021cc4ac",
+      "source_document_id": "doc-mixed-thread-capture",
+      "semantic_type": "source_note",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-18c313ca021cc4ac.json",
+      "preview_path": "previews/seg-18c313ca021cc4ac.md"
+    },
+    {
+      "segment_id": "seg-22396ab2b897eb7a",
+      "source_document_id": "doc-mixed-thread-capture",
+      "semantic_type": "reference",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-22396ab2b897eb7a.json",
+      "preview_path": "previews/seg-22396ab2b897eb7a.md"
+    },
+    {
+      "segment_id": "seg-a69efe17746ccf30",
+      "source_document_id": "doc-mixed-thread-capture",
+      "semantic_type": "reference",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-a69efe17746ccf30.json",
+      "preview_path": "previews/seg-a69efe17746ccf30.md"
+    },
+    {
+      "segment_id": "seg-62e35dbf9303d013",
+      "source_document_id": "doc-mixed-thread-capture",
+      "semantic_type": "insight",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-62e35dbf9303d013.json",
+      "preview_path": "previews/seg-62e35dbf9303d013.md"
+    },
+    {
+      "segment_id": "seg-b6c8cdf0e2d32653",
+      "source_document_id": "doc-mixed-thread-capture",
+      "semantic_type": "action",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-b6c8cdf0e2d32653.json",
+      "preview_path": "previews/seg-b6c8cdf0e2d32653.md"
+    },
+    {
+      "segment_id": "seg-74bd4949a7b8192d",
+      "source_document_id": "doc-mixed-thread-capture",
+      "semantic_type": "unknown",
+      "review_status": "needs_review",
+      "confidence": "low",
+      "segment_path": "segments/seg-74bd4949a7b8192d.json",
+      "preview_path": "previews/seg-74bd4949a7b8192d.md"
+    },
+    {
+      "segment_id": "seg-cd40480b721ed9df",
+      "source_document_id": "doc-mixed-thread-capture",
+      "semantic_type": "source_note",
+      "review_status": "blocked",
+      "confidence": "low",
+      "segment_path": "segments/seg-cd40480b721ed9df.json",
+      "preview_path": "previews/seg-cd40480b721ed9df.md"
+    }
+  ],
+  "source_count": 1,
+  "type_counts": {
+    "action": 1,
+    "insight": 1,
+    "reference": 2,
+    "source_note": 2,
+    "unknown": 1
+  }
+}

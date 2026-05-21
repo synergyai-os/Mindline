@@ -1,0 +1,95 @@
+{
+  "authority_ids": [
+    "PROD-1",
+    "DOMAIN-1",
+    "DEC-15",
+    "WP-8",
+    "WP-9",
+    "WP-10"
+  ],
+  "needs_review_count": 0,
+  "run_id": "run-doc-e4ff6601c602753e",
+  "schema_version": "document-segment-summary/v0.1",
+  "segment_count": 8,
+  "segments": [
+    {
+      "segment_id": "seg-0ad6cda807abf5ac",
+      "source_document_id": "doc-strategy-capability-table",
+      "semantic_type": "standard",
+      "review_status": "ready",
+      "confidence": "high",
+      "segment_path": "segments/seg-0ad6cda807abf5ac.json",
+      "preview_path": "previews/seg-0ad6cda807abf5ac.md"
+    },
+    {
+      "segment_id": "seg-5b76713e081b2aec",
+      "source_document_id": "doc-strategy-capability-table",
+      "semantic_type": "decision",
+      "review_status": "ready",
+      "confidence": "high",
+      "segment_path": "segments/seg-5b76713e081b2aec.json",
+      "preview_path": "previews/seg-5b76713e081b2aec.md"
+    },
+    {
+      "segment_id": "seg-7a6228dc64061955",
+      "source_document_id": "doc-strategy-capability-table",
+      "semantic_type": "standard",
+      "review_status": "ready",
+      "confidence": "high",
+      "segment_path": "segments/seg-7a6228dc64061955.json",
+      "preview_path": "previews/seg-7a6228dc64061955.md"
+    },
+    {
+      "segment_id": "seg-7c6fed21bf001426",
+      "source_document_id": "doc-strategy-capability-table",
+      "semantic_type": "reference",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-7c6fed21bf001426.json",
+      "preview_path": "previews/seg-7c6fed21bf001426.md"
+    },
+    {
+      "segment_id": "seg-60e9863265b86587",
+      "source_document_id": "doc-strategy-capability-table",
+      "semantic_type": "reference",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-60e9863265b86587.json",
+      "preview_path": "previews/seg-60e9863265b86587.md"
+    },
+    {
+      "segment_id": "seg-4c66c471f9fe9abe",
+      "source_document_id": "doc-strategy-capability-table",
+      "semantic_type": "reference",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-4c66c471f9fe9abe.json",
+      "preview_path": "previews/seg-4c66c471f9fe9abe.md"
+    },
+    {
+      "segment_id": "seg-13aa9d9743f6f356",
+      "source_document_id": "doc-strategy-capability-table",
+      "semantic_type": "reference",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-13aa9d9743f6f356.json",
+      "preview_path": "previews/seg-13aa9d9743f6f356.md"
+    },
+    {
+      "segment_id": "seg-dc82654e8cd8143a",
+      "source_document_id": "doc-strategy-capability-table",
+      "semantic_type": "work_item",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-dc82654e8cd8143a.json",
+      "preview_path": "previews/seg-dc82654e8cd8143a.md"
+    }
+  ],
+  "source_count": 1,
+  "type_counts": {
+    "decision": 1,
+    "reference": 4,
+    "standard": 2,
+    "work_item": 1
+  }
+}

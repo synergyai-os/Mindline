@@ -1,0 +1,30 @@
+{
+  "authority_ids": [
+    "PROD-1",
+    "DOMAIN-1",
+    "DEC-15",
+    "WP-8",
+    "WP-9",
+    "WP-10"
+  ],
+  "blockers": [],
+  "confidence": "medium",
+  "evidence": {
+    "kind": "location",
+    "heading_path": [
+      "Capability table"
+    ],
+    "line_start": 15,
+    "line_end": 15,
+    "content_hash": "sha256:2a78feee27ab8077b677da79ab6a7a6109fb70c560efc05727ed49384bb80b00"
+  },
+  "review_status": "ready",
+  "run_id": "run-doc-e4ff6601c602753e",
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-13aa9d9743f6f356",
+  "semantic_type": "reference",
+  "source_document_id": "doc-strategy-capability-table",
+  "source_kind": "markdown",
+  "summary": "Review status - Keep uncertain material out of ready downstream flow - Needs review",
+  "title": "Review status"
+}

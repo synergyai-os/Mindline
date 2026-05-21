@@ -1,0 +1,30 @@
+{
+  "authority_ids": [
+    "PROD-1",
+    "DOMAIN-1",
+    "DEC-15",
+    "WP-8",
+    "WP-9",
+    "WP-10"
+  ],
+  "blockers": [],
+  "confidence": "high",
+  "evidence": {
+    "kind": "location",
+    "heading_path": [
+      "Principles"
+    ],
+    "line_start": 7,
+    "line_end": 7,
+    "content_hash": "sha256:8724561833ae543ffd7c4d5c8472d10c82fb01ad2d3a866b564bb719bab9f573"
+  },
+  "review_status": "ready",
+  "run_id": "run-doc-e4ff6601c602753e",
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-7a6228dc64061955",
+  "semantic_type": "standard",
+  "source_document_id": "doc-strategy-capability-table",
+  "source_kind": "markdown",
+  "summary": "Standard: generated previews summarize metadata instead of copying private source text.",
+  "title": "generated previews summarize metadata instead of copying private source"
+}

@@ -1,0 +1,30 @@
+{
+  "authority_ids": [
+    "PROD-1",
+    "DOMAIN-1",
+    "DEC-15",
+    "WP-8",
+    "WP-9",
+    "WP-10"
+  ],
+  "blockers": [],
+  "confidence": "high",
+  "evidence": {
+    "kind": "location",
+    "heading_path": [
+      "Principles"
+    ],
+    "line_start": 5,
+    "line_end": 5,
+    "content_hash": "sha256:de24b4e67911a20885e005df0e15cd16cdff9526c488fe744b89ea6c06bf8329"
+  },
+  "review_status": "ready",
+  "run_id": "run-doc-e4ff6601c602753e",
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-0ad6cda807abf5ac",
+  "semantic_type": "standard",
+  "source_document_id": "doc-strategy-capability-table",
+  "source_kind": "markdown",
+  "summary": "Standard: core segments must stay destination-neutral.",
+  "title": "core segments must stay destination-neutral"
+}

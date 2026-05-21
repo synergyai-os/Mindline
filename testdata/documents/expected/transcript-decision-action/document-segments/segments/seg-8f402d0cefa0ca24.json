@@ -1,0 +1,30 @@
+{
+  "authority_ids": [
+    "PROD-1",
+    "DOMAIN-1",
+    "DEC-15",
+    "WP-8",
+    "WP-9",
+    "WP-10"
+  ],
+  "blockers": [],
+  "confidence": "medium",
+  "evidence": {
+    "kind": "location",
+    "heading_path": [
+      "Risks"
+    ],
+    "line_start": 21,
+    "line_end": 21,
+    "content_hash": "sha256:6304cb2d863803eba5fd1814112b10913cf0c76d0048949c08b3d8685aebe254"
+  },
+  "review_status": "ready",
+  "run_id": "run-doc-f548e3343b9d956b",
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-8f402d0cefa0ca24",
+  "semantic_type": "tension",
+  "source_document_id": "doc-transcript-decision-action",
+  "source_kind": "markdown",
+  "summary": "Risk: broad transcript sections may hide several separate work items if they are not split.",
+  "title": "broad transcript sections may hide several separate work items if they a"
+}
