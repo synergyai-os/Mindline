@@ -138,12 +138,21 @@ func parseSections(body string) ([]section, error) {
 	var sections []section
 	current := section{}
 	var headingPath []string
+	inFence := false
 	scanner := bufio.NewScanner(strings.NewReader(body))
 	lineNumber := 0
 	for scanner.Scan() {
 		lineNumber++
 		text := scanner.Text()
-		if strings.HasPrefix(text, "#") {
+		trimmed := strings.TrimSpace(text)
+		if isFenceMarker(trimmed) {
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			continue
+		}
+		if isATXHeading(text) {
 			level := headingLevel(text)
 			heading := strings.TrimSpace(strings.TrimLeft(text, "#"))
 			if len(current.lines) > 0 || len(current.headingPath) > 0 {
@@ -156,7 +165,7 @@ func parseSections(body string) ([]section, error) {
 			current = section{headingPath: append([]string(nil), headingPath...)}
 			continue
 		}
-		if strings.TrimSpace(text) == "" {
+		if trimmed == "" {
 			continue
 		}
 		current.lines = append(current.lines, line{number: lineNumber, text: text})
@@ -168,6 +177,25 @@ func parseSections(body string) ([]section, error) {
 		return nil, err
 	}
 	return sections, nil
+}
+
+func isFenceMarker(text string) bool {
+	return strings.HasPrefix(text, "```") || strings.HasPrefix(text, "~~~")
+}
+
+func isATXHeading(text string) bool {
+	if text == "" || text[0] != '#' {
+		return false
+	}
+	level := headingLevel(text)
+	if level > 6 {
+		return false
+	}
+	if len(text) == level {
+		return true
+	}
+	next := text[level]
+	return next == ' ' || next == '\t'
 }
 
 func headingLevel(text string) int {

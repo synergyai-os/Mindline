@@ -395,6 +395,39 @@ func TestTableRowsMayContainDashesAsData(t *testing.T) {
 	}
 }
 
+func TestParseSectionsIgnoresFencedCodeBlocks(t *testing.T) {
+	sections, err := parseSections("# Notes\n\nDecision: keep semantic prose.\n\n```go\n// Decision: code sample must not become a segment.\nfmt.Println(\"Action: skip code\")\n```\n\nAction: process real prose.\n")
+	if err != nil {
+		t.Fatalf("parse sections: %v", err)
+	}
+	if len(sections) != 1 {
+		t.Fatalf("expected 1 section, got %d: %+v", len(sections), sections)
+	}
+	segments := decomposeSection("run-doc-demo", "doc-demo", sections[0])
+	if len(segments) != 2 {
+		t.Fatalf("expected only prose segments, got %d: %+v", len(segments), segments)
+	}
+	for _, segment := range segments {
+		if strings.Contains(strings.ToLower(segment.Summary), "code sample") || strings.Contains(strings.ToLower(segment.Summary), "fmt.println") {
+			t.Fatalf("code block content became a segment: %+v", segment)
+		}
+	}
+}
+
+func TestParseSectionsRequiresValidATXHeading(t *testing.T) {
+	sections, err := parseSections("# Notes\n\n#123 should remain prose.\n#include should remain prose too.\n## Follow up\n\nAction: keep valid headings.\n")
+	if err != nil {
+		t.Fatalf("parse sections: %v", err)
+	}
+	if len(sections) != 2 {
+		t.Fatalf("expected 2 valid heading sections, got %d: %+v", len(sections), sections)
+	}
+	if len(sections[0].lines) != 2 {
+		t.Fatalf("expected invalid heading markers to remain prose, got %+v", sections[0].lines)
+	}
+	assertHeadingPath(t, sections[1].headingPath, []string{"Notes", "Follow up"})
+}
+
 func TestDocumentSegmentHasNoDestinationHints(t *testing.T) {
 	data, err := json.Marshal(validSegment())
 	if err != nil {
