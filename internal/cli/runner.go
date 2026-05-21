@@ -12,6 +12,7 @@ import (
 	slackadapter "github.com/synergyai-os/Mindline/internal/adapters/slack"
 	"github.com/synergyai-os/Mindline/internal/destinations"
 	tolariadestination "github.com/synergyai-os/Mindline/internal/destinations/tolaria"
+	"github.com/synergyai-os/Mindline/internal/pipeline"
 	"github.com/synergyai-os/Mindline/internal/sbos"
 )
 
@@ -22,7 +23,7 @@ const (
 	ExitArtifactWrite = 3
 )
 
-const usage = "usage: mindline process <candidate.json> [--out <dir>]\nusage: mindline slack normalize <slack-export.json> [--out <dir>]\nusage: mindline destination dry-run <sbos-result.json> --adapter tolaria --out <dir>\n"
+const usage = "usage: mindline process <candidate.json> [--out <dir>]\nusage: mindline slack normalize <slack-export.json> [--out <dir>]\nusage: mindline destination dry-run <sbos-result.json> --adapter tolaria --out <dir>\nusage: mindline pipeline dry-run <pipeline-input.json> --method basb-para-code --destination tolaria --out <dir>\n"
 
 const tolariaVaultPath = "/Users/randyhereman/Young Human Club Dropbox/02. Areas/PKM - Tolaria"
 
@@ -124,6 +125,9 @@ func (r Runner) Run(args []string, stdout, stderr io.Writer) int {
 	if args[0] == "destination" {
 		return r.runDestination(args[1:], stdout, stderr)
 	}
+	if args[0] == "pipeline" {
+		return r.runPipeline(args[1:], stdout, stderr)
+	}
 	if args[0] != "process" {
 		fmt.Fprint(stderr, usage)
 		return ExitUsage
@@ -189,6 +193,55 @@ func (r Runner) Run(args []string, stdout, stderr io.Writer) int {
 	encoder := json.NewEncoder(stdout)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(envelope); err != nil {
+		fmt.Fprintf(stderr, "write stdout: %v\n", err)
+		return ExitUsage
+	}
+	return ExitOK
+}
+
+func (r Runner) runPipeline(args []string, stdout, stderr io.Writer) int {
+	inputPath, methodID, destinationID, outDir, parseError := parsePipelineDryRunArgs(args)
+	if parseError != parseErrorNone {
+		if parseError == parseErrorInvalidOut {
+			fmt.Fprint(stderr, "missing required --out\n")
+			return ExitProcess
+		}
+		fmt.Fprint(stderr, usage)
+		return ExitUsage
+	}
+	if methodID != pipeline.MethodBASBPARACODE {
+		fmt.Fprintf(stderr, "unsupported method: %s\n", methodID)
+		return ExitProcess
+	}
+	if destinationID != pipeline.DestinationTolaria {
+		fmt.Fprintf(stderr, "unsupported destination: %s\n", destinationID)
+		return ExitProcess
+	}
+	input, err := pipeline.ParseInputFile(inputPath, pipeline.ParseOptions{})
+	if err != nil {
+		fmt.Fprintf(stderr, "parse pipeline input: %v\n", err)
+		return ExitProcess
+	}
+	if input.Method.ID != methodID {
+		fmt.Fprintf(stderr, "method mismatch: input=%s cli=%s\n", input.Method.ID, methodID)
+		return ExitProcess
+	}
+	if input.Destination.ID != destinationID {
+		fmt.Fprintf(stderr, "destination mismatch: input=%s cli=%s\n", input.Destination.ID, destinationID)
+		return ExitProcess
+	}
+	summary, err := pipeline.Run(inputPath, outDir, pipeline.RunOptions{ProtectedRoots: r.protectedRoots})
+	if err != nil {
+		if strings.Contains(err.Error(), "protected Tolaria vault") || strings.Contains(err.Error(), "sentinel") || strings.Contains(err.Error(), "output") {
+			fmt.Fprintf(stderr, "write pipeline artifacts: %v\n", err)
+			return ExitArtifactWrite
+		}
+		fmt.Fprintf(stderr, "run pipeline: %v\n", err)
+		return ExitProcess
+	}
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(summary); err != nil {
 		fmt.Fprintf(stderr, "write stdout: %v\n", err)
 		return ExitUsage
 	}
@@ -406,6 +459,44 @@ func parseDestinationDryRunArgs(args []string) (inputPath string, adapterID stri
 		return "", "", "", parseErrorUsage
 	}
 	return inputPath, adapterID, outDir, parseErrorNone
+}
+
+func parsePipelineDryRunArgs(args []string) (inputPath string, methodID string, destinationID string, outDir string, err parseError) {
+	if len(args) < 2 || args[0] != "dry-run" || strings.TrimSpace(args[1]) == "" {
+		return "", "", "", "", parseErrorUsage
+	}
+	inputPath = args[1]
+	if len(args) == 2 {
+		return "", "", "", "", parseErrorInvalidOut
+	}
+	if len(args) != 8 {
+		return "", "", "", "", parseErrorUsage
+	}
+	for i := 2; i < len(args); i += 2 {
+		if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+			if args[i] == "--out" {
+				return "", "", "", "", parseErrorInvalidOut
+			}
+			return "", "", "", "", parseErrorUsage
+		}
+		switch args[i] {
+		case "--method":
+			methodID = args[i+1]
+		case "--destination":
+			destinationID = args[i+1]
+		case "--out":
+			outDir = args[i+1]
+		default:
+			return "", "", "", "", parseErrorUsage
+		}
+	}
+	if outDir == "" {
+		return "", "", "", "", parseErrorInvalidOut
+	}
+	if methodID == "" || destinationID == "" {
+		return "", "", "", "", parseErrorUsage
+	}
+	return inputPath, methodID, destinationID, outDir, parseErrorNone
 }
 
 func (r Runner) validateOutDir(outDir string) error {

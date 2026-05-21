@@ -354,46 +354,18 @@ func renderAttention(candidate Candidate, redacted bool, reason string) string {
 
 func renderPublish(candidate Candidate) string {
 	var b strings.Builder
-	b.WriteString("---\n")
+	b.WriteString("source_candidate_id: " + candidate.CandidateID + "\n")
+	b.WriteString("state: dry_run_published\n")
+	b.WriteString("title: " + titleOrFallback(candidate) + "\n")
 	b.WriteString("type: " + candidate.Classification.Type + "\n")
-	b.WriteString("status: dry_run\n")
 	b.WriteString("domain: " + candidate.Classification.Domain + "\n")
-	b.WriteString("topics:\n")
-	for _, topic := range candidate.Classification.Topics {
-		b.WriteString("  - " + topic + "\n")
-	}
-	b.WriteString("source_adapter: " + candidate.AdapterID + "\n")
-	if candidate.Provenance.Permalink.Visibility == "public" && candidate.Provenance.Permalink.Value != "" {
-		b.WriteString("source_url: " + candidate.Provenance.Permalink.Value + "\n")
-	}
 	b.WriteString("confidence: " + candidate.Classification.Confidence + "\n")
-	b.WriteString("processing_status: dry_run_published\n")
-	b.WriteString("visibility: publish\n")
-	b.WriteString("schema_version: " + candidate.SchemaVersion + "\n")
-	b.WriteString("candidate_id: " + candidate.CandidateID + "\n")
-	b.WriteString("---\n\n")
-
-	b.WriteString("# " + titleOrFallback(candidate) + "\n\n")
-	b.WriteString("## Snapshot\n")
-	b.WriteString(candidate.Content.Text + "\n\n")
-	b.WriteString("## Source Content\n")
-	b.WriteString("- Source: " + candidate.Provenance.Permalink.Value + "\n")
-	b.WriteString("- Captured from: " + candidate.AdapterID + "\n")
-	b.WriteString("- Author: " + candidate.Provenance.Author.Value + "\n\n")
-	b.WriteString("## Key Details\n")
-	b.WriteString("- " + candidate.Content.Text + "\n\n")
-	b.WriteString("## Relevance\n")
-	b.WriteString("Classified under " + candidate.Classification.Domain + " with " + candidate.Classification.Confidence + " confidence.\n\n")
-	b.WriteString("## Signals\n")
-	for _, topic := range candidate.Classification.Topics {
-		b.WriteString("- " + topic + "\n")
-	}
-	b.WriteString("\n## Related Sources\n")
+	b.WriteString("source_adapter: " + candidate.AdapterID + "\n")
+	b.WriteString("text: " + candidate.Content.Text + "\n")
+	b.WriteString("urls:\n")
 	for _, url := range candidate.Content.URLs {
 		b.WriteString("- " + url + "\n")
 	}
-	b.WriteString("\n## Next Action\n")
-	b.WriteString("No immediate action. Keep as processed source reference.\n")
 	return b.String()
 }
 

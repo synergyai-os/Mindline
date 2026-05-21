@@ -20,7 +20,8 @@ The current Go core validates normalized JSON candidates and applies determinist
 - private provenance and redaction blocking
 - enrichment blocking
 - clarification, background, attention, and publish routing
-- deterministic dry-run Markdown artifact rendering
+- neutral SBOS dry-run artifacts
+- method-profile Markdown rendering in the pipeline layer
 - destination-neutral dry-run operation planning
 - Tolaria dry-run previews without Tolaria vault writes
 - PB authority metadata for the build contract
@@ -62,6 +63,20 @@ The command requires `--out` and writes only under that directory:
 - `destination-summary.json` with the same deterministic summary printed to stdout
 
 Background, skipped, and blocked operations do not create Markdown previews. Conflict-blocked operations keep their original operation id for traceability, clear their preview body, and report stable blocker metadata.
+
+## Local Pipeline Dry-Run
+
+The local pipeline runner composes the first end-to-end dry-run path:
+
+```bash
+go run ./cmd/mindline pipeline dry-run testdata/pipeline/inputs/pipeline-text-only.json --method basb-para-code --destination tolaria --out /tmp/mindline-wp7-output
+```
+
+This command is dry-run only. It validates Product Brain authority ids, loads local fixture input, runs SBOS, applies the selected method profile, plans processors, hands safe publish output to the Tolaria destination dry-run adapter, and writes deterministic artifacts under `--out`.
+
+`basb-para-code` is the first method profile, not core architecture. Processor routing is planning-only: YouTube, LinkedIn, web, PDF, unknown, private, and secret-like captures produce local plans and blockers, but the runner does not call live Slack APIs, browsers, LLMs, auth providers, databases, destination APIs, network services, or the Tolaria vault.
+
+Tolaria is the first destination adapter, not the core surface. Future destinations can consume the same pipeline result and processor plan contracts.
 
 ## Candidate Contract
 

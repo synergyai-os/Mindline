@@ -1,0 +1,36 @@
+{
+  "schema_version": "v0.1",
+  "candidate_id": "pipeline-private-provenance",
+  "adapter_id": "local-fixture",
+  "external_id": "pipeline-private-provenance",
+  "captured_at": "2026-05-20T10:00:00Z",
+  "provenance": {
+    "permalink": {"value": "https://private.example/source", "visibility": "private"},
+    "native_timestamp": {"value": "2026-05-20T10:00:00Z", "visibility": "private"},
+    "author": {"value": "Private Author", "visibility": "private"},
+    "raw_locator": {"value": "fixture://private", "visibility": "private"}
+  },
+  "content": {
+    "text": "Private capture redacted for dry-run output.",
+    "urls": [],
+    "attachments": [],
+    "source_title": "Private capture"
+  },
+  "enrichment_status": "complete",
+  "classification": {
+    "type": "Source",
+    "domain": "Inbox / Unknown",
+    "topics": ["private-capture"],
+    "confidence": "low",
+    "needs_clarification": false,
+    "clarification_reason": ""
+  },
+  "safety": {
+    "redaction_required": true,
+    "secret_like": false,
+    "empty_content": false,
+    "private_provenance": true
+  },
+  "desired_visibility": "publish",
+  "idempotency_key": "fixture:pipeline-private-provenance"
+}
