@@ -1,0 +1,34 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-ffc053795f31ea39",
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_document_id": "doc-process-no-h1-capabilities",
+  "node_type": "table",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "Table: Document",
+  "summary": "Markdown table block.",
+  "parent_node_id": "node-13a768d7ad6ff235",
+  "child_node_ids": [
+    "node-a37cca0160d6dae9"
+  ],
+  "related_segment_ids": [
+    "seg-8964edc602889ef2",
+    "seg-d8a69cb7bfd1a087"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-process-no-h1-capabilities",
+    "heading_path": [
+      "Table: Document"
+    ],
+    "line_start": 3,
+    "line_end": 5,
+    "content_hash": "sha256:8ebc83167853090c1f99738f5918258079e58a3c8ab0926eb8f51d3b73879c80",
+    "related_segment_ids": [
+      "seg-8964edc602889ef2",
+      "seg-d8a69cb7bfd1a087"
+    ]
+  },
+  "blockers": []
+}

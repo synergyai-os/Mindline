@@ -354,7 +354,7 @@ Implementation rules:
 - canonicalize the `<sbos-result.json>` path, derive its parent directory, and pass that directory as `ParseOptions.BaseDir` to `ParseDestinationInput`;
 - pass only explicit fixture directories as `ParseOptions.AllowFixtureDirs`; do not let parser resolution depend on process cwd;
 - canonicalize/resolve `--out` before writing;
-- reject output paths at or under `/Users/randyhereman/Young Human Club Dropbox/02. Areas/PKM - Tolaria`, including symlinks or equivalent filesystem indirection resolving into the vault;
+- reject output paths at or under the configured Tolaria vault path, including symlinks or equivalent filesystem indirection resolving into the vault;
 - write operation JSON for every operation;
 - write Markdown preview only for Tolaria operations with non-empty preview bodies and allowed operation types;
 - write `destination-summary.json`;
@@ -399,7 +399,7 @@ Expected: PASS for every package.
 Run:
 
 ```bash
-rg "net/http|http\\.Get|http\\.Post|oauth|token|SLACK|slack\\.com/api|conversations\\.history|chat\\.getPermalink|PKM - Tolaria|Tolaria/" internal cmd README.md
+rg "net/http|http\\.Get|http\\.Post|oauth|token|SLACK|slack\\.com/api|conversations\\.history|chat\\.getPermalink|protected-vault|Tolaria/" internal cmd README.md
 ```
 
 Expected: no implementation-surface matches except allowed documentation of the forbidden Tolaria vault path if the test names it explicitly. If documentation/test strings create expected matches, rerun a narrower grep against non-test Go implementation files and record both results.

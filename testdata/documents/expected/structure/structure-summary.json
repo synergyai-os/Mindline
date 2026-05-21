@@ -1,388 +1,589 @@
 {
   "schema_version": "document-structure-summary/v0.1",
-  "run_id": "run-struct-bf62ffb671d8ec6a",
-  "source_count": 5,
-  "node_count": 40,
-  "needs_review_count": 7,
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_count": 7,
+  "node_count": 62,
+  "needs_review_count": 8,
   "blocked_count": 2,
   "node_type_counts": {
     "audience": 1,
-    "capability": 6,
-    "document": 5,
-    "requirement": 2,
-    "section": 10,
-    "table": 4,
-    "table_row": 5,
+    "capability": 12,
+    "document": 7,
+    "requirement": 3,
+    "section": 13,
+    "table": 6,
+    "table_row": 9,
+    "transcript_turn": 4,
     "unknown": 5,
     "workflow": 2
   },
   "root_node_ids": [
-    "node-8f4b0b9a703310ad",
-    "node-5441859c65879cd8",
-    "node-e3e7e43c48bb44cb",
-    "node-f692b8bf94fba1c8",
-    "node-f5f50216cdb6b21b"
+    "node-52c9bd0190abaaea",
+    "node-baa09c07c72f8604",
+    "node-5f6ea5e4f308c130",
+    "node-2c1010fe299f311f",
+    "node-13a768d7ad6ff235",
+    "node-716d4cdb3be40177",
+    "node-51ea2fa737c4242f"
   ],
   "nodes": [
     {
-      "node_id": "node-8f4b0b9a703310ad",
+      "node_id": "node-52c9bd0190abaaea",
       "source_document_id": "doc-audience-capability-list",
       "node_type": "document",
       "review_status": "ready",
       "confidence": "medium",
       "node_path": "service-playbook",
-      "preview_path": "previews/node-8f4b0b9a703310ad.md"
+      "preview_path": "previews/node-52c9bd0190abaaea.md"
     },
     {
-      "node_id": "node-51733db6519e63ef",
+      "node_id": "node-7c912aa0fbc4314c",
       "source_document_id": "doc-audience-capability-list",
       "node_type": "section",
       "review_status": "ready",
       "confidence": "medium",
       "node_path": "service-playbook/audience-groups",
-      "preview_path": "previews/node-51733db6519e63ef.md"
+      "preview_path": "previews/node-7c912aa0fbc4314c.md"
     },
     {
-      "node_id": "node-4867bd6ab67eb10c",
+      "node_id": "node-15c2c15ebf2d36e7",
       "source_document_id": "doc-audience-capability-list",
       "node_type": "capability",
       "review_status": "ready",
       "confidence": "high",
       "node_path": "service-playbook/audience-groups/compare-structured-sections-before-approval",
-      "preview_path": "previews/node-4867bd6ab67eb10c.md"
+      "preview_path": "previews/node-15c2c15ebf2d36e7.md"
     },
     {
-      "node_id": "node-7fe3fce7cd497f33",
+      "node_id": "node-5fce3506a77f17b9",
       "source_document_id": "doc-audience-capability-list",
       "node_type": "unknown",
       "review_status": "needs_review",
       "confidence": "low",
       "node_path": "service-playbook/audience-groups/mark-unclear-relationships-for-review",
-      "preview_path": "previews/node-7fe3fce7cd497f33.md"
+      "preview_path": "previews/node-5fce3506a77f17b9.md"
     },
     {
-      "node_id": "node-aa9992cc9ec3253a",
+      "node_id": "node-7bf40b2901856b3c",
       "source_document_id": "doc-audience-capability-list",
       "node_type": "audience",
       "review_status": "ready",
       "confidence": "high",
       "node_path": "service-playbook/audience-groups/operators-reviewing-source-packages",
-      "preview_path": "previews/node-aa9992cc9ec3253a.md"
+      "preview_path": "previews/node-7bf40b2901856b3c.md"
     },
     {
-      "node_id": "node-df927a661f074bd0",
+      "node_id": "node-ff7a08ecaebd4ff0",
       "source_document_id": "doc-audience-capability-list",
       "node_type": "section",
       "review_status": "ready",
       "confidence": "medium",
       "node_path": "service-playbook/workflow-steps",
-      "preview_path": "previews/node-df927a661f074bd0.md"
+      "preview_path": "previews/node-ff7a08ecaebd4ff0.md"
     },
     {
-      "node_id": "node-ef386df142105f64",
+      "node_id": "node-0703a736495e7e5d",
       "source_document_id": "doc-audience-capability-list",
       "node_type": "workflow",
       "review_status": "ready",
       "confidence": "high",
       "node_path": "service-playbook/workflow-steps/collect-source-material",
-      "preview_path": "previews/node-ef386df142105f64.md"
+      "preview_path": "previews/node-0703a736495e7e5d.md"
     },
     {
-      "node_id": "node-b567c0124f52bd7c",
+      "node_id": "node-c2d48d1318620eba",
       "source_document_id": "doc-audience-capability-list",
       "node_type": "workflow",
       "review_status": "ready",
       "confidence": "high",
       "node_path": "service-playbook/workflow-steps/preserve-local-structure",
-      "preview_path": "previews/node-b567c0124f52bd7c.md"
+      "preview_path": "previews/node-c2d48d1318620eba.md"
     },
     {
-      "node_id": "node-327ffffe30b3088e",
+      "node_id": "node-738d1b730b629b13",
       "source_document_id": "doc-audience-capability-list",
       "node_type": "unknown",
       "review_status": "needs_review",
       "confidence": "low",
       "node_path": "service-playbook/workflow-steps/unclear-owner-for-escalation-path",
-      "preview_path": "previews/node-327ffffe30b3088e.md"
+      "preview_path": "previews/node-738d1b730b629b13.md"
     },
     {
-      "node_id": "node-5441859c65879cd8",
+      "node_id": "node-baa09c07c72f8604",
       "source_document_id": "doc-malformed-ambiguous",
       "node_type": "document",
       "review_status": "ready",
       "confidence": "medium",
       "node_path": "ambiguous-process",
-      "preview_path": "previews/node-5441859c65879cd8.md"
+      "preview_path": "previews/node-baa09c07c72f8604.md"
     },
     {
-      "node_id": "node-ec359d8d5aaa078d",
+      "node_id": "node-71f8173acdbb8f5b",
       "source_document_id": "doc-malformed-ambiguous",
       "node_type": "section",
       "review_status": "ready",
       "confidence": "medium",
       "node_path": "ambiguous-process/broken-table",
-      "preview_path": "previews/node-ec359d8d5aaa078d.md"
+      "preview_path": "previews/node-71f8173acdbb8f5b.md"
     },
     {
-      "node_id": "node-208d8706f6997210",
+      "node_id": "node-be0d94d59ebb054b",
       "source_document_id": "doc-malformed-ambiguous",
       "node_type": "table",
       "review_status": "needs_review",
       "confidence": "low",
       "node_path": "ambiguous-process/broken-table/table-broken-table",
-      "preview_path": "previews/node-208d8706f6997210.md"
+      "preview_path": "previews/node-be0d94d59ebb054b.md"
     },
     {
-      "node_id": "node-475bda4fb44e915a",
+      "node_id": "node-d99bf48d907c5cd2",
       "source_document_id": "doc-malformed-ambiguous",
       "node_type": "table_row",
       "review_status": "needs_review",
       "confidence": "low",
       "node_path": "ambiguous-process/broken-table/table-broken-table/maybe-this-row-is-a-table-but-delimiter-is-missing",
-      "preview_path": "previews/node-475bda4fb44e915a.md"
+      "preview_path": "previews/node-d99bf48d907c5cd2.md"
     },
     {
-      "node_id": "node-419a2b05a9f641dc",
+      "node_id": "node-2e143301b8052bb8",
       "source_document_id": "doc-malformed-ambiguous",
       "node_type": "unknown",
       "review_status": "needs_review",
       "confidence": "low",
       "node_path": "ambiguous-process/broken-table/table-broken-table/maybe-this-row-is-a-table-but-delimiter-is-missing/maybe-this-row-is-a-table-but-delimiter-is-missing",
-      "preview_path": "previews/node-419a2b05a9f641dc.md"
+      "preview_path": "previews/node-2e143301b8052bb8.md"
     },
     {
-      "node_id": "node-7fd8641f92b8fc87",
+      "node_id": "node-da8ea3c9a7eef125",
       "source_document_id": "doc-malformed-ambiguous",
       "node_type": "section",
       "review_status": "ready",
       "confidence": "medium",
       "node_path": "ambiguous-process/open-questions",
-      "preview_path": "previews/node-7fd8641f92b8fc87.md"
+      "preview_path": "previews/node-da8ea3c9a7eef125.md"
     },
     {
-      "node_id": "node-203cdcf47679d7c4",
+      "node_id": "node-7b32a35393abba9a",
       "source_document_id": "doc-malformed-ambiguous",
       "node_type": "unknown",
       "review_status": "needs_review",
       "confidence": "low",
       "node_path": "ambiguous-process/open-questions/maybe-this-belongs-under-another-section",
-      "preview_path": "previews/node-203cdcf47679d7c4.md"
+      "preview_path": "previews/node-7b32a35393abba9a.md"
     },
     {
-      "node_id": "node-5f28b3da18db75bd",
+      "node_id": "node-37b74c8956966716",
       "source_document_id": "doc-malformed-ambiguous",
       "node_type": "unknown",
       "review_status": "needs_review",
       "confidence": "low",
       "node_path": "ambiguous-process/open-questions/unclear-structure-owner",
-      "preview_path": "previews/node-5f28b3da18db75bd.md"
+      "preview_path": "previews/node-37b74c8956966716.md"
     },
     {
-      "node_id": "node-e3e7e43c48bb44cb",
+      "node_id": "node-5f6ea5e4f308c130",
       "source_document_id": "doc-mixed-structure",
       "node_type": "document",
       "review_status": "ready",
       "confidence": "medium",
       "node_path": "knowledge-runbook",
-      "preview_path": "previews/node-e3e7e43c48bb44cb.md"
+      "preview_path": "previews/node-5f6ea5e4f308c130.md"
     },
     {
-      "node_id": "node-18128e159178c8ad",
+      "node_id": "node-65ac4586cfaf0033",
       "source_document_id": "doc-mixed-structure",
       "node_type": "section",
       "review_status": "ready",
       "confidence": "medium",
       "node_path": "knowledge-runbook/capture",
-      "preview_path": "previews/node-18128e159178c8ad.md"
+      "preview_path": "previews/node-65ac4586cfaf0033.md"
     },
     {
-      "node_id": "node-801ae05cd1d54f67",
+      "node_id": "node-27fb78d239c32b66",
       "source_document_id": "doc-mixed-structure",
       "node_type": "requirement",
       "review_status": "ready",
       "confidence": "high",
       "node_path": "knowledge-runbook/capture/link-each-node-to-source-lines",
-      "preview_path": "previews/node-801ae05cd1d54f67.md"
+      "preview_path": "previews/node-27fb78d239c32b66.md"
     },
     {
-      "node_id": "node-a57f106527a710de",
+      "node_id": "node-72e0974363849711",
       "source_document_id": "doc-mixed-structure",
       "node_type": "capability",
       "review_status": "ready",
       "confidence": "high",
       "node_path": "knowledge-runbook/capture/preserve-nested-headings",
-      "preview_path": "previews/node-a57f106527a710de.md"
+      "preview_path": "previews/node-72e0974363849711.md"
     },
     {
-      "node_id": "node-410c3ffd96655946",
+      "node_id": "node-6fa482ae0b38ead9",
       "source_document_id": "doc-mixed-structure",
       "node_type": "section",
       "review_status": "ready",
       "confidence": "medium",
       "node_path": "knowledge-runbook/table-and-notes",
-      "preview_path": "previews/node-410c3ffd96655946.md"
+      "preview_path": "previews/node-6fa482ae0b38ead9.md"
     },
     {
-      "node_id": "node-bcc3e21cf81534a8",
+      "node_id": "node-c2a1a8c90d78b1a3",
       "source_document_id": "doc-mixed-structure",
       "node_type": "table",
       "review_status": "ready",
       "confidence": "medium",
       "node_path": "knowledge-runbook/table-and-notes/table-table-and-notes",
-      "preview_path": "previews/node-bcc3e21cf81534a8.md"
+      "preview_path": "previews/node-c2a1a8c90d78b1a3.md"
     },
     {
-      "node_id": "node-082837916725f264",
+      "node_id": "node-222ce65bd78ffebe",
       "source_document_id": "doc-mixed-structure",
       "node_type": "table_row",
       "review_status": "ready",
       "confidence": "medium",
       "node_path": "knowledge-runbook/table-and-notes/table-table-and-notes/cap-100",
-      "preview_path": "previews/node-082837916725f264.md"
+      "preview_path": "previews/node-222ce65bd78ffebe.md"
     },
     {
-      "node_id": "node-ae2b10796afacc64",
+      "node_id": "node-4a929fb1c2d347c6",
       "source_document_id": "doc-mixed-structure",
       "node_type": "capability",
       "review_status": "ready",
       "confidence": "high",
       "node_path": "knowledge-runbook/table-and-notes/table-table-and-notes/cap-100/cap-100",
-      "preview_path": "previews/node-ae2b10796afacc64.md"
+      "preview_path": "previews/node-4a929fb1c2d347c6.md"
     },
     {
-      "node_id": "node-f692b8bf94fba1c8",
+      "node_id": "node-2c1010fe299f311f",
       "source_document_id": "doc-process-capability-table",
       "node_type": "document",
       "review_status": "ready",
       "confidence": "medium",
       "node_path": "operating-model",
-      "preview_path": "previews/node-f692b8bf94fba1c8.md"
+      "preview_path": "previews/node-2c1010fe299f311f.md"
     },
     {
-      "node_id": "node-b45f4e8cb5616011",
+      "node_id": "node-638665395f7f3c28",
       "source_document_id": "doc-process-capability-table",
       "node_type": "section",
       "review_status": "ready",
       "confidence": "medium",
       "node_path": "operating-model/intake-capabilities",
-      "preview_path": "previews/node-b45f4e8cb5616011.md"
+      "preview_path": "previews/node-638665395f7f3c28.md"
     },
     {
-      "node_id": "node-46cfbac64b06ea63",
+      "node_id": "node-8ef3412777393010",
       "source_document_id": "doc-process-capability-table",
       "node_type": "table",
       "review_status": "ready",
       "confidence": "medium",
       "node_path": "operating-model/intake-capabilities/table-intake-capabilities",
-      "preview_path": "previews/node-46cfbac64b06ea63.md"
+      "preview_path": "previews/node-8ef3412777393010.md"
     },
     {
-      "node_id": "node-f385f87e127d2fc5",
+      "node_id": "node-51a7955ea8570ddd",
       "source_document_id": "doc-process-capability-table",
       "node_type": "table_row",
       "review_status": "ready",
       "confidence": "medium",
       "node_path": "operating-model/intake-capabilities/table-intake-capabilities/cap-001",
-      "preview_path": "previews/node-f385f87e127d2fc5.md"
+      "preview_path": "previews/node-51a7955ea8570ddd.md"
     },
     {
-      "node_id": "node-8f60b0691d9cdf08",
+      "node_id": "node-f73a6a150fb6c22e",
       "source_document_id": "doc-process-capability-table",
       "node_type": "capability",
       "review_status": "ready",
       "confidence": "high",
       "node_path": "operating-model/intake-capabilities/table-intake-capabilities/cap-001/cap-001",
-      "preview_path": "previews/node-8f60b0691d9cdf08.md"
+      "preview_path": "previews/node-f73a6a150fb6c22e.md"
     },
     {
-      "node_id": "node-20d13b0106f0c500",
+      "node_id": "node-735bba546a99d7aa",
       "source_document_id": "doc-process-capability-table",
       "node_type": "table_row",
       "review_status": "ready",
       "confidence": "medium",
       "node_path": "operating-model/intake-capabilities/table-intake-capabilities/cap-002",
-      "preview_path": "previews/node-20d13b0106f0c500.md"
+      "preview_path": "previews/node-735bba546a99d7aa.md"
     },
     {
-      "node_id": "node-8a02af38076b7d51",
+      "node_id": "node-0af45778548b5ac5",
       "source_document_id": "doc-process-capability-table",
       "node_type": "capability",
       "review_status": "ready",
       "confidence": "high",
       "node_path": "operating-model/intake-capabilities/table-intake-capabilities/cap-002/cap-002",
-      "preview_path": "previews/node-8a02af38076b7d51.md"
+      "preview_path": "previews/node-0af45778548b5ac5.md"
     },
     {
-      "node_id": "node-f5c0e047b3107106",
+      "node_id": "node-36b5fbf2b1081d26",
       "source_document_id": "doc-process-capability-table",
       "node_type": "section",
       "review_status": "ready",
       "confidence": "medium",
       "node_path": "operating-model/review-requirements",
-      "preview_path": "previews/node-f5c0e047b3107106.md"
+      "preview_path": "previews/node-36b5fbf2b1081d26.md"
     },
     {
-      "node_id": "node-1819610ee4259d27",
+      "node_id": "node-48194480dab27420",
       "source_document_id": "doc-process-capability-table",
       "node_type": "table",
       "review_status": "ready",
       "confidence": "medium",
       "node_path": "operating-model/review-requirements/table-review-requirements",
-      "preview_path": "previews/node-1819610ee4259d27.md"
+      "preview_path": "previews/node-48194480dab27420.md"
     },
     {
-      "node_id": "node-dd76fabdd9b1b052",
+      "node_id": "node-932fb83d725f2377",
       "source_document_id": "doc-process-capability-table",
       "node_type": "table_row",
       "review_status": "ready",
       "confidence": "medium",
       "node_path": "operating-model/review-requirements/table-review-requirements/req-001",
-      "preview_path": "previews/node-dd76fabdd9b1b052.md"
+      "preview_path": "previews/node-932fb83d725f2377.md"
     },
     {
-      "node_id": "node-fea8a7b4846b0363",
+      "node_id": "node-9497ccf2054be82f",
       "source_document_id": "doc-process-capability-table",
       "node_type": "requirement",
       "review_status": "ready",
       "confidence": "high",
       "node_path": "operating-model/review-requirements/table-review-requirements/req-001/req-001",
-      "preview_path": "previews/node-fea8a7b4846b0363.md"
+      "preview_path": "previews/node-9497ccf2054be82f.md"
     },
     {
-      "node_id": "node-b6a1ea9588052668",
+      "node_id": "node-13a768d7ad6ff235",
+      "source_document_id": "doc-process-no-h1-capabilities",
+      "node_type": "document",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "process-no-h1-capabilities",
+      "preview_path": "previews/node-13a768d7ad6ff235.md"
+    },
+    {
+      "node_id": "node-d0a8e8dffd786065",
+      "source_document_id": "doc-process-no-h1-capabilities",
+      "node_type": "section",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "process-no-h1-capabilities/essential-master-data-access",
+      "preview_path": "previews/node-d0a8e8dffd786065.md"
+    },
+    {
+      "node_id": "node-d4d5ef9ed35bfb2f",
+      "source_document_id": "doc-process-no-h1-capabilities",
+      "node_type": "capability",
+      "review_status": "ready",
+      "confidence": "high",
+      "node_path": "process-no-h1-capabilities/essential-master-data-access/p-s1-maintain-chemical-inventory",
+      "preview_path": "previews/node-d4d5ef9ed35bfb2f.md"
+    },
+    {
+      "node_id": "node-df699c8a810b5f3f",
+      "source_document_id": "doc-process-no-h1-capabilities",
+      "node_type": "capability",
+      "review_status": "ready",
+      "confidence": "high",
+      "node_path": "process-no-h1-capabilities/essential-master-data-access/pl-1-access-and-central-entry",
+      "preview_path": "previews/node-df699c8a810b5f3f.md"
+    },
+    {
+      "node_id": "node-52da4ea2279dfa4e",
+      "source_document_id": "doc-process-no-h1-capabilities",
+      "node_type": "capability",
+      "review_status": "ready",
+      "confidence": "high",
+      "node_path": "process-no-h1-capabilities/essential-master-data-access/pl-23-contacts-and-relationships",
+      "preview_path": "previews/node-52da4ea2279dfa4e.md"
+    },
+    {
+      "node_id": "node-33bf5032ab357dc8",
+      "source_document_id": "doc-process-no-h1-capabilities",
+      "node_type": "section",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "process-no-h1-capabilities/programme-rulebook",
+      "preview_path": "previews/node-33bf5032ab357dc8.md"
+    },
+    {
+      "node_id": "node-e1dd639b356bfc85",
+      "source_document_id": "doc-process-no-h1-capabilities",
+      "node_type": "section",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "process-no-h1-capabilities/programme-rulebook/nested-operating-detail",
+      "preview_path": "previews/node-e1dd639b356bfc85.md"
+    },
+    {
+      "node_id": "node-3c844340dc4abf42",
+      "source_document_id": "doc-process-no-h1-capabilities",
+      "node_type": "requirement",
+      "review_status": "ready",
+      "confidence": "high",
+      "node_path": "process-no-h1-capabilities/programme-rulebook/nested-operating-detail/preserve-the-original-source-line-evidence",
+      "preview_path": "previews/node-3c844340dc4abf42.md"
+    },
+    {
+      "node_id": "node-bf1fb7368d4da534",
+      "source_document_id": "doc-process-no-h1-capabilities",
+      "node_type": "table",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "process-no-h1-capabilities/programme-rulebook/table-programme-rulebook",
+      "preview_path": "previews/node-bf1fb7368d4da534.md"
+    },
+    {
+      "node_id": "node-b42fe3ad426b1e0f",
+      "source_document_id": "doc-process-no-h1-capabilities",
+      "node_type": "table_row",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "process-no-h1-capabilities/programme-rulebook/table-programme-rulebook/p-b4-participate-in-brands-to-zero",
+      "preview_path": "previews/node-b42fe3ad426b1e0f.md"
+    },
+    {
+      "node_id": "node-deb5cb817fe09162",
+      "source_document_id": "doc-process-no-h1-capabilities",
+      "node_type": "capability",
+      "review_status": "ready",
+      "confidence": "high",
+      "node_path": "process-no-h1-capabilities/programme-rulebook/table-programme-rulebook/p-b4-participate-in-brands-to-zero/p-b4-participate-in-brands-to-zero",
+      "preview_path": "previews/node-deb5cb817fe09162.md"
+    },
+    {
+      "node_id": "node-be89e4784b6c7d7d",
+      "source_document_id": "doc-process-no-h1-capabilities",
+      "node_type": "table_row",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "process-no-h1-capabilities/programme-rulebook/table-programme-rulebook/pl-10-12-rulebook-stewardship",
+      "preview_path": "previews/node-be89e4784b6c7d7d.md"
+    },
+    {
+      "node_id": "node-c05e62b8e903319e",
+      "source_document_id": "doc-process-no-h1-capabilities",
+      "node_type": "capability",
+      "review_status": "ready",
+      "confidence": "high",
+      "node_path": "process-no-h1-capabilities/programme-rulebook/table-programme-rulebook/pl-10-12-rulebook-stewardship/pl-10-12-rulebook-stewardship",
+      "preview_path": "previews/node-c05e62b8e903319e.md"
+    },
+    {
+      "node_id": "node-4bac978d0dc20c07",
+      "source_document_id": "doc-process-no-h1-capabilities",
+      "node_type": "table_row",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "process-no-h1-capabilities/programme-rulebook/table-programme-rulebook/pl-23-contacts-and-relationships",
+      "preview_path": "previews/node-4bac978d0dc20c07.md"
+    },
+    {
+      "node_id": "node-3c3d161c03017eda",
+      "source_document_id": "doc-process-no-h1-capabilities",
+      "node_type": "capability",
+      "review_status": "ready",
+      "confidence": "high",
+      "node_path": "process-no-h1-capabilities/programme-rulebook/table-programme-rulebook/pl-23-contacts-and-relationships/pl-23-contacts-and-relationships",
+      "preview_path": "previews/node-3c3d161c03017eda.md"
+    },
+    {
+      "node_id": "node-ffc053795f31ea39",
+      "source_document_id": "doc-process-no-h1-capabilities",
+      "node_type": "table",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "process-no-h1-capabilities/table-document",
+      "preview_path": "previews/node-ffc053795f31ea39.md"
+    },
+    {
+      "node_id": "node-a37cca0160d6dae9",
+      "source_document_id": "doc-process-no-h1-capabilities",
+      "node_type": "table_row",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "process-no-h1-capabilities/table-document/status",
+      "preview_path": "previews/node-a37cca0160d6dae9.md"
+    },
+    {
+      "node_id": "node-09c7b0bdba536cb4",
       "source_document_id": "doc-redacted-bb276cdea449a2b0",
       "node_type": "section",
       "review_status": "blocked",
       "confidence": "low",
       "node_path": "safety-sample/unsafe-content-redacted",
-      "preview_path": "previews/node-b6a1ea9588052668.md"
+      "preview_path": "previews/node-09c7b0bdba536cb4.md"
     },
     {
-      "node_id": "node-a4417419dcd2fd1a",
+      "node_id": "node-9b38dd084ec0dca4",
       "source_document_id": "doc-redacted-bb276cdea449a2b0",
       "node_type": "capability",
       "review_status": "blocked",
       "confidence": "low",
       "node_path": "safety-sample/unsafe-content-redacted/unsafe-content-redacted",
-      "preview_path": "previews/node-a4417419dcd2fd1a.md"
+      "preview_path": "previews/node-9b38dd084ec0dca4.md"
     },
     {
-      "node_id": "node-f5f50216cdb6b21b",
+      "node_id": "node-716d4cdb3be40177",
+      "source_document_id": "doc-transcript-turns",
+      "node_type": "document",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "transcript-turns",
+      "preview_path": "previews/node-716d4cdb3be40177.md"
+    },
+    {
+      "node_id": "node-d8f75d5cb482a4a2",
+      "source_document_id": "doc-transcript-turns",
+      "node_type": "transcript_turn",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "transcript-turns/00-02-facilitator",
+      "preview_path": "previews/node-d8f75d5cb482a4a2.md"
+    },
+    {
+      "node_id": "node-2e9942166bc179fe",
+      "source_document_id": "doc-transcript-turns",
+      "node_type": "transcript_turn",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "transcript-turns/01-14-participant-two",
+      "preview_path": "previews/node-2e9942166bc179fe.md"
+    },
+    {
+      "node_id": "node-f8754dbfe753bb5c",
+      "source_document_id": "doc-transcript-turns",
+      "node_type": "transcript_turn",
+      "review_status": "needs_review",
+      "confidence": "low",
+      "node_path": "transcript-turns/1-02-03-empty-speaker",
+      "preview_path": "previews/node-f8754dbfe753bb5c.md"
+    },
+    {
+      "node_id": "node-b0d875d358c4bbf8",
+      "source_document_id": "doc-transcript-turns",
+      "node_type": "transcript_turn",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "transcript-turns/12-44-product-lead",
+      "preview_path": "previews/node-b0d875d358c4bbf8.md"
+    },
+    {
+      "node_id": "node-51ea2fa737c4242f",
       "source_document_id": "doc-unsafe-marker",
       "node_type": "document",
       "review_status": "ready",
       "confidence": "medium",
       "node_path": "safety-sample",
-      "preview_path": "previews/node-f5f50216cdb6b21b.md"
+      "preview_path": "previews/node-51ea2fa737c4242f.md"
     },
     {
-      "node_id": "node-294ac7e5526be127",
+      "node_id": "node-00cb6de05831d58c",
       "source_document_id": "doc-unsafe-marker",
       "node_type": "section",
       "review_status": "ready",
       "confidence": "medium",
       "node_path": "safety-sample/safe-section",
-      "preview_path": "previews/node-294ac7e5526be127.md"
+      "preview_path": "previews/node-00cb6de05831d58c.md"
     }
   ]
 }

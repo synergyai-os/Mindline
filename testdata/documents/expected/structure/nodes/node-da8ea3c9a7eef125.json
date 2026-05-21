@@ -1,0 +1,36 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-da8ea3c9a7eef125",
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_document_id": "doc-malformed-ambiguous",
+  "node_type": "section",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "Open Questions",
+  "summary": "Section derived from Markdown heading hierarchy.",
+  "parent_node_id": "node-baa09c07c72f8604",
+  "child_node_ids": [
+    "node-7b32a35393abba9a",
+    "node-37b74c8956966716"
+  ],
+  "related_segment_ids": [
+    "seg-06acacd2b3948f89",
+    "seg-f60acd90bfeddd41"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-malformed-ambiguous",
+    "heading_path": [
+      "Ambiguous Process",
+      "Open Questions"
+    ],
+    "line_start": 8,
+    "line_end": 11,
+    "content_hash": "sha256:0fbb6ad1830e6b65f7460ffd8aced7755ffd0a856c5325f928d26bb10d4a279e",
+    "related_segment_ids": [
+      "seg-06acacd2b3948f89",
+      "seg-f60acd90bfeddd41"
+    ]
+  },
+  "blockers": []
+}

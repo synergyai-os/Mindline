@@ -1,0 +1,34 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-09c7b0bdba536cb4",
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_document_id": "doc-redacted-bb276cdea449a2b0",
+  "node_type": "section",
+  "review_status": "blocked",
+  "confidence": "low",
+  "title": "Unsafe content redacted",
+  "summary": "Structure node content was redacted because it contains an unsafe marker.",
+  "parent_node_id": "node-51ea2fa737c4242f",
+  "child_node_ids": [
+    "node-9b38dd084ec0dca4"
+  ],
+  "related_segment_ids": [],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-redacted-bb276cdea449a2b0",
+    "heading_path": [
+      "Unsafe heading redacted",
+      "Unsafe heading redacted"
+    ],
+    "line_start": 3,
+    "line_end": 5,
+    "content_hash": "sha256:ffec05300d921b07319eaeb08b30c37669b7e5e0c2d7b895d4cfae924f8fcd9d",
+    "related_segment_ids": []
+  },
+  "blockers": [
+    {
+      "code": "unsafe_private_marker",
+      "message": "Structure node contains an unsafe or private marker."
+    }
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-716d4cdb3be40177",
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_document_id": "doc-transcript-turns",
+  "node_type": "document",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "transcript-turns",
+  "summary": "Document structure root.",
+  "parent_node_id": "",
+  "child_node_ids": [
+    "node-d8f75d5cb482a4a2",
+    "node-2e9942166bc179fe",
+    "node-b0d875d358c4bbf8",
+    "node-f8754dbfe753bb5c"
+  ],
+  "related_segment_ids": [
+    "seg-5d4127f2841bd5e9",
+    "seg-b638487ff445beb9",
+    "seg-bb032f6d5fd21f1e",
+    "seg-bbba8e2dbf0c571a",
+    "seg-661f7ce3b78fdc42",
+    "seg-3e7443ac97be5a61",
+    "seg-a8eae20c6a10164d"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-transcript-turns",
+    "heading_path": [
+      "transcript-turns"
+    ],
+    "line_start": 1,
+    "line_end": 10,
+    "content_hash": "sha256:1ea9a49134dc2b7079dc87a3c6ae23f829432a73880ceafa2cc084789b00dd42",
+    "related_segment_ids": [
+      "seg-5d4127f2841bd5e9",
+      "seg-b638487ff445beb9",
+      "seg-bb032f6d5fd21f1e",
+      "seg-bbba8e2dbf0c571a",
+      "seg-661f7ce3b78fdc42",
+      "seg-3e7443ac97be5a61",
+      "seg-a8eae20c6a10164d"
+    ]
+  },
+  "blockers": []
+}

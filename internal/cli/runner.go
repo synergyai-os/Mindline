@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"unicode"
@@ -27,7 +28,7 @@ const (
 
 const usage = "usage: mindline process <candidate.json> [--out <dir>]\nusage: mindline slack normalize <slack-export.json> [--out <dir>]\nusage: mindline destination dry-run <sbos-result.json> --adapter tolaria --out <dir>\nusage: mindline pipeline dry-run <pipeline-input.json> --method basb-para-code --destination tolaria --out <dir>\nusage: mindline product-brain propose <run-dir> --profile <profile.json> --out <dir>\nusage: mindline documents decompose <markdown-path-or-dir> --out <dir>\nusage: mindline documents structure <markdown-path-or-dir> --out <dir>\n"
 
-const tolariaVaultPath = "/Users/randyhereman/Young Human Club Dropbox/02. Areas/PKM - Tolaria"
+const protectedRootsEnv = "MINDLINE_PROTECTED_ROOTS"
 
 var cliAuthorityIDs = []string{
 	"DEC-4",
@@ -109,11 +110,26 @@ type SlackNormalizeCandidateItem struct {
 }
 
 func NewRunner(fileSystem FileSystem) Runner {
-	return NewRunnerWithProtectedRoots(fileSystem, []string{tolariaVaultPath})
+	return NewRunnerWithProtectedRoots(fileSystem, configuredProtectedRoots())
 }
 
 func NewRunnerWithProtectedRoots(fileSystem FileSystem, protectedRoots []string) Runner {
 	return Runner{fs: fileSystem, protectedRoots: append([]string(nil), protectedRoots...)}
+}
+
+func configuredProtectedRoots() []string {
+	raw := strings.TrimSpace(os.Getenv(protectedRootsEnv))
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, string(os.PathListSeparator))
+	roots := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if root := strings.TrimSpace(part); root != "" {
+			roots = append(roots, root)
+		}
+	}
+	return roots
 }
 
 func (r Runner) Run(args []string, stdout, stderr io.Writer) int {

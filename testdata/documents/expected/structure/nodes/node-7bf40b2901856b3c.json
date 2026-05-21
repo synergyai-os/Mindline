@@ -1,0 +1,32 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-7bf40b2901856b3c",
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_document_id": "doc-audience-capability-list",
+  "node_type": "audience",
+  "review_status": "ready",
+  "confidence": "high",
+  "title": "Operators reviewing source packages",
+  "summary": "Audience: Operators reviewing source packages",
+  "parent_node_id": "node-7c912aa0fbc4314c",
+  "child_node_ids": [],
+  "related_segment_ids": [
+    "seg-ffbbde485b05705e"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-audience-capability-list",
+    "heading_path": [
+      "Service Playbook",
+      "Audience Groups",
+      "Operators reviewing source packages"
+    ],
+    "line_start": 5,
+    "line_end": 5,
+    "content_hash": "sha256:f261690c566f0ec3bd5c58a7c23c2034b48194c42bb59f3456ce239d8695aed3",
+    "related_segment_ids": [
+      "seg-ffbbde485b05705e"
+    ]
+  },
+  "blockers": []
+}

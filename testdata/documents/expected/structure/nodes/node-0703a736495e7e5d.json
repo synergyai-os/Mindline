@@ -1,0 +1,32 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-0703a736495e7e5d",
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_document_id": "doc-audience-capability-list",
+  "node_type": "workflow",
+  "review_status": "ready",
+  "confidence": "high",
+  "title": "collect source material",
+  "summary": "Workflow: collect source material",
+  "parent_node_id": "node-ff7a08ecaebd4ff0",
+  "child_node_ids": [],
+  "related_segment_ids": [
+    "seg-6c3f83add757aa21"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-audience-capability-list",
+    "heading_path": [
+      "Service Playbook",
+      "Workflow Steps",
+      "collect source material"
+    ],
+    "line_start": 11,
+    "line_end": 11,
+    "content_hash": "sha256:0c28aa27fe35e83735f0c94d681b2e8c2f88ba8cb9790566e5c7787c9795984d",
+    "related_segment_ids": [
+      "seg-6c3f83add757aa21"
+    ]
+  },
+  "blockers": []
+}

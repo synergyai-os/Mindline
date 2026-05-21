@@ -1,0 +1,39 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-8ef3412777393010",
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_document_id": "doc-process-capability-table",
+  "node_type": "table",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "Table: Intake Capabilities",
+  "summary": "Markdown table block.",
+  "parent_node_id": "node-638665395f7f3c28",
+  "child_node_ids": [
+    "node-51a7955ea8570ddd",
+    "node-735bba546a99d7aa"
+  ],
+  "related_segment_ids": [
+    "seg-033a97d3fea5c818",
+    "seg-cfe0bb76e0e3dfcf",
+    "seg-1845f0ed31e657ee"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-process-capability-table",
+    "heading_path": [
+      "Operating Model",
+      "Intake Capabilities",
+      "Table: Intake Capabilities"
+    ],
+    "line_start": 5,
+    "line_end": 8,
+    "content_hash": "sha256:a61124470a9aeae35f6b0cba9800c63a35d73df7bc66e0ed29e0fa135480abde",
+    "related_segment_ids": [
+      "seg-033a97d3fea5c818",
+      "seg-cfe0bb76e0e3dfcf",
+      "seg-1845f0ed31e657ee"
+    ]
+  },
+  "blockers": []
+}

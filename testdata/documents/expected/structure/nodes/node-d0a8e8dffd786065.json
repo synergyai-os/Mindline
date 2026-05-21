@@ -1,0 +1,44 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-d0a8e8dffd786065",
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_document_id": "doc-process-no-h1-capabilities",
+  "node_type": "section",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "Essential Master Data Access",
+  "summary": "Section derived from Markdown heading hierarchy.",
+  "parent_node_id": "node-13a768d7ad6ff235",
+  "child_node_ids": [
+    "node-df699c8a810b5f3f",
+    "node-52da4ea2279dfa4e",
+    "node-d4d5ef9ed35bfb2f"
+  ],
+  "related_segment_ids": [
+    "seg-c864975e8b47d59e",
+    "seg-2f897b89cf5ce74d",
+    "seg-0a521947305430b4",
+    "seg-70f430a90de3f9ef",
+    "seg-b76f1ad6892c6ae0",
+    "seg-bdec8bfa7ad6e84a"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-process-no-h1-capabilities",
+    "heading_path": [
+      "Essential Master Data Access"
+    ],
+    "line_start": 7,
+    "line_end": 14,
+    "content_hash": "sha256:c1bd9fd2b708ad5b8d4062430fcbd9cea5f37554d9ff16ef9d5c5ac05646a099",
+    "related_segment_ids": [
+      "seg-c864975e8b47d59e",
+      "seg-2f897b89cf5ce74d",
+      "seg-0a521947305430b4",
+      "seg-70f430a90de3f9ef",
+      "seg-b76f1ad6892c6ae0",
+      "seg-bdec8bfa7ad6e84a"
+    ]
+  },
+  "blockers": []
+}

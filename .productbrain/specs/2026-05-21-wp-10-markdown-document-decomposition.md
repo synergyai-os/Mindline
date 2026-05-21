@@ -88,7 +88,7 @@ Fixture rules:
 Verification must include:
 
 ```bash
-rg "Randy|Nina|Barbara|Lucas|Geert|Klaas|Morgana|ZDHC|Saprolab|/Users/|Young Human Club|slack|http://|https://" testdata/documents internal/documents
+rg "private-person|sample-speaker|private-org|/private-path/|workspace-name|slack|http://|https://" testdata/documents internal/documents
 ```
 
 Expected result: no matches unless the match is an explicit allowlisted synthetic string documented in the test.
@@ -288,7 +288,7 @@ go test ./internal/documents -run 'TestGoldenMarkdownDecomposition|TestDocuments
 go test ./internal/cli -run 'TestDocumentsDecomposeDoesNotReadProductBrainProfile|TestDocumentsDecomposeDoesNotEmitProductBrainProposals' -count=1
 go run ./cmd/mindline documents decompose testdata/documents/markdown --out /tmp/mindline-wp10-documents
 go test ./internal/documents -run TestGeneratedOutputMatchesGoldenFixtures -count=1
-rg "Randy|Nina|Barbara|Lucas|Geert|Klaas|Morgana|ZDHC|Saprolab|/Users/|Young Human Club|slack|http://|https://" testdata/documents internal/documents /tmp/mindline-wp10-documents
+rg "private-person|sample-speaker|private-org|/private-path/|workspace-name|slack|http://|https://" testdata/documents internal/documents /tmp/mindline-wp10-documents
 rg "destination_hints|surface|productbrain|notion|obsidian|tolaria" /tmp/mindline-wp10-documents/document-segments
 rg "internal/productbrain|productbrain\\.|product-brain|Product-OS|convex|pb profile|pb capture|notion|obsidian|tolaria|slack|browser|auth|oauth|net/http|os/exec|exec.Command|http://|https://" internal/documents
 rg "Product-OS|convex|pb profile|pb capture|notion|obsidian|tolaria|slack|browser|auth|oauth|net/http|os/exec|exec.Command|http://|https://" internal/cli

@@ -123,19 +123,20 @@ func TestDocumentStructurePreservesHierarchyAndReviewStates(t *testing.T) {
 	if summary.SchemaVersion != StructureSummarySchemaVersion {
 		t.Fatalf("unexpected schema: %s", summary.SchemaVersion)
 	}
-	if summary.SourceCount != 5 {
-		t.Fatalf("expected 5 sources, got %d", summary.SourceCount)
+	if summary.SourceCount != 7 {
+		t.Fatalf("expected 7 sources, got %d", summary.SourceCount)
 	}
 	for nodeType, min := range map[StructureNodeType]int{
-		StructureNodeTypeDocument:    5,
-		StructureNodeTypeSection:     8,
-		StructureNodeTypeTable:       3,
-		StructureNodeTypeTableRow:    4,
-		StructureNodeTypeCapability:  5,
-		StructureNodeTypeRequirement: 2,
-		StructureNodeTypeWorkflow:    2,
-		StructureNodeTypeAudience:    1,
-		StructureNodeTypeUnknown:     2,
+		StructureNodeTypeDocument:       7,
+		StructureNodeTypeSection:        11,
+		StructureNodeTypeTable:          3,
+		StructureNodeTypeTableRow:       4,
+		StructureNodeTypeCapability:     12,
+		StructureNodeTypeTranscriptTurn: 4,
+		StructureNodeTypeRequirement:    2,
+		StructureNodeTypeWorkflow:       2,
+		StructureNodeTypeAudience:       1,
+		StructureNodeTypeUnknown:        2,
 	} {
 		if got := summary.NodeTypeCounts[nodeType]; got < min {
 			t.Fatalf("expected at least %d %s nodes, got %d in %+v", min, nodeType, got, summary.NodeTypeCounts)
@@ -155,7 +156,20 @@ func TestDocumentStructurePreservesHierarchyAndReviewStates(t *testing.T) {
 	if summary.BlockedCount < 2 {
 		t.Fatalf("expected blocked unsafe nodes, got %+v", summary)
 	}
-	assertGeneratedTreeExcludes(t, filepath.Join(out, "document-structure"), "private_content", "secret", "authority_ids", "authority_id")
+	assertStructureNodePath(t, summary, StructureNodeTypeDocument, "process-no-h1-capabilities")
+	assertStructureNodePath(t, summary, StructureNodeTypeSection, "process-no-h1-capabilities/essential-master-data-access")
+	assertStructureNodePath(t, summary, StructureNodeTypeSection, "process-no-h1-capabilities/programme-rulebook")
+	assertMissingStructureNodePath(t, summary, "process-no-h1-capabilities/essential-master-data-access/programme-rulebook")
+	assertStructureNodePath(t, summary, StructureNodeTypeCapability, "process-no-h1-capabilities/essential-master-data-access/pl-1-access-and-central-entry")
+	assertStructureNodePath(t, summary, StructureNodeTypeCapability, "process-no-h1-capabilities/essential-master-data-access/pl-23-contacts-and-relationships")
+	assertStructureNodePath(t, summary, StructureNodeTypeCapability, "process-no-h1-capabilities/essential-master-data-access/p-s1-maintain-chemical-inventory")
+	assertStructureNodePath(t, summary, StructureNodeTypeCapability, "process-no-h1-capabilities/programme-rulebook/table-programme-rulebook/pl-23-contacts-and-relationships/pl-23-contacts-and-relationships")
+	assertStructureNodePath(t, summary, StructureNodeTypeCapability, "process-no-h1-capabilities/programme-rulebook/table-programme-rulebook/pl-10-12-rulebook-stewardship/pl-10-12-rulebook-stewardship")
+	assertMissingStructureNodePath(t, summary, "abc-1-not-a-capability")
+	assertMissingStructureNodePath(t, summary, "this-sentence-merely-mentions-pl-1-without-defining-it")
+	assertStructureNodeTitle(t, out, summary, StructureNodeTypeCapability, "process-no-h1-capabilities/essential-master-data-access/pl-23-contacts-and-relationships", "PL-23 - Contacts and relationships")
+	assertTranscriptTurnEvidence(t, out, summary)
+	assertGeneratedTreeExcludes(t, filepath.Join(out, "document-structure"), "private_content", "secret", "authority_ids", "authority_id", "example private person")
 }
 
 func TestDocumentStructureDeterministicAcrossRuns(t *testing.T) {
@@ -563,6 +577,24 @@ func TestParseSectionsPreservesHeadingHierarchy(t *testing.T) {
 	assertHeadingPath(t, sections[0].headingPath, []string{"Strategy"})
 	assertHeadingPath(t, sections[1].headingPath, []string{"Strategy", "Risks"})
 	assertHeadingPath(t, sections[2].headingPath, []string{"Strategy", "Risks", "Follow up"})
+}
+
+func TestParseSectionsNormalizesNoH1HeadingHierarchy(t *testing.T) {
+	sections, err := parseSections("Intro note.\n\n### First Area\n\nSource content.\n\n### Second Area\n\nMore content.\n\n## Later Top Area\n\nTop content.\n\n### Later Child Detail\n\nNested content.\n")
+	if err != nil {
+		t.Fatalf("parse sections: %v", err)
+	}
+	if len(sections) != 5 {
+		t.Fatalf("expected pre-heading plus 4 headed sections, got %d: %+v", len(sections), sections)
+	}
+	assertHeadingPath(t, sections[0].headingPath, nil)
+	assertHeadingPath(t, sections[1].headingPath, []string{"First Area"})
+	assertHeadingPath(t, sections[2].headingPath, []string{"Second Area"})
+	assertHeadingPath(t, sections[3].headingPath, []string{"Later Top Area"})
+	assertHeadingPath(t, sections[4].headingPath, []string{"Later Top Area", "Later Child Detail"})
+	if sections[1].sourceHeadingLevel != 3 || sections[1].normalizedHeadingLevel != 1 {
+		t.Fatalf("expected source h3 normalized to level 1, got %+v", sections[1])
+	}
 }
 
 func TestMixedTableSectionKeepsNonTableSegments(t *testing.T) {
@@ -981,6 +1013,87 @@ func assertGeneratedTreeExcludes(t *testing.T, root string, forbidden ...string)
 				t.Fatalf("generated artifact %s leaked %q:\n%s", path, value, body)
 			}
 		}
+	}
+}
+
+func assertStructureNodePath(t *testing.T, summary StructureSummary, nodeType StructureNodeType, nodePath string) {
+	t.Helper()
+	for _, node := range summary.Nodes {
+		if node.NodeType == nodeType && node.NodePath == nodePath {
+			return
+		}
+	}
+	t.Fatalf("expected %s node path %q in %+v", nodeType, nodePath, summary.Nodes)
+}
+
+func assertMissingStructureNodePath(t *testing.T, summary StructureSummary, nodePathFragment string) {
+	t.Helper()
+	for _, node := range summary.Nodes {
+		if strings.Contains(node.NodePath, nodePathFragment) {
+			t.Fatalf("unexpected node path containing %q: %+v", nodePathFragment, node)
+		}
+	}
+}
+
+func assertStructureNodeTitle(t *testing.T, out string, summary StructureSummary, nodeType StructureNodeType, nodePath, wantTitle string) {
+	t.Helper()
+	for _, item := range summary.Nodes {
+		if item.NodeType != nodeType || item.NodePath != nodePath {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(out, "document-structure", StructureNodeJSONPath(item.NodeID)))
+		if err != nil {
+			t.Fatalf("read structure node: %v", err)
+		}
+		var node StructureNode
+		if err := json.Unmarshal(data, &node); err != nil {
+			t.Fatalf("decode structure node: %v", err)
+		}
+		if node.Title != wantTitle {
+			t.Fatalf("unexpected node title got=%q want=%q node=%+v", node.Title, wantTitle, node)
+		}
+		if strings.Contains(node.Title, "*") || strings.Contains(strings.Join(node.Evidence.HeadingPath, "/"), "*") {
+			t.Fatalf("expected emphasis-free title and evidence path, got %+v", node)
+		}
+		return
+	}
+	t.Fatalf("missing %s node at %q", nodeType, nodePath)
+}
+
+func assertTranscriptTurnEvidence(t *testing.T, out string, summary StructureSummary) {
+	t.Helper()
+	foundReady := false
+	foundNeedsReview := false
+	for _, item := range summary.Nodes {
+		if item.NodeType != StructureNodeTypeTranscriptTurn {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(out, "document-structure", StructureNodeJSONPath(item.NodeID)))
+		if err != nil {
+			t.Fatalf("read transcript turn node: %v", err)
+		}
+		var node StructureNode
+		if err := json.Unmarshal(data, &node); err != nil {
+			t.Fatalf("decode transcript turn node: %v", err)
+		}
+		if !strings.Contains(node.Title, " - ") {
+			t.Fatalf("expected timestamp and speaker in title, got %+v", node)
+		}
+		if node.Evidence.LineStart <= 0 || node.Evidence.LineEnd < node.Evidence.LineStart {
+			t.Fatalf("expected transcript turn line range, got %+v", node)
+		}
+		if len(node.RelatedSegmentIDs) == 0 && node.ReviewStatus == ReviewStatusReady {
+			t.Fatalf("ready transcript turn should preserve related segment ids: %+v", node)
+		}
+		if node.ReviewStatus == ReviewStatusReady {
+			foundReady = true
+		}
+		if node.ReviewStatus == ReviewStatusNeedsReview {
+			foundNeedsReview = true
+		}
+	}
+	if !foundReady || !foundNeedsReview {
+		t.Fatalf("expected ready and needs_review transcript turns, ready=%v needsReview=%v", foundReady, foundNeedsReview)
 	}
 }
 

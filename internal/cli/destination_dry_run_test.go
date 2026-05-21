@@ -237,7 +237,7 @@ func TestDestinationDryRunWritesRedactedAttentionPreview(t *testing.T) {
 
 func TestDestinationDryRunRejectsProtectedOutputRootAndSymlink(t *testing.T) {
 	base := t.TempDir()
-	vault := filepath.Join(base, "PKM - Tolaria")
+	vault := filepath.Join(base, "protected-vault")
 	outside := filepath.Join(base, "outside")
 	if err := os.MkdirAll(vault, 0o755); err != nil {
 		t.Fatalf("mkdir vault: %v", err)

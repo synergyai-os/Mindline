@@ -1,0 +1,31 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-52da4ea2279dfa4e",
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_document_id": "doc-process-no-h1-capabilities",
+  "node_type": "capability",
+  "review_status": "ready",
+  "confidence": "high",
+  "title": "PL-23 - Contacts and relationships",
+  "summary": "**PL-23 - Contacts and relationships**",
+  "parent_node_id": "node-d0a8e8dffd786065",
+  "child_node_ids": [],
+  "related_segment_ids": [
+    "seg-2f897b89cf5ce74d"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-process-no-h1-capabilities",
+    "heading_path": [
+      "Essential Master Data Access",
+      "PL-23 - Contacts and relationships"
+    ],
+    "line_start": 10,
+    "line_end": 10,
+    "content_hash": "sha256:2f445c7358e74060d817f58d8c3778c687898ff06ca14a37051675917938fefb",
+    "related_segment_ids": [
+      "seg-2f897b89cf5ce74d"
+    ]
+  },
+  "blockers": []
+}

@@ -1,0 +1,41 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-be0d94d59ebb054b",
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_document_id": "doc-malformed-ambiguous",
+  "node_type": "table",
+  "review_status": "needs_review",
+  "confidence": "low",
+  "title": "Table: Broken Table",
+  "summary": "Markdown table block.",
+  "parent_node_id": "node-71f8173acdbb8f5b",
+  "child_node_ids": [
+    "node-d99bf48d907c5cd2"
+  ],
+  "related_segment_ids": [
+    "seg-e21d6714ced82a22",
+    "seg-5e6a3c91b80ae04d"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-malformed-ambiguous",
+    "heading_path": [
+      "Ambiguous Process",
+      "Broken Table",
+      "Table: Broken Table"
+    ],
+    "line_start": 5,
+    "line_end": 6,
+    "content_hash": "sha256:49bac2367c8106c1240ea95378f0b04e61d5bcb9e1a7d257e3b012e676ce38cb",
+    "related_segment_ids": [
+      "seg-e21d6714ced82a22",
+      "seg-5e6a3c91b80ae04d"
+    ]
+  },
+  "blockers": [
+    {
+      "code": "malformed_structure",
+      "message": "Malformed Markdown table block requires review."
+    }
+  ]
+}

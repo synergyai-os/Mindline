@@ -1,0 +1,36 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-b42fe3ad426b1e0f",
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_document_id": "doc-process-no-h1-capabilities",
+  "node_type": "table_row",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "P-B4 - Participate in Brands to Zero",
+  "summary": "P-B4 - Participate in Brands to Zero - Partner workflow",
+  "parent_node_id": "node-bf1fb7368d4da534",
+  "child_node_ids": [
+    "node-deb5cb817fe09162"
+  ],
+  "related_segment_ids": [
+    "seg-296e1d3b781631fe",
+    "seg-d915f0fdd4d48baf"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-process-no-h1-capabilities",
+    "heading_path": [
+      "Programme Rulebook",
+      "Table: Programme Rulebook",
+      "P-B4 - Participate in Brands to Zero"
+    ],
+    "line_start": 21,
+    "line_end": 21,
+    "content_hash": "sha256:344b91add3f9478cd61e2534964c703806be2e20bcba5eb75285e759d3fd4f3c",
+    "related_segment_ids": [
+      "seg-296e1d3b781631fe",
+      "seg-d915f0fdd4d48baf"
+    ]
+  },
+  "blockers": []
+}

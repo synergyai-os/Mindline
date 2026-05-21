@@ -151,7 +151,7 @@ func goldenTextOnlyPipelineOutputWithLedger() Output {
 }
 
 func TestWriterRejectsProtectedTolariaOutputAndSentinels(t *testing.T) {
-	protected := filepath.Join(t.TempDir(), "PKM - Tolaria")
+	protected := filepath.Join(t.TempDir(), "protected-vault")
 	if err := os.MkdirAll(protected, 0o755); err != nil {
 		t.Fatalf("mkdir protected: %v", err)
 	}

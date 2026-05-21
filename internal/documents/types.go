@@ -49,15 +49,16 @@ const (
 type StructureNodeType string
 
 const (
-	StructureNodeTypeDocument    StructureNodeType = "document"
-	StructureNodeTypeSection     StructureNodeType = "section"
-	StructureNodeTypeTable       StructureNodeType = "table"
-	StructureNodeTypeTableRow    StructureNodeType = "table_row"
-	StructureNodeTypeCapability  StructureNodeType = "capability"
-	StructureNodeTypeAudience    StructureNodeType = "audience"
-	StructureNodeTypeWorkflow    StructureNodeType = "workflow"
-	StructureNodeTypeRequirement StructureNodeType = "requirement"
-	StructureNodeTypeUnknown     StructureNodeType = "unknown"
+	StructureNodeTypeDocument       StructureNodeType = "document"
+	StructureNodeTypeSection        StructureNodeType = "section"
+	StructureNodeTypeTable          StructureNodeType = "table"
+	StructureNodeTypeTableRow       StructureNodeType = "table_row"
+	StructureNodeTypeCapability     StructureNodeType = "capability"
+	StructureNodeTypeTranscriptTurn StructureNodeType = "transcript_turn"
+	StructureNodeTypeAudience       StructureNodeType = "audience"
+	StructureNodeTypeWorkflow       StructureNodeType = "workflow"
+	StructureNodeTypeRequirement    StructureNodeType = "requirement"
+	StructureNodeTypeUnknown        StructureNodeType = "unknown"
 )
 
 type Summary struct {

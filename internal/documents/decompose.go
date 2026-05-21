@@ -17,8 +17,18 @@ type line struct {
 }
 
 type section struct {
-	headingPath []string
-	lines       []line
+	headingPath            []string
+	headingLine            int
+	sourceHeadingLevel     int
+	normalizedHeadingLevel int
+	lines                  []line
+}
+
+type documentLine struct {
+	number       int
+	text         string
+	heading      string
+	headingLevel int
 }
 
 func DecomposePath(inputPath, outDir string) (Summary, error) {
@@ -162,9 +172,44 @@ func decomposeFile(path, runID, sourceID string) ([]Segment, error) {
 }
 
 func parseSections(body string) ([]section, error) {
+	lines, err := parseDocumentLines(body)
+	if err != nil {
+		return nil, err
+	}
 	var sections []section
 	current := section{}
 	var headingPath []string
+	var headingLevels []int
+	for _, item := range lines {
+		if item.heading != "" {
+			if len(current.lines) > 0 || len(current.headingPath) > 0 {
+				sections = append(sections, current)
+			}
+			for len(headingLevels) > 0 && headingLevels[len(headingLevels)-1] >= item.headingLevel {
+				headingLevels = headingLevels[:len(headingLevels)-1]
+				headingPath = headingPath[:len(headingPath)-1]
+			}
+			headingLevels = append(headingLevels, item.headingLevel)
+			headingPath = append(headingPath, item.heading)
+			level := len(headingPath)
+			current = section{
+				headingPath:            append([]string(nil), headingPath...),
+				headingLine:            item.number,
+				sourceHeadingLevel:     item.headingLevel,
+				normalizedHeadingLevel: level,
+			}
+			continue
+		}
+		current.lines = append(current.lines, line{number: item.number, text: item.text})
+	}
+	if len(current.lines) > 0 || len(current.headingPath) > 0 {
+		sections = append(sections, current)
+	}
+	return sections, nil
+}
+
+func parseDocumentLines(body string) ([]documentLine, error) {
+	var lines []documentLine
 	var fenceMarker string
 	scanner := bufio.NewScanner(strings.NewReader(body))
 	lineNumber := 0
@@ -189,28 +234,37 @@ func parseSections(body string) ([]section, error) {
 			headingText := strings.TrimLeft(text, " ")
 			level := headingLevel(headingText)
 			heading := strings.TrimSpace(strings.TrimLeft(headingText, "#"))
-			if len(current.lines) > 0 || len(current.headingPath) > 0 {
-				sections = append(sections, current)
-			}
-			if level <= len(headingPath) {
-				headingPath = headingPath[:level-1]
-			}
-			headingPath = append(headingPath, heading)
-			current = section{headingPath: append([]string(nil), headingPath...)}
+			lines = append(lines, documentLine{number: lineNumber, text: text, heading: heading, headingLevel: level})
 			continue
 		}
 		if trimmed == "" {
 			continue
 		}
-		current.lines = append(current.lines, line{number: lineNumber, text: text})
-	}
-	if len(current.lines) > 0 || len(current.headingPath) > 0 {
-		sections = append(sections, current)
+		lines = append(lines, documentLine{number: lineNumber, text: text})
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
-	return sections, nil
+	return lines, nil
+}
+
+func baseHeadingLevel(lines []documentLine) int {
+	minLevel := 0
+	for _, line := range lines {
+		if line.headingLevel == 1 {
+			return 1
+		}
+		if line.headingLevel == 0 {
+			continue
+		}
+		if minLevel == 0 || line.headingLevel < minLevel {
+			minLevel = line.headingLevel
+		}
+	}
+	if minLevel == 0 {
+		return 1
+	}
+	return minLevel
 }
 
 func fenceMarkerType(text string) (string, bool) {

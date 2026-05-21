@@ -11,7 +11,12 @@ import (
 	"strings"
 )
 
-var governanceIDPattern = regexp.MustCompile(`\b(PROD|DOMAIN|WP|DEC|STD|INS)-[0-9]+\b`)
+var (
+	governanceIDPattern   = regexp.MustCompile(`\b(PROD|DOMAIN|WP|DEC|STD|INS)-[0-9]+\b`)
+	capabilityCodePattern = regexp.MustCompile(`^(PL-[0-9]+(?:–[0-9]+)?|P-[A-Z][0-9]+)(?: - | — |: )(.+)$`)
+	transcriptTurnPattern = regexp.MustCompile(`^([0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?) - (.+)$`)
+	readableWordPattern   = regexp.MustCompile(`[A-Za-z][A-Za-z-]*`)
+)
 
 type tableBlock struct {
 	startLine int
@@ -121,8 +126,12 @@ func structureFile(path, body, runID, sourceID string, segments []Segment) ([]St
 	root := newStructureNode(runID, sourceID, StructureNodeTypeDocument, "", []string{title}, 1, maxLine, title, "Document structure root.", segmentsForRange(segments, 1, maxLine))
 	nodes := []StructureNode{root}
 	sectionIDs := map[string]string{}
+	hasH1 := documentHasH1(sections)
 	for _, section := range sections {
-		if len(section.headingPath) <= 1 {
+		if hasH1 && len(section.headingPath) <= 1 {
+			continue
+		}
+		if !hasH1 && len(section.headingPath) == 0 {
 			continue
 		}
 		key := strings.Join(section.headingPath, "\x00")
@@ -141,6 +150,7 @@ func structureFile(path, body, runID, sourceID string, segments []Segment) ([]St
 		sectionIDs[key] = node.NodeID
 		nodes = append(nodes, node)
 	}
+	nodes = append(nodes, structureTranscriptTurns(runID, sourceID, root.NodeID, title, sections, segments)...)
 	for _, section := range sections {
 		parentID := root.NodeID
 		if key := strings.Join(section.headingPath, "\x00"); sectionIDs[key] != "" {
@@ -174,23 +184,91 @@ func structureSectionBlocks(runID, sourceID, parentID string, section section, s
 				rowNode = markStructureNeedsReview(rowNode, "Row belongs to a malformed Markdown table block.")
 			}
 			nodes = append(nodes, rowNode)
-			if typedNodeType, ok := typedNodeFromText(rowTitle + " " + strings.Join(cells[1:], " ")); ok {
+			if typedNodeType, typedTitle, ok := typedNodeFromTitle(rowTitle, rowTitle+" "+strings.Join(cells[1:], " ")); ok {
 				typedPath := append(rowPath, string(typedNodeType))
-				typedNode := newStructureNode(runID, sourceID, typedNodeType, rowNode.NodeID, typedPath, row.number, row.number, rowTitle, strings.Join(cells, " - "), rowNode.RelatedSegmentIDs)
+				typedNode := newStructureNode(runID, sourceID, typedNodeType, rowNode.NodeID, typedPath, row.number, row.number, typedTitle, strings.Join(cells, " - "), rowNode.RelatedSegmentIDs)
 				nodes = append(nodes, typedNode)
 			}
 		}
 	}
 	for _, item := range listItems(section.lines) {
-		nodeType, ok := typedNodeFromText(item.text)
+		nodeType, title, ok := typedNodeFromTitle(item.text, item.text)
 		if !ok {
 			continue
 		}
-		title := listTitle(item.text)
 		nodePath := append(append([]string(nil), section.headingPath...), title)
 		nodes = append(nodes, newStructureNode(runID, sourceID, nodeType, parentID, nodePath, item.number, item.number, title, strings.TrimSpace(strings.TrimPrefix(item.text, "-")), segmentsForRange(segments, item.number, item.number)))
 	}
 	return nodes
+}
+
+type transcriptTurn struct {
+	timestamp string
+	speaker   string
+	start     int
+	end       int
+	hasText   bool
+}
+
+func structureTranscriptTurns(runID, sourceID, rootID, documentTitle string, sections []section, segments []Segment) []StructureNode {
+	turns := transcriptTurns(sections)
+	nodes := make([]StructureNode, 0, len(turns))
+	for _, turn := range turns {
+		title := turn.timestamp + " - " + turn.speaker
+		node := newStructureNode(
+			runID,
+			sourceID,
+			StructureNodeTypeTranscriptTurn,
+			rootID,
+			[]string{documentTitle, title},
+			turn.start,
+			turn.end,
+			title,
+			"Transcript turn by "+turn.speaker+" at "+turn.timestamp+".",
+			segmentsForRange(segments, turn.start, turn.end),
+		)
+		if !turn.hasText {
+			node = markStructureNeedsReview(node, "Transcript turn has a timestamp and speaker but no utterance text.")
+		}
+		nodes = append(nodes, node)
+	}
+	return nodes
+}
+
+func transcriptTurns(sections []section) []transcriptTurn {
+	lines := allSectionLines(sections)
+	var turns []transcriptTurn
+	for _, item := range lines {
+		matches := transcriptTurnPattern.FindStringSubmatch(strings.TrimSpace(item.text))
+		if matches == nil {
+			if len(turns) > 0 && strings.TrimSpace(item.text) != "" {
+				turns[len(turns)-1].end = item.number
+				turns[len(turns)-1].hasText = true
+			}
+			continue
+		}
+		if len(turns) > 0 && turns[len(turns)-1].end < turns[len(turns)-1].start {
+			turns[len(turns)-1].end = turns[len(turns)-1].start
+		}
+		turns = append(turns, transcriptTurn{
+			timestamp: matches[1],
+			speaker:   strings.TrimSpace(matches[2]),
+			start:     item.number,
+			end:       item.number,
+		})
+	}
+	return turns
+}
+
+func allSectionLines(sections []section) []line {
+	var lines []line
+	for _, section := range sections {
+		lines = append(lines, section.lines...)
+	}
+	sort.SliceStable(lines, func(i, j int) bool {
+		return lines[i].number < lines[j].number
+	})
+	return lines
 }
 
 func markStructureNeedsReview(node StructureNode, message string) StructureNode {
@@ -232,7 +310,7 @@ func newStructureNode(runID, sourceID string, nodeType StructureNodeType, parent
 	case StructureNodeTypeUnknown:
 		node.ReviewStatus = ReviewStatusNeedsReview
 		node.Confidence = ConfidenceLow
-	case StructureNodeTypeDocument, StructureNodeTypeSection, StructureNodeTypeTable, StructureNodeTypeTableRow:
+	case StructureNodeTypeDocument, StructureNodeTypeSection, StructureNodeTypeTable, StructureNodeTypeTableRow, StructureNodeTypeTranscriptTurn:
 		node.Confidence = ConfidenceMedium
 	default:
 		node.Confidence = ConfidenceHigh
@@ -364,7 +442,7 @@ func ClassifyUnsafeStructureMarkers(node StructureNode) StructureNode {
 		}
 		node.RelatedSegmentIDs = []string{}
 		node.Evidence.RelatedSegmentIDs = []string{}
-		node.Blockers = append(node.Blockers, Blocker{Code: "unsafe_private_marker", Message: "Structure node contains an unsafe, private, or governance marker."})
+		node.Blockers = append(node.Blockers, Blocker{Code: "unsafe_private_marker", Message: "Structure node contains an unsafe or private marker."})
 	}
 	return node
 }
@@ -484,7 +562,7 @@ func RejectDuplicateStructureNodeIDs(nodes []StructureNode) error {
 
 func validStructureNodeType(value StructureNodeType) bool {
 	switch value {
-	case StructureNodeTypeDocument, StructureNodeTypeSection, StructureNodeTypeTable, StructureNodeTypeTableRow, StructureNodeTypeCapability, StructureNodeTypeAudience, StructureNodeTypeWorkflow, StructureNodeTypeRequirement, StructureNodeTypeUnknown:
+	case StructureNodeTypeDocument, StructureNodeTypeSection, StructureNodeTypeTable, StructureNodeTypeTableRow, StructureNodeTypeCapability, StructureNodeTypeTranscriptTurn, StructureNodeTypeAudience, StructureNodeTypeWorkflow, StructureNodeTypeRequirement, StructureNodeTypeUnknown:
 		return true
 	default:
 		return false
@@ -573,6 +651,9 @@ func listItems(lines []line) []line {
 }
 
 func typedNodeFromText(text string) (StructureNodeType, bool) {
+	if _, ok := capabilityCodeTitle(text); ok {
+		return StructureNodeTypeCapability, true
+	}
 	lower := strings.ToLower(text)
 	switch {
 	case strings.Contains(lower, "maybe") || strings.Contains(lower, "unclear") || strings.Contains(lower, "ambiguous"):
@@ -590,6 +671,17 @@ func typedNodeFromText(text string) (StructureNodeType, bool) {
 	}
 }
 
+func typedNodeFromTitle(title, text string) (StructureNodeType, string, bool) {
+	if capabilityTitle, ok := capabilityCodeTitle(title); ok {
+		return StructureNodeTypeCapability, capabilityTitle, true
+	}
+	nodeType, ok := typedNodeFromText(text)
+	if !ok {
+		return "", "", false
+	}
+	return nodeType, listTitle(title), true
+}
+
 func listTitle(text string) string {
 	text = strings.TrimSpace(text)
 	for _, prefix := range []string{"Capability:", "Requirement:", "Workflow:", "Audience:", "User group:"} {
@@ -602,6 +694,26 @@ func listTitle(text string) string {
 		text = strings.TrimSpace(text[:72])
 	}
 	return strings.Trim(text, ".")
+}
+
+func capabilityCodeTitle(text string) (string, bool) {
+	text = stripMarkdownEmphasis(strings.TrimSpace(text))
+	matches := capabilityCodePattern.FindStringSubmatch(text)
+	if matches == nil {
+		return "", false
+	}
+	if !readableWordPattern.MatchString(matches[2]) {
+		return "", false
+	}
+	return strings.TrimSpace(text), true
+}
+
+func stripMarkdownEmphasis(text string) string {
+	text = strings.TrimSpace(text)
+	text = strings.ReplaceAll(text, "**", "")
+	text = strings.ReplaceAll(text, "__", "")
+	text = strings.Trim(text, "*_ ")
+	return strings.TrimSpace(text)
 }
 
 func segmentsForRange(segments []Segment, start, end int) []string {
@@ -625,11 +737,20 @@ func orderStructureNodes(nodes []StructureNode) []StructureNode {
 
 func documentTitle(path string, sections []section) string {
 	for _, section := range sections {
-		if len(section.headingPath) > 0 {
+		if section.sourceHeadingLevel == 1 && len(section.headingPath) > 0 {
 			return section.headingPath[0]
 		}
 	}
 	return strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+}
+
+func documentHasH1(sections []section) bool {
+	for _, section := range sections {
+		if section.sourceHeadingLevel == 1 {
+			return true
+		}
+	}
+	return false
 }
 
 func maxLineNumber(sections []section) int {
@@ -645,9 +766,16 @@ func maxLineNumber(sections []section) int {
 
 func sectionLineRange(section section) (int, int) {
 	if len(section.lines) == 0 {
+		if section.headingLine > 0 {
+			return section.headingLine, section.headingLine
+		}
 		return 1, 1
 	}
-	return section.lines[0].number, section.lines[len(section.lines)-1].number
+	start := section.lines[0].number
+	if section.headingLine > 0 && section.headingLine < start {
+		start = section.headingLine
+	}
+	return start, section.lines[len(section.lines)-1].number
 }
 
 func structureHash(sourceID string, nodeType StructureNodeType, path []string, start, end int, title, summary string) string {

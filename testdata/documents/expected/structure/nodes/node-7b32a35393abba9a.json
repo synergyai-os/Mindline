@@ -1,0 +1,32 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-7b32a35393abba9a",
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_document_id": "doc-malformed-ambiguous",
+  "node_type": "unknown",
+  "review_status": "needs_review",
+  "confidence": "low",
+  "title": "Maybe this belongs under another section",
+  "summary": "Maybe this belongs under another section",
+  "parent_node_id": "node-da8ea3c9a7eef125",
+  "child_node_ids": [],
+  "related_segment_ids": [
+    "seg-06acacd2b3948f89"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-malformed-ambiguous",
+    "heading_path": [
+      "Ambiguous Process",
+      "Open Questions",
+      "Maybe this belongs under another section"
+    ],
+    "line_start": 10,
+    "line_end": 10,
+    "content_hash": "sha256:2b6c3cda47c927f0b53e119f1b43f0fe4921ecc178b25709ffc3d23514af6e5e",
+    "related_segment_ids": [
+      "seg-06acacd2b3948f89"
+    ]
+  },
+  "blockers": []
+}

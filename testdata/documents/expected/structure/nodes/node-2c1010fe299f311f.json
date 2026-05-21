@@ -1,0 +1,41 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-2c1010fe299f311f",
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_document_id": "doc-process-capability-table",
+  "node_type": "document",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "Operating Model",
+  "summary": "Document structure root.",
+  "parent_node_id": "",
+  "child_node_ids": [
+    "node-638665395f7f3c28",
+    "node-36b5fbf2b1081d26"
+  ],
+  "related_segment_ids": [
+    "seg-033a97d3fea5c818",
+    "seg-cfe0bb76e0e3dfcf",
+    "seg-1845f0ed31e657ee",
+    "seg-c2b527bc5e7ac60f",
+    "seg-93c7d15cd036b970"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-process-capability-table",
+    "heading_path": [
+      "Operating Model"
+    ],
+    "line_start": 1,
+    "line_end": 14,
+    "content_hash": "sha256:4830b2dddff86f99dc8975b1f42a8e05b469a806a9f40a6f31d4cdf23eb7a732",
+    "related_segment_ids": [
+      "seg-033a97d3fea5c818",
+      "seg-cfe0bb76e0e3dfcf",
+      "seg-1845f0ed31e657ee",
+      "seg-c2b527bc5e7ac60f",
+      "seg-93c7d15cd036b970"
+    ]
+  },
+  "blockers": []
+}

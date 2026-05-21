@@ -1,0 +1,36 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-f8754dbfe753bb5c",
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_document_id": "doc-transcript-turns",
+  "node_type": "transcript_turn",
+  "review_status": "needs_review",
+  "confidence": "low",
+  "title": "1:02:03 - Empty Speaker",
+  "summary": "Transcript turn by Empty Speaker at 1:02:03.",
+  "parent_node_id": "node-716d4cdb3be40177",
+  "child_node_ids": [],
+  "related_segment_ids": [
+    "seg-a8eae20c6a10164d"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-transcript-turns",
+    "heading_path": [
+      "transcript-turns",
+      "1:02:03 - Empty Speaker"
+    ],
+    "line_start": 10,
+    "line_end": 10,
+    "content_hash": "sha256:c86b6139862b1f222d1ecaf55d783f8df544c050df28a89e2a7d170867cb735b",
+    "related_segment_ids": [
+      "seg-a8eae20c6a10164d"
+    ]
+  },
+  "blockers": [
+    {
+      "code": "malformed_structure",
+      "message": "Transcript turn has a timestamp and speaker but no utterance text."
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-51ea2fa737c4242f",
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_document_id": "doc-unsafe-marker",
+  "node_type": "document",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "Safety Sample",
+  "summary": "Document structure root.",
+  "parent_node_id": "",
+  "child_node_ids": [
+    "node-09c7b0bdba536cb4",
+    "node-00cb6de05831d58c"
+  ],
+  "related_segment_ids": [
+    "seg-baf5dd5aca6e1a7c",
+    "seg-ec6b63a4685be8c0"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-unsafe-marker",
+    "heading_path": [
+      "Safety Sample"
+    ],
+    "line_start": 1,
+    "line_end": 9,
+    "content_hash": "sha256:f0a0a20e34a4bf741156dbf3ccfa793c89700c90a5d85e3bea70a81d561a8ecc",
+    "related_segment_ids": [
+      "seg-baf5dd5aca6e1a7c",
+      "seg-ec6b63a4685be8c0"
+    ]
+  },
+  "blockers": []
+}
