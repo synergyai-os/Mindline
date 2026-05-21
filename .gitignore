@@ -1,6 +1,7 @@
 .cache/
 .gocache/
 .DS_Store
+temp/
 .productbrain/*
 !.productbrain/specs/
 !.productbrain/specs/**

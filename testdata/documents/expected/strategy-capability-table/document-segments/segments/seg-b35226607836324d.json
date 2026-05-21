@@ -1,0 +1,31 @@
+{
+  "authority_ids": [
+    "PROD-1",
+    "DOMAIN-1",
+    "DEC-15",
+    "WP-8",
+    "WP-9",
+    "WP-10"
+  ],
+  "blockers": [],
+  "confidence": "medium",
+  "evidence": {
+    "kind": "location",
+    "heading_path": [
+      "Document processing strategy",
+      "Capability table"
+    ],
+    "line_start": 13,
+    "line_end": 13,
+    "content_hash": "sha256:316aa477669daefe6f311f5068aa177b1579cc1112737cc7bcdcc569b55a753d"
+  },
+  "review_status": "ready",
+  "run_id": "run-doc-e4ff6601c602753e",
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-b35226607836324d",
+  "semantic_type": "reference",
+  "source_document_id": "doc-strategy-capability-table",
+  "source_kind": "markdown",
+  "summary": "Segment contract - Define a reusable document candidate shape - Ready",
+  "title": "Segment contract"
+}

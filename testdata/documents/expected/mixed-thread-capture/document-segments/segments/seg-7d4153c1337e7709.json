@@ -1,0 +1,36 @@
+{
+  "authority_ids": [
+    "PROD-1",
+    "DOMAIN-1",
+    "DEC-15",
+    "WP-8",
+    "WP-9",
+    "WP-10"
+  ],
+  "blockers": [
+    {
+      "code": "unsafe_private_marker",
+      "message": "Segment contains an unsafe or private marker."
+    }
+  ],
+  "confidence": "low",
+  "evidence": {
+    "kind": "location",
+    "heading_path": [
+      "Unsafe heading redacted",
+      "Unsafe heading redacted"
+    ],
+    "line_start": 23,
+    "line_end": 23,
+    "content_hash": "sha256:24a765c3f60b16f1b72231481d09f7078af2b4d98acd380dea5468da117b68da"
+  },
+  "review_status": "blocked",
+  "run_id": "run-doc-dc28525bad06e31b",
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-7d4153c1337e7709",
+  "semantic_type": "source_note",
+  "source_document_id": "doc-mixed-thread-capture",
+  "source_kind": "markdown",
+  "summary": "Segment content was redacted because it contains an unsafe marker.",
+  "title": "Unsafe content redacted"
+}

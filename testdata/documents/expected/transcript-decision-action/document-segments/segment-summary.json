@@ -1,0 +1,95 @@
+{
+  "authority_ids": [
+    "PROD-1",
+    "DOMAIN-1",
+    "DEC-15",
+    "WP-8",
+    "WP-9",
+    "WP-10"
+  ],
+  "needs_review_count": 0,
+  "run_id": "run-doc-f548e3343b9d956b",
+  "schema_version": "document-segment-summary/v0.1",
+  "segment_count": 8,
+  "segments": [
+    {
+      "segment_id": "seg-dbf3ce85addffb86",
+      "source_document_id": "doc-transcript-decision-action",
+      "semantic_type": "meeting_note",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-dbf3ce85addffb86.json",
+      "preview_path": "previews/seg-dbf3ce85addffb86.md"
+    },
+    {
+      "segment_id": "seg-1fdb98432f1b0a38",
+      "source_document_id": "doc-transcript-decision-action",
+      "semantic_type": "meeting_note",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-1fdb98432f1b0a38.json",
+      "preview_path": "previews/seg-1fdb98432f1b0a38.md"
+    },
+    {
+      "segment_id": "seg-f0707b79fba1780b",
+      "source_document_id": "doc-transcript-decision-action",
+      "semantic_type": "decision",
+      "review_status": "ready",
+      "confidence": "high",
+      "segment_path": "segments/seg-f0707b79fba1780b.json",
+      "preview_path": "previews/seg-f0707b79fba1780b.md"
+    },
+    {
+      "segment_id": "seg-698b27790debbb48",
+      "source_document_id": "doc-transcript-decision-action",
+      "semantic_type": "decision",
+      "review_status": "ready",
+      "confidence": "high",
+      "segment_path": "segments/seg-698b27790debbb48.json",
+      "preview_path": "previews/seg-698b27790debbb48.md"
+    },
+    {
+      "segment_id": "seg-13f095f8bb23e706",
+      "source_document_id": "doc-transcript-decision-action",
+      "semantic_type": "action",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-13f095f8bb23e706.json",
+      "preview_path": "previews/seg-13f095f8bb23e706.md"
+    },
+    {
+      "segment_id": "seg-1e8340d5ed38985f",
+      "source_document_id": "doc-transcript-decision-action",
+      "semantic_type": "action",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-1e8340d5ed38985f.json",
+      "preview_path": "previews/seg-1e8340d5ed38985f.md"
+    },
+    {
+      "segment_id": "seg-8fbde2f1f99905aa",
+      "source_document_id": "doc-transcript-decision-action",
+      "semantic_type": "action",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-8fbde2f1f99905aa.json",
+      "preview_path": "previews/seg-8fbde2f1f99905aa.md"
+    },
+    {
+      "segment_id": "seg-6a2e9cd7557d1f68",
+      "source_document_id": "doc-transcript-decision-action",
+      "semantic_type": "tension",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-6a2e9cd7557d1f68.json",
+      "preview_path": "previews/seg-6a2e9cd7557d1f68.md"
+    }
+  ],
+  "source_count": 1,
+  "type_counts": {
+    "action": 3,
+    "decision": 2,
+    "meeting_note": 2,
+    "tension": 1
+  }
+}
