@@ -138,18 +138,24 @@ func parseSections(body string) ([]section, error) {
 	var sections []section
 	current := section{}
 	var headingPath []string
-	inFence := false
+	var fenceMarker string
 	scanner := bufio.NewScanner(strings.NewReader(body))
 	lineNumber := 0
 	for scanner.Scan() {
 		lineNumber++
 		text := scanner.Text()
 		trimmed := strings.TrimSpace(text)
-		if isFenceMarker(trimmed) {
-			inFence = !inFence
+		if marker, ok := fenceMarkerType(trimmed); ok {
+			if fenceMarker == "" {
+				fenceMarker = marker
+				continue
+			}
+			if fenceMarker == marker {
+				fenceMarker = ""
+			}
 			continue
 		}
-		if inFence {
+		if fenceMarker != "" {
 			continue
 		}
 		if isATXHeading(text) {
@@ -180,8 +186,15 @@ func parseSections(body string) ([]section, error) {
 	return sections, nil
 }
 
-func isFenceMarker(text string) bool {
-	return strings.HasPrefix(text, "```") || strings.HasPrefix(text, "~~~")
+func fenceMarkerType(text string) (string, bool) {
+	switch {
+	case strings.HasPrefix(text, "```"):
+		return "```", true
+	case strings.HasPrefix(text, "~~~"):
+		return "~~~", true
+	default:
+		return "", false
+	}
 }
 
 func isATXHeading(text string) bool {

@@ -414,6 +414,23 @@ func TestParseSectionsIgnoresFencedCodeBlocks(t *testing.T) {
 	}
 }
 
+func TestParseSectionsTracksFenceMarkerType(t *testing.T) {
+	sections, err := parseSections("# Notes\n\n~~~md\n```not a closing fence\nDecision: code sample must stay ignored.\n~~~\n\nAction: process real prose.\n")
+	if err != nil {
+		t.Fatalf("parse sections: %v", err)
+	}
+	if len(sections) != 1 {
+		t.Fatalf("expected 1 section, got %d: %+v", len(sections), sections)
+	}
+	segments := decomposeSection("run-doc-demo", "doc-demo", sections[0])
+	if len(segments) != 1 {
+		t.Fatalf("expected only real prose segment, got %d: %+v", len(segments), segments)
+	}
+	if strings.Contains(strings.ToLower(segments[0].Summary), "code sample") {
+		t.Fatalf("code fence content became a segment: %+v", segments[0])
+	}
+}
+
 func TestParseSectionsRequiresValidATXHeading(t *testing.T) {
 	sections, err := parseSections("# Notes\n\n#123 should remain prose.\n#include should remain prose too.\n## Follow up\n\nAction: keep valid headings.\n")
 	if err != nil {
