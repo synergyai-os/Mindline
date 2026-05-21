@@ -215,7 +215,7 @@ func (r Runner) runDocuments(args []string, stdout, stderr io.Writer) int {
 	}
 	summary, err := documents.DecomposePath(inputPath, outDir)
 	if err != nil {
-		if strings.Contains(err.Error(), "output") || strings.Contains(err.Error(), "symlink") || strings.Contains(err.Error(), "escaped") {
+		if documents.IsArtifactWriteError(err) {
 			fmt.Fprintf(stderr, "write document segments: %v\n", err)
 			return ExitArtifactWrite
 		}

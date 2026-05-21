@@ -428,6 +428,20 @@ func TestParseSectionsRequiresValidATXHeading(t *testing.T) {
 	assertHeadingPath(t, sections[1].headingPath, []string{"Notes", "Follow up"})
 }
 
+func TestParseSectionsAcceptsIndentedATXHeading(t *testing.T) {
+	sections, err := parseSections("# Notes\n\n   ## Indented valid heading\n\nAction: preserve section provenance.\n\n    # Code-like line remains prose.\n")
+	if err != nil {
+		t.Fatalf("parse sections: %v", err)
+	}
+	if len(sections) != 2 {
+		t.Fatalf("expected 2 sections, got %d: %+v", len(sections), sections)
+	}
+	assertHeadingPath(t, sections[1].headingPath, []string{"Notes", "Indented valid heading"})
+	if len(sections[1].lines) != 2 {
+		t.Fatalf("expected 4-space heading-like line to remain prose, got %+v", sections[1].lines)
+	}
+}
+
 func TestDocumentSegmentHasNoDestinationHints(t *testing.T) {
 	data, err := json.Marshal(validSegment())
 	if err != nil {
@@ -470,8 +484,16 @@ func TestDocumentsPackageDoesNotImportProductBrain(t *testing.T) {
 
 func TestSegmentID(t *testing.T) {
 	got := SegmentID("run-doc-demo", "doc-demo", []string{"Actions"}, 12, "Product Lead to prepare checklist.")
-	if got != "seg-57061a0612ea70f1" {
+	if got != "seg-986c470fb2625d48" {
 		t.Fatalf("unexpected segment id: %s", got)
+	}
+}
+
+func TestSegmentIDSerializesLineStartNumerically(t *testing.T) {
+	first := SegmentID("run-doc-demo", "doc-demo", []string{"Actions"}, 0xD800, "repeat text")
+	second := SegmentID("run-doc-demo", "doc-demo", []string{"Actions"}, 0xD801, "repeat text")
+	if first == second {
+		t.Fatalf("line numbers must produce distinct segment ids, both got %s", first)
 	}
 }
 

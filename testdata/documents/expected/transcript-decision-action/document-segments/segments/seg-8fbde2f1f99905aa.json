@@ -1,0 +1,31 @@
+{
+  "authority_ids": [
+    "PROD-1",
+    "DOMAIN-1",
+    "DEC-15",
+    "WP-8",
+    "WP-9",
+    "WP-10"
+  ],
+  "blockers": [],
+  "confidence": "medium",
+  "evidence": {
+    "kind": "location",
+    "heading_path": [
+      "Product sync transcript",
+      "Actions"
+    ],
+    "line_start": 17,
+    "line_end": 17,
+    "content_hash": "sha256:2ba97923b912197d183c005e78161407a4371159c83977049763fb54949b06a9"
+  },
+  "review_status": "ready",
+  "run_id": "run-doc-f548e3343b9d956b",
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-8fbde2f1f99905aa",
+  "semantic_type": "action",
+  "source_document_id": "doc-transcript-decision-action",
+  "source_kind": "markdown",
+  "summary": "Engineering Lead to verify the artifact tree before review.",
+  "title": "Engineering Lead to verify the artifact tree before review"
+}

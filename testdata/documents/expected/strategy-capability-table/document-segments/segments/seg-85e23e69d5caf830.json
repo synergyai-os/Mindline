@@ -1,0 +1,31 @@
+{
+  "authority_ids": [
+    "PROD-1",
+    "DOMAIN-1",
+    "DEC-15",
+    "WP-8",
+    "WP-9",
+    "WP-10"
+  ],
+  "blockers": [],
+  "confidence": "medium",
+  "evidence": {
+    "kind": "location",
+    "heading_path": [
+      "Document processing strategy",
+      "Capability table"
+    ],
+    "line_start": 14,
+    "line_end": 14,
+    "content_hash": "sha256:0d78606d38eb31f1ea3262f400a130016b4d34587f111a546259474b65eb2453"
+  },
+  "review_status": "ready",
+  "run_id": "run-doc-e4ff6601c602753e",
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-85e23e69d5caf830",
+  "semantic_type": "reference",
+  "source_document_id": "doc-strategy-capability-table",
+  "source_kind": "markdown",
+  "summary": "Artifact writer - Persist summaries, segment JSON, and previews under explicit output - Ready",
+  "title": "Artifact writer"
+}

@@ -1,0 +1,31 @@
+{
+  "authority_ids": [
+    "PROD-1",
+    "DOMAIN-1",
+    "DEC-15",
+    "WP-8",
+    "WP-9",
+    "WP-10"
+  ],
+  "blockers": [],
+  "confidence": "medium",
+  "evidence": {
+    "kind": "location",
+    "heading_path": [
+      "Product sync transcript",
+      "Meeting context"
+    ],
+    "line_start": 6,
+    "line_end": 6,
+    "content_hash": "sha256:8b04c438f22d1b91528acbca208b313b725133e6570ad097a69003996f4b7b4a"
+  },
+  "review_status": "ready",
+  "run_id": "run-doc-f548e3343b9d956b",
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-1fdb98432f1b0a38",
+  "semantic_type": "meeting_note",
+  "source_document_id": "doc-transcript-decision-action",
+  "source_kind": "markdown",
+  "summary": "Support needs a handover session before the pilot starts.",
+  "title": "Support needs a handover session before the pilot starts"
+}

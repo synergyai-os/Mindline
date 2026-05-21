@@ -87,6 +87,24 @@ func TestDocumentsDecomposeDoesNotEmitProductBrainProposals(t *testing.T) {
 	}
 }
 
+func TestDocumentsDecomposeReportsWriteFailuresAsArtifactWrite(t *testing.T) {
+	outFile := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(outFile, []byte("occupied"), 0o644); err != nil {
+		t.Fatalf("write out file: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "decompose", documentsFixture(t, "markdown", "mixed-thread-capture.md"),
+		"--out", outFile,
+	}, &stdout, &stderr)
+	if code != ExitArtifactWrite {
+		t.Fatalf("expected artifact write exit, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "write document segments") {
+		t.Fatalf("expected write error context, got %q", stderr.String())
+	}
+}
+
 func documentsFixture(t *testing.T, parts ...string) string {
 	t.Helper()
 	_, file, _, ok := runtime.Caller(0)

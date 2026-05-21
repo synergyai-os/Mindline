@@ -153,8 +153,9 @@ func parseSections(body string) ([]section, error) {
 			continue
 		}
 		if isATXHeading(text) {
-			level := headingLevel(text)
-			heading := strings.TrimSpace(strings.TrimLeft(text, "#"))
+			headingText := strings.TrimLeft(text, " ")
+			level := headingLevel(headingText)
+			heading := strings.TrimSpace(strings.TrimLeft(headingText, "#"))
 			if len(current.lines) > 0 || len(current.headingPath) > 0 {
 				sections = append(sections, current)
 			}
@@ -184,6 +185,11 @@ func isFenceMarker(text string) bool {
 }
 
 func isATXHeading(text string) bool {
+	leadingSpaces := len(text) - len(strings.TrimLeft(text, " "))
+	if leadingSpaces > 3 {
+		return false
+	}
+	text = strings.TrimLeft(text, " ")
 	if text == "" || text[0] != '#' {
 		return false
 	}

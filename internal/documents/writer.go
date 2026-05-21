@@ -2,13 +2,38 @@ package documents
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
+type ArtifactWriteError struct {
+	Err error
+}
+
+func (e ArtifactWriteError) Error() string {
+	return e.Err.Error()
+}
+
+func (e ArtifactWriteError) Unwrap() error {
+	return e.Err
+}
+
+func IsArtifactWriteError(err error) bool {
+	var writeErr ArtifactWriteError
+	return errors.As(err, &writeErr)
+}
+
 func Write(outDir string, summary Summary, segments []Segment) error {
+	if err := write(outDir, summary, segments); err != nil {
+		return ArtifactWriteError{Err: err}
+	}
+	return nil
+}
+
+func write(outDir string, summary Summary, segments []Segment) error {
 	if strings.TrimSpace(outDir) == "" {
 		return fmt.Errorf("missing required --out")
 	}

@@ -1,0 +1,31 @@
+{
+  "authority_ids": [
+    "PROD-1",
+    "DOMAIN-1",
+    "DEC-15",
+    "WP-8",
+    "WP-9",
+    "WP-10"
+  ],
+  "blockers": [],
+  "confidence": "low",
+  "evidence": {
+    "kind": "location",
+    "heading_path": [
+      "Mixed capture thread",
+      "Ambiguous note"
+    ],
+    "line_start": 19,
+    "line_end": 19,
+    "content_hash": "sha256:63c24c9499b2a33a604dfe6fd2b9770041f9f21aeb9561fcfc6a836a040e1241"
+  },
+  "review_status": "needs_review",
+  "run_id": "run-doc-dc28525bad06e31b",
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-c796e40a4bad4f24",
+  "semantic_type": "unknown",
+  "source_document_id": "doc-mixed-thread-capture",
+  "source_kind": "markdown",
+  "summary": "Maybe later we should change the review flow, but the owner and outcome are unclear.",
+  "title": "Maybe later we should change the review flow, but the owner and outcome"
+}

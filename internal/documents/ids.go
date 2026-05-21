@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -37,7 +38,7 @@ func redactedDocumentID(value string) string {
 }
 
 func SegmentID(runID, sourceDocumentID string, headingPath []string, lineStart int, text string) string {
-	seed := runID + "\x00" + sourceDocumentID + "\x00" + strings.Join(headingPath, "/") + "\x00" + string(rune(lineStart)) + "\x00" + strings.TrimSpace(text)
+	seed := runID + "\x00" + sourceDocumentID + "\x00" + strings.Join(headingPath, "/") + "\x00" + strconv.Itoa(lineStart) + "\x00" + strings.TrimSpace(text)
 	sum := sha256.Sum256([]byte(seed))
 	return "seg-" + hex.EncodeToString(sum[:])[:16]
 }

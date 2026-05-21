@@ -1,0 +1,31 @@
+{
+  "authority_ids": [
+    "PROD-1",
+    "DOMAIN-1",
+    "DEC-15",
+    "WP-8",
+    "WP-9",
+    "WP-10"
+  ],
+  "blockers": [],
+  "confidence": "medium",
+  "evidence": {
+    "kind": "location",
+    "heading_path": [
+      "Mixed capture thread",
+      "Signals"
+    ],
+    "line_start": 14,
+    "line_end": 14,
+    "content_hash": "sha256:cf1d8c9103fa684b2110a87da693ba1b199b3366e69f8bc2dc70babff473dfe8"
+  },
+  "review_status": "ready",
+  "run_id": "run-doc-dc28525bad06e31b",
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-d83cbb3aaa37572a",
+  "semantic_type": "insight",
+  "source_document_id": "doc-mixed-thread-capture",
+  "source_kind": "markdown",
+  "summary": "Insight: repeated support questions show that review status must be visible.",
+  "title": "repeated support questions show that review status must be visible"
+}

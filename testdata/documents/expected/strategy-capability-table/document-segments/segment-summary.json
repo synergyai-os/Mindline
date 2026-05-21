@@ -13,76 +13,76 @@
   "segment_count": 8,
   "segments": [
     {
-      "segment_id": "seg-0ad6cda807abf5ac",
+      "segment_id": "seg-315843ff3c834b45",
       "source_document_id": "doc-strategy-capability-table",
       "semantic_type": "standard",
       "review_status": "ready",
       "confidence": "high",
-      "segment_path": "segments/seg-0ad6cda807abf5ac.json",
-      "preview_path": "previews/seg-0ad6cda807abf5ac.md"
+      "segment_path": "segments/seg-315843ff3c834b45.json",
+      "preview_path": "previews/seg-315843ff3c834b45.md"
     },
     {
-      "segment_id": "seg-5b76713e081b2aec",
+      "segment_id": "seg-122de8fcc0a5ea3a",
       "source_document_id": "doc-strategy-capability-table",
       "semantic_type": "decision",
       "review_status": "ready",
       "confidence": "high",
-      "segment_path": "segments/seg-5b76713e081b2aec.json",
-      "preview_path": "previews/seg-5b76713e081b2aec.md"
+      "segment_path": "segments/seg-122de8fcc0a5ea3a.json",
+      "preview_path": "previews/seg-122de8fcc0a5ea3a.md"
     },
     {
-      "segment_id": "seg-7a6228dc64061955",
+      "segment_id": "seg-400a6e557321b1fd",
       "source_document_id": "doc-strategy-capability-table",
       "semantic_type": "standard",
       "review_status": "ready",
       "confidence": "high",
-      "segment_path": "segments/seg-7a6228dc64061955.json",
-      "preview_path": "previews/seg-7a6228dc64061955.md"
+      "segment_path": "segments/seg-400a6e557321b1fd.json",
+      "preview_path": "previews/seg-400a6e557321b1fd.md"
     },
     {
-      "segment_id": "seg-7c6fed21bf001426",
+      "segment_id": "seg-d93362e742b788ac",
       "source_document_id": "doc-strategy-capability-table",
       "semantic_type": "reference",
       "review_status": "ready",
       "confidence": "medium",
-      "segment_path": "segments/seg-7c6fed21bf001426.json",
-      "preview_path": "previews/seg-7c6fed21bf001426.md"
+      "segment_path": "segments/seg-d93362e742b788ac.json",
+      "preview_path": "previews/seg-d93362e742b788ac.md"
     },
     {
-      "segment_id": "seg-60e9863265b86587",
+      "segment_id": "seg-b35226607836324d",
       "source_document_id": "doc-strategy-capability-table",
       "semantic_type": "reference",
       "review_status": "ready",
       "confidence": "medium",
-      "segment_path": "segments/seg-60e9863265b86587.json",
-      "preview_path": "previews/seg-60e9863265b86587.md"
+      "segment_path": "segments/seg-b35226607836324d.json",
+      "preview_path": "previews/seg-b35226607836324d.md"
     },
     {
-      "segment_id": "seg-4c66c471f9fe9abe",
+      "segment_id": "seg-85e23e69d5caf830",
       "source_document_id": "doc-strategy-capability-table",
       "semantic_type": "reference",
       "review_status": "ready",
       "confidence": "medium",
-      "segment_path": "segments/seg-4c66c471f9fe9abe.json",
-      "preview_path": "previews/seg-4c66c471f9fe9abe.md"
+      "segment_path": "segments/seg-85e23e69d5caf830.json",
+      "preview_path": "previews/seg-85e23e69d5caf830.md"
     },
     {
-      "segment_id": "seg-13aa9d9743f6f356",
+      "segment_id": "seg-6832f28c3b60c0ab",
       "source_document_id": "doc-strategy-capability-table",
       "semantic_type": "reference",
       "review_status": "ready",
       "confidence": "medium",
-      "segment_path": "segments/seg-13aa9d9743f6f356.json",
-      "preview_path": "previews/seg-13aa9d9743f6f356.md"
+      "segment_path": "segments/seg-6832f28c3b60c0ab.json",
+      "preview_path": "previews/seg-6832f28c3b60c0ab.md"
     },
     {
-      "segment_id": "seg-dc82654e8cd8143a",
+      "segment_id": "seg-3bb61a90097b5e12",
       "source_document_id": "doc-strategy-capability-table",
       "semantic_type": "work_item",
       "review_status": "ready",
       "confidence": "medium",
-      "segment_path": "segments/seg-dc82654e8cd8143a.json",
-      "preview_path": "previews/seg-dc82654e8cd8143a.md"
+      "segment_path": "segments/seg-3bb61a90097b5e12.json",
+      "preview_path": "previews/seg-3bb61a90097b5e12.md"
     }
   ],
   "source_count": 1,
