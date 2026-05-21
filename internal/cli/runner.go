@@ -13,6 +13,7 @@ import (
 	"github.com/synergyai-os/Mindline/internal/destinations"
 	tolariadestination "github.com/synergyai-os/Mindline/internal/destinations/tolaria"
 	"github.com/synergyai-os/Mindline/internal/pipeline"
+	"github.com/synergyai-os/Mindline/internal/productbrain"
 	"github.com/synergyai-os/Mindline/internal/sbos"
 )
 
@@ -23,7 +24,7 @@ const (
 	ExitArtifactWrite = 3
 )
 
-const usage = "usage: mindline process <candidate.json> [--out <dir>]\nusage: mindline slack normalize <slack-export.json> [--out <dir>]\nusage: mindline destination dry-run <sbos-result.json> --adapter tolaria --out <dir>\nusage: mindline pipeline dry-run <pipeline-input.json> --method basb-para-code --destination tolaria --out <dir>\n"
+const usage = "usage: mindline process <candidate.json> [--out <dir>]\nusage: mindline slack normalize <slack-export.json> [--out <dir>]\nusage: mindline destination dry-run <sbos-result.json> --adapter tolaria --out <dir>\nusage: mindline pipeline dry-run <pipeline-input.json> --method basb-para-code --destination tolaria --out <dir>\nusage: mindline product-brain propose <run-dir> --profile <profile.json> --out <dir>\n"
 
 const tolariaVaultPath = "/Users/randyhereman/Young Human Club Dropbox/02. Areas/PKM - Tolaria"
 
@@ -128,6 +129,9 @@ func (r Runner) Run(args []string, stdout, stderr io.Writer) int {
 	if args[0] == "pipeline" {
 		return r.runPipeline(args[1:], stdout, stderr)
 	}
+	if args[0] == "product-brain" {
+		return r.runProductBrain(args[1:], stdout, stderr)
+	}
 	if args[0] != "process" {
 		fmt.Fprint(stderr, usage)
 		return ExitUsage
@@ -193,6 +197,30 @@ func (r Runner) Run(args []string, stdout, stderr io.Writer) int {
 	encoder := json.NewEncoder(stdout)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(envelope); err != nil {
+		fmt.Fprintf(stderr, "write stdout: %v\n", err)
+		return ExitUsage
+	}
+	return ExitOK
+}
+
+func (r Runner) runProductBrain(args []string, stdout, stderr io.Writer) int {
+	runDir, profilePath, outDir, parseError := parseProductBrainProposeArgs(args)
+	if parseError != parseErrorNone {
+		fmt.Fprint(stderr, usage)
+		return ExitUsage
+	}
+	summary, err := productbrain.Propose(runDir, profilePath, outDir)
+	if err != nil {
+		if strings.Contains(err.Error(), "write") || strings.Contains(err.Error(), "output") || strings.Contains(err.Error(), "private or secret") {
+			fmt.Fprintf(stderr, "write Product Brain proposals: %v\n", err)
+			return ExitArtifactWrite
+		}
+		fmt.Fprintf(stderr, "propose Product Brain writes: %v\n", err)
+		return ExitProcess
+	}
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(summary); err != nil {
 		fmt.Fprintf(stderr, "write stdout: %v\n", err)
 		return ExitUsage
 	}
@@ -497,6 +525,30 @@ func parsePipelineDryRunArgs(args []string) (inputPath string, methodID string, 
 		return "", "", "", "", parseErrorUsage
 	}
 	return inputPath, methodID, destinationID, outDir, parseErrorNone
+}
+
+func parseProductBrainProposeArgs(args []string) (runDir string, profilePath string, outDir string, err parseError) {
+	if len(args) != 6 || args[0] != "propose" || strings.TrimSpace(args[1]) == "" {
+		return "", "", "", parseErrorUsage
+	}
+	runDir = args[1]
+	for i := 2; i < len(args); i += 2 {
+		if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+			return "", "", "", parseErrorUsage
+		}
+		switch args[i] {
+		case "--profile":
+			profilePath = args[i+1]
+		case "--out":
+			outDir = args[i+1]
+		default:
+			return "", "", "", parseErrorUsage
+		}
+	}
+	if profilePath == "" || outDir == "" {
+		return "", "", "", parseErrorUsage
+	}
+	return runDir, profilePath, outDir, parseErrorNone
 }
 
 func (r Runner) validateOutDir(outDir string) error {

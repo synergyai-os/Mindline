@@ -1,0 +1,22 @@
+{
+  "schema_version": "run-ledger/v0.1",
+  "run_id": "run-0123456789abcdef",
+  "run_mode": "dry_run",
+  "pipeline_summary_path": "pipeline-summary.json",
+  "method_id": "basb-para-code",
+  "destination_id": "tolaria",
+  "input_fingerprint": "sha256:fixture",
+  "started_at": "2026-05-21T00:00:00Z",
+  "completed_at": "2026-05-21T00:00:00Z",
+  "item_count": 2,
+  "review_queue_count": 2,
+  "states": {
+    "published_preview": 0,
+    "background": 0,
+    "needs_enrichment": 0,
+    "needs_clarification": 1,
+    "blocked": 1,
+    "skipped": 0
+  },
+  "authority_ids": ["PROD-1", "DEC-17", "DEC-15", "WP-8"]
+}

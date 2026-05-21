@@ -1,0 +1,15 @@
+{
+  "schema_version": "run-ledger-item/v0.1",
+  "run_id": "run-0123456789abcdef",
+  "record_id": "review-decision",
+  "source_candidate_id": "review-decision",
+  "state": "needs_clarification",
+  "review_required": true,
+  "blockers": ["decision_rationale_ready"],
+  "pipeline_result_path": "results/review-decision.json",
+  "processor_plan_path": "processors/review-decision.json",
+  "destination_summary_path": "destinations/review-decision/destination-summary.json",
+  "safe_title": "Choose Product Brain workspace profile bridge",
+  "safe_summary": "Decision: use Product Brain workspace profiles before live writes.",
+  "authority_ids": ["PROD-1", "DEC-17", "DEC-15", "WP-8"]
+}

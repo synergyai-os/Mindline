@@ -1,0 +1,15 @@
+{
+  "schema_version": "run-ledger-item/v0.1",
+  "run_id": "run-0123456789abcdef",
+  "record_id": "review-blocked",
+  "source_candidate_id": "review-blocked",
+  "state": "blocked",
+  "review_required": true,
+  "blockers": ["unknown_product_brain_intent"],
+  "pipeline_result_path": "results/review-blocked.json",
+  "processor_plan_path": "processors/review-blocked.json",
+  "destination_summary_path": "destinations/review-blocked/destination-summary.json",
+  "safe_title": "Unmapped note",
+  "safe_summary": "This item is useful but has no Product Brain target intent.",
+  "authority_ids": ["PROD-1", "DEC-17", "DEC-15", "WP-8"]
+}
