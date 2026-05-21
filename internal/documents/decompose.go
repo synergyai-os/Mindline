@@ -188,14 +188,14 @@ func decomposeSection(runID, sourceID string, section section) []Segment {
 	if len(section.lines) == 0 {
 		return nil
 	}
-	if hasMarkdownTable(section.lines) {
-		return decomposeTable(runID, sourceID, section)
-	}
 	var segments []Segment
+	if hasMarkdownTable(section.lines) {
+		segments = append(segments, decomposeTable(runID, sourceID, section)...)
+	}
 	for _, line := range section.lines {
 		text := strings.TrimSpace(strings.TrimPrefix(line.text, "-"))
 		text = strings.TrimSpace(text)
-		if text == "" || strings.HasPrefix(text, "|") || strings.HasPrefix(text, "---") {
+		if text == "" || strings.HasPrefix(text, "|") || isMarkdownTableDelimiter(text) {
 			continue
 		}
 		segments = append(segments, segmentFromText(runID, sourceID, section.headingPath, line.number, line.number, text))
@@ -216,7 +216,7 @@ func decomposeTable(runID, sourceID string, section section) []Segment {
 	var rows []line
 	for _, line := range section.lines {
 		text := strings.TrimSpace(line.text)
-		if strings.HasPrefix(text, "|") && !strings.Contains(text, "---") {
+		if strings.HasPrefix(text, "|") && !isMarkdownTableDelimiter(text) {
 			rows = append(rows, line)
 		}
 	}
@@ -248,6 +248,23 @@ func tableCells(row string) []string {
 		}
 	}
 	return cells
+}
+
+func isMarkdownTableDelimiter(text string) bool {
+	text = strings.TrimSpace(text)
+	if !strings.HasPrefix(text, "|") {
+		return strings.Trim(text, "-: ") == ""
+	}
+	cells := tableCells(text)
+	if len(cells) == 0 {
+		return false
+	}
+	for _, cell := range cells {
+		if strings.Trim(cell, "-: ") != "" {
+			return false
+		}
+	}
+	return true
 }
 
 func segmentFromText(runID, sourceID string, headingPath []string, start, end int, text string) Segment {

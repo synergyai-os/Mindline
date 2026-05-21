@@ -359,6 +359,42 @@ func TestParseSectionsPreservesHeadingHierarchy(t *testing.T) {
 	assertHeadingPath(t, sections[2].headingPath, []string{"Strategy", "Risks", "Follow up"})
 }
 
+func TestMixedTableSectionKeepsNonTableSegments(t *testing.T) {
+	segments := decomposeSection("run-doc-demo", "doc-demo", section{
+		headingPath: []string{"Capability review"},
+		lines: []line{
+			{number: 3, text: "Decision: keep local segment artifacts destination-neutral."},
+			{number: 5, text: "| Capability | Status |"},
+			{number: 6, text: "| --- | --- |"},
+			{number: 7, text: "| Segment writer | Ready |"},
+			{number: 9, text: "Action: validate downstream proposal adapters separately."},
+		},
+	})
+	if len(segments) < 4 {
+		t.Fatalf("expected table and non-table segments, got %d: %+v", len(segments), segments)
+	}
+	assertHasSemanticType(t, segments, SemanticTypeDecision)
+	assertHasSemanticType(t, segments, SemanticTypeAction)
+	assertHasSemanticType(t, segments, SemanticTypeReference)
+}
+
+func TestTableRowsMayContainDashesAsData(t *testing.T) {
+	segments := decomposeTable("run-doc-demo", "doc-demo", section{
+		headingPath: []string{"Version table"},
+		lines: []line{
+			{number: 1, text: "| Name | Range |"},
+			{number: 2, text: "| --- | --- |"},
+			{number: 3, text: "| Parser | v1---v2 |"},
+		},
+	})
+	if len(segments) != 2 {
+		t.Fatalf("expected table-level plus dashed data row segments, got %d: %+v", len(segments), segments)
+	}
+	if segments[1].Title != "Parser" || !strings.Contains(segments[1].Summary, "v1---v2") {
+		t.Fatalf("expected dashed data row to be preserved, got %+v", segments[1])
+	}
+}
+
 func TestDocumentSegmentHasNoDestinationHints(t *testing.T) {
 	data, err := json.Marshal(validSegment())
 	if err != nil {
@@ -614,6 +650,16 @@ func assertHeadingPath(t *testing.T, got []string, want []string) {
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("unexpected heading path got=%+v want=%+v", got, want)
 	}
+}
+
+func assertHasSemanticType(t *testing.T, segments []Segment, semanticType SemanticType) {
+	t.Helper()
+	for _, segment := range segments {
+		if segment.SemanticType == semanticType {
+			return
+		}
+	}
+	t.Fatalf("expected semantic type %s in %+v", semanticType, segments)
 }
 
 func keys(values map[string]string) []string {
