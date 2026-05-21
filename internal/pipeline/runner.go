@@ -13,8 +13,11 @@ import (
 	"github.com/synergyai-os/Mindline/internal/pipeline/artifacts"
 	"github.com/synergyai-os/Mindline/internal/pipeline/methods"
 	"github.com/synergyai-os/Mindline/internal/pipeline/processors"
+	"github.com/synergyai-os/Mindline/internal/pipeline/runs"
 	"github.com/synergyai-os/Mindline/internal/sbos"
 )
+
+var wp8AuthorityIDs = []string{"PROD-1", "DEC-17", "DEC-15", "WP-8"}
 
 type RunOptions struct {
 	ProtectedRoots       []string
@@ -34,6 +37,10 @@ type Runner struct {
 }
 
 func (r Runner) Run(inputPath, outDir string) (Summary, error) {
+	inputBytes, err := os.ReadFile(inputPath)
+	if err != nil {
+		return Summary{}, err
+	}
 	input, err := ParseInputFile(inputPath, ParseOptions{})
 	if err != nil {
 		return Summary{}, err
@@ -72,10 +79,103 @@ func (r Runner) Run(inputPath, outDir string) (Summary, error) {
 	}
 	summary.ItemCount = len(summary.Items)
 	artifacts.AssignPaths(&summary)
+	buildRunLedger(&summary, inputPath, inputBytes)
 	if err := artifacts.Write(outDir, summary, r.ProtectedRoots); err != nil {
 		return Summary{}, err
 	}
 	return summary, nil
+}
+
+func buildRunLedger(summary *Summary, inputPath string, inputBytes []byte) {
+	runID := runs.BuildRunID(runs.RunIdentityInput{
+		InputPath:     inputPath,
+		InputBytes:    inputBytes,
+		MethodID:      summary.MethodID,
+		DestinationID: summary.DestinationID,
+	})
+	ledgerItems := make([]runs.LedgerItem, 0, len(summary.Items))
+	for _, item := range summary.Items {
+		privateProvenance := resultBool(item.Result, "private_provenance")
+		secretLike := resultBool(item.Result, "secret_like")
+		ledgerItems = append(ledgerItems, runs.BuildLedgerItem(runID, runs.ItemInput{
+			RecordID:               resultString(item.Result, "record_id"),
+			SourceCandidateID:      resultString(item.Result, "source_candidate_id"),
+			PipelineState:          item.State,
+			Blockers:               ledgerBlockers(item.ProcessorPlan, privateProvenance, secretLike),
+			PreviewPaths:           previewPaths(item.PreviewFiles),
+			PipelineResultPath:     item.ResultPath,
+			ProcessorPlanPath:      item.ProcessorPlanPath,
+			DestinationSummaryPath: item.DestinationPath,
+			PrivateProvenance:      privateProvenance,
+			SecretLike:             secretLike,
+			RedactionRequired:      resultBool(item.Result, "redaction_required"),
+			SafeTitle:              item.CandidateID,
+		}, wp8AuthorityIDs))
+	}
+	summary.RunManifest = runs.BuildManifest(runs.ManifestInput{
+		RunID:            runID,
+		RunMode:          summary.RunMode,
+		MethodID:         summary.MethodID,
+		DestinationID:    summary.DestinationID,
+		InputFingerprint: runs.InputFingerprint(inputBytes),
+		Items:            ledgerItems,
+		AuthorityIDs:     wp8AuthorityIDs,
+	})
+	summary.LedgerItems = ledgerItems
+	summary.LedgerIndex = runs.BuildIndex(runID, ledgerItems, wp8AuthorityIDs)
+	summary.ReviewQueue = runs.BuildReviewQueue(runID, ledgerItems, wp8AuthorityIDs)
+	summary.ReviewItems = runs.BuildReviewQueueItems(ledgerItems, wp8AuthorityIDs)
+}
+
+func resultString(value any, key string) string {
+	if data, ok := value.(map[string]any); ok {
+		if got, ok := data[key].(string); ok {
+			return got
+		}
+	}
+	return ""
+}
+
+func resultBool(value any, key string) bool {
+	if data, ok := value.(map[string]any); ok {
+		if got, ok := data[key].(bool); ok {
+			return got
+		}
+	}
+	return false
+}
+
+func processorBlockers(value any) []string {
+	if plan, ok := value.(processors.PlanResult); ok {
+		return append([]string(nil), plan.Blockers...)
+	}
+	return nil
+}
+
+func ledgerBlockers(value any, privateProvenance bool, secretLike bool) []string {
+	blockers := processorBlockers(value)
+	if secretLike {
+		return blockers
+	}
+	if !privateProvenance {
+		return blockers
+	}
+	filtered := make([]string, 0, len(blockers))
+	for _, blocker := range blockers {
+		if blocker == "private_provenance_requires_review" {
+			continue
+		}
+		filtered = append(filtered, blocker)
+	}
+	return filtered
+}
+
+func previewPaths(files []artifacts.PreviewFile) []string {
+	out := make([]string, 0, len(files))
+	for _, file := range files {
+		out = append(out, file.Path)
+	}
+	return out
 }
 
 func loadCandidates(input Input) ([]sbos.Candidate, error) {
@@ -202,15 +302,18 @@ func pipelineResult(candidate sbos.Candidate, result sbos.ProcessResult, profile
 }
 
 func destinationArtifacts(candidate sbos.Candidate, resultEnvelope map[string]any, result sbos.ProcessResult, authorityIDs []string, blocked bool, blockers []string) (map[string]any, []artifacts.OperationFile, []artifacts.PreviewFile, error) {
-	slug := sanitize(candidate.CandidateID)
+	slug := runs.BuildSafeID(candidate.CandidateID)
 	if blocked {
+		sourceCandidateID := runs.BuildSafeID(safeDiagnostic(candidate.CandidateID, result.Safety))
+		sourceRecordID := runs.BuildSafeID(safeDiagnostic(result.RecordID, result.Safety))
+		idempotencyKey := runs.BuildSafeID(safeDiagnostic(result.IdempotencyKey, result.Safety))
 		operation := destinations.Operation{
 			SchemaVersion:        destinations.OperationSchemaVersion,
-			OperationID:          destinations.GenerateOperationID(DestinationTolaria, candidate.CandidateID, destinations.OperationBlocked),
+			OperationID:          destinations.GenerateOperationID(DestinationTolaria, sourceCandidateID, destinations.OperationBlocked),
 			DestinationAdapterID: DestinationTolaria,
-			SourceCandidateID:    safeDiagnostic(candidate.CandidateID, result.Safety),
-			SourceRecordID:       safeDiagnostic(result.RecordID, result.Safety),
-			IdempotencyKey:       safeDiagnostic(result.IdempotencyKey, result.Safety),
+			SourceCandidateID:    sourceCandidateID,
+			SourceRecordID:       sourceRecordID,
+			IdempotencyKey:       idempotencyKey,
 			OperationType:        destinations.OperationBlocked,
 			WriteMode:            destinations.WriteModeDryRun,
 			VisibilityLane:       destinations.VisibilityBlocked,
@@ -222,11 +325,14 @@ func destinationArtifacts(candidate sbos.Candidate, resultEnvelope map[string]an
 		operationPath := filepath.ToSlash(filepath.Join("destinations", slug, "operations", operation.OperationID+".json"))
 		return destinationSummary([]destinations.Operation{operation}, operationPath, ""), []artifacts.OperationFile{{Path: operationPath, Body: operation}}, nil, nil
 	}
+	sourceCandidateID := runs.BuildSafeID(result.SourceCandidateID)
+	recordID := runs.BuildSafeID(result.RecordID)
+	idempotencyKey := runs.BuildSafeID(result.IdempotencyKey)
 	destinationInput := destinations.InputResult{
 		State:             string(result.State),
-		RecordID:          result.RecordID,
-		SourceCandidateID: result.SourceCandidateID,
-		IdempotencyKey:    result.IdempotencyKey,
+		RecordID:          recordID,
+		SourceCandidateID: sourceCandidateID,
+		IdempotencyKey:    idempotencyKey,
 		AuthorityIDs:      append([]string(nil), authorityIDs...),
 		Safety: destinations.InputSafety{
 			PrivateProvenance: result.Safety.PrivateProvenance,

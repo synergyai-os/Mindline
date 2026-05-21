@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/synergyai-os/Mindline/internal/pipeline/runs"
 )
 
 func TestWriterWritesTextOnlyOutput(t *testing.T) {
@@ -41,6 +43,110 @@ func TestWriterWritesTextOnlyOutput(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(out, relative)); err != nil {
 			t.Fatalf("expected %s: %v", relative, err)
 		}
+	}
+}
+
+func TestWriterWritesLedgerAndReviewQueue(t *testing.T) {
+	out := t.TempDir()
+	output := goldenTextOnlyPipelineOutputWithLedger()
+	err := Write(out, output, nil)
+	if err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	for _, relative := range []string{
+		"ledger/run-manifest.json",
+		"ledger/index.json",
+		"ledger/items/pipeline-text-only.json",
+		"review-queue/review-queue.json",
+	} {
+		if _, err := os.Stat(filepath.Join(out, relative)); err != nil {
+			t.Fatalf("expected %s: %v", relative, err)
+		}
+	}
+}
+
+func TestWriterDisambiguatesDuplicateLedgerAndReviewItemFilenames(t *testing.T) {
+	out := t.TempDir()
+	authorityIDs := []string{"PROD-1", "DEC-17", "DEC-15", "WP-8"}
+	items := []runs.LedgerItem{
+		{RunID: "run-abc", RecordID: "shared-record", State: "needs_enrichment", ReviewRequired: true, ReviewReason: "missing_local_youtube_transcript"},
+		{RunID: "run-abc", RecordID: "shared-record", State: "blocked", ReviewRequired: true, ReviewReason: "missing_local_article"},
+	}
+	output := Output{
+		SchemaVersion: "pipeline-summary/v0.1",
+		RunManifest: runs.BuildManifest(runs.ManifestInput{
+			RunID:        "run-abc",
+			Items:        items,
+			AuthorityIDs: authorityIDs,
+			Now:          "2026-05-21T00:00:00Z",
+		}),
+		LedgerItems: items,
+		LedgerIndex: runs.BuildIndex("run-abc", items, authorityIDs),
+		ReviewQueue: runs.BuildReviewQueue("run-abc", items, authorityIDs),
+		ReviewItems: runs.BuildReviewQueueItems(items, authorityIDs),
+	}
+
+	if err := Write(out, output, nil); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	for _, relative := range []string{
+		"ledger/items/shared-record.json",
+		"ledger/items/shared-record-2.json",
+		"review-queue/items/shared-record.json",
+		"review-queue/items/shared-record-2.json",
+	} {
+		if _, err := os.Stat(filepath.Join(out, relative)); err != nil {
+			t.Fatalf("expected %s: %v", relative, err)
+		}
+	}
+	if output.LedgerIndex.Items[1].LedgerItemPath != "items/shared-record-2.json" {
+		t.Fatalf("index did not point at disambiguated ledger item: %+v", output.LedgerIndex.Items[1])
+	}
+	if output.ReviewQueue.Items[1].ReviewItemPath != "items/shared-record-2.json" {
+		t.Fatalf("queue did not point at disambiguated review item: %+v", output.ReviewQueue.Items[1])
+	}
+	if output.ReviewItems[1].Links["ledger_item"] != "ledger/items/shared-record-2.json" {
+		t.Fatalf("review item did not link to disambiguated ledger item: %+v", output.ReviewItems[1].Links)
+	}
+}
+
+func goldenTextOnlyPipelineOutputWithLedger() Output {
+	authorityIDs := []string{"PROD-1", "DEC-17", "DEC-15", "WP-8"}
+	item := runs.BuildLedgerItem("run-abc", runs.ItemInput{
+		RecordID:          "pipeline-text-only",
+		SourceCandidateID: "pipeline-text-only",
+		PipelineState:     "dry_run_published",
+		PreviewPaths:      []string{"destinations/pipeline-text-only/previews/op.md"},
+		SafeTitle:         "Mindline pipeline text-only fixture",
+	}, authorityIDs)
+	return Output{
+		SchemaVersion: "pipeline-summary/v0.1",
+		RunMode:       "dry_run",
+		MethodID:      "basb-para-code",
+		DestinationID: "tolaria",
+		ItemCount:     1,
+		Items: []Item{{
+			CandidateID:        "pipeline-text-only",
+			State:              "dry_run_published",
+			Result:             map[string]any{"state": "dry_run_published"},
+			ProcessorPlan:      map[string]any{"schema_version": "processor-plan/v0.1"},
+			DestinationSummary: map[string]any{"operation_count": float64(1)},
+			PreviewFiles:       []PreviewFile{{Path: "destinations/pipeline-text-only/previews/op.md", Body: "# Processed source pipeline-text-only\n"}},
+		}},
+		AuthorityIDs: authorityIDs,
+		RunManifest: runs.BuildManifest(runs.ManifestInput{
+			RunID:            "run-abc",
+			RunMode:          "dry_run",
+			MethodID:         "basb-para-code",
+			DestinationID:    "tolaria",
+			InputFingerprint: "sha256:test",
+			Items:            []runs.LedgerItem{item},
+			AuthorityIDs:     authorityIDs,
+			Now:              "2026-05-21T00:00:00Z",
+		}),
+		LedgerItems: []runs.LedgerItem{item},
+		LedgerIndex: runs.BuildIndex("run-abc", []runs.LedgerItem{item}, authorityIDs),
+		ReviewQueue: runs.BuildReviewQueue("run-abc", []runs.LedgerItem{item}, authorityIDs),
 	}
 }
 
@@ -88,7 +194,7 @@ func TestWriterAssignsUniquePathsForCollidingCandidateSlugs(t *testing.T) {
 	out := t.TempDir()
 	output := Output{Items: []Item{
 		{
-			CandidateID:        "Candidate A",
+			CandidateID:        "candidate-a",
 			Result:             map[string]any{"candidate": "first"},
 			ProcessorPlan:      map[string]any{"candidate": "first"},
 			DestinationSummary: map[string]any{"candidate": "first"},

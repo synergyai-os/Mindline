@@ -78,6 +78,16 @@ This command is dry-run only. It validates Product Brain authority ids, loads lo
 
 Tolaria is the first destination adapter, not the core surface. Future destinations can consume the same pipeline result and processor plan contracts.
 
+Each pipeline dry-run also writes a local run ledger and derived review queue:
+
+- `ledger/run-manifest.json` records the deterministic run id, input fingerprint, state counts, review count, and WP-8 authority ids.
+- `ledger/index.json` is the stable item lookup surface.
+- `ledger/items/<record_id>.json` records one safe, path-stable outcome per item.
+- `review-queue/review-queue.json` lists only items that need enrichment, clarification, or blocker review.
+- `review-queue/items/<record_id>.json` gives safe local context and links for each review item.
+
+Text-only publish previews are excluded from the review queue. Private provenance alone is retained as background ledger evidence, not a review item. Secret-like content is skipped without readable body content. Reusing an output directory for the same deterministic run is allowed; reusing it for a different run is refused before new ledger or review queue files are written.
+
 ## Candidate Contract
 
 Source adapters emit normalized candidate JSON. The public contract is documented in [docs/candidate-contract.md](docs/candidate-contract.md), with runnable examples in [examples/candidates](examples/candidates).
