@@ -97,6 +97,26 @@ func TestPathSafeIDsRedactUnsafeNativeIDs(t *testing.T) {
 	}
 }
 
+func TestLedgerItemUsesAssignedArtifactPaths(t *testing.T) {
+	got := BuildLedgerItem("run-abc", ItemInput{
+		RecordID:               "record-a",
+		SourceCandidateID:      "candidate-a",
+		PipelineResultPath:     "results/candidate-a-2.json",
+		ProcessorPlanPath:      "processors/candidate-a-2.json",
+		DestinationSummaryPath: "destinations/candidate-a-2/destination-summary.json",
+	}, []string{"PROD-1", "DEC-17", "DEC-15", "WP-8"})
+
+	if got.PipelineResultPath != "results/candidate-a-2.json" {
+		t.Fatalf("pipeline result path got %q", got.PipelineResultPath)
+	}
+	if got.ProcessorPlanPath != "processors/candidate-a-2.json" {
+		t.Fatalf("processor path got %q", got.ProcessorPlanPath)
+	}
+	if got.DestinationSummaryPath != "destinations/candidate-a-2/destination-summary.json" {
+		t.Fatalf("destination path got %q", got.DestinationSummaryPath)
+	}
+}
+
 func assertSafeIdentifier(t *testing.T, value string) {
 	t.Helper()
 	for _, forbidden := range []string{"PRIVATE_DM_SENTINEL_DO_NOT_WRITE", "sk-test-secret-do-not-leak", "http://", "https://", "..", "/", `\\`} {
@@ -133,6 +153,21 @@ func TestRunIDIsDeterministicAndDoesNotUsePrivateContent(t *testing.T) {
 	}
 	if gotA == "" || len(gotA) != len("run-0123456789abcdef") {
 		t.Fatalf("unexpected run id %q", gotA)
+	}
+}
+
+func TestRunIDNormalizesEquivalentInputPaths(t *testing.T) {
+	input := RunIdentityInput{
+		InputPath:     filepath.Join("inputs", "pipeline.json"),
+		InputBytes:    []byte(`{"source":"same"}`),
+		MethodID:      "basb-para-code",
+		DestinationID: "tolaria",
+	}
+	equivalent := input
+	equivalent.InputPath = filepath.Join(".", "inputs", "pipeline.json")
+
+	if got, want := BuildRunID(equivalent), BuildRunID(input); got != want {
+		t.Fatalf("equivalent input paths produced different run ids: %q != %q", got, want)
 	}
 }
 

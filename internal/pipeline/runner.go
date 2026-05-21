@@ -98,15 +98,18 @@ func buildRunLedger(summary *Summary, inputPath string, inputBytes []byte) {
 		privateProvenance := resultBool(item.Result, "private_provenance")
 		secretLike := resultBool(item.Result, "secret_like")
 		ledgerItems = append(ledgerItems, runs.BuildLedgerItem(runID, runs.ItemInput{
-			RecordID:          resultString(item.Result, "record_id"),
-			SourceCandidateID: resultString(item.Result, "source_candidate_id"),
-			PipelineState:     item.State,
-			Blockers:          ledgerBlockers(item.ProcessorPlan, privateProvenance, secretLike),
-			PreviewPaths:      previewPaths(item.PreviewFiles),
-			PrivateProvenance: privateProvenance,
-			SecretLike:        secretLike,
-			RedactionRequired: resultBool(item.Result, "redaction_required"),
-			SafeTitle:         item.CandidateID,
+			RecordID:               resultString(item.Result, "record_id"),
+			SourceCandidateID:      resultString(item.Result, "source_candidate_id"),
+			PipelineState:          item.State,
+			Blockers:               ledgerBlockers(item.ProcessorPlan, privateProvenance, secretLike),
+			PreviewPaths:           previewPaths(item.PreviewFiles),
+			PipelineResultPath:     item.ResultPath,
+			ProcessorPlanPath:      item.ProcessorPlanPath,
+			DestinationSummaryPath: item.DestinationPath,
+			PrivateProvenance:      privateProvenance,
+			SecretLike:             secretLike,
+			RedactionRequired:      resultBool(item.Result, "redaction_required"),
+			SafeTitle:              item.CandidateID,
 		}, wp8AuthorityIDs))
 	}
 	summary.RunManifest = runs.BuildManifest(runs.ManifestInput{

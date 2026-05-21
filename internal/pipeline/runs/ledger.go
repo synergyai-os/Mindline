@@ -17,15 +17,18 @@ const (
 )
 
 type ItemInput struct {
-	RecordID          string
-	SourceCandidateID string
-	PipelineState     string
-	Blockers          []string
-	PreviewPaths      []string
-	PrivateProvenance bool
-	SecretLike        bool
-	RedactionRequired bool
-	SafeTitle         string
+	RecordID               string
+	SourceCandidateID      string
+	PipelineState          string
+	Blockers               []string
+	PreviewPaths           []string
+	PipelineResultPath     string
+	ProcessorPlanPath      string
+	DestinationSummaryPath string
+	PrivateProvenance      bool
+	SecretLike             bool
+	RedactionRequired      bool
+	SafeTitle              string
 }
 
 type LedgerItem struct {
@@ -153,9 +156,9 @@ func BuildLedgerItem(runID string, input ItemInput, authorityIDs []string) Ledge
 		ReviewRequired:         reviewRequired,
 		ReviewReason:           reviewReason,
 		Blockers:               safeBlockers(input.Blockers, input.SecretLike),
-		PipelineResultPath:     cleanOutPath("results", recordID+".json"),
-		ProcessorPlanPath:      cleanOutPath("processors", recordID+".json"),
-		DestinationSummaryPath: cleanOutPath("destinations", recordID, "destination-summary.json"),
+		PipelineResultPath:     safeOutputPath(input.PipelineResultPath, cleanOutPath("results", recordID+".json")),
+		ProcessorPlanPath:      safeOutputPath(input.ProcessorPlanPath, cleanOutPath("processors", recordID+".json")),
+		DestinationSummaryPath: safeOutputPath(input.DestinationSummaryPath, cleanOutPath("destinations", recordID, "destination-summary.json")),
 		PreviewPaths:           safePreviewPaths(input.PreviewPaths),
 		SafeTitle:              title,
 		SafeSummary:            summary,
@@ -175,7 +178,7 @@ func BuildSafeID(native string) string {
 func BuildRunID(input RunIdentityInput) string {
 	sum := sha256.Sum256([]byte(strings.Join([]string{
 		RunLedgerSchemaVersion,
-		input.InputPath,
+		canonicalInputPath(input.InputPath),
 		string(input.InputBytes),
 		input.MethodID,
 		input.DestinationID,
@@ -383,6 +386,28 @@ func isSafeNativeID(value string) bool {
 
 func cleanOutPath(parts ...string) string {
 	return filepath.ToSlash(filepath.Join(parts...))
+}
+
+func canonicalInputPath(path string) string {
+	abs, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return filepath.Clean(path)
+	}
+	real, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return abs
+	}
+	return real
+}
+
+func safeOutputPath(path string, fallback string) string {
+	if path == "" || filepath.IsAbs(path) || strings.Contains(path, "..") || strings.Contains(path, `\`) {
+		return fallback
+	}
+	if strings.Contains(path, "PRIVATE_DM_SENTINEL_DO_NOT_WRITE") || strings.Contains(path, "sk-test-secret-do-not-leak") {
+		return fallback
+	}
+	return filepath.ToSlash(filepath.Clean(path))
 }
 
 func safePreviewPaths(paths []string) []string {
