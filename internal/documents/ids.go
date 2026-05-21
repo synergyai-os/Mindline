@@ -22,6 +22,15 @@ func SourceDocumentID(path string) string {
 	return "doc-" + sanitizeID(base)
 }
 
+func DisambiguatedSourceDocumentID(path string) string {
+	base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	if containsUnsafeMarker(base) {
+		return redactedDocumentID(filepath.Clean(path))
+	}
+	sum := sha256.Sum256([]byte(filepath.Clean(path)))
+	return "doc-" + sanitizeID(base) + "-" + hex.EncodeToString(sum[:])[:8]
+}
+
 func redactedDocumentID(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return "doc-redacted-" + hex.EncodeToString(sum[:])[:16]

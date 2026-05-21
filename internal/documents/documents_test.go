@@ -297,6 +297,45 @@ func TestUnsafeMarkerFilenameArtifactsAreRedacted(t *testing.T) {
 	assertGeneratedTreeExcludes(t, filepath.Join(out, "document-segments"), "secret", "token")
 }
 
+func TestDirectoryInputsDisambiguateDuplicateBasenames(t *testing.T) {
+	root := t.TempDir()
+	for _, dir := range []string{"alpha", "beta"} {
+		path := filepath.Join(root, dir, "notes.md")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir input parent: %v", err)
+		}
+		if err := os.WriteFile(path, []byte("# Decisions\n\nDecision: Ship the staged release.\n"), 0o644); err != nil {
+			t.Fatalf("write input: %v", err)
+		}
+	}
+	out := t.TempDir()
+	summary, err := DecomposePath(root, out)
+	if err != nil {
+		t.Fatalf("decompose duplicate basenames: %v", err)
+	}
+	if summary.SourceCount != 2 || summary.SegmentCount != 2 {
+		t.Fatalf("unexpected summary counts: %+v", summary)
+	}
+	sourceIDs := map[string]bool{}
+	for _, item := range summary.Segments {
+		sourceIDs[item.SourceDocumentID] = true
+	}
+	if len(sourceIDs) != 2 {
+		t.Fatalf("expected distinct source document ids, got %+v", sourceIDs)
+	}
+}
+
+func TestDecomposePathRejectsMarkdownScannerErrors(t *testing.T) {
+	input := filepath.Join(t.TempDir(), "long-line.md")
+	longLine := strings.Repeat("a", 1024*1024)
+	if err := os.WriteFile(input, []byte("# Oversized\n\n"+longLine+"\n"), 0o644); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
+	if _, err := DecomposePath(input, t.TempDir()); err == nil {
+		t.Fatalf("expected scanner error for oversized markdown line")
+	}
+}
+
 func TestDocumentSegmentHasNoDestinationHints(t *testing.T) {
 	data, err := json.Marshal(validSegment())
 	if err != nil {

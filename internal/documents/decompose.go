@@ -26,14 +26,15 @@ func DecomposePath(inputPath, outDir string) (Summary, error) {
 	if err != nil {
 		return Summary{}, err
 	}
+	sourceIDsByPath := sourceDocumentIDs(paths)
 	sourceIDs := make([]string, 0, len(paths))
 	for _, path := range paths {
-		sourceIDs = append(sourceIDs, SourceDocumentID(path))
+		sourceIDs = append(sourceIDs, sourceIDsByPath[path])
 	}
 	runID := RunID(sourceIDs)
 	var segments []Segment
 	for _, path := range paths {
-		sourceSegments, err := decomposeFile(path, runID)
+		sourceSegments, err := decomposeFile(path, runID, sourceIDsByPath[path])
 		if err != nil {
 			return Summary{}, err
 		}
@@ -101,13 +102,31 @@ func markdownPaths(inputPath string) ([]string, error) {
 	return paths, nil
 }
 
-func decomposeFile(path, runID string) ([]Segment, error) {
+func sourceDocumentIDs(paths []string) map[string]string {
+	counts := map[string]int{}
+	for _, path := range paths {
+		counts[SourceDocumentID(path)]++
+	}
+	ids := map[string]string{}
+	for _, path := range paths {
+		sourceID := SourceDocumentID(path)
+		if counts[sourceID] > 1 {
+			sourceID = DisambiguatedSourceDocumentID(path)
+		}
+		ids[path] = sourceID
+	}
+	return ids
+}
+
+func decomposeFile(path, runID, sourceID string) ([]Segment, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	sourceID := SourceDocumentID(path)
-	sections := parseSections(string(data))
+	sections, err := parseSections(string(data))
+	if err != nil {
+		return nil, err
+	}
 	var segments []Segment
 	for _, section := range sections {
 		segments = append(segments, decomposeSection(runID, sourceID, section)...)
@@ -115,7 +134,7 @@ func decomposeFile(path, runID string) ([]Segment, error) {
 	return segments, RejectDuplicateSegmentIDs(segments)
 }
 
-func parseSections(body string) []section {
+func parseSections(body string) ([]section, error) {
 	var sections []section
 	current := section{}
 	scanner := bufio.NewScanner(strings.NewReader(body))
@@ -139,7 +158,10 @@ func parseSections(body string) []section {
 	if len(current.lines) > 0 || len(current.headingPath) > 0 {
 		sections = append(sections, current)
 	}
-	return sections
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return sections, nil
 }
 
 func decomposeSection(runID, sourceID string, section section) []Segment {
