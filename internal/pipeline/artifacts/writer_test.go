@@ -83,10 +83,7 @@ func TestWriterDisambiguatesDuplicateLedgerAndReviewItemFilenames(t *testing.T) 
 		LedgerItems: items,
 		LedgerIndex: runs.BuildIndex("run-abc", items, authorityIDs),
 		ReviewQueue: runs.BuildReviewQueue("run-abc", items, authorityIDs),
-		ReviewItems: []runs.ReviewQueueItem{
-			runs.BuildReviewQueueItem(items[0], authorityIDs),
-			runs.BuildReviewQueueItem(items[1], authorityIDs),
-		},
+		ReviewItems: runs.BuildReviewQueueItems(items, authorityIDs),
 	}
 
 	if err := Write(out, output, nil); err != nil {
@@ -107,6 +104,9 @@ func TestWriterDisambiguatesDuplicateLedgerAndReviewItemFilenames(t *testing.T) 
 	}
 	if output.ReviewQueue.Items[1].ReviewItemPath != "items/shared-record-2.json" {
 		t.Fatalf("queue did not point at disambiguated review item: %+v", output.ReviewQueue.Items[1])
+	}
+	if output.ReviewItems[1].Links["ledger_item"] != "ledger/items/shared-record-2.json" {
+		t.Fatalf("review item did not link to disambiguated ledger item: %+v", output.ReviewItems[1].Links)
 	}
 }
 

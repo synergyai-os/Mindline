@@ -289,6 +289,23 @@ func BuildReviewQueue(runID string, items []LedgerItem, authorityIDs []string) R
 
 func BuildReviewQueueItem(item LedgerItem, authorityIDs []string) ReviewQueueItem {
 	recordID := BuildSafeID(item.RecordID)
+	return buildReviewQueueItem(item, authorityIDs, cleanOutPath("ledger", "items", recordID+".json"))
+}
+
+func BuildReviewQueueItems(items []LedgerItem, authorityIDs []string) []ReviewQueueItem {
+	pathIDs := BuildUniquePathIDs(ledgerRecordIDs(items))
+	out := make([]ReviewQueueItem, 0, len(items))
+	for i, item := range items {
+		if !item.ReviewRequired {
+			continue
+		}
+		out = append(out, buildReviewQueueItem(item, authorityIDs, cleanOutPath("ledger", "items", pathIDs[i]+".json")))
+	}
+	return out
+}
+
+func buildReviewQueueItem(item LedgerItem, authorityIDs []string, ledgerItemPath string) ReviewQueueItem {
+	recordID := BuildSafeID(item.RecordID)
 	reason := safeReason(item.ReviewReason)
 	return ReviewQueueItem{
 		SchemaVersion:       ReviewItemSchemaVersion,
@@ -301,7 +318,7 @@ func BuildReviewQueueItem(item LedgerItem, authorityIDs []string) ReviewQueueIte
 		SafeTitle:           item.SafeTitle,
 		SafeContext:         item.SafeSummary,
 		Links: map[string]string{
-			"ledger_item":         cleanOutPath("ledger", "items", recordID+".json"),
+			"ledger_item":         ledgerItemPath,
 			"pipeline_result":     item.PipelineResultPath,
 			"processor_plan":      item.ProcessorPlanPath,
 			"destination_summary": item.DestinationSummaryPath,

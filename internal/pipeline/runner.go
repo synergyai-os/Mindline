@@ -124,11 +124,7 @@ func buildRunLedger(summary *Summary, inputPath string, inputBytes []byte) {
 	summary.LedgerItems = ledgerItems
 	summary.LedgerIndex = runs.BuildIndex(runID, ledgerItems, wp8AuthorityIDs)
 	summary.ReviewQueue = runs.BuildReviewQueue(runID, ledgerItems, wp8AuthorityIDs)
-	for _, item := range ledgerItems {
-		if item.ReviewRequired {
-			summary.ReviewItems = append(summary.ReviewItems, runs.BuildReviewQueueItem(item, wp8AuthorityIDs))
-		}
-	}
+	summary.ReviewItems = runs.BuildReviewQueueItems(ledgerItems, wp8AuthorityIDs)
 }
 
 func resultString(value any, key string) string {
