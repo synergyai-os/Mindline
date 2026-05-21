@@ -416,47 +416,16 @@ func candidateWithSafety(candidateID, safetyField, visibilityMutation string) st
 }
 
 func expectedPublishMarkdown() string {
-	return `---
+	return `source_candidate_id: candidate-publish
+state: dry_run_published
+title: CODE workflow source
 type: Source
-status: dry_run
 domain: Tolaria PKM OS
-topics:
-  - knowledge-management
-  - code-workflow
-source_adapter: slack
-source_url: https://public.example/source
 confidence: high
-processing_status: dry_run_published
-visibility: publish
-schema_version: v0.1
-candidate_id: candidate-publish
----
-
-# CODE workflow source
-
-## Snapshot
-A useful source about CODE workflow.
-
-## Source Content
-- Source: https://public.example/source
-- Captured from: slack
-- Author: Randy
-
-## Key Details
-- A useful source about CODE workflow.
-
-## Relevance
-Classified under Tolaria PKM OS with high confidence.
-
-## Signals
-- knowledge-management
-- code-workflow
-
-## Related Sources
+source_adapter: slack
+text: A useful source about CODE workflow.
+urls:
 - https://public.example/source
-
-## Next Action
-No immediate action. Keep as processed source reference.
 `
 }
 

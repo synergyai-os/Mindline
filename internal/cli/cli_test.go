@@ -40,7 +40,7 @@ func TestProcessPrintsDeterministicEnvelopeToStdoutByDefault(t *testing.T) {
     {
       "kind": "dry_run_publish",
       "path": "",
-      "body": "---\ntype: Source\nstatus: dry_run\ndomain: Tolaria PKM OS\ntopics:\n  - knowledge-management\n  - code-workflow\nsource_adapter: slack\nsource_url: https://public.example/source\nconfidence: high\nprocessing_status: dry_run_published\nvisibility: publish\nschema_version: v0.1\ncandidate_id: candidate-publish\n---\n\n# CODE workflow source\n\n## Snapshot\nA useful source about CODE workflow.\n\n## Source Content\n- Source: https://public.example/source\n- Captured from: slack\n- Author: Randy\n\n## Key Details\n- A useful source about CODE workflow.\n\n## Relevance\nClassified under Tolaria PKM OS with high confidence.\n\n## Signals\n- knowledge-management\n- code-workflow\n\n## Related Sources\n- https://public.example/source\n\n## Next Action\nNo immediate action. Keep as processed source reference.\n"
+      "body": "source_candidate_id: candidate-publish\nstate: dry_run_published\ntitle: CODE workflow source\ntype: Source\ndomain: Tolaria PKM OS\nconfidence: high\nsource_adapter: slack\ntext: A useful source about CODE workflow.\nurls:\n- https://public.example/source\n"
     }
   ],
   "authority_ids": [
@@ -87,7 +87,7 @@ func TestProcessWritesArtifactsOnlyWithExplicitOut(t *testing.T) {
 	if !fs.Exists(artifactPath) {
 		t.Fatalf("expected artifact %q to be written", artifactPath)
 	}
-	if !strings.Contains(string(fs.MustReadFile(artifactPath)), "## Snapshot") {
+	if !strings.Contains(string(fs.MustReadFile(artifactPath)), "source_candidate_id: candidate-publish") {
 		t.Fatalf("expected artifact body to be written")
 	}
 	var envelope ResultEnvelope
@@ -412,47 +412,16 @@ func TestOutPathContainmentSanitizesCandidateIDs(t *testing.T) {
 }
 
 func expectedPublishMarkdown() string {
-	return `---
+	return `source_candidate_id: candidate-publish
+state: dry_run_published
+title: CODE workflow source
 type: Source
-status: dry_run
 domain: Tolaria PKM OS
-topics:
-  - knowledge-management
-  - code-workflow
-source_adapter: slack
-source_url: https://public.example/source
 confidence: high
-processing_status: dry_run_published
-visibility: publish
-schema_version: v0.1
-candidate_id: candidate-publish
----
-
-# CODE workflow source
-
-## Snapshot
-A useful source about CODE workflow.
-
-## Source Content
-- Source: https://public.example/source
-- Captured from: slack
-- Author: Randy
-
-## Key Details
-- A useful source about CODE workflow.
-
-## Relevance
-Classified under Tolaria PKM OS with high confidence.
-
-## Signals
-- knowledge-management
-- code-workflow
-
-## Related Sources
+source_adapter: slack
+text: A useful source about CODE workflow.
+urls:
 - https://public.example/source
-
-## Next Action
-No immediate action. Keep as processed source reference.
 `
 }
 

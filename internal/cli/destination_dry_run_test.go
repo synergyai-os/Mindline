@@ -55,8 +55,8 @@ func TestDestinationDryRunWritesTolariaOperationLayout(t *testing.T) {
 	if !fs.Exists(item.PreviewPath) {
 		t.Fatalf("expected preview file %q", item.PreviewPath)
 	}
-	if !strings.Contains(string(fs.MustReadFile(item.PreviewPath)), "## Snapshot") {
-		t.Fatalf("expected STD-9 preview body")
+	if !strings.Contains(string(fs.MustReadFile(item.PreviewPath)), "source_candidate_id: candidate-publish") {
+		t.Fatalf("expected neutral preview body")
 	}
 	if string(fs.MustReadFile("dry-run/destination-summary.json")) != stdout.String() {
 		t.Fatalf("summary file and stdout differ")
