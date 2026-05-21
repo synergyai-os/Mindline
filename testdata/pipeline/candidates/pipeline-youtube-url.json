@@ -1,0 +1,36 @@
+{
+  "schema_version": "v0.1",
+  "candidate_id": "pipeline-youtube-url",
+  "adapter_id": "local-fixture",
+  "external_id": "pipeline-youtube-url",
+  "captured_at": "2026-05-20T10:00:00Z",
+  "provenance": {
+    "permalink": {"value": "https://example.com/mindline-youtube-url", "visibility": "public"},
+    "native_timestamp": {"value": "2026-05-20T10:00:00Z", "visibility": "public"},
+    "author": {"value": "Randy", "visibility": "public"},
+    "raw_locator": {"value": "fixture://pipeline-youtube-url", "visibility": "public"}
+  },
+  "content": {
+    "text": "A useful PKM video needs a local transcript before Tolaria write decisions.",
+    "urls": ["https://www.youtube.com/watch?v=dQw4w9WgXcQ"],
+    "attachments": [],
+    "source_title": "Mindline pipeline YouTube fixture"
+  },
+  "enrichment_status": "incomplete",
+  "classification": {
+    "type": "Source",
+    "domain": "Tolaria PKM OS",
+    "topics": ["knowledge-management", "enrichment"],
+    "confidence": "medium",
+    "needs_clarification": false,
+    "clarification_reason": ""
+  },
+  "safety": {
+    "redaction_required": false,
+    "secret_like": false,
+    "empty_content": false,
+    "private_provenance": false
+  },
+  "desired_visibility": "publish",
+  "idempotency_key": "fixture:pipeline-youtube-url"
+}

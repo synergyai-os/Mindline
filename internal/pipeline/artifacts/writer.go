@@ -6,18 +6,25 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/synergyai-os/Mindline/internal/pipeline/runs"
 )
 
 type Output struct {
-	SchemaVersion string      `json:"schema_version"`
-	RunMode       string      `json:"run_mode"`
-	MethodID      string      `json:"method_id"`
-	DestinationID string      `json:"destination_id"`
-	ItemCount     int         `json:"item_count"`
-	BlockedCount  int         `json:"blocked_count"`
-	Items         []Item      `json:"items"`
-	AuthorityIDs  []string    `json:"authority_ids"`
-	Paths         OutputPaths `json:"paths"`
+	SchemaVersion string                 `json:"schema_version"`
+	RunMode       string                 `json:"run_mode"`
+	MethodID      string                 `json:"method_id"`
+	DestinationID string                 `json:"destination_id"`
+	ItemCount     int                    `json:"item_count"`
+	BlockedCount  int                    `json:"blocked_count"`
+	Items         []Item                 `json:"items"`
+	AuthorityIDs  []string               `json:"authority_ids"`
+	Paths         OutputPaths            `json:"paths"`
+	RunManifest   runs.Manifest          `json:"run_manifest,omitempty"`
+	LedgerItems   []runs.LedgerItem      `json:"ledger_items,omitempty"`
+	LedgerIndex   runs.Index             `json:"ledger_index,omitempty"`
+	ReviewQueue   runs.ReviewQueue       `json:"review_queue,omitempty"`
+	ReviewItems   []runs.ReviewQueueItem `json:"review_items,omitempty"`
 }
 
 type OutputPaths struct {
@@ -65,6 +72,9 @@ func (w Writer) Write(outDir string, output Output) error {
 	if err := rejectSentinels(output); err != nil {
 		return err
 	}
+	if err := rejectDifferentExistingRun(realOut, output.RunManifest); err != nil {
+		return err
+	}
 	if err := writeJSON(realOut, "pipeline-summary.json", output); err != nil {
 		return err
 	}
@@ -87,6 +97,31 @@ func (w Writer) Write(outDir string, output Output) error {
 			if err := writeFile(realOut, preview.Path, []byte(preview.Body)); err != nil {
 				return err
 			}
+		}
+	}
+	if output.RunManifest.SchemaVersion != "" {
+		if err := writeJSON(realOut, "ledger/run-manifest.json", output.RunManifest); err != nil {
+			return err
+		}
+	}
+	if output.LedgerIndex.SchemaVersion != "" {
+		if err := writeJSON(realOut, "ledger/index.json", output.LedgerIndex); err != nil {
+			return err
+		}
+	}
+	for _, item := range output.LedgerItems {
+		if err := writeJSON(realOut, filepath.ToSlash(filepath.Join("ledger", "items", item.RecordID+".json")), item); err != nil {
+			return err
+		}
+	}
+	if output.ReviewQueue.SchemaVersion != "" {
+		if err := writeJSON(realOut, "review-queue/review-queue.json", output.ReviewQueue); err != nil {
+			return err
+		}
+	}
+	for _, item := range output.ReviewItems {
+		if err := writeJSON(realOut, filepath.ToSlash(filepath.Join("review-queue", "items", item.RecordID+".json")), item); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -154,6 +189,29 @@ func writeJSON(root, relative string, value any) error {
 	}
 	data = append(data, '\n')
 	return writeFile(root, relative, data)
+}
+
+func rejectDifferentExistingRun(root string, manifest runs.Manifest) error {
+	if manifest.RunID == "" {
+		return nil
+	}
+	data, err := os.ReadFile(filepath.Join(root, "ledger", "run-manifest.json"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	var existing struct {
+		RunID string `json:"run_id"`
+	}
+	if err := json.Unmarshal(data, &existing); err != nil {
+		return fmt.Errorf("read existing run manifest: %w", err)
+	}
+	if existing.RunID != "" && existing.RunID != manifest.RunID {
+		return fmt.Errorf("existing output directory contains a different run")
+	}
+	return nil
 }
 
 func writeFile(root, relative string, data []byte) error {
@@ -251,7 +309,7 @@ func uniqueSlugs(items []Item) []string {
 	used := map[string]int{}
 	slugs := make([]string, len(items))
 	for i, item := range items {
-		base := slug(item.CandidateID)
+		base := runs.BuildSafeID(item.CandidateID)
 		used[base]++
 		if used[base] == 1 {
 			slugs[i] = base

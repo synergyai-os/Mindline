@@ -44,6 +44,30 @@ func TestPipelineDryRunStdoutMatchesSummaryFile(t *testing.T) {
 	if string(gotJSON) != string(wantJSON) {
 		t.Fatalf("stdout and file differ\nstdout=%s\nfile=%s", stdout.String(), data)
 	}
+	var summary struct {
+		RunManifest struct {
+			ReviewQueueCount int `json:"review_queue_count"`
+		} `json:"run_manifest"`
+		ReviewQueue struct {
+			QueueCount int `json:"queue_count"`
+		} `json:"review_queue"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
+		t.Fatalf("decode stdout summary: %v", err)
+	}
+	if summary.RunManifest.ReviewQueueCount != 0 || summary.ReviewQueue.QueueCount != 0 {
+		t.Fatalf("text-only should not enter review queue: %+v", summary)
+	}
+	for _, relative := range []string{
+		"ledger/run-manifest.json",
+		"ledger/index.json",
+		"ledger/items/pipeline-text-only.json",
+		"review-queue/review-queue.json",
+	} {
+		if _, err := os.Stat(filepath.Join(out, relative)); err != nil {
+			t.Fatalf("expected %s: %v", relative, err)
+		}
+	}
 }
 
 func fixturePipelineInput(t *testing.T, name string) string {
