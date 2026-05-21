@@ -12,6 +12,7 @@
   "evidence": {
     "kind": "location",
     "heading_path": [
+      "Mixed capture thread",
       "Signals"
     ],
     "line_start": 14,

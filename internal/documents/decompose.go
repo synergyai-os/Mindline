@@ -137,17 +137,23 @@ func decomposeFile(path, runID, sourceID string) ([]Segment, error) {
 func parseSections(body string) ([]section, error) {
 	var sections []section
 	current := section{}
+	var headingPath []string
 	scanner := bufio.NewScanner(strings.NewReader(body))
 	lineNumber := 0
 	for scanner.Scan() {
 		lineNumber++
 		text := scanner.Text()
 		if strings.HasPrefix(text, "#") {
+			level := headingLevel(text)
 			heading := strings.TrimSpace(strings.TrimLeft(text, "#"))
 			if len(current.lines) > 0 || len(current.headingPath) > 0 {
 				sections = append(sections, current)
 			}
-			current = section{headingPath: []string{heading}}
+			if level <= len(headingPath) {
+				headingPath = headingPath[:level-1]
+			}
+			headingPath = append(headingPath, heading)
+			current = section{headingPath: append([]string(nil), headingPath...)}
 			continue
 		}
 		if strings.TrimSpace(text) == "" {
@@ -162,6 +168,20 @@ func parseSections(body string) ([]section, error) {
 		return nil, err
 	}
 	return sections, nil
+}
+
+func headingLevel(text string) int {
+	level := 0
+	for _, r := range text {
+		if r != '#' {
+			break
+		}
+		level++
+	}
+	if level == 0 {
+		return 1
+	}
+	return level
 }
 
 func decomposeSection(runID, sourceID string, section section) []Segment {
@@ -254,14 +274,14 @@ func segmentFromText(runID, sourceID string, headingPath []string, start, end in
 		semanticType = SemanticTypeInsight
 	case strings.Contains(lower, "work item:"):
 		semanticType = SemanticTypeWorkItem
-	case strings.Contains(lower, "action:") || strings.Contains(lower, " to "):
-		semanticType = SemanticTypeAction
-	case strings.Contains(lower, "reference:") || strings.Contains(lower, "checklist") || strings.Contains(lower, "stage"):
-		semanticType = SemanticTypeReference
 	case strings.Contains(lower, "maybe") || strings.Contains(lower, "unclear"):
 		semanticType = SemanticTypeUnknown
 		status = ReviewStatusNeedsReview
 		confidence = ConfidenceLow
+	case strings.Contains(lower, "action:") || strings.Contains(lower, " to "):
+		semanticType = SemanticTypeAction
+	case strings.Contains(lower, "reference:") || strings.Contains(lower, "checklist") || strings.Contains(lower, "stage"):
+		semanticType = SemanticTypeReference
 	case strings.Contains(strings.ToLower(headingTitle(headingPath)), "meeting") || strings.Contains(lower, "speaker"):
 		semanticType = SemanticTypeMeetingNote
 	default:
@@ -293,7 +313,7 @@ func newSegment(runID, sourceID string, headingPath []string, start, end int, se
 		Blockers:     []Blocker{},
 		AuthorityIDs: append([]string(nil), WP10AuthorityIDs...),
 	}
-	segment.SegmentID = SegmentID(runID, sourceID, headingPath, start, title+"\n"+summary)
+	segment.SegmentID = SegmentID(runID, sourceID, []string{headingTitle(headingPath)}, start, title+"\n"+summary)
 	return ClassifyUnsafeMarkers(segment)
 }
 

@@ -336,6 +336,29 @@ func TestDecomposePathRejectsMarkdownScannerErrors(t *testing.T) {
 	}
 }
 
+func TestUncertaintyMarkersTakePrecedenceOverActionHeuristics(t *testing.T) {
+	segment := segmentFromText("run-doc-demo", "doc-demo", []string{"Open questions"}, 3, 3, "Maybe we need to revisit this")
+	if segment.SemanticType != SemanticTypeUnknown {
+		t.Fatalf("expected unknown semantic type, got %s", segment.SemanticType)
+	}
+	if segment.ReviewStatus != ReviewStatusNeedsReview {
+		t.Fatalf("expected needs_review status, got %s", segment.ReviewStatus)
+	}
+}
+
+func TestParseSectionsPreservesHeadingHierarchy(t *testing.T) {
+	sections, err := parseSections("# Strategy\n\nIntro note.\n\n## Risks\n\nRisk: ambiguous provenance.\n\n### Follow up\n\nAction: map nested headings.\n")
+	if err != nil {
+		t.Fatalf("parse sections: %v", err)
+	}
+	if len(sections) != 3 {
+		t.Fatalf("expected 3 sections, got %d: %+v", len(sections), sections)
+	}
+	assertHeadingPath(t, sections[0].headingPath, []string{"Strategy"})
+	assertHeadingPath(t, sections[1].headingPath, []string{"Strategy", "Risks"})
+	assertHeadingPath(t, sections[2].headingPath, []string{"Strategy", "Risks", "Follow up"})
+}
+
 func TestDocumentSegmentHasNoDestinationHints(t *testing.T) {
 	data, err := json.Marshal(validSegment())
 	if err != nil {
@@ -583,6 +606,13 @@ func assertGeneratedTreeExcludes(t *testing.T, root string, forbidden ...string)
 				t.Fatalf("generated artifact %s leaked %q:\n%s", path, value, body)
 			}
 		}
+	}
+}
+
+func assertHeadingPath(t *testing.T, got []string, want []string) {
+	t.Helper()
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("unexpected heading path got=%+v want=%+v", got, want)
 	}
 }
 
