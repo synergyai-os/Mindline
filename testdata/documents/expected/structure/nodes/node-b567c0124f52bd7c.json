@@ -1,0 +1,32 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-b567c0124f52bd7c",
+  "run_id": "run-struct-bf62ffb671d8ec6a",
+  "source_document_id": "doc-audience-capability-list",
+  "node_type": "workflow",
+  "review_status": "ready",
+  "confidence": "high",
+  "title": "preserve local structure",
+  "summary": "Workflow: preserve local structure",
+  "parent_node_id": "node-df927a661f074bd0",
+  "child_node_ids": [],
+  "related_segment_ids": [
+    "seg-84cfff395dc15fc2"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-audience-capability-list",
+    "heading_path": [
+      "Service Playbook",
+      "Workflow Steps",
+      "preserve local structure"
+    ],
+    "line_start": 12,
+    "line_end": 12,
+    "content_hash": "sha256:bf11c9ef1ef01d781c621348892f2f5602df0f46c90e7d5867aac277caa1a96a",
+    "related_segment_ids": [
+      "seg-84cfff395dc15fc2"
+    ]
+  },
+  "blockers": []
+}

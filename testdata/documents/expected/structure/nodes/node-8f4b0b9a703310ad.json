@@ -1,0 +1,43 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-8f4b0b9a703310ad",
+  "run_id": "run-struct-bf62ffb671d8ec6a",
+  "source_document_id": "doc-audience-capability-list",
+  "node_type": "document",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "Service Playbook",
+  "summary": "Document structure root.",
+  "parent_node_id": "",
+  "child_node_ids": [
+    "node-51733db6519e63ef",
+    "node-df927a661f074bd0"
+  ],
+  "related_segment_ids": [
+    "seg-d9273c6f52b610e1",
+    "seg-25f27b6fb2607964",
+    "seg-168018af023c7f6c",
+    "seg-3599b36d59a83287",
+    "seg-84cfff395dc15fc2",
+    "seg-24e76e31d8554ae9"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-audience-capability-list",
+    "heading_path": [
+      "Service Playbook"
+    ],
+    "line_start": 1,
+    "line_end": 13,
+    "content_hash": "sha256:09d9f70973c7c3cf4295679e4a0b0dec202ec62fb1b04ddbe215878c33ab1662",
+    "related_segment_ids": [
+      "seg-d9273c6f52b610e1",
+      "seg-25f27b6fb2607964",
+      "seg-168018af023c7f6c",
+      "seg-3599b36d59a83287",
+      "seg-84cfff395dc15fc2",
+      "seg-24e76e31d8554ae9"
+    ]
+  },
+  "blockers": []
+}

@@ -1,0 +1,32 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-5f28b3da18db75bd",
+  "run_id": "run-struct-bf62ffb671d8ec6a",
+  "source_document_id": "doc-malformed-ambiguous",
+  "node_type": "unknown",
+  "review_status": "needs_review",
+  "confidence": "low",
+  "title": "Unclear structure owner",
+  "summary": "Unclear structure owner",
+  "parent_node_id": "node-7fd8641f92b8fc87",
+  "child_node_ids": [],
+  "related_segment_ids": [
+    "seg-5c230b37eccdedce"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-malformed-ambiguous",
+    "heading_path": [
+      "Ambiguous Process",
+      "Open Questions",
+      "Unclear structure owner"
+    ],
+    "line_start": 11,
+    "line_end": 11,
+    "content_hash": "sha256:4d1efd81afd825b1c748a2afb82fed192b621abb5adeedb4ddf26bf18a77a0a1",
+    "related_segment_ids": [
+      "seg-5c230b37eccdedce"
+    ]
+  },
+  "blockers": []
+}

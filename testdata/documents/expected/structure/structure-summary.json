@@ -1,0 +1,388 @@
+{
+  "schema_version": "document-structure-summary/v0.1",
+  "run_id": "run-struct-bf62ffb671d8ec6a",
+  "source_count": 5,
+  "node_count": 40,
+  "needs_review_count": 7,
+  "blocked_count": 2,
+  "node_type_counts": {
+    "audience": 1,
+    "capability": 6,
+    "document": 5,
+    "requirement": 2,
+    "section": 10,
+    "table": 4,
+    "table_row": 5,
+    "unknown": 5,
+    "workflow": 2
+  },
+  "root_node_ids": [
+    "node-8f4b0b9a703310ad",
+    "node-5441859c65879cd8",
+    "node-e3e7e43c48bb44cb",
+    "node-f692b8bf94fba1c8",
+    "node-f5f50216cdb6b21b"
+  ],
+  "nodes": [
+    {
+      "node_id": "node-8f4b0b9a703310ad",
+      "source_document_id": "doc-audience-capability-list",
+      "node_type": "document",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "service-playbook",
+      "preview_path": "previews/node-8f4b0b9a703310ad.md"
+    },
+    {
+      "node_id": "node-51733db6519e63ef",
+      "source_document_id": "doc-audience-capability-list",
+      "node_type": "section",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "service-playbook/audience-groups",
+      "preview_path": "previews/node-51733db6519e63ef.md"
+    },
+    {
+      "node_id": "node-4867bd6ab67eb10c",
+      "source_document_id": "doc-audience-capability-list",
+      "node_type": "capability",
+      "review_status": "ready",
+      "confidence": "high",
+      "node_path": "service-playbook/audience-groups/compare-structured-sections-before-approval",
+      "preview_path": "previews/node-4867bd6ab67eb10c.md"
+    },
+    {
+      "node_id": "node-7fe3fce7cd497f33",
+      "source_document_id": "doc-audience-capability-list",
+      "node_type": "unknown",
+      "review_status": "needs_review",
+      "confidence": "low",
+      "node_path": "service-playbook/audience-groups/mark-unclear-relationships-for-review",
+      "preview_path": "previews/node-7fe3fce7cd497f33.md"
+    },
+    {
+      "node_id": "node-aa9992cc9ec3253a",
+      "source_document_id": "doc-audience-capability-list",
+      "node_type": "audience",
+      "review_status": "ready",
+      "confidence": "high",
+      "node_path": "service-playbook/audience-groups/operators-reviewing-source-packages",
+      "preview_path": "previews/node-aa9992cc9ec3253a.md"
+    },
+    {
+      "node_id": "node-df927a661f074bd0",
+      "source_document_id": "doc-audience-capability-list",
+      "node_type": "section",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "service-playbook/workflow-steps",
+      "preview_path": "previews/node-df927a661f074bd0.md"
+    },
+    {
+      "node_id": "node-ef386df142105f64",
+      "source_document_id": "doc-audience-capability-list",
+      "node_type": "workflow",
+      "review_status": "ready",
+      "confidence": "high",
+      "node_path": "service-playbook/workflow-steps/collect-source-material",
+      "preview_path": "previews/node-ef386df142105f64.md"
+    },
+    {
+      "node_id": "node-b567c0124f52bd7c",
+      "source_document_id": "doc-audience-capability-list",
+      "node_type": "workflow",
+      "review_status": "ready",
+      "confidence": "high",
+      "node_path": "service-playbook/workflow-steps/preserve-local-structure",
+      "preview_path": "previews/node-b567c0124f52bd7c.md"
+    },
+    {
+      "node_id": "node-327ffffe30b3088e",
+      "source_document_id": "doc-audience-capability-list",
+      "node_type": "unknown",
+      "review_status": "needs_review",
+      "confidence": "low",
+      "node_path": "service-playbook/workflow-steps/unclear-owner-for-escalation-path",
+      "preview_path": "previews/node-327ffffe30b3088e.md"
+    },
+    {
+      "node_id": "node-5441859c65879cd8",
+      "source_document_id": "doc-malformed-ambiguous",
+      "node_type": "document",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "ambiguous-process",
+      "preview_path": "previews/node-5441859c65879cd8.md"
+    },
+    {
+      "node_id": "node-ec359d8d5aaa078d",
+      "source_document_id": "doc-malformed-ambiguous",
+      "node_type": "section",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "ambiguous-process/broken-table",
+      "preview_path": "previews/node-ec359d8d5aaa078d.md"
+    },
+    {
+      "node_id": "node-208d8706f6997210",
+      "source_document_id": "doc-malformed-ambiguous",
+      "node_type": "table",
+      "review_status": "needs_review",
+      "confidence": "low",
+      "node_path": "ambiguous-process/broken-table/table-broken-table",
+      "preview_path": "previews/node-208d8706f6997210.md"
+    },
+    {
+      "node_id": "node-475bda4fb44e915a",
+      "source_document_id": "doc-malformed-ambiguous",
+      "node_type": "table_row",
+      "review_status": "needs_review",
+      "confidence": "low",
+      "node_path": "ambiguous-process/broken-table/table-broken-table/maybe-this-row-is-a-table-but-delimiter-is-missing",
+      "preview_path": "previews/node-475bda4fb44e915a.md"
+    },
+    {
+      "node_id": "node-419a2b05a9f641dc",
+      "source_document_id": "doc-malformed-ambiguous",
+      "node_type": "unknown",
+      "review_status": "needs_review",
+      "confidence": "low",
+      "node_path": "ambiguous-process/broken-table/table-broken-table/maybe-this-row-is-a-table-but-delimiter-is-missing/maybe-this-row-is-a-table-but-delimiter-is-missing",
+      "preview_path": "previews/node-419a2b05a9f641dc.md"
+    },
+    {
+      "node_id": "node-7fd8641f92b8fc87",
+      "source_document_id": "doc-malformed-ambiguous",
+      "node_type": "section",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "ambiguous-process/open-questions",
+      "preview_path": "previews/node-7fd8641f92b8fc87.md"
+    },
+    {
+      "node_id": "node-203cdcf47679d7c4",
+      "source_document_id": "doc-malformed-ambiguous",
+      "node_type": "unknown",
+      "review_status": "needs_review",
+      "confidence": "low",
+      "node_path": "ambiguous-process/open-questions/maybe-this-belongs-under-another-section",
+      "preview_path": "previews/node-203cdcf47679d7c4.md"
+    },
+    {
+      "node_id": "node-5f28b3da18db75bd",
+      "source_document_id": "doc-malformed-ambiguous",
+      "node_type": "unknown",
+      "review_status": "needs_review",
+      "confidence": "low",
+      "node_path": "ambiguous-process/open-questions/unclear-structure-owner",
+      "preview_path": "previews/node-5f28b3da18db75bd.md"
+    },
+    {
+      "node_id": "node-e3e7e43c48bb44cb",
+      "source_document_id": "doc-mixed-structure",
+      "node_type": "document",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "knowledge-runbook",
+      "preview_path": "previews/node-e3e7e43c48bb44cb.md"
+    },
+    {
+      "node_id": "node-18128e159178c8ad",
+      "source_document_id": "doc-mixed-structure",
+      "node_type": "section",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "knowledge-runbook/capture",
+      "preview_path": "previews/node-18128e159178c8ad.md"
+    },
+    {
+      "node_id": "node-801ae05cd1d54f67",
+      "source_document_id": "doc-mixed-structure",
+      "node_type": "requirement",
+      "review_status": "ready",
+      "confidence": "high",
+      "node_path": "knowledge-runbook/capture/link-each-node-to-source-lines",
+      "preview_path": "previews/node-801ae05cd1d54f67.md"
+    },
+    {
+      "node_id": "node-a57f106527a710de",
+      "source_document_id": "doc-mixed-structure",
+      "node_type": "capability",
+      "review_status": "ready",
+      "confidence": "high",
+      "node_path": "knowledge-runbook/capture/preserve-nested-headings",
+      "preview_path": "previews/node-a57f106527a710de.md"
+    },
+    {
+      "node_id": "node-410c3ffd96655946",
+      "source_document_id": "doc-mixed-structure",
+      "node_type": "section",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "knowledge-runbook/table-and-notes",
+      "preview_path": "previews/node-410c3ffd96655946.md"
+    },
+    {
+      "node_id": "node-bcc3e21cf81534a8",
+      "source_document_id": "doc-mixed-structure",
+      "node_type": "table",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "knowledge-runbook/table-and-notes/table-table-and-notes",
+      "preview_path": "previews/node-bcc3e21cf81534a8.md"
+    },
+    {
+      "node_id": "node-082837916725f264",
+      "source_document_id": "doc-mixed-structure",
+      "node_type": "table_row",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "knowledge-runbook/table-and-notes/table-table-and-notes/cap-100",
+      "preview_path": "previews/node-082837916725f264.md"
+    },
+    {
+      "node_id": "node-ae2b10796afacc64",
+      "source_document_id": "doc-mixed-structure",
+      "node_type": "capability",
+      "review_status": "ready",
+      "confidence": "high",
+      "node_path": "knowledge-runbook/table-and-notes/table-table-and-notes/cap-100/cap-100",
+      "preview_path": "previews/node-ae2b10796afacc64.md"
+    },
+    {
+      "node_id": "node-f692b8bf94fba1c8",
+      "source_document_id": "doc-process-capability-table",
+      "node_type": "document",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "operating-model",
+      "preview_path": "previews/node-f692b8bf94fba1c8.md"
+    },
+    {
+      "node_id": "node-b45f4e8cb5616011",
+      "source_document_id": "doc-process-capability-table",
+      "node_type": "section",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "operating-model/intake-capabilities",
+      "preview_path": "previews/node-b45f4e8cb5616011.md"
+    },
+    {
+      "node_id": "node-46cfbac64b06ea63",
+      "source_document_id": "doc-process-capability-table",
+      "node_type": "table",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "operating-model/intake-capabilities/table-intake-capabilities",
+      "preview_path": "previews/node-46cfbac64b06ea63.md"
+    },
+    {
+      "node_id": "node-f385f87e127d2fc5",
+      "source_document_id": "doc-process-capability-table",
+      "node_type": "table_row",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "operating-model/intake-capabilities/table-intake-capabilities/cap-001",
+      "preview_path": "previews/node-f385f87e127d2fc5.md"
+    },
+    {
+      "node_id": "node-8f60b0691d9cdf08",
+      "source_document_id": "doc-process-capability-table",
+      "node_type": "capability",
+      "review_status": "ready",
+      "confidence": "high",
+      "node_path": "operating-model/intake-capabilities/table-intake-capabilities/cap-001/cap-001",
+      "preview_path": "previews/node-8f60b0691d9cdf08.md"
+    },
+    {
+      "node_id": "node-20d13b0106f0c500",
+      "source_document_id": "doc-process-capability-table",
+      "node_type": "table_row",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "operating-model/intake-capabilities/table-intake-capabilities/cap-002",
+      "preview_path": "previews/node-20d13b0106f0c500.md"
+    },
+    {
+      "node_id": "node-8a02af38076b7d51",
+      "source_document_id": "doc-process-capability-table",
+      "node_type": "capability",
+      "review_status": "ready",
+      "confidence": "high",
+      "node_path": "operating-model/intake-capabilities/table-intake-capabilities/cap-002/cap-002",
+      "preview_path": "previews/node-8a02af38076b7d51.md"
+    },
+    {
+      "node_id": "node-f5c0e047b3107106",
+      "source_document_id": "doc-process-capability-table",
+      "node_type": "section",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "operating-model/review-requirements",
+      "preview_path": "previews/node-f5c0e047b3107106.md"
+    },
+    {
+      "node_id": "node-1819610ee4259d27",
+      "source_document_id": "doc-process-capability-table",
+      "node_type": "table",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "operating-model/review-requirements/table-review-requirements",
+      "preview_path": "previews/node-1819610ee4259d27.md"
+    },
+    {
+      "node_id": "node-dd76fabdd9b1b052",
+      "source_document_id": "doc-process-capability-table",
+      "node_type": "table_row",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "operating-model/review-requirements/table-review-requirements/req-001",
+      "preview_path": "previews/node-dd76fabdd9b1b052.md"
+    },
+    {
+      "node_id": "node-fea8a7b4846b0363",
+      "source_document_id": "doc-process-capability-table",
+      "node_type": "requirement",
+      "review_status": "ready",
+      "confidence": "high",
+      "node_path": "operating-model/review-requirements/table-review-requirements/req-001/req-001",
+      "preview_path": "previews/node-fea8a7b4846b0363.md"
+    },
+    {
+      "node_id": "node-b6a1ea9588052668",
+      "source_document_id": "doc-redacted-bb276cdea449a2b0",
+      "node_type": "section",
+      "review_status": "blocked",
+      "confidence": "low",
+      "node_path": "safety-sample/unsafe-content-redacted",
+      "preview_path": "previews/node-b6a1ea9588052668.md"
+    },
+    {
+      "node_id": "node-a4417419dcd2fd1a",
+      "source_document_id": "doc-redacted-bb276cdea449a2b0",
+      "node_type": "capability",
+      "review_status": "blocked",
+      "confidence": "low",
+      "node_path": "safety-sample/unsafe-content-redacted/unsafe-content-redacted",
+      "preview_path": "previews/node-a4417419dcd2fd1a.md"
+    },
+    {
+      "node_id": "node-f5f50216cdb6b21b",
+      "source_document_id": "doc-unsafe-marker",
+      "node_type": "document",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "safety-sample",
+      "preview_path": "previews/node-f5f50216cdb6b21b.md"
+    },
+    {
+      "node_id": "node-294ac7e5526be127",
+      "source_document_id": "doc-unsafe-marker",
+      "node_type": "section",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "safety-sample/safe-section",
+      "preview_path": "previews/node-294ac7e5526be127.md"
+    }
+  ]
+}

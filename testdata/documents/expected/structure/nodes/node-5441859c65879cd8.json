@@ -1,0 +1,39 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-5441859c65879cd8",
+  "run_id": "run-struct-bf62ffb671d8ec6a",
+  "source_document_id": "doc-malformed-ambiguous",
+  "node_type": "document",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "Ambiguous Process",
+  "summary": "Document structure root.",
+  "parent_node_id": "",
+  "child_node_ids": [
+    "node-ec359d8d5aaa078d",
+    "node-7fd8641f92b8fc87"
+  ],
+  "related_segment_ids": [
+    "seg-10e3a4f80a06cfcb",
+    "seg-1e93e3fc6de2514a",
+    "seg-d69230cd40227eec",
+    "seg-5c230b37eccdedce"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-malformed-ambiguous",
+    "heading_path": [
+      "Ambiguous Process"
+    ],
+    "line_start": 1,
+    "line_end": 11,
+    "content_hash": "sha256:ee7393b35fd9d6125401a16883cae157d693e3770364c5ed8db0e2d1af1ea3e0",
+    "related_segment_ids": [
+      "seg-10e3a4f80a06cfcb",
+      "seg-1e93e3fc6de2514a",
+      "seg-d69230cd40227eec",
+      "seg-5c230b37eccdedce"
+    ]
+  },
+  "blockers": []
+}

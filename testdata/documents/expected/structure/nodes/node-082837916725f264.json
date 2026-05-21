@@ -1,0 +1,37 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-082837916725f264",
+  "run_id": "run-struct-bf62ffb671d8ec6a",
+  "source_document_id": "doc-mixed-structure",
+  "node_type": "table_row",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "CAP-100",
+  "summary": "CAP-100 - Capability: table rows remain visible",
+  "parent_node_id": "node-bcc3e21cf81534a8",
+  "child_node_ids": [
+    "node-ae2b10796afacc64"
+  ],
+  "related_segment_ids": [
+    "seg-1ded1af2016c8660",
+    "seg-6471194f5b97bb56"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-mixed-structure",
+    "heading_path": [
+      "Knowledge Runbook",
+      "Table And Notes",
+      "Table: Table And Notes",
+      "CAP-100"
+    ],
+    "line_start": 16,
+    "line_end": 16,
+    "content_hash": "sha256:965de32548b455cbef30494b8a2b7a22a59c2e2aeffbb7fd008a1c768309bff1",
+    "related_segment_ids": [
+      "seg-1ded1af2016c8660",
+      "seg-6471194f5b97bb56"
+    ]
+  },
+  "blockers": []
+}

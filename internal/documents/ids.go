@@ -15,20 +15,31 @@ func RunID(sourceIDs []string) string {
 	return "run-doc-" + hex.EncodeToString(sum[:])[:16]
 }
 
+func StructureRunID(sourceIDs []string, contentHashes []string) string {
+	parts := append([]string(nil), sourceIDs...)
+	parts = append(parts, contentHashes...)
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return "run-struct-" + hex.EncodeToString(sum[:])[:16]
+}
+
 func SourceDocumentID(path string) string {
 	base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	if containsUnsafeMarker(base) {
-		return redactedDocumentID(filepath.Clean(path))
+		return redactedDocumentID(base)
 	}
 	return "doc-" + sanitizeID(base)
 }
 
 func DisambiguatedSourceDocumentID(path string) string {
+	return disambiguatedSourceDocumentID(path, filepath.Clean(path))
+}
+
+func disambiguatedSourceDocumentID(path, disambiguator string) string {
 	base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	if containsUnsafeMarker(base) {
-		return redactedDocumentID(filepath.Clean(path))
+		return redactedDocumentID(disambiguator)
 	}
-	sum := sha256.Sum256([]byte(filepath.Clean(path)))
+	sum := sha256.Sum256([]byte(disambiguator))
 	return "doc-" + sanitizeID(base) + "-" + hex.EncodeToString(sum[:])[:8]
 }
 
@@ -49,6 +60,20 @@ func SegmentJSONPath(segmentID string) string {
 
 func SegmentPreviewPath(segmentID string) string {
 	return filepath.ToSlash(filepath.Join("previews", sanitizeID(segmentID)+".md"))
+}
+
+func StructureNodeID(runID, sourceDocumentID string, nodeType StructureNodeType, structuralPath []string, lineStart, lineEnd int, contentHash string) string {
+	seed := runID + "\x00" + sourceDocumentID + "\x00" + string(nodeType) + "\x00" + strings.Join(structuralPath, "/") + "\x00" + strconv.Itoa(lineStart) + "\x00" + strconv.Itoa(lineEnd) + "\x00" + contentHash
+	sum := sha256.Sum256([]byte(seed))
+	return "node-" + hex.EncodeToString(sum[:])[:16]
+}
+
+func StructureNodeJSONPath(nodeID string) string {
+	return filepath.ToSlash(filepath.Join("nodes", sanitizeID(nodeID)+".json"))
+}
+
+func StructureNodePreviewPath(nodeID string) string {
+	return filepath.ToSlash(filepath.Join("previews", sanitizeID(nodeID)+".md"))
 }
 
 func sanitizeID(value string) string {

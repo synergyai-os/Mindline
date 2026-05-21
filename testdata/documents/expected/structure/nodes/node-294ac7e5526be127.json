@@ -1,0 +1,31 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-294ac7e5526be127",
+  "run_id": "run-struct-bf62ffb671d8ec6a",
+  "source_document_id": "doc-unsafe-marker",
+  "node_type": "section",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "Safe Section",
+  "summary": "Section derived from Markdown heading hierarchy.",
+  "parent_node_id": "node-f5f50216cdb6b21b",
+  "child_node_ids": [],
+  "related_segment_ids": [
+    "seg-57a590a272f39d1e"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-unsafe-marker",
+    "heading_path": [
+      "Safety Sample",
+      "Safe Section"
+    ],
+    "line_start": 9,
+    "line_end": 9,
+    "content_hash": "sha256:b30f0e5af2c40a2e4b14c706c93f9d661ac23394ebaf64fb048a8a92a1eed345",
+    "related_segment_ids": [
+      "seg-57a590a272f39d1e"
+    ]
+  },
+  "blockers": []
+}

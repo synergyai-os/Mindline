@@ -1,0 +1,37 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-b45f4e8cb5616011",
+  "run_id": "run-struct-bf62ffb671d8ec6a",
+  "source_document_id": "doc-process-capability-table",
+  "node_type": "section",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "Intake Capabilities",
+  "summary": "Section derived from Markdown heading hierarchy.",
+  "parent_node_id": "node-f692b8bf94fba1c8",
+  "child_node_ids": [
+    "node-46cfbac64b06ea63"
+  ],
+  "related_segment_ids": [
+    "seg-7b0ed93c9077f71a",
+    "seg-2b0e4497dc16e05f",
+    "seg-2ae63444b5ca5483"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-process-capability-table",
+    "heading_path": [
+      "Operating Model",
+      "Intake Capabilities"
+    ],
+    "line_start": 5,
+    "line_end": 8,
+    "content_hash": "sha256:e4be132abf62f0ebade97966d793fe650e9afedf25f2d805886acab8885fed76",
+    "related_segment_ids": [
+      "seg-7b0ed93c9077f71a",
+      "seg-2b0e4497dc16e05f",
+      "seg-2ae63444b5ca5483"
+    ]
+  },
+  "blockers": []
+}

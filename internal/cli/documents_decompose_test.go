@@ -53,6 +53,83 @@ func TestDocumentsDecompose(t *testing.T) {
 	}
 }
 
+func TestDocumentsStructure(t *testing.T) {
+	out := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "structure", documentsFixture(t, "structure"),
+		"--out", out,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("expected empty stderr, got %q", stderr.String())
+	}
+	var summary struct {
+		SchemaVersion string `json:"schema_version"`
+		NodeCount     int    `json:"node_count"`
+		Nodes         []struct {
+			NodePath    string `json:"node_path"`
+			PreviewPath string `json:"preview_path"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
+		t.Fatalf("decode stdout: %v\n%s", err, stdout.String())
+	}
+	if summary.SchemaVersion != "document-structure-summary/v0.1" {
+		t.Fatalf("unexpected schema: %s", summary.SchemaVersion)
+	}
+	if summary.NodeCount == 0 || len(summary.Nodes) != summary.NodeCount {
+		t.Fatalf("unexpected node count: %+v", summary)
+	}
+	if _, err := os.Stat(filepath.Join(out, "document-structure", "structure-summary.json")); err != nil {
+		t.Fatalf("expected summary artifact: %v", err)
+	}
+	for _, item := range summary.Nodes {
+		if item.NodePath == "" {
+			t.Fatalf("expected node path in summary item: %+v", item)
+		}
+		if _, err := os.Stat(filepath.Join(out, "document-structure", item.PreviewPath)); err != nil {
+			t.Fatalf("expected preview artifact %s: %v", item.PreviewPath, err)
+		}
+	}
+}
+
+func TestDocumentsStructureDoesNotReadProductBrainProfile(t *testing.T) {
+	out := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "structure", documentsFixture(t, "structure", "mixed-structure.md"),
+		"--profile", documentsFixture(t, "..", "productbrain", "profiles", "default-governance.json"),
+		"--out", out,
+	}, &stdout, &stderr)
+	if code != ExitUsage {
+		t.Fatalf("expected usage exit for --profile, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "usage: mindline documents structure") {
+		t.Fatalf("expected documents structure usage, got %q", stderr.String())
+	}
+}
+
+func TestDocumentsStructureReportsWriteFailuresAsArtifactWrite(t *testing.T) {
+	outFile := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(outFile, []byte("occupied"), 0o644); err != nil {
+		t.Fatalf("write out file: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "structure", documentsFixture(t, "structure", "mixed-structure.md"),
+		"--out", outFile,
+	}, &stdout, &stderr)
+	if code != ExitArtifactWrite {
+		t.Fatalf("expected artifact write exit, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "write document structure") {
+		t.Fatalf("expected write error context, got %q", stderr.String())
+	}
+}
+
 func TestDocumentsDecomposeDoesNotReadProductBrainProfile(t *testing.T) {
 	out := t.TempDir()
 	var stdout, stderr bytes.Buffer

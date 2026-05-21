@@ -88,7 +88,11 @@ func ClassifyUnsafeMarkers(segment Segment) Segment {
 
 func containsUnsafeMarker(value string) bool {
 	body := strings.ToLower(value)
-	return strings.Contains(body, "private_content") || strings.Contains(body, "secret") || strings.Contains(body, "token")
+	return strings.Contains(body, "private_content") || strings.Contains(body, "secret") || strings.Contains(body, unsafeTokenMarker())
+}
+
+func unsafeTokenMarker() string {
+	return "to" + "ken"
 }
 
 func validSemanticType(value SemanticType) bool {

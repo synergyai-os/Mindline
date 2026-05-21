@@ -26,7 +26,10 @@ func DecomposePath(inputPath, outDir string) (Summary, error) {
 	if err != nil {
 		return Summary{}, err
 	}
-	sourceIDsByPath := sourceDocumentIDs(paths)
+	sourceIDsByPath, err := sourceDocumentIDs(inputPath, paths)
+	if err != nil {
+		return Summary{}, err
+	}
 	sourceIDs := make([]string, 0, len(paths))
 	for _, path := range paths {
 		sourceIDs = append(sourceIDs, sourceIDsByPath[path])
@@ -102,7 +105,11 @@ func markdownPaths(inputPath string) ([]string, error) {
 	return paths, nil
 }
 
-func sourceDocumentIDs(paths []string) map[string]string {
+func sourceDocumentIDs(inputPath string, paths []string) (map[string]string, error) {
+	relativeByPath, err := relativeMarkdownPaths(inputPath, paths)
+	if err != nil {
+		return nil, err
+	}
 	counts := map[string]int{}
 	for _, path := range paths {
 		counts[SourceDocumentID(path)]++
@@ -111,11 +118,31 @@ func sourceDocumentIDs(paths []string) map[string]string {
 	for _, path := range paths {
 		sourceID := SourceDocumentID(path)
 		if counts[sourceID] > 1 {
-			sourceID = DisambiguatedSourceDocumentID(path)
+			sourceID = disambiguatedSourceDocumentID(path, relativeByPath[path])
 		}
 		ids[path] = sourceID
 	}
-	return ids
+	return ids, nil
+}
+
+func relativeMarkdownPaths(inputPath string, paths []string) (map[string]string, error) {
+	root := inputPath
+	info, err := os.Stat(inputPath)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		root = filepath.Dir(inputPath)
+	}
+	relativeByPath := map[string]string{}
+	for _, path := range paths {
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return nil, err
+		}
+		relativeByPath[path] = filepath.ToSlash(filepath.Clean(rel))
+	}
+	return relativeByPath, nil
 }
 
 func decomposeFile(path, runID, sourceID string) ([]Segment, error) {

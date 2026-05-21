@@ -1,0 +1,32 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-7fe3fce7cd497f33",
+  "run_id": "run-struct-bf62ffb671d8ec6a",
+  "source_document_id": "doc-audience-capability-list",
+  "node_type": "unknown",
+  "review_status": "needs_review",
+  "confidence": "low",
+  "title": "Mark unclear relationships for review",
+  "summary": "Requirement: Mark unclear relationships for review",
+  "parent_node_id": "node-51733db6519e63ef",
+  "child_node_ids": [],
+  "related_segment_ids": [
+    "seg-168018af023c7f6c"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-audience-capability-list",
+    "heading_path": [
+      "Service Playbook",
+      "Audience Groups",
+      "Mark unclear relationships for review"
+    ],
+    "line_start": 7,
+    "line_end": 7,
+    "content_hash": "sha256:9a8b0dc35d31d362525a5fceb9f99baf13b815f9009bacde2b5ada9d41bc7290",
+    "related_segment_ids": [
+      "seg-168018af023c7f6c"
+    ]
+  },
+  "blockers": []
+}
