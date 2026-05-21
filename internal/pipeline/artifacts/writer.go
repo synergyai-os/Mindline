@@ -61,14 +61,7 @@ func (w Writer) Write(outDir string, output Output) error {
 	if err != nil {
 		return err
 	}
-	output.Paths.Summary = "pipeline-summary.json"
-	for i := range output.Items {
-		item := &output.Items[i]
-		slug := slug(item.CandidateID)
-		item.ResultPath = filepath.ToSlash(filepath.Join("results", slug+".json"))
-		item.ProcessorPlanPath = filepath.ToSlash(filepath.Join("processors", slug+".json"))
-		item.DestinationPath = filepath.ToSlash(filepath.Join("destinations", slug, "destination-summary.json"))
-	}
+	AssignPaths(&output)
 	if err := rejectSentinels(output); err != nil {
 		return err
 	}
@@ -76,14 +69,13 @@ func (w Writer) Write(outDir string, output Output) error {
 		return err
 	}
 	for _, item := range output.Items {
-		slug := slug(item.CandidateID)
-		if err := writeJSON(realOut, filepath.Join("results", slug+".json"), item.Result); err != nil {
+		if err := writeJSON(realOut, item.ResultPath, item.Result); err != nil {
 			return err
 		}
-		if err := writeJSON(realOut, filepath.Join("processors", slug+".json"), item.ProcessorPlan); err != nil {
+		if err := writeJSON(realOut, item.ProcessorPlanPath, item.ProcessorPlan); err != nil {
 			return err
 		}
-		if err := writeJSON(realOut, filepath.Join("destinations", slug, "destination-summary.json"), item.DestinationSummary); err != nil {
+		if err := writeJSON(realOut, item.DestinationPath, item.DestinationSummary); err != nil {
 			return err
 		}
 		for _, operation := range item.OperationFiles {
@@ -98,6 +90,18 @@ func (w Writer) Write(outDir string, output Output) error {
 		}
 	}
 	return nil
+}
+
+func AssignPaths(output *Output) {
+	output.Paths.Summary = "pipeline-summary.json"
+	slugs := uniqueSlugs(output.Items)
+	for i := range output.Items {
+		item := &output.Items[i]
+		slug := slugs[i]
+		item.ResultPath = filepath.ToSlash(filepath.Join("results", slug+".json"))
+		item.ProcessorPlanPath = filepath.ToSlash(filepath.Join("processors", slug+".json"))
+		item.DestinationPath = filepath.ToSlash(filepath.Join("destinations", slug, "destination-summary.json"))
+	}
 }
 
 func prepareOutputRoot(outDir string, protectedRoots []string) (string, error) {
@@ -168,13 +172,44 @@ func writeFile(root, relative string, data []byte) error {
 	if !isInside(cleanRoot, cleanTarget) || cleanRoot == cleanTarget {
 		return fmt.Errorf("output path escaped output directory")
 	}
-	if err := os.MkdirAll(filepath.Dir(cleanTarget), 0o755); err != nil {
+	if err := ensureParentDir(cleanRoot, relative); err != nil {
 		return err
 	}
 	if info, err := os.Lstat(cleanTarget); err == nil && info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("output path escaped output directory")
 	}
 	return os.WriteFile(cleanTarget, data, 0o644)
+}
+
+func ensureParentDir(root, relative string) error {
+	dir := filepath.Dir(filepath.Clean(relative))
+	if dir == "." {
+		return nil
+	}
+	current := root
+	for _, part := range strings.Split(dir, string(filepath.Separator)) {
+		if part == "" || part == "." {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err == nil {
+			if info.Mode()&os.ModeSymlink != 0 {
+				return fmt.Errorf("output path escaped output directory")
+			}
+			if !info.IsDir() {
+				return fmt.Errorf("output path parent is not a directory")
+			}
+			continue
+		}
+		if !os.IsNotExist(err) {
+			return err
+		}
+		if err := os.Mkdir(current, 0o755); err != nil && !os.IsExist(err) {
+			return err
+		}
+	}
+	return nil
 }
 
 func rejectSentinels(value any) error {
@@ -210,6 +245,28 @@ func slug(value string) string {
 		return "source"
 	}
 	return cleaned
+}
+
+func uniqueSlugs(items []Item) []string {
+	used := map[string]int{}
+	slugs := make([]string, len(items))
+	for i, item := range items {
+		base := slug(item.CandidateID)
+		used[base]++
+		if used[base] == 1 {
+			slugs[i] = base
+			continue
+		}
+		for suffix := used[base]; ; suffix++ {
+			candidate := fmt.Sprintf("%s-%d", base, suffix)
+			if used[candidate] == 0 {
+				used[candidate] = 1
+				slugs[i] = candidate
+				break
+			}
+		}
+	}
+	return slugs
 }
 
 func isInside(root, target string) bool {

@@ -71,21 +71,11 @@ func (r Runner) Run(inputPath, outDir string) (Summary, error) {
 		summary.Items = append(summary.Items, item)
 	}
 	summary.ItemCount = len(summary.Items)
-	prepareSummaryPaths(&summary)
+	artifacts.AssignPaths(&summary)
 	if err := artifacts.Write(outDir, summary, r.ProtectedRoots); err != nil {
 		return Summary{}, err
 	}
 	return summary, nil
-}
-
-func prepareSummaryPaths(summary *Summary) {
-	summary.Paths.Summary = "pipeline-summary.json"
-	for i := range summary.Items {
-		slug := sanitize(summary.Items[i].CandidateID)
-		summary.Items[i].ResultPath = filepath.ToSlash(filepath.Join("results", slug+".json"))
-		summary.Items[i].ProcessorPlanPath = filepath.ToSlash(filepath.Join("processors", slug+".json"))
-		summary.Items[i].DestinationPath = filepath.ToSlash(filepath.Join("destinations", slug, "destination-summary.json"))
-	}
 }
 
 func loadCandidates(input Input) ([]sbos.Candidate, error) {

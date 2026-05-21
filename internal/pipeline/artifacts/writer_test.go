@@ -60,3 +60,54 @@ func TestWriterRejectsProtectedTolariaOutputAndSentinels(t *testing.T) {
 		t.Fatalf("expected sentinel rejection, got %v", err)
 	}
 }
+
+func TestWriterRejectsSymlinkedOutputSubdirectory(t *testing.T) {
+	out := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(out, "results")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	output := Output{Items: []Item{{
+		CandidateID:        "pipeline-text-only",
+		Result:             map[string]any{"state": "dry_run_published"},
+		ProcessorPlan:      map[string]any{"schema_version": "processor-plan/v0.1"},
+		DestinationSummary: map[string]any{"operation_count": 1},
+	}}}
+
+	err := Write(out, output, nil)
+	if err == nil || !strings.Contains(err.Error(), "output path escaped output directory") {
+		t.Fatalf("expected symlink escape rejection, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "pipeline-text-only.json")); err == nil {
+		t.Fatalf("writer followed symlinked output directory")
+	}
+}
+
+func TestWriterAssignsUniquePathsForCollidingCandidateSlugs(t *testing.T) {
+	out := t.TempDir()
+	output := Output{Items: []Item{
+		{
+			CandidateID:        "Candidate A",
+			Result:             map[string]any{"candidate": "first"},
+			ProcessorPlan:      map[string]any{"candidate": "first"},
+			DestinationSummary: map[string]any{"candidate": "first"},
+		},
+		{
+			CandidateID:        "candidate-a",
+			Result:             map[string]any{"candidate": "second"},
+			ProcessorPlan:      map[string]any{"candidate": "second"},
+			DestinationSummary: map[string]any{"candidate": "second"},
+		},
+	}}
+
+	if err := Write(out, output, nil); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(out, "results", "candidate-a.json")); err != nil {
+		t.Fatalf("expected first result path: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(out, "results", "candidate-a-2.json")); err != nil {
+		t.Fatalf("expected collision result path: %v", err)
+	}
+}
