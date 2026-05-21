@@ -65,6 +65,51 @@ func TestWriterWritesLedgerAndReviewQueue(t *testing.T) {
 	}
 }
 
+func TestWriterDisambiguatesDuplicateLedgerAndReviewItemFilenames(t *testing.T) {
+	out := t.TempDir()
+	authorityIDs := []string{"PROD-1", "DEC-17", "DEC-15", "WP-8"}
+	items := []runs.LedgerItem{
+		{RunID: "run-abc", RecordID: "shared-record", State: "needs_enrichment", ReviewRequired: true, ReviewReason: "missing_local_youtube_transcript"},
+		{RunID: "run-abc", RecordID: "shared-record", State: "blocked", ReviewRequired: true, ReviewReason: "missing_local_article"},
+	}
+	output := Output{
+		SchemaVersion: "pipeline-summary/v0.1",
+		RunManifest: runs.BuildManifest(runs.ManifestInput{
+			RunID:        "run-abc",
+			Items:        items,
+			AuthorityIDs: authorityIDs,
+			Now:          "2026-05-21T00:00:00Z",
+		}),
+		LedgerItems: items,
+		LedgerIndex: runs.BuildIndex("run-abc", items, authorityIDs),
+		ReviewQueue: runs.BuildReviewQueue("run-abc", items, authorityIDs),
+		ReviewItems: []runs.ReviewQueueItem{
+			runs.BuildReviewQueueItem(items[0], authorityIDs),
+			runs.BuildReviewQueueItem(items[1], authorityIDs),
+		},
+	}
+
+	if err := Write(out, output, nil); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	for _, relative := range []string{
+		"ledger/items/shared-record.json",
+		"ledger/items/shared-record-2.json",
+		"review-queue/items/shared-record.json",
+		"review-queue/items/shared-record-2.json",
+	} {
+		if _, err := os.Stat(filepath.Join(out, relative)); err != nil {
+			t.Fatalf("expected %s: %v", relative, err)
+		}
+	}
+	if output.LedgerIndex.Items[1].LedgerItemPath != "items/shared-record-2.json" {
+		t.Fatalf("index did not point at disambiguated ledger item: %+v", output.LedgerIndex.Items[1])
+	}
+	if output.ReviewQueue.Items[1].ReviewItemPath != "items/shared-record-2.json" {
+		t.Fatalf("queue did not point at disambiguated review item: %+v", output.ReviewQueue.Items[1])
+	}
+}
+
 func goldenTextOnlyPipelineOutputWithLedger() Output {
 	authorityIDs := []string{"PROD-1", "DEC-17", "DEC-15", "WP-8"}
 	item := runs.BuildLedgerItem("run-abc", runs.ItemInput{

@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -236,7 +237,8 @@ func BuildIndex(runID string, items []LedgerItem, authorityIDs []string) Index {
 		Items:         make([]IndexItem, 0, len(items)),
 		AuthorityIDs:  append([]string(nil), authorityIDs...),
 	}
-	for _, item := range items {
+	pathIDs := BuildUniquePathIDs(ledgerRecordIDs(items))
+	for i, item := range items {
 		recordID := BuildSafeID(item.RecordID)
 		sourceCandidateID := BuildSafeID(item.SourceCandidateID)
 		if sourceCandidateID == "" {
@@ -250,7 +252,7 @@ func BuildIndex(runID string, items []LedgerItem, authorityIDs []string) Index {
 			SourceCandidateID: sourceCandidateID,
 			State:             item.State,
 			ReviewRequired:    item.ReviewRequired,
-			LedgerItemPath:    cleanOutPath("items", recordID+".json"),
+			LedgerItemPath:    cleanOutPath("items", pathIDs[i]+".json"),
 		})
 	}
 	return index
@@ -263,16 +265,21 @@ func BuildReviewQueue(runID string, items []LedgerItem, authorityIDs []string) R
 		Items:         []ReviewQueueEntry{},
 		AuthorityIDs:  append([]string(nil), authorityIDs...),
 	}
+	reviewItems := make([]LedgerItem, 0, len(items))
 	for _, item := range items {
 		if !item.ReviewRequired {
 			continue
 		}
+		reviewItems = append(reviewItems, item)
+	}
+	pathIDs := BuildUniquePathIDs(ledgerRecordIDs(reviewItems))
+	for i, item := range reviewItems {
 		recordID := BuildSafeID(item.RecordID)
 		entry := ReviewQueueEntry{
 			RecordID:       recordID,
 			State:          item.State,
 			Reason:         safeReason(item.ReviewReason),
-			ReviewItemPath: cleanOutPath("items", recordID+".json"),
+			ReviewItemPath: cleanOutPath("items", pathIDs[i]+".json"),
 		}
 		queue.Items = append(queue.Items, entry)
 	}
@@ -301,6 +308,29 @@ func BuildReviewQueueItem(item LedgerItem, authorityIDs []string) ReviewQueueIte
 		},
 		AuthorityIDs: append([]string(nil), authorityIDs...),
 	}
+}
+
+func BuildUniquePathIDs(ids []string) []string {
+	out := make([]string, len(ids))
+	seen := map[string]int{}
+	for i, id := range ids {
+		base := BuildSafeID(id)
+		seen[base]++
+		if seen[base] == 1 {
+			out[i] = base
+			continue
+		}
+		out[i] = base + "-" + strconv.Itoa(seen[base])
+	}
+	return out
+}
+
+func ledgerRecordIDs(items []LedgerItem) []string {
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.RecordID)
+	}
+	return ids
 }
 
 func safeReason(reason string) string {

@@ -109,8 +109,9 @@ func (w Writer) Write(outDir string, output Output) error {
 			return err
 		}
 	}
-	for _, item := range output.LedgerItems {
-		if err := writeJSON(realOut, filepath.ToSlash(filepath.Join("ledger", "items", item.RecordID+".json")), item); err != nil {
+	ledgerPathIDs := ledgerItemPathIDs(output.LedgerItems)
+	for i, item := range output.LedgerItems {
+		if err := writeJSON(realOut, filepath.ToSlash(filepath.Join("ledger", "items", ledgerPathIDs[i]+".json")), item); err != nil {
 			return err
 		}
 	}
@@ -119,12 +120,29 @@ func (w Writer) Write(outDir string, output Output) error {
 			return err
 		}
 	}
-	for _, item := range output.ReviewItems {
-		if err := writeJSON(realOut, filepath.ToSlash(filepath.Join("review-queue", "items", item.RecordID+".json")), item); err != nil {
+	reviewPathIDs := reviewItemPathIDs(output.ReviewItems)
+	for i, item := range output.ReviewItems {
+		if err := writeJSON(realOut, filepath.ToSlash(filepath.Join("review-queue", "items", reviewPathIDs[i]+".json")), item); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func ledgerItemPathIDs(items []runs.LedgerItem) []string {
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.RecordID)
+	}
+	return runs.BuildUniquePathIDs(ids)
+}
+
+func reviewItemPathIDs(items []runs.ReviewQueueItem) []string {
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.RecordID)
+	}
+	return runs.BuildUniquePathIDs(ids)
 }
 
 func AssignPaths(output *Output) {
