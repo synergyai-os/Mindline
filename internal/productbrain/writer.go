@@ -44,6 +44,9 @@ func Write(outDir string, input WriteInput) (Summary, error) {
 	if err := rejectSentinels(summary); err != nil {
 		return Summary{}, err
 	}
+	if err := rejectDuplicateProposalIDs(input.Proposals); err != nil {
+		return Summary{}, err
+	}
 	for _, proposal := range input.Proposals {
 		if err := rejectSentinels(proposal); err != nil {
 			return Summary{}, err
@@ -158,6 +161,20 @@ func ensureParentDir(root string, relative string) error {
 		if err := os.Mkdir(current, 0o755); err != nil && !os.IsExist(err) {
 			return err
 		}
+	}
+	return nil
+}
+
+func rejectDuplicateProposalIDs(proposals []Proposal) error {
+	seen := map[string]bool{}
+	for _, proposal := range proposals {
+		if strings.TrimSpace(proposal.ProposalID) == "" {
+			return fmt.Errorf("missing proposal id")
+		}
+		if seen[proposal.ProposalID] {
+			return fmt.Errorf("duplicate proposal id: %s", proposal.ProposalID)
+		}
+		seen[proposal.ProposalID] = true
 	}
 	return nil
 }

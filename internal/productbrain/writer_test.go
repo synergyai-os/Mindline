@@ -108,3 +108,32 @@ func TestWriterRejectsSymlinkedOutputParents(t *testing.T) {
 		t.Fatalf("WriteProposals() error = %v, want escaped output directory refusal", err)
 	}
 }
+
+func TestWriterRejectsDuplicateProposalIDs(t *testing.T) {
+	out := t.TempDir()
+	first := NewProposal(ProposalInput{
+		RunID:                "run-0123456789abcdef",
+		SourceReviewItemID:   "duplicate-review-id",
+		Intent:               IntentDurableDecision,
+		Status:               ProposalStatusReady,
+		TargetCollectionSlug: "decisions",
+		EntryName:            "First decision",
+		WorkflowStatus:       "pending",
+		Data:                 map[string]string{"rationale": "First rationale."},
+	})
+	second := NewProposal(ProposalInput{
+		RunID:                "run-0123456789abcdef",
+		SourceReviewItemID:   "duplicate-review-id",
+		Intent:               IntentDurableDecision,
+		Status:               ProposalStatusReady,
+		TargetCollectionSlug: "decisions",
+		EntryName:            "Second decision",
+		WorkflowStatus:       "pending",
+		Data:                 map[string]string{"rationale": "Second rationale."},
+	})
+
+	err := WriteProposals(out, []Proposal{first, second}, loadProfileFixture(t, "default-governance.json"))
+	if err == nil || !strings.Contains(err.Error(), "duplicate proposal id") {
+		t.Fatalf("WriteProposals() error = %v, want duplicate proposal id refusal", err)
+	}
+}

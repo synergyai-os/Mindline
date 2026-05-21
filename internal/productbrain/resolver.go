@@ -21,6 +21,9 @@ func Resolve(input ResolveInput, profile Profile) Proposal {
 	if input.Intent == IntentNoProductBrainWrite {
 		return blockedProposal(input, ProposalStatusSkipped, "no_product_brain_write", "Item does not require Product Brain state.")
 	}
+	if !supportsProposalWrite(profile.KernelContract) {
+		return blockedProposal(input, ProposalStatusBlocked, "unsupported_kernel_contract", "Workspace profile does not support the required Product Brain proposal write contract.")
+	}
 	mapping, mappingCount := findMapping(profile, input.Intent)
 	if mappingCount > 1 {
 		return blockedProposal(input, ProposalStatusBlocked, "ambiguous_intent_mapping", fmt.Sprintf("Profile defines multiple mappings for intent %s.", input.Intent))
@@ -79,6 +82,15 @@ func inferIntent(input ResolveInput) Intent {
 	default:
 		return IntentNoProductBrainWrite
 	}
+}
+
+func supportsProposalWrite(contract KernelContract) bool {
+	return contract.SupportsWriteEntry &&
+		contract.SupportsUpsertByExternalRef &&
+		contract.SupportsExternalRef &&
+		contract.SupportsIdempotencyKey &&
+		contract.SupportsActorAuthority &&
+		contract.SupportsProvenance
 }
 
 func findMapping(profile Profile, intent Intent) (IntentMapping, int) {

@@ -74,6 +74,16 @@ func TestResolveBlocksUnsupportedCases(t *testing.T) {
 			want: "platform_only_collection",
 		},
 		{
+			name:  "unsupported kernel contract",
+			input: ResolveInput{RunID: "run-1", ReviewItemID: "review-1", SafeTitle: "Note", SafeContext: "Context", Intent: IntentDurableDecision},
+			profile: func() Profile {
+				profile := loadProfileFixture(t, "default-governance.json")
+				profile.KernelContract.SupportsExternalRef = false
+				return profile
+			}(),
+			want: "unsupported_kernel_contract",
+		},
+		{
 			name:    "no write",
 			input:   ResolveInput{RunID: "run-1", ReviewItemID: "review-1", SafeTitle: "Note", SafeContext: "Context", Intent: IntentNoProductBrainWrite},
 			profile: loadProfileFixture(t, "default-governance.json"),
