@@ -2635,6 +2635,26 @@ func TestSemanticCalibrationRejectsExpectedOutcomeSummaryMismatch(t *testing.T) 
 	}
 }
 
+func TestSemanticCalibrationRejectsMissingReferencedExpectedOutcome(t *testing.T) {
+	acceptanceDir := writeSemanticAcceptanceOutput(t, []SemanticCandidate{
+		validSemanticCandidate(validSemanticObservation(validStructureNode()), validStructureNode()),
+	}, true)
+	summaryPath := filepath.Join(acceptanceDir, "acceptance-summary.json")
+	var summary SemanticAcceptanceSummary
+	data, err := os.ReadFile(summaryPath)
+	if err != nil {
+		t.Fatalf("read acceptance summary: %v", err)
+	}
+	if err := json.Unmarshal(data, &summary); err != nil {
+		t.Fatalf("decode acceptance summary: %v", err)
+	}
+	summary.ExpectedOutcomes = nil
+	writeDocumentsTestJSON(t, summaryPath, summary)
+	if _, err := CalibrateSemanticAcceptance(acceptanceDir, t.TempDir(), SemanticCalibrationOptions{Threshold: 0.98, HeldOut: true}); err == nil {
+		t.Fatalf("expected missing referenced expected outcome to be rejected")
+	}
+}
+
 func TestSemanticCalibrationRejectsNewExpectedOutcomeWithoutRichContext(t *testing.T) {
 	acceptanceDir := writeSemanticAcceptanceOutput(t, []SemanticCandidate{
 		validSemanticCandidate(validSemanticObservation(validStructureNode()), validStructureNode()),

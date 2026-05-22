@@ -737,6 +737,9 @@ func readSemanticAcceptanceBundle(root string) (SemanticAcceptanceSummary, []Sem
 		}
 		expected = append(expected, outcome)
 	}
+	if err := validateSemanticCalibrationExpectedOutcomeReferences(items, expected); err != nil {
+		return SemanticAcceptanceSummary{}, nil, nil, err
+	}
 	return summary, items, expected, nil
 }
 
@@ -748,6 +751,22 @@ func semanticCalibrationReferencedExpectedOutcomes(items []SemanticAcceptanceIte
 		}
 	}
 	return referenced
+}
+
+func validateSemanticCalibrationExpectedOutcomeReferences(items []SemanticAcceptanceItem, expected []SemanticExpectedOutcomeResult) error {
+	expectedByID := map[string]bool{}
+	for _, outcome := range expected {
+		expectedByID[outcome.ExpectedOutcomeID] = true
+	}
+	for _, item := range items {
+		if strings.TrimSpace(item.ExpectedOutcomeID) == "" {
+			continue
+		}
+		if !expectedByID[item.ExpectedOutcomeID] {
+			return fmt.Errorf("acceptance item references missing expected outcome: %s", item.ExpectedOutcomeID)
+		}
+	}
+	return nil
 }
 
 func readSemanticCalibrationSummary(root string) (SemanticCalibrationSummary, error) {
