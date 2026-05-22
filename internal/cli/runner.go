@@ -29,6 +29,7 @@ const (
 const usage = "usage: mindline process <candidate.json> [--out <dir>]\nusage: mindline slack normalize <slack-export.json> [--out <dir>]\nusage: mindline destination dry-run <sbos-result.json> --adapter tolaria --out <dir>\nusage: mindline pipeline dry-run <pipeline-input.json> --method basb-para-code --destination tolaria --out <dir>\nusage: mindline product-brain propose <run-dir> --profile <profile.json> --out <dir>\nusage: mindline documents decompose <markdown-path-or-dir> --out <dir>\nusage: mindline documents structure <markdown-path-or-dir> --out <dir>\n"
 
 const protectedRootsEnv = "MINDLINE_PROTECTED_ROOTS"
+const defaultTolariaProtectedRoot = "/Users/randyhereman/Young Human Club Dropbox/02. Areas/PKM - Tolaria"
 
 var cliAuthorityIDs = []string{
 	"DEC-4",
@@ -120,7 +121,7 @@ func NewRunnerWithProtectedRoots(fileSystem FileSystem, protectedRoots []string)
 func configuredProtectedRoots() []string {
 	raw := strings.TrimSpace(os.Getenv(protectedRootsEnv))
 	if raw == "" {
-		return nil
+		return []string{defaultTolariaProtectedRoot}
 	}
 	parts := strings.Split(raw, string(os.PathListSeparator))
 	roots := make([]string, 0, len(parts))

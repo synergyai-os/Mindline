@@ -274,6 +274,22 @@ func TestDestinationDryRunRejectsProtectedOutputRootAndSymlink(t *testing.T) {
 	}
 }
 
+func TestConfiguredProtectedRootsDefaultsWhenEnvUnset(t *testing.T) {
+	t.Setenv(protectedRootsEnv, "")
+
+	roots := configuredProtectedRoots()
+
+	if len(roots) == 0 {
+		t.Fatalf("expected default protected roots when %s is unset", protectedRootsEnv)
+	}
+	for _, root := range roots {
+		if root == defaultTolariaProtectedRoot {
+			return
+		}
+	}
+	t.Fatalf("expected default Tolaria protected root %q in %+v", defaultTolariaProtectedRoot, roots)
+}
+
 func TestDestinationDryRunResolvesArtifactPathsFromInputDirectory(t *testing.T) {
 	base := t.TempDir()
 	inputDir := filepath.Join(base, "input")

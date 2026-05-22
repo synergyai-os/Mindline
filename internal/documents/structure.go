@@ -30,7 +30,7 @@ func StructurePath(inputPath, outDir string) (StructureSummary, error) {
 	if err != nil {
 		return StructureSummary{}, err
 	}
-	sourceIDsByPath, err := structureSourceDocumentIDs(inputPath, paths)
+	sourceIDsByPath, err := sourceDocumentIDs(inputPath, paths)
 	if err != nil {
 		return StructureSummary{}, err
 	}
@@ -76,44 +76,6 @@ func StructurePath(inputPath, outDir string) (StructureSummary, error) {
 		return StructureSummary{}, err
 	}
 	return BuildStructureSummary(runID, len(paths), nodes), nil
-}
-
-func structureSourceDocumentIDs(inputPath string, paths []string) (map[string]string, error) {
-	root := inputPath
-	info, err := os.Stat(inputPath)
-	if err != nil {
-		return nil, err
-	}
-	if !info.IsDir() {
-		root = filepath.Dir(inputPath)
-	}
-	relativeByPath := map[string]string{}
-	counts := map[string]int{}
-	for _, path := range paths {
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return nil, err
-		}
-		rel = filepath.ToSlash(filepath.Clean(rel))
-		relativeByPath[path] = rel
-		base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-		counts[base]++
-	}
-	ids := map[string]string{}
-	for _, path := range paths {
-		base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-		rel := relativeByPath[path]
-		switch {
-		case containsUnsafeMarker(base):
-			ids[path] = redactedDocumentID(rel)
-		case counts[base] > 1:
-			sum := sha256.Sum256([]byte(rel))
-			ids[path] = "doc-" + sanitizeID(base) + "-" + hex.EncodeToString(sum[:])[:8]
-		default:
-			ids[path] = "doc-" + sanitizeID(base)
-		}
-	}
-	return ids, nil
 }
 
 func structureFile(path, body, runID, sourceID string, segments []Segment) ([]StructureNode, error) {

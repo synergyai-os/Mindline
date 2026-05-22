@@ -198,6 +198,66 @@ func TestDocumentStructureDuplicateBasenamesAreRelativePathDeterministic(t *test
 	assertTreeMatches(t, filepath.Join(firstOut, "document-structure"), filepath.Join(secondOut, "document-structure"))
 }
 
+func TestDocumentStructureDisambiguatesSanitizedBasenameCollisions(t *testing.T) {
+	root := t.TempDir()
+	body := []byte("# Shared Title\n\nCapability: preserve source identity.\n")
+	for _, name := range []string{"a b.md", "a-b.md"} {
+		if err := os.WriteFile(filepath.Join(root, name), body, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	out := t.TempDir()
+	summary, err := StructurePath(root, out)
+	if err != nil {
+		t.Fatalf("structure: %v", err)
+	}
+
+	sourceIDs := map[string]bool{}
+	for _, node := range summary.Nodes {
+		if node.NodeType == StructureNodeTypeDocument {
+			sourceIDs[node.SourceDocumentID] = true
+		}
+	}
+	if len(sourceIDs) != 2 {
+		t.Fatalf("expected two disambiguated source document ids, got %+v", sourceIDs)
+	}
+	for sourceID := range sourceIDs {
+		if !strings.HasPrefix(sourceID, "doc-a-b-") {
+			t.Fatalf("expected sanitized disambiguated id, got %s", sourceID)
+		}
+	}
+}
+
+func TestDocumentStructureUnsafeSourceIDsMatchDecomposeOutput(t *testing.T) {
+	root := t.TempDir()
+	inputPath := filepath.Join(root, "PRIVATE_CONTENT.md")
+	if err := os.WriteFile(inputPath, []byte("# Public Title\n\nSafe body.\n"), 0o644); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
+
+	decomposeOut := t.TempDir()
+	decomposeSummary, err := DecomposePath(inputPath, decomposeOut)
+	if err != nil {
+		t.Fatalf("decompose: %v", err)
+	}
+	if len(decomposeSummary.Segments) == 0 {
+		t.Fatalf("expected decompose segments")
+	}
+	wantSourceID := decomposeSummary.Segments[0].SourceDocumentID
+
+	structureOut := t.TempDir()
+	structureSummary, err := StructurePath(inputPath, structureOut)
+	if err != nil {
+		t.Fatalf("structure: %v", err)
+	}
+	for _, node := range structureSummary.Nodes {
+		if node.NodeType == StructureNodeTypeDocument && node.SourceDocumentID != wantSourceID {
+			t.Fatalf("expected structure source id %s to match decompose, got %s", wantSourceID, node.SourceDocumentID)
+		}
+	}
+}
+
 func TestDocumentStructureRelatedSegmentIDsMatchDecomposeOutput(t *testing.T) {
 	root := duplicateStructureTree(t)
 	decomposeOut := t.TempDir()
