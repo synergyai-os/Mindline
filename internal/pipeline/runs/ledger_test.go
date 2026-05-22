@@ -225,3 +225,42 @@ func TestReviewQueueIncludesOnlyReviewRequiredItems(t *testing.T) {
 		t.Fatalf("unexpected queue item: %+v", queue.Items[0])
 	}
 }
+
+func TestReviewQueueItemPreservesSourceCandidateID(t *testing.T) {
+	item := LedgerItem{
+		RunID:             "run-abc",
+		RecordID:          "review-youtube",
+		SourceCandidateID: "slack-DSELF-1710000000000001",
+		State:             "needs_enrichment",
+		ReviewRequired:    true,
+		ReviewReason:      "missing_local_youtube_transcript",
+	}
+
+	got := BuildReviewQueueItem(item, []string{"PROD-1", "DEC-17", "DEC-15", "WP-8"})
+	want := BuildSafeID("slack-DSELF-1710000000000001")
+	if got.SourceCandidateID != want {
+		t.Fatalf("source_candidate_id = %q", got.SourceCandidateID)
+	}
+
+	items := BuildReviewQueueItems([]LedgerItem{item}, []string{"PROD-1", "DEC-17", "DEC-15", "WP-8"})
+	if len(items) != 1 || items[0].SourceCandidateID != want {
+		t.Fatalf("review queue items did not preserve source identity: %+v", items)
+	}
+}
+
+func TestReviewQueueItemSanitizesUnsafeSourceCandidateID(t *testing.T) {
+	item := LedgerItem{
+		RunID:             "run-abc",
+		RecordID:          "review-secret",
+		SourceCandidateID: "https://private.example/PRIVATE_DM_SENTINEL_DO_NOT_WRITE",
+		State:             "blocked",
+		ReviewRequired:    true,
+		ReviewReason:      "ambiguous",
+	}
+
+	got := BuildReviewQueueItem(item, []string{"PROD-1", "DEC-17", "DEC-15", "WP-8"})
+	assertSafeIdentifier(t, got.SourceCandidateID)
+	if got.SourceCandidateID == item.SourceCandidateID {
+		t.Fatalf("unsafe source candidate id was not sanitized")
+	}
+}

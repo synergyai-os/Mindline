@@ -340,6 +340,37 @@ func TestSemanticWriterRedactsUnsafeEndpointAndEvidenceFields(t *testing.T) {
 	assertGeneratedTreeExcludes(t, filepath.Join(out, "semantic-candidates"), "private_content", "secret", unsafeTokenMarker(), "DEC-49", "WP-13")
 }
 
+func TestConsolidateSemanticCandidatesKeepsRedactedCandidateRelationEndpoint(t *testing.T) {
+	node := validStructureNode()
+	observation := validSemanticObservation(node)
+	observation.ObservationKind = SemanticObservationKindCapabilityStatement
+	observation.Title = "Capability contains " + unsafeTokenMarker()
+	observation.Summary = "Safe observation summary."
+
+	candidates, relations := ConsolidateSemanticCandidates("run-sem-demo", []SemanticObservation{observation})
+	if len(candidates) != 1 {
+		t.Fatalf("candidate count = %d", len(candidates))
+	}
+	if len(relations) != 1 {
+		t.Fatalf("relation count = %d", len(relations))
+	}
+
+	candidate := candidates[0]
+	relation := relations[0]
+	if candidate.ReviewStatus != ReviewStatusBlocked {
+		t.Fatalf("candidate review status = %s", candidate.ReviewStatus)
+	}
+	if relation.ReviewStatus != ReviewStatusBlocked {
+		t.Fatalf("relation review status = %s", relation.ReviewStatus)
+	}
+	if relation.FromType != SemanticRelationEndpointCandidate {
+		t.Fatalf("relation from type = %s", relation.FromType)
+	}
+	if relation.FromID != candidate.CandidateID {
+		t.Fatalf("relation from_id = %q, candidate_id = %q", relation.FromID, candidate.CandidateID)
+	}
+}
+
 func TestSemanticArtifactsReferenceInspectableStructureNodes(t *testing.T) {
 	out := t.TempDir()
 	summary, err := SemanticPath(fixturePath(t, "semantic"), out)

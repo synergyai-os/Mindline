@@ -96,6 +96,7 @@ type Blocker struct {
 type ProposalInput struct {
 	RunID                string
 	SourceReviewItemID   string
+	SourceCandidateID    string
 	Intent               Intent
 	Status               ProposalStatus
 	TargetCollectionSlug string
@@ -123,7 +124,7 @@ func NewProposal(input ProposalInput) Proposal {
 		Status:             status,
 		Intent:             input.Intent,
 		Confidence:         confidence,
-		ExternalRef:        BuildExternalRef(input.RunID, input.SourceReviewItemID, input.Intent),
+		ExternalRef:        BuildExternalRef(input.SourceCandidateID, input.Intent),
 		IdempotencyKey:     BuildIdempotencyKey(input.RunID, proposalID),
 		Actor:              Actor{Kind: "integration", Authority: "mindline"},
 		Provenance:         Provenance{Surface: "integration", CapturePath: "integration:mindline", SourceRunID: input.RunID},
@@ -153,10 +154,17 @@ func BuildProposalID(runID string, reviewItemID string, intent Intent, targetCol
 	return "pbp-" + hex.EncodeToString(sum[:])[:16]
 }
 
-func BuildExternalRef(runID string, reviewItemID string, intent Intent) ExternalRef {
+func BuildExternalRef(sourceCandidateID string, intent Intent) ExternalRef {
+	if strings.TrimSpace(sourceCandidateID) == "" {
+		sourceCandidateID = "unknown-source"
+	}
+	sourceID := safeID(sourceCandidateID)
+	if strings.TrimSpace(sourceID) == "" {
+		sourceID = "unknown-source"
+	}
 	return ExternalRef{
 		Source: "mindline",
-		ID:     fmt.Sprintf("%s:%s:%s", safeID(runID), safeID(reviewItemID), intent),
+		ID:     fmt.Sprintf("mindline:%s:%s", sourceID, intent),
 	}
 }
 

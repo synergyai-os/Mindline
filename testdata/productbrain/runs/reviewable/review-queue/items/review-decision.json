@@ -2,6 +2,7 @@
   "schema_version": "review-queue-item/v0.1",
   "run_id": "run-0123456789abcdef",
   "record_id": "review-decision",
+  "source_candidate_id": "slack-dself-1710000000000001",
   "state": "needs_clarification",
   "priority": "normal",
   "reason": "decision_rationale_ready",

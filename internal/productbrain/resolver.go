@@ -6,12 +6,13 @@ import (
 )
 
 type ResolveInput struct {
-	RunID        string
-	ReviewItemID string
-	SafeTitle    string
-	SafeContext  string
-	Reason       string
-	Intent       Intent
+	RunID             string
+	ReviewItemID      string
+	SourceCandidateID string
+	SafeTitle         string
+	SafeContext       string
+	Reason            string
+	Intent            Intent
 }
 
 func Resolve(input ResolveInput, profile Profile) Proposal {
@@ -41,7 +42,10 @@ func Resolve(input ResolveInput, profile Profile) Proposal {
 	}
 	data := map[string]string{}
 	for role, fieldKey := range mapping.FieldMap {
-		value := valueForRole(role, input)
+		value, ok := valueForRole(role, input)
+		if !ok {
+			return blockedProposal(input, ProposalStatusBlocked, "unsupported_field_role", fmt.Sprintf("Profile maps unsupported field role %s.", role))
+		}
 		if value != "" {
 			data[fieldKey] = value
 		}
@@ -61,6 +65,7 @@ func Resolve(input ResolveInput, profile Profile) Proposal {
 	return NewProposal(ProposalInput{
 		RunID:                input.RunID,
 		SourceReviewItemID:   input.ReviewItemID,
+		SourceCandidateID:    input.SourceCandidateID,
 		Intent:               input.Intent,
 		Status:               ProposalStatusReady,
 		TargetCollectionSlug: collection.Slug,
@@ -116,14 +121,14 @@ func findCollection(profile Profile, slug string) (Collection, bool) {
 	return Collection{}, false
 }
 
-func valueForRole(role string, input ResolveInput) string {
+func valueForRole(role string, input ResolveInput) (string, bool) {
 	switch role {
 	case "rationale", "summary":
-		return safeText(input.SafeContext)
+		return safeText(input.SafeContext), true
 	case "title", "name":
-		return safeText(input.SafeTitle)
+		return safeText(input.SafeTitle), true
 	default:
-		return safeText(input.SafeContext)
+		return "", false
 	}
 }
 
@@ -131,6 +136,7 @@ func blockedProposal(input ResolveInput, status ProposalStatus, code string, mes
 	return NewProposal(ProposalInput{
 		RunID:              input.RunID,
 		SourceReviewItemID: input.ReviewItemID,
+		SourceCandidateID:  input.SourceCandidateID,
 		Intent:             input.Intent,
 		Status:             status,
 		EntryName:          input.SafeTitle,
