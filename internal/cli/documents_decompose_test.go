@@ -209,9 +209,12 @@ func TestDocumentsAccept(t *testing.T) {
       "expected_state": "expected_present",
       "expected_kind": "action_candidate",
       "required_evidence": ["node-262592341686a94b"],
+      "acceptable_evidence_alternates": ["node-262592341686a94b"],
       "title_signals": ["checklist"],
       "summary_signals": ["prepare"],
-      "minimum_confidence_floor": "low"
+      "relation_requirements": ["derived_from"],
+      "minimum_confidence_floor": "low",
+      "notes": "CLI expected action."
     }
   ]
 }`), 0o644); err != nil {
@@ -256,6 +259,68 @@ func TestDocumentsAccept(t *testing.T) {
 	}
 }
 
+func TestDocumentsCalibrateAndCalibrateNext(t *testing.T) {
+	acceptOut := documentsAcceptanceFixture(t)
+	calibrateOut := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "calibrate", filepath.Join(acceptOut, "semantic-acceptance"),
+		"--out", calibrateOut,
+		"--threshold", "0.98",
+		"--held-out",
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected calibrate exit %d, got %d stdout=%s stderr=%s", ExitOK, code, stdout.String(), stderr.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("expected empty stderr, got %q", stderr.String())
+	}
+	var summary struct {
+		SchemaVersion   string `json:"schema_version"`
+		ThresholdStatus string `json:"threshold_status"`
+		NoHumanEligible bool   `json:"no_human_eligible"`
+		ReviewItemCount int    `json:"review_item_count"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
+		t.Fatalf("decode calibrate stdout: %v\n%s", err, stdout.String())
+	}
+	if summary.SchemaVersion != "semantic-calibration-summary/v0.1" || summary.ReviewItemCount == 0 {
+		t.Fatalf("unexpected calibration summary: %+v", summary)
+	}
+	if _, err := os.Stat(filepath.Join(calibrateOut, "semantic-calibration", "calibration-summary.json")); err != nil {
+		t.Fatalf("expected calibration summary artifact: %v", err)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "calibrate-next", filepath.Join(calibrateOut, "semantic-calibration"),
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected calibrate-next exit %d, got %d stdout=%s stderr=%s", ExitOK, code, stdout.String(), stderr.String())
+	}
+	var page struct {
+		SchemaVersion string           `json:"schema_version"`
+		Done          bool             `json:"done"`
+		Item          *json.RawMessage `json:"item,omitempty"`
+		PageMarkdown  string           `json:"page_markdown"`
+		ReviewContext *json.RawMessage `json:"review_context,omitempty"`
+		Cursor        struct {
+			ProcessedCount int `json:"processed_count"`
+			RemainingCount int `json:"remaining_count"`
+		} `json:"cursor"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &page); err != nil {
+		t.Fatalf("decode calibrate-next stdout: %v\n%s", err, stdout.String())
+	}
+	if page.SchemaVersion != "semantic-calibration-page/v0.2" || page.Done || page.Item == nil || page.ReviewContext == nil || page.PageMarkdown == "" || page.Cursor.ProcessedCount != 1 {
+		t.Fatalf("calibrate-next must return one item page: %+v", page)
+	}
+	if !strings.Contains(page.PageMarkdown, "Adjudication choices") {
+		t.Fatalf("expected content-rich calibration page markdown, got %q", page.PageMarkdown)
+	}
+}
+
 func TestDocumentsAcceptRejectsDestinationAndProfileFlags(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := NewRunner(NewOSFileSystem()).Run([]string{
@@ -269,6 +334,40 @@ func TestDocumentsAcceptRejectsDestinationAndProfileFlags(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "usage: mindline documents accept") {
 		t.Fatalf("expected documents accept usage, got %q", stderr.String())
+	}
+}
+
+func TestDocumentsCalibrateRejectsDestinationAndProfileFlags(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "calibrate", t.TempDir(),
+		"--profile", documentsFixture(t, "..", "productbrain", "profiles", "default-governance.json"),
+		"--out", t.TempDir(),
+	}, &stdout, &stderr)
+	if code != ExitUsage {
+		t.Fatalf("expected usage exit for --profile, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "usage: mindline documents calibrate") {
+		t.Fatalf("expected documents calibrate usage, got %q", stderr.String())
+	}
+}
+
+func TestDocumentsCalibrateRejectsNonFiniteThresholds(t *testing.T) {
+	for _, threshold := range []string{"NaN", "+Inf", "-Inf"} {
+		t.Run(threshold, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := NewRunner(NewOSFileSystem()).Run([]string{
+				"documents", "calibrate", t.TempDir(),
+				"--out", t.TempDir(),
+				"--threshold", threshold,
+			}, &stdout, &stderr)
+			if code != ExitUsage {
+				t.Fatalf("expected usage exit for threshold %s, got %d stdout=%s stderr=%s", threshold, code, stdout.String(), stderr.String())
+			}
+			if !strings.Contains(stderr.String(), "usage: mindline documents calibrate") {
+				t.Fatalf("expected documents calibrate usage, got %q", stderr.String())
+			}
+		})
 	}
 }
 
@@ -350,4 +449,51 @@ func documentsFixture(t *testing.T, parts ...string) string {
 	}
 	all := append([]string{filepath.Dir(file), "..", "..", "testdata", "documents"}, parts...)
 	return filepath.Join(all...)
+}
+
+func documentsAcceptanceFixture(t *testing.T) string {
+	t.Helper()
+	semanticOut := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "semantics", documentsFixture(t, "semantic"),
+		"--out", semanticOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected semantic generation exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+	answerKey := filepath.Join(t.TempDir(), "answer-key.json")
+	if err := os.WriteFile(answerKey, []byte(`{
+  "schema_version": "semantic-acceptance-answer-key/v0.1",
+  "answer_key_id": "ak-cli-calibration",
+  "source_document_id": "doc-transcript-consolidated-action",
+  "expected_outcomes": [
+    {
+      "expected_outcome_id": "exp-action",
+      "expected_state": "expected_present",
+      "expected_kind": "action_candidate",
+      "required_evidence": ["node-262592341686a94b"],
+      "acceptable_evidence_alternates": ["node-262592341686a94b"],
+      "title_signals": ["checklist"],
+      "summary_signals": ["prepare"],
+      "relation_requirements": ["derived_from"],
+      "minimum_confidence_floor": "low",
+      "notes": "CLI expected action."
+    }
+  ]
+}`), 0o644); err != nil {
+		t.Fatalf("write answer key: %v", err)
+	}
+	acceptOut := t.TempDir()
+	stdout.Reset()
+	stderr.Reset()
+	code = NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "accept", semanticOut,
+		"--answer-key", answerKey,
+		"--out", acceptOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected accept exit %d, got %d stdout=%s stderr=%s", ExitOK, code, stdout.String(), stderr.String())
+	}
+	return acceptOut
 }

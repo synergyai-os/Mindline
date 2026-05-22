@@ -226,11 +226,18 @@ func EvaluateSemanticAcceptance(runID string, answerKey SemanticAcceptanceAnswer
 	missed := 0
 	for _, outcome := range answerKey.ExpectedOutcomes {
 		result := SemanticExpectedOutcomeResult{
-			SchemaVersion:     SemanticAcceptanceExpectedOutcomeSchemaVersion,
-			ExpectedOutcomeID: outcome.ExpectedOutcomeID,
-			ExpectedState:     outcome.ExpectedState,
-			ExpectedKind:      outcome.ExpectedKind,
-			ExpectedPath:      SemanticAcceptanceExpectedOutcomeJSONPath(outcome.ExpectedOutcomeID),
+			SchemaVersion:          SemanticAcceptanceExpectedOutcomeSchemaVersion,
+			ExpectedOutcomeID:      outcome.ExpectedOutcomeID,
+			ExpectedState:          outcome.ExpectedState,
+			ExpectedKind:           outcome.ExpectedKind,
+			RequiredEvidence:       cloneStringList(outcome.RequiredEvidence),
+			AcceptableAlternates:   cloneStringList(outcome.AcceptableAlternates),
+			TitleSignals:           cloneStringList(outcome.TitleSignals),
+			SummarySignals:         cloneStringList(outcome.SummarySignals),
+			RelationRequirements:   append([]SemanticRelationshipType(nil), outcome.RelationRequirements...),
+			MinimumConfidenceFloor: outcome.MinimumConfidenceFloor,
+			Notes:                  outcome.Notes,
+			ExpectedPath:           SemanticAcceptanceExpectedOutcomeJSONPath(outcome.ExpectedOutcomeID),
 		}
 		switch outcome.ExpectedState {
 		case ExpectedOutcomePresent:
