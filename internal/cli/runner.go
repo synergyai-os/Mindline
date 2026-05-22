@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -788,7 +789,7 @@ func parseDocumentsCalibrateArgs(args []string) (inputPath string, outDir string
 				return "", "", options, parseErrorUsage
 			}
 			threshold, parseErr := strconv.ParseFloat(args[i+1], 64)
-			if parseErr != nil || threshold <= 0 {
+			if parseErr != nil || math.IsNaN(threshold) || math.IsInf(threshold, 0) || threshold <= 0 {
 				return "", "", options, parseErrorUsage
 			}
 			options.Threshold = threshold

@@ -344,6 +344,25 @@ func TestDocumentsCalibrateRejectsDestinationAndProfileFlags(t *testing.T) {
 	}
 }
 
+func TestDocumentsCalibrateRejectsNonFiniteThresholds(t *testing.T) {
+	for _, threshold := range []string{"NaN", "+Inf", "-Inf"} {
+		t.Run(threshold, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			code := NewRunner(NewOSFileSystem()).Run([]string{
+				"documents", "calibrate", t.TempDir(),
+				"--out", t.TempDir(),
+				"--threshold", threshold,
+			}, &stdout, &stderr)
+			if code != ExitUsage {
+				t.Fatalf("expected usage exit for threshold %s, got %d stdout=%s stderr=%s", threshold, code, stdout.String(), stderr.String())
+			}
+			if !strings.Contains(stderr.String(), "usage: mindline documents calibrate") {
+				t.Fatalf("expected documents calibrate usage, got %q", stderr.String())
+			}
+		})
+	}
+}
+
 func TestDocumentsStructureReportsWriteFailuresAsArtifactWrite(t *testing.T) {
 	outFile := filepath.Join(t.TempDir(), "not-a-directory")
 	if err := os.WriteFile(outFile, []byte("occupied"), 0o644); err != nil {
