@@ -13,6 +13,10 @@ const (
 	SemanticAcceptanceAnswerKeySchemaVersion       = "semantic-acceptance-answer-key/v0.1"
 	SemanticAcceptanceExpectedOutcomeSchemaVersion = "semantic-acceptance-expected-outcome/v0.1"
 	SemanticAcceptanceItemSchemaVersion            = "semantic-acceptance-item/v0.1"
+	SemanticCalibrationSummarySchemaVersion        = "semantic-calibration-summary/v0.1"
+	SemanticCalibrationReviewItemSchemaVersion     = "semantic-calibration-review-item/v0.1"
+	SemanticCalibrationCursorSchemaVersion         = "semantic-calibration-cursor/v0.1"
+	SemanticCalibrationPageSchemaVersion           = "semantic-calibration-page/v0.1"
 	SourceKindMarkdown                             = "markdown"
 	EvidenceKindLocation                           = "location"
 )
@@ -432,4 +436,106 @@ type SemanticAcceptanceItem struct {
 	Reason            SemanticAcceptanceReason `json:"reason"`
 	ExpectedOutcomeID string                   `json:"expected_outcome_id,omitempty"`
 	Blockers          []Blocker                `json:"blockers"`
+}
+
+type SemanticCalibrationOptions struct {
+	Threshold float64
+	HeldOut   bool
+}
+
+type SemanticCalibrationThresholdStatus string
+
+const (
+	SemanticCalibrationThresholdTrusted    SemanticCalibrationThresholdStatus = "trusted"
+	SemanticCalibrationThresholdNotTrusted SemanticCalibrationThresholdStatus = "not_trusted"
+)
+
+type SemanticCalibrationFailureClass string
+
+const (
+	SemanticCalibrationFailureAccepted             SemanticCalibrationFailureClass = "accepted"
+	SemanticCalibrationFailureFalsePositive        SemanticCalibrationFailureClass = "false_positive"
+	SemanticCalibrationFailureFalseNegative        SemanticCalibrationFailureClass = "false_negative"
+	SemanticCalibrationFailureMissingEvidence      SemanticCalibrationFailureClass = "missing_evidence"
+	SemanticCalibrationFailureRelationError        SemanticCalibrationFailureClass = "relation_error"
+	SemanticCalibrationFailureSourceScopeError     SemanticCalibrationFailureClass = "source_scope_error"
+	SemanticCalibrationFailureBlockedPrivate       SemanticCalibrationFailureClass = "blocked_private"
+	SemanticCalibrationFailureDuplicate            SemanticCalibrationFailureClass = "duplicate"
+	SemanticCalibrationFailureNeedsReviewAmbiguity SemanticCalibrationFailureClass = "needs_review_ambiguity"
+	SemanticCalibrationFailureOther                SemanticCalibrationFailureClass = "other"
+)
+
+type SemanticCalibrationSummary struct {
+	SchemaVersion       string                                  `json:"schema_version"`
+	RunID               string                                  `json:"run_id"`
+	AnswerKeyID         string                                  `json:"answer_key_id"`
+	Threshold           float64                                 `json:"threshold"`
+	HeldOut             bool                                    `json:"held_out"`
+	ThresholdStatus     SemanticCalibrationThresholdStatus      `json:"threshold_status"`
+	NoHumanEligible     bool                                    `json:"no_human_eligible"`
+	MeasuredAccuracy    float64                                 `json:"measured_accuracy"`
+	ScoredCount         int                                     `json:"scored_count"`
+	AcceptedCount       int                                     `json:"accepted_count"`
+	FalsePositiveCount  int                                     `json:"false_positive_count"`
+	FalseNegativeCount  int                                     `json:"false_negative_count"`
+	NeedsReviewCount    int                                     `json:"needs_review_count"`
+	ReviewBurdenCount   int                                     `json:"review_burden_count"`
+	ReviewBurdenRate    float64                                 `json:"review_burden_rate"`
+	BlockedPrivateCount int                                     `json:"blocked_private_count"`
+	ReviewItemCount     int                                     `json:"review_item_count"`
+	FailureClassCounts  map[SemanticCalibrationFailureClass]int `json:"failure_class_counts"`
+	QualityStatement    string                                  `json:"quality_statement"`
+	CursorPath          string                                  `json:"cursor_path"`
+	ReportPath          string                                  `json:"report_path"`
+	ReviewItems         []SemanticCalibrationReviewItemSummary  `json:"review_items"`
+	Items               []SemanticCalibrationReviewItem         `json:"-"`
+}
+
+type SemanticCalibrationReviewItemSummary struct {
+	ReviewItemID    string                          `json:"review_item_id"`
+	ItemPath        string                          `json:"item_path"`
+	PreviewPath     string                          `json:"preview_path"`
+	FailureClass    SemanticCalibrationFailureClass `json:"failure_class"`
+	AcceptanceState SemanticAcceptanceState         `json:"acceptance_state"`
+	Reason          SemanticAcceptanceReason        `json:"reason"`
+}
+
+type SemanticCalibrationReviewItem struct {
+	SchemaVersion     string                          `json:"schema_version"`
+	ReviewItemID      string                          `json:"review_item_id"`
+	ItemIndex         int                             `json:"item_index"`
+	RunID             string                          `json:"run_id"`
+	SourceDocumentID  string                          `json:"source_document_id,omitempty"`
+	CandidateID       string                          `json:"candidate_id,omitempty"`
+	ExpectedOutcomeID string                          `json:"expected_outcome_id,omitempty"`
+	CandidateKind     SemanticCandidateKind           `json:"candidate_kind,omitempty"`
+	ReviewStatus      ReviewStatus                    `json:"review_status,omitempty"`
+	Confidence        Confidence                      `json:"confidence,omitempty"`
+	Title             string                          `json:"title,omitempty"`
+	Summary           string                          `json:"summary,omitempty"`
+	EvidenceNodes     []string                        `json:"evidence_nodes"`
+	EvidenceRanges    []SemanticEvidenceRange         `json:"evidence_ranges"`
+	RelationIDs       []string                        `json:"relation_ids"`
+	AcceptanceState   SemanticAcceptanceState         `json:"acceptance_state"`
+	Reason            SemanticAcceptanceReason        `json:"reason"`
+	FailureClass      SemanticCalibrationFailureClass `json:"failure_class"`
+	NeedsAdjudication bool                            `json:"needs_adjudication"`
+	Blockers          []Blocker                       `json:"blockers"`
+}
+
+type SemanticCalibrationCursor struct {
+	SchemaVersion  string `json:"schema_version"`
+	RunID          string `json:"run_id"`
+	NextIndex      int    `json:"next_index"`
+	TotalCount     int    `json:"total_count"`
+	ProcessedCount int    `json:"processed_count"`
+	RemainingCount int    `json:"remaining_count"`
+	Exhausted      bool   `json:"exhausted"`
+}
+
+type SemanticCalibrationPage struct {
+	SchemaVersion string                         `json:"schema_version"`
+	Done          bool                           `json:"done"`
+	Cursor        SemanticCalibrationCursor      `json:"cursor"`
+	Item          *SemanticCalibrationReviewItem `json:"item,omitempty"`
 }

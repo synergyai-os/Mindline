@@ -129,6 +129,14 @@ func SemanticAcceptancePreviewPath(candidateID string) string {
 	return filepath.ToSlash(filepath.Join("previews", sanitizeID(candidateID)+".md"))
 }
 
+func SemanticCalibrationReviewItemJSONPath(reviewItemID string) string {
+	return filepath.ToSlash(filepath.Join("review-items", sanitizeID(reviewItemID)+".json"))
+}
+
+func SemanticCalibrationReviewPreviewPath(reviewItemID string) string {
+	return filepath.ToSlash(filepath.Join("previews", sanitizeID(reviewItemID)+".md"))
+}
+
 func sanitizeID(value string) string {
 	var b strings.Builder
 	for _, r := range strings.ToLower(value) {
