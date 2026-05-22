@@ -350,6 +350,7 @@ func newSemanticCandidate(runID, sourceID string, kind SemanticCandidateKind, st
 	candidate := SemanticCandidate{
 		SchemaVersion:     SemanticCandidateSchemaVersion,
 		RunID:             runID,
+		SourceDocumentID:  sourceID,
 		CandidateKind:     kind,
 		ReviewStatus:      status,
 		Confidence:        confidence,

@@ -1,16 +1,20 @@
 package documents
 
 const (
-	SegmentSummarySchemaVersion      = "document-segment-summary/v0.1"
-	SegmentSchemaVersion             = "document-segment/v0.1"
-	StructureSummarySchemaVersion    = "document-structure-summary/v0.1"
-	StructureNodeSchemaVersion       = "document-structure-node/v0.1"
-	SemanticSummarySchemaVersion     = "semantic-candidate-summary/v0.1"
-	SemanticObservationSchemaVersion = "semantic-observation/v0.1"
-	SemanticCandidateSchemaVersion   = "semantic-candidate/v0.1"
-	SemanticRelationSchemaVersion    = "semantic-relation/v0.1"
-	SourceKindMarkdown               = "markdown"
-	EvidenceKindLocation             = "location"
+	SegmentSummarySchemaVersion                    = "document-segment-summary/v0.1"
+	SegmentSchemaVersion                           = "document-segment/v0.1"
+	StructureSummarySchemaVersion                  = "document-structure-summary/v0.1"
+	StructureNodeSchemaVersion                     = "document-structure-node/v0.1"
+	SemanticSummarySchemaVersion                   = "semantic-candidate-summary/v0.1"
+	SemanticObservationSchemaVersion               = "semantic-observation/v0.1"
+	SemanticCandidateSchemaVersion                 = "semantic-candidate/v0.1"
+	SemanticRelationSchemaVersion                  = "semantic-relation/v0.1"
+	SemanticAcceptanceSummarySchemaVersion         = "semantic-acceptance-summary/v0.1"
+	SemanticAcceptanceAnswerKeySchemaVersion       = "semantic-acceptance-answer-key/v0.1"
+	SemanticAcceptanceExpectedOutcomeSchemaVersion = "semantic-acceptance-expected-outcome/v0.1"
+	SemanticAcceptanceItemSchemaVersion            = "semantic-acceptance-item/v0.1"
+	SourceKindMarkdown                             = "markdown"
+	EvidenceKindLocation                           = "location"
 )
 
 var WP10AuthorityIDs = []string{"PROD-1", "DOMAIN-1", "DEC-15", "WP-8", "WP-9", "WP-10"}
@@ -279,6 +283,7 @@ type SemanticCandidate struct {
 	SchemaVersion     string                    `json:"schema_version"`
 	CandidateID       string                    `json:"candidate_id"`
 	RunID             string                    `json:"run_id"`
+	SourceDocumentID  string                    `json:"source_document_id,omitempty"`
 	CandidateKind     SemanticCandidateKind     `json:"candidate_kind"`
 	ReviewStatus      ReviewStatus              `json:"review_status"`
 	Confidence        Confidence                `json:"confidence"`
@@ -305,4 +310,126 @@ type SemanticRelation struct {
 	Confidence       Confidence                   `json:"confidence"`
 	ReviewStatus     ReviewStatus                 `json:"review_status"`
 	Blockers         []Blocker                    `json:"blockers"`
+}
+
+type SemanticExpectedOutcomeState string
+
+const (
+	ExpectedOutcomePresent SemanticExpectedOutcomeState = "expected_present"
+	ExpectedOutcomeAbsent  SemanticExpectedOutcomeState = "expected_absent"
+)
+
+type SemanticAcceptanceState string
+
+const (
+	SemanticAcceptanceAccepted    SemanticAcceptanceState = "accepted"
+	SemanticAcceptanceRejected    SemanticAcceptanceState = "rejected"
+	SemanticAcceptanceNeedsReview SemanticAcceptanceState = "needs_review"
+	SemanticAcceptanceNeedsSplit  SemanticAcceptanceState = "needs_split"
+	SemanticAcceptanceNeedsMerge  SemanticAcceptanceState = "needs_merge"
+	SemanticAcceptanceBlocked     SemanticAcceptanceState = "blocked"
+)
+
+type SemanticAcceptanceReason string
+
+const (
+	SemanticAcceptanceReasonCorrect                SemanticAcceptanceReason = "correct"
+	SemanticAcceptanceReasonWrongKind              SemanticAcceptanceReason = "wrong_kind"
+	SemanticAcceptanceReasonUnsupportedEvidence    SemanticAcceptanceReason = "unsupported_evidence"
+	SemanticAcceptanceReasonMissingEvidence        SemanticAcceptanceReason = "missing_evidence"
+	SemanticAcceptanceReasonUnsafeOrPrivate        SemanticAcceptanceReason = "unsafe_or_private"
+	SemanticAcceptanceReasonDuplicate              SemanticAcceptanceReason = "duplicate"
+	SemanticAcceptanceReasonTooBroad               SemanticAcceptanceReason = "too_broad"
+	SemanticAcceptanceReasonTooNarrow              SemanticAcceptanceReason = "too_narrow"
+	SemanticAcceptanceReasonStaleOrContradicted    SemanticAcceptanceReason = "stale_or_contradicted"
+	SemanticAcceptanceReasonAmbiguous              SemanticAcceptanceReason = "ambiguous"
+	SemanticAcceptanceReasonMissingExpectedOutcome SemanticAcceptanceReason = "missing_expected_outcome"
+	SemanticAcceptanceReasonUnexpectedCandidate    SemanticAcceptanceReason = "unexpected_candidate"
+)
+
+type SemanticAcceptanceAnswerKey struct {
+	SchemaVersion    string                    `json:"schema_version"`
+	AnswerKeyID      string                    `json:"answer_key_id"`
+	SourceDocumentID string                    `json:"source_document_id"`
+	ExpectedOutcomes []SemanticExpectedOutcome `json:"expected_outcomes"`
+}
+
+type SemanticExpectedOutcome struct {
+	SchemaVersion          string                       `json:"schema_version,omitempty"`
+	ExpectedOutcomeID      string                       `json:"expected_outcome_id"`
+	ExpectedState          SemanticExpectedOutcomeState `json:"expected_state"`
+	ExpectedKind           SemanticCandidateKind        `json:"expected_kind"`
+	RequiredEvidence       []string                     `json:"required_evidence"`
+	AcceptableAlternates   []string                     `json:"acceptable_evidence_alternates"`
+	TitleSignals           []string                     `json:"title_signals"`
+	SummarySignals         []string                     `json:"summary_signals"`
+	RelationRequirements   []SemanticRelationshipType   `json:"relation_requirements"`
+	MinimumConfidenceFloor Confidence                   `json:"minimum_confidence_floor"`
+	Notes                  string                       `json:"notes"`
+}
+
+type SemanticAcceptanceSummary struct {
+	SchemaVersion                     string                          `json:"schema_version"`
+	RunID                             string                          `json:"run_id"`
+	AnswerKeyID                       string                          `json:"answer_key_id"`
+	CandidateCount                    int                             `json:"candidate_count"`
+	ExpectedPresentCount              int                             `json:"expected_present_count"`
+	ExpectedAbsentCount               int                             `json:"expected_absent_count"`
+	MatchedExpectedCount              int                             `json:"matched_expected_count"`
+	MissedExpectedCount               int                             `json:"missed_expected_count"`
+	UnexpectedCandidateCount          int                             `json:"unexpected_candidate_count"`
+	FalsePositiveCount                int                             `json:"false_positive_count"`
+	FalseNegativeCount                int                             `json:"false_negative_count"`
+	DuplicateCount                    int                             `json:"duplicate_count"`
+	EvidenceMissingCount              int                             `json:"evidence_missing_count"`
+	AcceptedCount                     int                             `json:"accepted_count"`
+	RejectedCount                     int                             `json:"rejected_count"`
+	NeedsReviewCount                  int                             `json:"needs_review_count"`
+	BlockedCount                      int                             `json:"blocked_count"`
+	ReviewBurdenCount                 int                             `json:"review_burden_count"`
+	PrecisionLikeMatchRate            float64                         `json:"precision_like_match_rate"`
+	RecallLikeExpectedOutcomeCoverage float64                         `json:"recall_like_expected_outcome_coverage"`
+	QualityStatement                  string                          `json:"quality_statement"`
+	ExpectedOutcomes                  []SemanticExpectedOutcomeResult `json:"expected_outcomes"`
+	Candidates                        []SemanticAcceptanceItemSummary `json:"candidates"`
+	Items                             []SemanticAcceptanceItem        `json:"-"`
+}
+
+type SemanticExpectedOutcomeResult struct {
+	SchemaVersion      string                       `json:"schema_version"`
+	ExpectedOutcomeID  string                       `json:"expected_outcome_id"`
+	ExpectedState      SemanticExpectedOutcomeState `json:"expected_state"`
+	ExpectedKind       SemanticCandidateKind        `json:"expected_kind"`
+	AcceptanceState    SemanticAcceptanceState      `json:"acceptance_state"`
+	Reason             SemanticAcceptanceReason     `json:"reason"`
+	MatchedCandidateID string                       `json:"matched_candidate_id,omitempty"`
+	ExpectedPath       string                       `json:"expected_path"`
+}
+
+type SemanticAcceptanceItemSummary struct {
+	CandidateID     string                   `json:"candidate_id"`
+	CandidateKind   SemanticCandidateKind    `json:"candidate_kind"`
+	AcceptanceState SemanticAcceptanceState  `json:"acceptance_state"`
+	Reason          SemanticAcceptanceReason `json:"reason"`
+	ItemPath        string                   `json:"item_path"`
+	PreviewPath     string                   `json:"preview_path"`
+}
+
+type SemanticAcceptanceItem struct {
+	SchemaVersion     string                   `json:"schema_version"`
+	CandidateID       string                   `json:"candidate_id"`
+	RunID             string                   `json:"run_id"`
+	SourceDocumentID  string                   `json:"source_document_id"`
+	CandidateKind     SemanticCandidateKind    `json:"candidate_kind"`
+	ReviewStatus      ReviewStatus             `json:"review_status"`
+	Confidence        Confidence               `json:"confidence"`
+	Title             string                   `json:"title"`
+	Summary           string                   `json:"summary"`
+	EvidenceNodes     []string                 `json:"evidence_nodes"`
+	EvidenceRanges    []SemanticEvidenceRange  `json:"evidence_ranges"`
+	RelationIDs       []string                 `json:"relation_ids"`
+	AcceptanceState   SemanticAcceptanceState  `json:"acceptance_state"`
+	Reason            SemanticAcceptanceReason `json:"reason"`
+	ExpectedOutcomeID string                   `json:"expected_outcome_id,omitempty"`
+	Blockers          []Blocker                `json:"blockers"`
 }

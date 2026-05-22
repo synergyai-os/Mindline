@@ -26,7 +26,7 @@ const (
 	ExitArtifactWrite = 3
 )
 
-const usage = "usage: mindline process <candidate.json> [--out <dir>]\nusage: mindline slack normalize <slack-export.json> [--out <dir>]\nusage: mindline destination dry-run <sbos-result.json> --adapter tolaria --out <dir>\nusage: mindline pipeline dry-run <pipeline-input.json> --method basb-para-code --destination tolaria --out <dir>\nusage: mindline product-brain propose <run-dir> --profile <profile.json> --out <dir>\nusage: mindline documents decompose <markdown-path-or-dir> --out <dir>\nusage: mindline documents structure <markdown-path-or-dir> --out <dir>\nusage: mindline documents semantics <structure-run-dir-or-markdown-path-or-markdown-dir> --out <dir>\n"
+const usage = "usage: mindline process <candidate.json> [--out <dir>]\nusage: mindline slack normalize <slack-export.json> [--out <dir>]\nusage: mindline destination dry-run <sbos-result.json> --adapter tolaria --out <dir>\nusage: mindline pipeline dry-run <pipeline-input.json> --method basb-para-code --destination tolaria --out <dir>\nusage: mindline product-brain propose <run-dir> --profile <profile.json> --out <dir>\nusage: mindline documents decompose <markdown-path-or-dir> --out <dir>\nusage: mindline documents structure <markdown-path-or-dir> --out <dir>\nusage: mindline documents semantics <structure-run-dir-or-markdown-path-or-markdown-dir> --out <dir>\nusage: mindline documents accept <semantic-run-dir> --answer-key <answer-key.json> --out <dir>\n"
 
 const protectedRootsEnv = "MINDLINE_PROTECTED_ROOTS"
 const defaultTolariaProtectedRoot = "/Users/randyhereman/Young Human Club Dropbox/02. Areas/PKM - Tolaria"
@@ -234,6 +234,9 @@ func (r Runner) runDocuments(args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "semantics" {
 		return r.runDocumentsSemantics(args, stdout, stderr)
 	}
+	if len(args) > 0 && args[0] == "accept" {
+		return r.runDocumentsAccept(args, stdout, stderr)
+	}
 	inputPath, outDir, parseError := parseDocumentsArgs(args, "decompose")
 	if parseError != parseErrorNone {
 		fmt.Fprint(stderr, usage)
@@ -246,6 +249,30 @@ func (r Runner) runDocuments(args []string, stdout, stderr io.Writer) int {
 			return ExitArtifactWrite
 		}
 		fmt.Fprintf(stderr, "decompose documents: %v\n", err)
+		return ExitProcess
+	}
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(summary); err != nil {
+		fmt.Fprintf(stderr, "write stdout: %v\n", err)
+		return ExitUsage
+	}
+	return ExitOK
+}
+
+func (r Runner) runDocumentsAccept(args []string, stdout, stderr io.Writer) int {
+	inputPath, answerKeyPath, outDir, parseError := parseDocumentsAcceptArgs(args)
+	if parseError != parseErrorNone {
+		fmt.Fprint(stderr, usage)
+		return ExitUsage
+	}
+	summary, err := documents.AcceptSemantic(inputPath, answerKeyPath, outDir)
+	if err != nil {
+		if documents.IsArtifactWriteError(err) {
+			fmt.Fprintf(stderr, "write semantic acceptance: %v\n", err)
+			return ExitArtifactWrite
+		}
+		fmt.Fprintf(stderr, "accept semantic candidates: %v\n", err)
 		return ExitProcess
 	}
 	encoder := json.NewEncoder(stdout)
@@ -662,6 +689,30 @@ func parseDocumentsArgs(args []string, command string) (inputPath string, outDir
 		return "", "", parseErrorUsage
 	}
 	return inputPath, args[3], parseErrorNone
+}
+
+func parseDocumentsAcceptArgs(args []string) (inputPath string, answerKeyPath string, outDir string, err parseError) {
+	if len(args) != 6 || args[0] != "accept" || strings.TrimSpace(args[1]) == "" {
+		return "", "", "", parseErrorUsage
+	}
+	inputPath = args[1]
+	for i := 2; i < len(args); i += 2 {
+		if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+			return "", "", "", parseErrorUsage
+		}
+		switch args[i] {
+		case "--answer-key":
+			answerKeyPath = args[i+1]
+		case "--out":
+			outDir = args[i+1]
+		default:
+			return "", "", "", parseErrorUsage
+		}
+	}
+	if answerKeyPath == "" || outDir == "" {
+		return "", "", "", parseErrorUsage
+	}
+	return inputPath, answerKeyPath, outDir, parseErrorNone
 }
 
 func (r Runner) validateOutDir(outDir string) error {

@@ -2,6 +2,7 @@
   "schema_version": "semantic-candidate/v0.1",
   "candidate_id": "cand-92ae8e8100a5eaac",
   "run_id": "run-sem-712942e3ab499d31",
+  "source_document_id": "doc-process-capability-evidence",
   "candidate_kind": "capability_candidate",
   "review_status": "ready",
   "confidence": "medium",

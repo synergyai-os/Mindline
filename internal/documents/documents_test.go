@@ -1338,6 +1338,7 @@ func validSemanticCandidate(observation SemanticObservation, node StructureNode)
 		SchemaVersion:     SemanticCandidateSchemaVersion,
 		CandidateID:       "cand-demo",
 		RunID:             observation.RunID,
+		SourceDocumentID:  observation.SourceDocumentID,
 		CandidateKind:     SemanticCandidateKindAction,
 		ReviewStatus:      ReviewStatusReady,
 		Confidence:        ConfidenceMedium,
@@ -1366,6 +1367,677 @@ func validSemanticRelation(candidate SemanticCandidate, observation SemanticObse
 		Confidence:       ConfidenceMedium,
 		ReviewStatus:     ReviewStatusReady,
 		Blockers:         []Blocker{},
+	}
+}
+
+func TestSemanticAcceptanceEvaluatesExpectedOutcomes(t *testing.T) {
+	semanticRun := writeSemanticAcceptanceRun(t, []SemanticCandidate{
+		validSemanticCandidate(validSemanticObservation(validStructureNode()), validStructureNode()),
+		{
+			SchemaVersion:     SemanticCandidateSchemaVersion,
+			CandidateID:       "cand-unexpected",
+			RunID:             "run-sem-demo",
+			SourceDocumentID:  "doc-demo",
+			CandidateKind:     SemanticCandidateKindDecision,
+			ReviewStatus:      ReviewStatusReady,
+			Confidence:        ConfidenceMedium,
+			Title:             "Decide launch scope",
+			Summary:           "The team decided the launch scope.",
+			EvidenceNodes:     []string{"node-decision"},
+			EvidenceRanges:    []SemanticEvidenceRange{{StructureNodeID: "node-decision", LineStart: 3, LineEnd: 4}},
+			ObservationIDs:    []string{"obs-decision"},
+			RelationIDs:       []string{"rel-decision"},
+			DestinationStatus: SemanticDestinationUnresolved,
+			Blockers:          []Blocker{},
+		},
+	})
+	answerKey := writeAcceptanceAnswerKey(t, SemanticAcceptanceAnswerKey{
+		SchemaVersion:    SemanticAcceptanceAnswerKeySchemaVersion,
+		AnswerKeyID:      "ak-demo",
+		SourceDocumentID: "doc-demo",
+		ExpectedOutcomes: []SemanticExpectedOutcome{
+			{
+				ExpectedOutcomeID:      "exp-action",
+				ExpectedState:          ExpectedOutcomePresent,
+				ExpectedKind:           SemanticCandidateKindAction,
+				RequiredEvidence:       []string{"node-demo"},
+				TitleSignals:           []string{"checklist"},
+				SummarySignals:         []string{"prepare"},
+				MinimumConfidenceFloor: ConfidenceLow,
+			},
+			{
+				ExpectedOutcomeID:      "exp-no-risk",
+				ExpectedState:          ExpectedOutcomeAbsent,
+				ExpectedKind:           SemanticCandidateKindRisk,
+				TitleSignals:           []string{"security risk"},
+				MinimumConfidenceFloor: ConfidenceLow,
+			},
+		},
+	})
+	out := t.TempDir()
+	summary, err := AcceptSemantic(semanticRun, answerKey, out)
+	if err != nil {
+		t.Fatalf("accept semantic candidates: %v", err)
+	}
+	if summary.SchemaVersion != SemanticAcceptanceSummarySchemaVersion {
+		t.Fatalf("unexpected schema: %s", summary.SchemaVersion)
+	}
+	if summary.MatchedExpectedCount != 1 || summary.MissedExpectedCount != 0 || summary.UnexpectedCandidateCount != 1 {
+		t.Fatalf("unexpected acceptance counts: %+v", summary)
+	}
+	if summary.FalsePositiveCount != 1 || summary.FalseNegativeCount != 0 || summary.EvidenceMissingCount != 0 {
+		t.Fatalf("unexpected false-positive/false-negative counts: %+v", summary)
+	}
+	if summary.PrecisionLikeMatchRate != 0.5 || summary.RecallLikeExpectedOutcomeCoverage != 1 {
+		t.Fatalf("unexpected rates: %+v", summary)
+	}
+	if _, err := os.Stat(filepath.Join(out, "semantic-acceptance", "acceptance-summary.json")); err != nil {
+		t.Fatalf("expected acceptance summary: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(out, "semantic-acceptance", "reports", "quality-report.md")); err != nil {
+		t.Fatalf("expected quality report: %v", err)
+	}
+	report, err := os.ReadFile(filepath.Join(out, "semantic-acceptance", "reports", "quality-report.md"))
+	if err != nil {
+		t.Fatalf("read quality report: %v", err)
+	}
+	if !strings.Contains(string(report), "False positives: 1") || !strings.Contains(string(report), "False negatives: 0") {
+		t.Fatalf("quality report must label false-positive and false-negative counts:\n%s", string(report))
+	}
+	for _, item := range summary.Items {
+		if item.CandidateID != "cand-demo" {
+			continue
+		}
+		if item.SourceDocumentID != "doc-demo" || len(item.EvidenceRanges) == 0 || len(item.RelationIDs) == 0 {
+			t.Fatalf("acceptance item must preserve source, ranges, and relations: %+v", item)
+		}
+	}
+}
+
+func TestSemanticAcceptanceReportsMissedExpectedOutcome(t *testing.T) {
+	semanticRun := writeSemanticAcceptanceRun(t, nil)
+	answerKey := writeAcceptanceAnswerKey(t, SemanticAcceptanceAnswerKey{
+		SchemaVersion:    SemanticAcceptanceAnswerKeySchemaVersion,
+		AnswerKeyID:      "ak-missed",
+		SourceDocumentID: "doc-demo",
+		ExpectedOutcomes: []SemanticExpectedOutcome{{
+			ExpectedOutcomeID:      "exp-required-action",
+			ExpectedState:          ExpectedOutcomePresent,
+			ExpectedKind:           SemanticCandidateKindAction,
+			RequiredEvidence:       []string{"node-demo"},
+			TitleSignals:           []string{"checklist"},
+			MinimumConfidenceFloor: ConfidenceLow,
+		}},
+	})
+	summary, err := AcceptSemantic(semanticRun, answerKey, t.TempDir())
+	if err != nil {
+		t.Fatalf("accept semantic candidates: %v", err)
+	}
+	if summary.MissedExpectedCount != 1 || summary.RecallLikeExpectedOutcomeCoverage != 0 {
+		t.Fatalf("expected missed outcome and zero recall-like coverage: %+v", summary)
+	}
+	if summary.FalseNegativeCount != 1 || summary.EvidenceMissingCount != 1 {
+		t.Fatalf("expected missed outcome to count as false negative and missing evidence: %+v", summary)
+	}
+}
+
+func TestSemanticAcceptanceDoesNotMatchWrongSourceDocument(t *testing.T) {
+	node := validStructureNode()
+	observation := validSemanticObservation(node)
+	candidate := validSemanticCandidate(observation, node)
+	candidate.SourceDocumentID = "doc-other"
+	semanticRun := writeSemanticAcceptanceRun(t, []SemanticCandidate{candidate})
+	answerKey := writeAcceptanceAnswerKey(t, SemanticAcceptanceAnswerKey{
+		SchemaVersion:    SemanticAcceptanceAnswerKeySchemaVersion,
+		AnswerKeyID:      "ak-source-scope",
+		SourceDocumentID: "doc-demo",
+		ExpectedOutcomes: []SemanticExpectedOutcome{{
+			ExpectedOutcomeID:      "exp-action",
+			ExpectedState:          ExpectedOutcomePresent,
+			ExpectedKind:           SemanticCandidateKindAction,
+			RequiredEvidence:       []string{"node-demo"},
+			TitleSignals:           []string{"checklist"},
+			MinimumConfidenceFloor: ConfidenceLow,
+		}},
+	})
+	summary, err := AcceptSemantic(semanticRun, answerKey, t.TempDir())
+	if err != nil {
+		t.Fatalf("accept semantic candidates: %v", err)
+	}
+	if summary.MatchedExpectedCount != 0 || summary.MissedExpectedCount != 1 {
+		t.Fatalf("expected wrong-source candidate to miss: %+v", summary)
+	}
+	if summary.CandidateCount != 0 || summary.FalsePositiveCount != 0 || summary.UnexpectedCandidateCount != 0 {
+		t.Fatalf("expected wrong-source candidate excluded from scoped metrics: %+v", summary)
+	}
+}
+
+func TestSemanticAcceptanceRequiresFullEvidenceSetAndRanges(t *testing.T) {
+	node := validStructureNode()
+	observation := validSemanticObservation(node)
+	candidate := validSemanticCandidate(observation, node)
+	candidate.EvidenceNodes = []string{"node-demo", "node-other"}
+	candidate.EvidenceRanges = []SemanticEvidenceRange{{StructureNodeID: "node-demo", LineStart: 1, LineEnd: 2}}
+	semanticRun := writeSemanticAcceptanceRun(t, []SemanticCandidate{candidate})
+	answerKey := writeAcceptanceAnswerKey(t, SemanticAcceptanceAnswerKey{
+		SchemaVersion:    SemanticAcceptanceAnswerKeySchemaVersion,
+		AnswerKeyID:      "ak-evidence-set",
+		SourceDocumentID: "doc-demo",
+		ExpectedOutcomes: []SemanticExpectedOutcome{{
+			ExpectedOutcomeID:      "exp-action",
+			ExpectedState:          ExpectedOutcomePresent,
+			ExpectedKind:           SemanticCandidateKindAction,
+			RequiredEvidence:       []string{"node-demo", "node-other"},
+			TitleSignals:           []string{"checklist"},
+			MinimumConfidenceFloor: ConfidenceLow,
+		}},
+	})
+	summary, err := AcceptSemantic(semanticRun, answerKey, t.TempDir())
+	if err != nil {
+		t.Fatalf("accept semantic candidates: %v", err)
+	}
+	if summary.MatchedExpectedCount != 0 || summary.MissedExpectedCount != 1 {
+		t.Fatalf("expected missing evidence range to fail match: %+v", summary)
+	}
+}
+
+func TestSemanticAcceptanceRequiresRelationRequirements(t *testing.T) {
+	node := validStructureNode()
+	observation := validSemanticObservation(node)
+	candidate := validSemanticCandidate(observation, node)
+	candidate.RelationIDs = []string{SemanticRelationID(candidate.RunID, SemanticRelationshipDerivedFrom, candidate.CandidateID, observation.ObservationID)}
+	semanticRun := writeSemanticAcceptanceRun(t, []SemanticCandidate{candidate})
+	answerKey := writeAcceptanceAnswerKey(t, SemanticAcceptanceAnswerKey{
+		SchemaVersion:    SemanticAcceptanceAnswerKeySchemaVersion,
+		AnswerKeyID:      "ak-relation",
+		SourceDocumentID: "doc-demo",
+		ExpectedOutcomes: []SemanticExpectedOutcome{{
+			ExpectedOutcomeID:      "exp-action",
+			ExpectedState:          ExpectedOutcomePresent,
+			ExpectedKind:           SemanticCandidateKindAction,
+			RequiredEvidence:       []string{"node-demo"},
+			TitleSignals:           []string{"checklist"},
+			RelationRequirements:   []SemanticRelationshipType{SemanticRelationshipContradicts},
+			MinimumConfidenceFloor: ConfidenceLow,
+		}},
+	})
+	summary, err := AcceptSemantic(semanticRun, answerKey, t.TempDir())
+	if err != nil {
+		t.Fatalf("accept semantic candidates: %v", err)
+	}
+	if summary.MatchedExpectedCount != 0 || summary.MissedExpectedCount != 1 {
+		t.Fatalf("expected missing relation requirement to fail match: %+v", summary)
+	}
+}
+
+func TestSemanticAcceptanceIgnoresBlockedRelationRequirements(t *testing.T) {
+	node := validStructureNode()
+	observation := validSemanticObservation(node)
+	candidate := validSemanticCandidate(observation, node)
+	relationID := SemanticRelationID(candidate.RunID, SemanticRelationshipDerivedFrom, candidate.CandidateID, observation.ObservationID)
+	candidate.RelationIDs = []string{relationID}
+	semanticRun := writeSemanticAcceptanceRun(t, []SemanticCandidate{candidate})
+	writeDocumentsTestJSON(t, filepath.Join(semanticRun, "semantic-candidates", SemanticRelationJSONPath(relationID)), SemanticRelation{
+		SchemaVersion:    SemanticRelationSchemaVersion,
+		RelationID:       relationID,
+		RunID:            candidate.RunID,
+		RelationshipType: SemanticRelationshipDerivedFrom,
+		FromID:           candidate.CandidateID,
+		FromType:         SemanticRelationEndpointCandidate,
+		ToID:             observation.ObservationID,
+		ToType:           SemanticRelationEndpointObservation,
+		EvidenceNodes:    []string{"node-demo"},
+		Confidence:       ConfidenceLow,
+		ReviewStatus:     ReviewStatusBlocked,
+		Blockers:         []Blocker{{Code: "relation_blocked", Message: "Relation evidence is blocked."}},
+	})
+	answerKey := writeAcceptanceAnswerKey(t, SemanticAcceptanceAnswerKey{
+		SchemaVersion:    SemanticAcceptanceAnswerKeySchemaVersion,
+		AnswerKeyID:      "ak-blocked-relation",
+		SourceDocumentID: "doc-demo",
+		ExpectedOutcomes: []SemanticExpectedOutcome{{
+			ExpectedOutcomeID:      "exp-action",
+			ExpectedState:          ExpectedOutcomePresent,
+			ExpectedKind:           SemanticCandidateKindAction,
+			RequiredEvidence:       []string{"node-demo"},
+			TitleSignals:           []string{"checklist"},
+			RelationRequirements:   []SemanticRelationshipType{SemanticRelationshipDerivedFrom},
+			MinimumConfidenceFloor: ConfidenceLow,
+		}},
+	})
+	summary, err := AcceptSemantic(semanticRun, answerKey, t.TempDir())
+	if err != nil {
+		t.Fatalf("accept semantic candidates: %v", err)
+	}
+	if summary.MatchedExpectedCount != 0 || summary.MissedExpectedCount != 1 {
+		t.Fatalf("expected blocked relation not to satisfy requirement: %+v", summary)
+	}
+}
+
+func TestSemanticAcceptanceDoesNotCountBlockedCandidateAsMatch(t *testing.T) {
+	node := validStructureNode()
+	observation := validSemanticObservation(node)
+	candidate := validSemanticCandidate(observation, node)
+	candidate.ReviewStatus = ReviewStatusBlocked
+	candidate.Blockers = []Blocker{{Code: "blocked_candidate", Message: "Candidate blocked by review policy."}}
+	semanticRun := writeSemanticAcceptanceRun(t, []SemanticCandidate{candidate})
+	answerKey := writeAcceptanceAnswerKey(t, SemanticAcceptanceAnswerKey{
+		SchemaVersion:    SemanticAcceptanceAnswerKeySchemaVersion,
+		AnswerKeyID:      "ak-blocked",
+		SourceDocumentID: "doc-demo",
+		ExpectedOutcomes: []SemanticExpectedOutcome{{
+			ExpectedOutcomeID:      "exp-action",
+			ExpectedState:          ExpectedOutcomePresent,
+			ExpectedKind:           SemanticCandidateKindAction,
+			RequiredEvidence:       []string{"node-demo"},
+			TitleSignals:           []string{"checklist"},
+			MinimumConfidenceFloor: ConfidenceLow,
+		}},
+	})
+	summary, err := AcceptSemantic(semanticRun, answerKey, t.TempDir())
+	if err != nil {
+		t.Fatalf("accept semantic candidates: %v", err)
+	}
+	if summary.MatchedExpectedCount != 0 || summary.BlockedCount != 1 || summary.RecallLikeExpectedOutcomeCoverage != 0 {
+		t.Fatalf("expected blocked candidate excluded from quality match: %+v", summary)
+	}
+	if summary.PrecisionLikeMatchRate != 0 || summary.ReviewBurdenCount != 1 {
+		t.Fatalf("expected blocked candidate excluded from precision denominator: %+v", summary)
+	}
+}
+
+func TestSemanticAcceptancePreservesNeedsReviewCandidateWithReviewBlocker(t *testing.T) {
+	node := validStructureNode()
+	observation := validSemanticObservation(node)
+	candidate := validSemanticCandidate(observation, node)
+	candidate.ReviewStatus = ReviewStatusNeedsReview
+	candidate.Confidence = ConfidenceLow
+	candidate.Blockers = []Blocker{{Code: "semantic_review_required", Message: "Candidate requires review because evidence is weak, contradicted, or ambiguous."}}
+	semanticRun := writeSemanticAcceptanceRun(t, []SemanticCandidate{candidate})
+	answerKey := writeAcceptanceAnswerKey(t, SemanticAcceptanceAnswerKey{
+		SchemaVersion:    SemanticAcceptanceAnswerKeySchemaVersion,
+		AnswerKeyID:      "ak-needs-review",
+		SourceDocumentID: "doc-demo",
+		ExpectedOutcomes: []SemanticExpectedOutcome{{
+			ExpectedOutcomeID:      "exp-action",
+			ExpectedState:          ExpectedOutcomePresent,
+			ExpectedKind:           SemanticCandidateKindAction,
+			RequiredEvidence:       []string{"node-demo"},
+			TitleSignals:           []string{"checklist"},
+			MinimumConfidenceFloor: ConfidenceLow,
+		}},
+	})
+	summary, err := AcceptSemantic(semanticRun, answerKey, t.TempDir())
+	if err != nil {
+		t.Fatalf("accept semantic candidates: %v", err)
+	}
+	if summary.BlockedCount != 0 || summary.NeedsReviewCount != 1 || summary.ReviewBurdenCount != 1 {
+		t.Fatalf("expected needs_review candidate to remain review burden, got %+v", summary)
+	}
+	if len(summary.Items) != 1 || summary.Items[0].AcceptanceState != SemanticAcceptanceNeedsReview {
+		t.Fatalf("expected item to need review, got %+v", summary.Items)
+	}
+}
+
+func TestSemanticAcceptanceRejectsPrivateMarkerInBlocker(t *testing.T) {
+	node := validStructureNode()
+	observation := validSemanticObservation(node)
+	candidate := validSemanticCandidate(observation, node)
+	candidate.ReviewStatus = ReviewStatusBlocked
+	candidate.Blockers = []Blocker{{Code: "unsafe_marker", Message: unsafeTokenMarker()}}
+	semanticRun := writeSemanticAcceptanceRun(t, []SemanticCandidate{candidate})
+	answerKey := writeAcceptanceAnswerKey(t, SemanticAcceptanceAnswerKey{
+		SchemaVersion:    SemanticAcceptanceAnswerKeySchemaVersion,
+		AnswerKeyID:      "ak-blocker-marker",
+		SourceDocumentID: "doc-demo",
+		ExpectedOutcomes: []SemanticExpectedOutcome{{
+			ExpectedOutcomeID:      "exp-action",
+			ExpectedState:          ExpectedOutcomePresent,
+			ExpectedKind:           SemanticCandidateKindAction,
+			RequiredEvidence:       []string{"node-demo"},
+			TitleSignals:           []string{"checklist"},
+			MinimumConfidenceFloor: ConfidenceLow,
+		}},
+	})
+	if _, err := AcceptSemantic(semanticRun, answerKey, t.TempDir()); err == nil {
+		t.Fatalf("expected private marker in blocker to be rejected")
+	}
+}
+
+func TestSemanticAcceptanceRejectsPrivateMarkerInRunID(t *testing.T) {
+	semanticRun := writeSemanticAcceptanceRun(t, []SemanticCandidate{validSemanticCandidate(validSemanticObservation(validStructureNode()), validStructureNode())})
+	summaryPath := filepath.Join(semanticRun, "semantic-candidates", "semantic-summary.json")
+	data, err := os.ReadFile(summaryPath)
+	if err != nil {
+		t.Fatalf("read semantic summary: %v", err)
+	}
+	var summary SemanticSummary
+	if err := json.Unmarshal(data, &summary); err != nil {
+		t.Fatalf("decode semantic summary: %v", err)
+	}
+	summary.RunID = "run-" + unsafeTokenMarker()
+	writeDocumentsTestJSON(t, summaryPath, summary)
+	answerKey := writeAcceptanceAnswerKey(t, SemanticAcceptanceAnswerKey{
+		SchemaVersion:    SemanticAcceptanceAnswerKeySchemaVersion,
+		AnswerKeyID:      "ak-run-marker",
+		SourceDocumentID: "doc-demo",
+		ExpectedOutcomes: []SemanticExpectedOutcome{{
+			ExpectedOutcomeID:      "exp-action",
+			ExpectedState:          ExpectedOutcomePresent,
+			ExpectedKind:           SemanticCandidateKindAction,
+			RequiredEvidence:       []string{"node-demo"},
+			TitleSignals:           []string{"checklist"},
+			MinimumConfidenceFloor: ConfidenceLow,
+		}},
+	})
+	if _, err := AcceptSemantic(semanticRun, answerKey, t.TempDir()); err == nil {
+		t.Fatalf("expected private marker in run id to be rejected")
+	}
+}
+
+func TestSemanticAcceptanceRejectsDuplicateExpectedOutcomes(t *testing.T) {
+	semanticRun := writeSemanticAcceptanceRun(t, nil)
+	answerKey := writeAcceptanceAnswerKey(t, SemanticAcceptanceAnswerKey{
+		SchemaVersion:    SemanticAcceptanceAnswerKeySchemaVersion,
+		AnswerKeyID:      "ak-duplicate",
+		SourceDocumentID: "doc-demo",
+		ExpectedOutcomes: []SemanticExpectedOutcome{
+			{ExpectedOutcomeID: "exp-duplicate", ExpectedState: ExpectedOutcomeAbsent, ExpectedKind: SemanticCandidateKindRisk, MinimumConfidenceFloor: ConfidenceLow},
+			{ExpectedOutcomeID: "exp-duplicate", ExpectedState: ExpectedOutcomeAbsent, ExpectedKind: SemanticCandidateKindRisk, MinimumConfidenceFloor: ConfidenceLow},
+		},
+	})
+	if _, err := AcceptSemantic(semanticRun, answerKey, t.TempDir()); err == nil {
+		t.Fatalf("expected duplicate expected outcome rejection")
+	}
+}
+
+func TestSemanticAcceptanceRejectsExpectedPresentWithoutEvidence(t *testing.T) {
+	semanticRun := writeSemanticAcceptanceRun(t, nil)
+	answerKey := writeAcceptanceAnswerKey(t, SemanticAcceptanceAnswerKey{
+		SchemaVersion:    SemanticAcceptanceAnswerKeySchemaVersion,
+		AnswerKeyID:      "ak-missing-evidence",
+		SourceDocumentID: "doc-demo",
+		ExpectedOutcomes: []SemanticExpectedOutcome{{
+			ExpectedOutcomeID:      "exp-missing-evidence",
+			ExpectedState:          ExpectedOutcomePresent,
+			ExpectedKind:           SemanticCandidateKindAction,
+			TitleSignals:           []string{"checklist"},
+			MinimumConfidenceFloor: ConfidenceLow,
+		}},
+	})
+	if _, err := AcceptSemantic(semanticRun, answerKey, t.TempDir()); err == nil {
+		t.Fatalf("expected missing evidence rejection")
+	}
+}
+
+func TestSemanticAcceptanceRejectsBlankRequiredEvidence(t *testing.T) {
+	semanticRun := writeSemanticAcceptanceRun(t, nil)
+	answerKey := writeAcceptanceAnswerKey(t, SemanticAcceptanceAnswerKey{
+		SchemaVersion:    SemanticAcceptanceAnswerKeySchemaVersion,
+		AnswerKeyID:      "ak-blank-evidence",
+		SourceDocumentID: "doc-demo",
+		ExpectedOutcomes: []SemanticExpectedOutcome{{
+			ExpectedOutcomeID:      "exp-blank-evidence",
+			ExpectedState:          ExpectedOutcomePresent,
+			ExpectedKind:           SemanticCandidateKindAction,
+			RequiredEvidence:       []string{" "},
+			MinimumConfidenceFloor: ConfidenceLow,
+		}},
+	})
+	if _, err := AcceptSemantic(semanticRun, answerKey, t.TempDir()); err == nil {
+		t.Fatalf("expected blank required evidence rejection")
+	}
+}
+
+func TestSemanticAcceptanceRejectsPrivateMarkers(t *testing.T) {
+	semanticRun := writeSemanticAcceptanceRun(t, nil)
+	answerKey := writeAcceptanceAnswerKey(t, SemanticAcceptanceAnswerKey{
+		SchemaVersion:    SemanticAcceptanceAnswerKeySchemaVersion,
+		AnswerKeyID:      "ak-private",
+		SourceDocumentID: "doc-demo",
+		ExpectedOutcomes: []SemanticExpectedOutcome{{
+			ExpectedOutcomeID:      "exp-private",
+			ExpectedState:          ExpectedOutcomePresent,
+			ExpectedKind:           SemanticCandidateKindAction,
+			RequiredEvidence:       []string{"node-demo"},
+			TitleSignals:           []string{unsafeTokenMarker()},
+			MinimumConfidenceFloor: ConfidenceLow,
+		}},
+	})
+	if _, err := AcceptSemantic(semanticRun, answerKey, t.TempDir()); err == nil {
+		t.Fatalf("expected private marker rejection")
+	}
+}
+
+func TestSemanticAcceptanceRejectsCandidatePathTraversal(t *testing.T) {
+	semanticRun := writeSemanticAcceptanceRun(t, []SemanticCandidate{validSemanticCandidate(validSemanticObservation(validStructureNode()), validStructureNode())})
+	summaryPath := filepath.Join(semanticRun, "semantic-candidates", "semantic-summary.json")
+	data, err := os.ReadFile(summaryPath)
+	if err != nil {
+		t.Fatalf("read semantic summary: %v", err)
+	}
+	var summary SemanticSummary
+	if err := json.Unmarshal(data, &summary); err != nil {
+		t.Fatalf("decode semantic summary: %v", err)
+	}
+	summary.Candidates[0].CandidatePath = "../outside.json"
+	writeDocumentsTestJSON(t, summaryPath, summary)
+	answerKey := writeAcceptanceAnswerKey(t, SemanticAcceptanceAnswerKey{
+		SchemaVersion:    SemanticAcceptanceAnswerKeySchemaVersion,
+		AnswerKeyID:      "ak-path-traversal",
+		SourceDocumentID: "doc-demo",
+		ExpectedOutcomes: []SemanticExpectedOutcome{{
+			ExpectedOutcomeID:      "exp-action",
+			ExpectedState:          ExpectedOutcomePresent,
+			ExpectedKind:           SemanticCandidateKindAction,
+			RequiredEvidence:       []string{"node-demo"},
+			TitleSignals:           []string{"checklist"},
+			MinimumConfidenceFloor: ConfidenceLow,
+		}},
+	})
+	if _, err := AcceptSemantic(semanticRun, answerKey, t.TempDir()); err == nil {
+		t.Fatalf("expected candidate path traversal rejection")
+	}
+}
+
+func TestSemanticAcceptanceRejectsSymlinkedInputArtifact(t *testing.T) {
+	base := t.TempDir()
+	outside := filepath.Join(base, "outside.json")
+	if err := os.WriteFile(outside, []byte(`{}`), 0o644); err != nil {
+		t.Fatalf("write outside artifact: %v", err)
+	}
+	semanticRun := writeSemanticAcceptanceRun(t, []SemanticCandidate{validSemanticCandidate(validSemanticObservation(validStructureNode()), validStructureNode())})
+	candidatePath := filepath.Join(semanticRun, "semantic-candidates", SemanticCandidateJSONPath("cand-demo"))
+	if err := os.Remove(candidatePath); err != nil {
+		t.Fatalf("remove candidate artifact: %v", err)
+	}
+	if err := os.Symlink(outside, candidatePath); err != nil {
+		t.Fatalf("symlink candidate artifact: %v", err)
+	}
+	answerKey := writeAcceptanceAnswerKey(t, SemanticAcceptanceAnswerKey{
+		SchemaVersion:    SemanticAcceptanceAnswerKeySchemaVersion,
+		AnswerKeyID:      "ak-input-symlink",
+		SourceDocumentID: "doc-demo",
+		ExpectedOutcomes: []SemanticExpectedOutcome{{
+			ExpectedOutcomeID:      "exp-action",
+			ExpectedState:          ExpectedOutcomePresent,
+			ExpectedKind:           SemanticCandidateKindAction,
+			RequiredEvidence:       []string{"node-demo"},
+			TitleSignals:           []string{"checklist"},
+			MinimumConfidenceFloor: ConfidenceLow,
+		}},
+	})
+	if _, err := AcceptSemantic(semanticRun, answerKey, t.TempDir()); err == nil {
+		t.Fatalf("expected symlinked candidate artifact rejection")
+	}
+}
+
+func TestSemanticAcceptanceRejectsSymlinkedSummaryArtifact(t *testing.T) {
+	base := t.TempDir()
+	outside := filepath.Join(base, "outside-summary.json")
+	if err := os.WriteFile(outside, []byte(`{}`), 0o644); err != nil {
+		t.Fatalf("write outside summary: %v", err)
+	}
+	semanticRun := writeSemanticAcceptanceRun(t, nil)
+	summaryPath := filepath.Join(semanticRun, "semantic-candidates", "semantic-summary.json")
+	if err := os.Remove(summaryPath); err != nil {
+		t.Fatalf("remove semantic summary: %v", err)
+	}
+	if err := os.Symlink(outside, summaryPath); err != nil {
+		t.Fatalf("symlink semantic summary: %v", err)
+	}
+	answerKey := writeAcceptanceAnswerKey(t, SemanticAcceptanceAnswerKey{
+		SchemaVersion:    SemanticAcceptanceAnswerKeySchemaVersion,
+		AnswerKeyID:      "ak-summary-symlink",
+		SourceDocumentID: "doc-demo",
+		ExpectedOutcomes: []SemanticExpectedOutcome{{
+			ExpectedOutcomeID:      "exp-action",
+			ExpectedState:          ExpectedOutcomePresent,
+			ExpectedKind:           SemanticCandidateKindAction,
+			RequiredEvidence:       []string{"node-demo"},
+			TitleSignals:           []string{"checklist"},
+			MinimumConfidenceFloor: ConfidenceLow,
+		}},
+	})
+	if _, err := AcceptSemantic(semanticRun, answerKey, t.TempDir()); err == nil {
+		t.Fatalf("expected symlinked semantic summary rejection")
+	}
+}
+
+func TestSemanticAcceptanceDeterministicAcrossRuns(t *testing.T) {
+	semanticRun := writeSemanticAcceptanceRun(t, []SemanticCandidate{
+		validSemanticCandidate(validSemanticObservation(validStructureNode()), validStructureNode()),
+	})
+	answerKey := writeAcceptanceAnswerKey(t, SemanticAcceptanceAnswerKey{
+		SchemaVersion:    SemanticAcceptanceAnswerKeySchemaVersion,
+		AnswerKeyID:      "ak-deterministic",
+		SourceDocumentID: "doc-demo",
+		ExpectedOutcomes: []SemanticExpectedOutcome{{
+			ExpectedOutcomeID:      "exp-action",
+			ExpectedState:          ExpectedOutcomePresent,
+			ExpectedKind:           SemanticCandidateKindAction,
+			RequiredEvidence:       []string{"node-demo"},
+			TitleSignals:           []string{"checklist"},
+			MinimumConfidenceFloor: ConfidenceLow,
+		}},
+	})
+	first := t.TempDir()
+	second := t.TempDir()
+	if _, err := AcceptSemantic(semanticRun, answerKey, first); err != nil {
+		t.Fatalf("first accept: %v", err)
+	}
+	if _, err := AcceptSemantic(semanticRun, answerKey, second); err != nil {
+		t.Fatalf("second accept: %v", err)
+	}
+	assertTreeMatches(t, filepath.Join(first, "semantic-acceptance"), filepath.Join(second, "semantic-acceptance"))
+}
+
+func TestSemanticAcceptanceRejectsSymlinkedOutParent(t *testing.T) {
+	base := t.TempDir()
+	outside := filepath.Join(base, "outside")
+	linkParent := filepath.Join(base, "link-parent")
+	if err := os.Mkdir(outside, 0o755); err != nil {
+		t.Fatalf("mkdir outside: %v", err)
+	}
+	if err := os.Symlink(outside, linkParent); err != nil {
+		t.Fatalf("symlink parent: %v", err)
+	}
+	semanticRun := writeSemanticAcceptanceRun(t, nil)
+	answerKey := writeAcceptanceAnswerKey(t, SemanticAcceptanceAnswerKey{
+		SchemaVersion:    SemanticAcceptanceAnswerKeySchemaVersion,
+		AnswerKeyID:      "ak-symlink",
+		SourceDocumentID: "doc-demo",
+		ExpectedOutcomes: []SemanticExpectedOutcome{{
+			ExpectedOutcomeID:      "exp-no-risk",
+			ExpectedState:          ExpectedOutcomeAbsent,
+			ExpectedKind:           SemanticCandidateKindRisk,
+			MinimumConfidenceFloor: ConfidenceLow,
+		}},
+	})
+	if _, err := AcceptSemantic(semanticRun, answerKey, filepath.Join(linkParent, "generated")); err == nil {
+		t.Fatalf("expected symlinked --out parent rejection")
+	}
+}
+
+func writeSemanticAcceptanceRun(t *testing.T, candidates []SemanticCandidate) string {
+	t.Helper()
+	root := t.TempDir()
+	semanticRoot := filepath.Join(root, "semantic-candidates")
+	if err := os.MkdirAll(filepath.Join(semanticRoot, "candidates"), 0o755); err != nil {
+		t.Fatalf("mkdir semantic candidates: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(semanticRoot, "relations"), 0o755); err != nil {
+		t.Fatalf("mkdir semantic relations: %v", err)
+	}
+	if candidates == nil {
+		candidates = []SemanticCandidate{}
+	}
+	summaryCandidates := make([]SemanticSummaryCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		path := SemanticCandidateJSONPath(candidate.CandidateID)
+		writeDocumentsTestJSON(t, filepath.Join(semanticRoot, path), candidate)
+		for _, relationID := range candidate.RelationIDs {
+			relation := SemanticRelation{
+				SchemaVersion:    SemanticRelationSchemaVersion,
+				RelationID:       relationID,
+				RunID:            candidate.RunID,
+				RelationshipType: SemanticRelationshipDerivedFrom,
+				FromID:           candidate.CandidateID,
+				FromType:         SemanticRelationEndpointCandidate,
+				ToID:             firstString(candidate.ObservationIDs),
+				ToType:           SemanticRelationEndpointObservation,
+				EvidenceNodes:    cloneStringList(candidate.EvidenceNodes),
+				Confidence:       candidate.Confidence,
+				ReviewStatus:     candidate.ReviewStatus,
+				Blockers:         cloneBlockerList(candidate.Blockers),
+			}
+			writeDocumentsTestJSON(t, filepath.Join(semanticRoot, SemanticRelationJSONPath(relationID)), relation)
+		}
+		summaryCandidates = append(summaryCandidates, SemanticSummaryCandidate{
+			CandidateID:   candidate.CandidateID,
+			CandidateKind: candidate.CandidateKind,
+			ReviewStatus:  candidate.ReviewStatus,
+			Confidence:    candidate.Confidence,
+			CandidatePath: path,
+			PreviewPath:   SemanticPreviewPath(candidate.CandidateID),
+		})
+	}
+	writeDocumentsTestJSON(t, filepath.Join(semanticRoot, "semantic-summary.json"), SemanticSummary{
+		SchemaVersion:  SemanticSummarySchemaVersion,
+		RunID:          "run-sem-demo",
+		SourceCount:    1,
+		CandidateCount: len(candidates),
+		Candidates:     summaryCandidates,
+	})
+	return root
+}
+
+func firstString(values []string) string {
+	if len(values) == 0 {
+		return "obs-demo"
+	}
+	return values[0]
+}
+
+func writeAcceptanceAnswerKey(t *testing.T, answerKey SemanticAcceptanceAnswerKey) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "answer-key.json")
+	writeDocumentsTestJSON(t, path, answerKey)
+	return path
+}
+
+func writeDocumentsTestJSON(t *testing.T, path string, value any) {
+	t.Helper()
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal test json: %v", err)
+	}
+	data = append(data, '\n')
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir test json dir: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("write test json: %v", err)
 	}
 }
 
