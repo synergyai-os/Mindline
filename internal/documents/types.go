@@ -1,14 +1,16 @@
 package documents
 
-import "encoding/json"
-
 const (
-	SegmentSummarySchemaVersion   = "document-segment-summary/v0.1"
-	SegmentSchemaVersion          = "document-segment/v0.1"
-	StructureSummarySchemaVersion = "document-structure-summary/v0.1"
-	StructureNodeSchemaVersion    = "document-structure-node/v0.1"
-	SourceKindMarkdown            = "markdown"
-	EvidenceKindLocation          = "location"
+	SegmentSummarySchemaVersion      = "document-segment-summary/v0.1"
+	SegmentSchemaVersion             = "document-segment/v0.1"
+	StructureSummarySchemaVersion    = "document-structure-summary/v0.1"
+	StructureNodeSchemaVersion       = "document-structure-node/v0.1"
+	SemanticSummarySchemaVersion     = "semantic-candidate-summary/v0.1"
+	SemanticObservationSchemaVersion = "semantic-observation/v0.1"
+	SemanticCandidateSchemaVersion   = "semantic-candidate/v0.1"
+	SemanticRelationSchemaVersion    = "semantic-relation/v0.1"
+	SourceKindMarkdown               = "markdown"
+	EvidenceKindLocation             = "location"
 )
 
 var WP10AuthorityIDs = []string{"PROD-1", "DOMAIN-1", "DEC-15", "WP-8", "WP-9", "WP-10"}
@@ -161,35 +163,146 @@ type StructureEvidence struct {
 	RelatedSegmentIDs []string `json:"related_segment_ids"`
 }
 
-func (s Summary) MarshalJSON() ([]byte, error) {
-	value := map[string]any{
-		"schema_version":     s.SchemaVersion,
-		"run_id":             s.RunID,
-		"source_count":       s.SourceCount,
-		"segment_count":      s.SegmentCount,
-		"needs_review_count": s.NeedsReviewCount,
-		"type_counts":        s.TypeCounts,
-		"segments":           s.Segments,
-		"au" + "thority_ids": s.AuthorityIDs,
-	}
-	return json.Marshal(value)
+type SemanticCandidateKind string
+
+const (
+	SemanticCandidateKindTopic       SemanticCandidateKind = "topic_candidate"
+	SemanticCandidateKindDecision    SemanticCandidateKind = "decision_candidate"
+	SemanticCandidateKindAction      SemanticCandidateKind = "action_candidate"
+	SemanticCandidateKindIssue       SemanticCandidateKind = "issue_candidate"
+	SemanticCandidateKindQuestion    SemanticCandidateKind = "question_candidate"
+	SemanticCandidateKindRequirement SemanticCandidateKind = "requirement_candidate"
+	SemanticCandidateKindCapability  SemanticCandidateKind = "capability_candidate"
+	SemanticCandidateKindDependency  SemanticCandidateKind = "dependency_candidate"
+	SemanticCandidateKindRisk        SemanticCandidateKind = "risk_candidate"
+	SemanticCandidateKindReference   SemanticCandidateKind = "reference_candidate"
+	SemanticCandidateKindUnknown     SemanticCandidateKind = "unknown_candidate"
+)
+
+type SemanticObservationKind string
+
+const (
+	SemanticObservationKindAgendaFrame          SemanticObservationKind = "agenda_frame"
+	SemanticObservationKindClaim                SemanticObservationKind = "claim"
+	SemanticObservationKindQuestion             SemanticObservationKind = "question"
+	SemanticObservationKindProposal             SemanticObservationKind = "proposal"
+	SemanticObservationKindObjection            SemanticObservationKind = "objection"
+	SemanticObservationKindDecisionSignal       SemanticObservationKind = "decision_signal"
+	SemanticObservationKindActionSignal         SemanticObservationKind = "action_signal"
+	SemanticObservationKindOwnerSignal          SemanticObservationKind = "owner_signal"
+	SemanticObservationKindDeadlineSignal       SemanticObservationKind = "deadline_signal"
+	SemanticObservationKindRecapSignal          SemanticObservationKind = "recap_signal"
+	SemanticObservationKindCapabilityStatement  SemanticObservationKind = "capability_statement"
+	SemanticObservationKindRequirementStatement SemanticObservationKind = "requirement_statement"
+	SemanticObservationKindDependencyStatement  SemanticObservationKind = "dependency_statement"
+	SemanticObservationKindRiskStatement        SemanticObservationKind = "risk_statement"
+	SemanticObservationKindReferenceStatement   SemanticObservationKind = "reference_statement"
+	SemanticObservationKindUnknown              SemanticObservationKind = "unknown_observation"
+)
+
+type SemanticRelationshipType string
+
+const (
+	SemanticRelationshipSupports         SemanticRelationshipType = "supports"
+	SemanticRelationshipRefines          SemanticRelationshipType = "refines"
+	SemanticRelationshipContradicts      SemanticRelationshipType = "contradicts"
+	SemanticRelationshipAnswers          SemanticRelationshipType = "answers"
+	SemanticRelationshipSupersedes       SemanticRelationshipType = "supersedes"
+	SemanticRelationshipSummarizes       SemanticRelationshipType = "summarizes"
+	SemanticRelationshipSameTopicAs      SemanticRelationshipType = "same_topic_as"
+	SemanticRelationshipDependsOn        SemanticRelationshipType = "depends_on"
+	SemanticRelationshipAssignsAction    SemanticRelationshipType = "assigns_action"
+	SemanticRelationshipMentionsOwner    SemanticRelationshipType = "mentions_owner"
+	SemanticRelationshipMentionsDeadline SemanticRelationshipType = "mentions_deadline"
+	SemanticRelationshipDerivedFrom      SemanticRelationshipType = "derived_from"
+)
+
+type SemanticRelationEndpointType string
+
+const (
+	SemanticRelationEndpointStructureNode SemanticRelationEndpointType = "structure_node"
+	SemanticRelationEndpointObservation   SemanticRelationEndpointType = "observation"
+	SemanticRelationEndpointCandidate     SemanticRelationEndpointType = "candidate"
+)
+
+type SemanticDestinationStatus string
+
+const SemanticDestinationUnresolved SemanticDestinationStatus = "unresolved"
+
+type SemanticSummary struct {
+	SchemaVersion          string                           `json:"schema_version"`
+	RunID                  string                           `json:"run_id"`
+	SourceCount            int                              `json:"source_count"`
+	ObservationCount       int                              `json:"observation_count"`
+	CandidateCount         int                              `json:"candidate_count"`
+	RelationCount          int                              `json:"relation_count"`
+	NeedsReviewCount       int                              `json:"needs_review_count"`
+	BlockedCount           int                              `json:"blocked_count"`
+	CandidateKindCounts    map[SemanticCandidateKind]int    `json:"candidate_kind_counts"`
+	ObservationKindCounts  map[SemanticObservationKind]int  `json:"observation_kind_counts"`
+	RelationshipTypeCounts map[SemanticRelationshipType]int `json:"relationship_type_counts"`
+	Candidates             []SemanticSummaryCandidate       `json:"candidates"`
 }
 
-func (s Segment) MarshalJSON() ([]byte, error) {
-	value := map[string]any{
-		"schema_version":     s.SchemaVersion,
-		"segment_id":         s.SegmentID,
-		"run_id":             s.RunID,
-		"source_document_id": s.SourceDocumentID,
-		"source_kind":        s.SourceKind,
-		"semantic_type":      s.SemanticType,
-		"review_status":      s.ReviewStatus,
-		"confidence":         s.Confidence,
-		"title":              s.Title,
-		"summary":            s.Summary,
-		"evidence":           s.Evidence,
-		"blockers":           s.Blockers,
-		"au" + "thority_ids": s.AuthorityIDs,
-	}
-	return json.Marshal(value)
+type SemanticSummaryCandidate struct {
+	CandidateID   string                `json:"candidate_id"`
+	CandidateKind SemanticCandidateKind `json:"candidate_kind"`
+	ReviewStatus  ReviewStatus          `json:"review_status"`
+	Confidence    Confidence            `json:"confidence"`
+	CandidatePath string                `json:"candidate_path"`
+	PreviewPath   string                `json:"preview_path"`
+}
+
+type SemanticEvidenceRange struct {
+	StructureNodeID string `json:"structure_node_id"`
+	LineStart       int    `json:"line_start"`
+	LineEnd         int    `json:"line_end"`
+}
+
+type SemanticObservation struct {
+	SchemaVersion    string                  `json:"schema_version"`
+	ObservationID    string                  `json:"observation_id"`
+	RunID            string                  `json:"run_id"`
+	SourceDocumentID string                  `json:"source_document_id"`
+	ObservationKind  SemanticObservationKind `json:"observation_kind"`
+	ReviewStatus     ReviewStatus            `json:"review_status"`
+	Confidence       Confidence              `json:"confidence"`
+	Title            string                  `json:"title"`
+	Summary          string                  `json:"summary"`
+	EvidenceNodes    []string                `json:"evidence_nodes"`
+	EvidenceRanges   []SemanticEvidenceRange `json:"evidence_ranges"`
+	ContentHash      string                  `json:"content_hash"`
+	Blockers         []Blocker               `json:"blockers"`
+}
+
+type SemanticCandidate struct {
+	SchemaVersion     string                    `json:"schema_version"`
+	CandidateID       string                    `json:"candidate_id"`
+	RunID             string                    `json:"run_id"`
+	CandidateKind     SemanticCandidateKind     `json:"candidate_kind"`
+	ReviewStatus      ReviewStatus              `json:"review_status"`
+	Confidence        Confidence                `json:"confidence"`
+	Title             string                    `json:"title"`
+	Summary           string                    `json:"summary"`
+	EvidenceNodes     []string                  `json:"evidence_nodes"`
+	EvidenceRanges    []SemanticEvidenceRange   `json:"evidence_ranges"`
+	ObservationIDs    []string                  `json:"observation_ids"`
+	RelationIDs       []string                  `json:"relation_ids"`
+	DestinationStatus SemanticDestinationStatus `json:"destination_status"`
+	Blockers          []Blocker                 `json:"blockers"`
+}
+
+type SemanticRelation struct {
+	SchemaVersion    string                       `json:"schema_version"`
+	RelationID       string                       `json:"relation_id"`
+	RunID            string                       `json:"run_id"`
+	RelationshipType SemanticRelationshipType     `json:"relationship_type"`
+	FromID           string                       `json:"from_id"`
+	FromType         SemanticRelationEndpointType `json:"from_type"`
+	ToID             string                       `json:"to_id"`
+	ToType           SemanticRelationEndpointType `json:"to_type"`
+	EvidenceNodes    []string                     `json:"evidence_nodes"`
+	Confidence       Confidence                   `json:"confidence"`
+	ReviewStatus     ReviewStatus                 `json:"review_status"`
+	Blockers         []Blocker                    `json:"blockers"`
 }

@@ -1,0 +1,22 @@
+{
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-a5e61004aac504fd",
+  "run_id": "run-doc-df6548611870eecc",
+  "source_document_id": "doc-transcript-contradicted-observation",
+  "source_kind": "markdown",
+  "semantic_type": "source_note",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "10:00 - Facilitator",
+  "summary": "10:00 - Facilitator",
+  "evidence": {
+    "kind": "location",
+    "heading_path": [
+      "Synthetic Contradiction Transcript"
+    ],
+    "line_start": 3,
+    "line_end": 3,
+    "content_hash": "sha256:20c8e6e6457a4bf3f615e6b7b998c35bb3902257f2080e5449d8ee1be79d6783"
+  },
+  "blockers": []
+}

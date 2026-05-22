@@ -1,0 +1,36 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-09e1698fedb83559",
+  "run_id": "run-struct-035f649b794d0fe1",
+  "source_document_id": "doc-process-capability-evidence",
+  "node_type": "table",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "Table: Intake Area",
+  "summary": "Markdown table block.",
+  "parent_node_id": "node-332b000d88913479",
+  "child_node_ids": [
+    "node-40596963c9438f4a"
+  ],
+  "related_segment_ids": [
+    "seg-59c3ac3e1afc7267",
+    "seg-acd3a4518f8e7e2c"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-process-capability-evidence",
+    "heading_path": [
+      "Intake Operating Model",
+      "Intake Area",
+      "Table: Intake Area"
+    ],
+    "line_start": 10,
+    "line_end": 12,
+    "content_hash": "sha256:061d927227a912189f60b5ec78fce6a80d9803324e5f1421f19f15967f1f5731",
+    "related_segment_ids": [
+      "seg-59c3ac3e1afc7267",
+      "seg-acd3a4518f8e7e2c"
+    ]
+  },
+  "blockers": []
+}

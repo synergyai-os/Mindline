@@ -1,14 +1,14 @@
 {
-  "authority_ids": [
-    "PROD-1",
-    "DOMAIN-1",
-    "DEC-15",
-    "WP-8",
-    "WP-9",
-    "WP-10"
-  ],
-  "blockers": [],
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-d93362e742b788ac",
+  "run_id": "run-doc-e4ff6601c602753e",
+  "source_document_id": "doc-strategy-capability-table",
+  "source_kind": "markdown",
+  "semantic_type": "reference",
+  "review_status": "ready",
   "confidence": "medium",
+  "title": "Reference table: Capability table",
+  "summary": "Table records structured reference material for this section.",
   "evidence": {
     "kind": "location",
     "heading_path": [
@@ -19,13 +19,5 @@
     "line_end": 15,
     "content_hash": "sha256:d8a6a8a72316298531a8ba26128a0652f337884d8e46d8bdfb1ae05345ef9a5a"
   },
-  "review_status": "ready",
-  "run_id": "run-doc-e4ff6601c602753e",
-  "schema_version": "document-segment/v0.1",
-  "segment_id": "seg-d93362e742b788ac",
-  "semantic_type": "reference",
-  "source_document_id": "doc-strategy-capability-table",
-  "source_kind": "markdown",
-  "summary": "Table records structured reference material for this section.",
-  "title": "Reference table: Capability table"
+  "blockers": []
 }

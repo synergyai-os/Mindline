@@ -1,0 +1,16 @@
+{
+  "schema_version": "semantic-relation/v0.1",
+  "relation_id": "rel-97ca6f2d3792d6a5",
+  "run_id": "run-sem-712942e3ab499d31",
+  "relationship_type": "derived_from",
+  "from_id": "cand-355990974e6d5d71",
+  "from_type": "candidate",
+  "to_id": "obs-437adbc72b53bcfc",
+  "to_type": "observation",
+  "evidence_nodes": [
+    "node-c87e0b2d89043a83"
+  ],
+  "confidence": "low",
+  "review_status": "needs_review",
+  "blockers": []
+}

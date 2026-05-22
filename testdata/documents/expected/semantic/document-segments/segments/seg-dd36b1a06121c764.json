@@ -1,0 +1,22 @@
+{
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-dd36b1a06121c764",
+  "run_id": "run-doc-df6548611870eecc",
+  "source_document_id": "doc-transcript-consolidated-action",
+  "source_kind": "markdown",
+  "semantic_type": "source_note",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "09:05 - Lead",
+  "summary": "09:05 - Lead",
+  "evidence": {
+    "kind": "location",
+    "heading_path": [
+      "Synthetic Planning Transcript"
+    ],
+    "line_start": 9,
+    "line_end": 9,
+    "content_hash": "sha256:6440578ada4bcae63e516ac06a04200576454ee375d5679f959d2737134b5977"
+  },
+  "blockers": []
+}

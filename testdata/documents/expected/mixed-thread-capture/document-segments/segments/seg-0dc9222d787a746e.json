@@ -1,14 +1,14 @@
 {
-  "authority_ids": [
-    "PROD-1",
-    "DOMAIN-1",
-    "DEC-15",
-    "WP-8",
-    "WP-9",
-    "WP-10"
-  ],
-  "blockers": [],
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-0dc9222d787a746e",
+  "run_id": "run-doc-dc28525bad06e31b",
+  "source_document_id": "doc-mixed-thread-capture",
+  "source_kind": "markdown",
+  "semantic_type": "action",
+  "review_status": "ready",
   "confidence": "medium",
+  "title": "add a compact summary for each generated segment",
+  "summary": "Action: add a compact summary for each generated segment.",
   "evidence": {
     "kind": "location",
     "heading_path": [
@@ -19,13 +19,5 @@
     "line_end": 15,
     "content_hash": "sha256:083612d960eb10e1dad59208f91d8fd14977b3d97c44466c599c28c67ecec8fe"
   },
-  "review_status": "ready",
-  "run_id": "run-doc-dc28525bad06e31b",
-  "schema_version": "document-segment/v0.1",
-  "segment_id": "seg-0dc9222d787a746e",
-  "semantic_type": "action",
-  "source_document_id": "doc-mixed-thread-capture",
-  "source_kind": "markdown",
-  "summary": "Action: add a compact summary for each generated segment.",
-  "title": "add a compact summary for each generated segment"
+  "blockers": []
 }

@@ -1,0 +1,23 @@
+{
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-f17df32f3c151067",
+  "run_id": "run-doc-df6548611870eecc",
+  "source_document_id": "doc-process-capability-evidence",
+  "source_kind": "markdown",
+  "semantic_type": "tension",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "missing source metadata blocks review",
+  "summary": "Risk: missing source metadata blocks review.",
+  "evidence": {
+    "kind": "location",
+    "heading_path": [
+      "Intake Operating Model",
+      "Intake Area"
+    ],
+    "line_start": 8,
+    "line_end": 8,
+    "content_hash": "sha256:25c61fb246edd24b36b44db02ed5d7e4770a8507c0baf0fe5b37e2d71b580be3"
+  },
+  "blockers": []
+}

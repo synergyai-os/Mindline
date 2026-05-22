@@ -1,0 +1,59 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-27bc66a606192c2f",
+  "run_id": "run-struct-035f649b794d0fe1",
+  "source_document_id": "doc-transcript-consolidated-action",
+  "node_type": "document",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "Synthetic Planning Transcript",
+  "summary": "Document structure root.",
+  "parent_node_id": "",
+  "child_node_ids": [
+    "node-0fe508dd044cf9a9",
+    "node-067e324d52f25bff",
+    "node-64b6bb0de4aa3782",
+    "node-68ef7b02f454e088",
+    "node-262592341686a94b",
+    "node-b89259969784f6ae"
+  ],
+  "related_segment_ids": [
+    "seg-b227e6079e46515b",
+    "seg-4590354ca85feca5",
+    "seg-9eba9e9bfe543c72",
+    "seg-7358598ae4c4c405",
+    "seg-dd36b1a06121c764",
+    "seg-bf569a28059ef96d",
+    "seg-dd98dad184034a5c",
+    "seg-2f3ef0adc85ed4db",
+    "seg-0a494a0eae2e7eaf",
+    "seg-c76dcc7575428b80",
+    "seg-1fe984a900452f4e",
+    "seg-38bfac571ef0ab31"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-transcript-consolidated-action",
+    "heading_path": [
+      "Synthetic Planning Transcript"
+    ],
+    "line_start": 1,
+    "line_end": 19,
+    "content_hash": "sha256:d0bb83ebcbe51fa795e89901453807ba08ebbc448aae1ada0739d23c74908948",
+    "related_segment_ids": [
+      "seg-b227e6079e46515b",
+      "seg-4590354ca85feca5",
+      "seg-9eba9e9bfe543c72",
+      "seg-7358598ae4c4c405",
+      "seg-dd36b1a06121c764",
+      "seg-bf569a28059ef96d",
+      "seg-dd98dad184034a5c",
+      "seg-2f3ef0adc85ed4db",
+      "seg-0a494a0eae2e7eaf",
+      "seg-c76dcc7575428b80",
+      "seg-1fe984a900452f4e",
+      "seg-38bfac571ef0ab31"
+    ]
+  },
+  "blockers": []
+}

@@ -1,0 +1,23 @@
+{
+  "schema_version": "semantic-observation/v0.1",
+  "observation_id": "obs-7cee560f045f4b1b",
+  "run_id": "run-sem-712942e3ab499d31",
+  "source_document_id": "doc-transcript-contradicted-observation",
+  "observation_kind": "question",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "question: 10:00 - Facilitator Question: should we mark the import ready today?",
+  "summary": "10:00 - Facilitator Question: should we mark the import ready today?",
+  "evidence_nodes": [
+    "node-9fe582b1e14d82fc"
+  ],
+  "evidence_ranges": [
+    {
+      "structure_node_id": "node-9fe582b1e14d82fc",
+      "line_start": 3,
+      "line_end": 4
+    }
+  ],
+  "content_hash": "sha256:4ea80ee53fc7d5db605afc5c6454d135a06e6dfc3fa1c1604d0c977edcbd16ee",
+  "blockers": []
+}

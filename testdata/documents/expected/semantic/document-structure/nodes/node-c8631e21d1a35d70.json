@@ -1,0 +1,32 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-c8631e21d1a35d70",
+  "run_id": "run-struct-035f649b794d0fe1",
+  "source_document_id": "doc-process-capability-evidence",
+  "node_type": "capability",
+  "review_status": "ready",
+  "confidence": "high",
+  "title": "PL-1 - Intake routing",
+  "summary": "PL-1 - Intake routing",
+  "parent_node_id": "node-332b000d88913479",
+  "child_node_ids": [],
+  "related_segment_ids": [
+    "seg-6758aa76f66affb3"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-process-capability-evidence",
+    "heading_path": [
+      "Intake Operating Model",
+      "Intake Area",
+      "PL-1 - Intake routing"
+    ],
+    "line_start": 5,
+    "line_end": 5,
+    "content_hash": "sha256:7725055a078c07ca14392fbfaf98238bdefd85060f53340c4bb3895b8d4e2ceb",
+    "related_segment_ids": [
+      "seg-6758aa76f66affb3"
+    ]
+  },
+  "blockers": []
+}

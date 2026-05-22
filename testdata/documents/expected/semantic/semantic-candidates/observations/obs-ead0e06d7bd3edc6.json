@@ -1,0 +1,23 @@
+{
+  "schema_version": "semantic-observation/v0.1",
+  "observation_id": "obs-ead0e06d7bd3edc6",
+  "run_id": "run-sem-712942e3ab499d31",
+  "source_document_id": "doc-transcript-contradicted-observation",
+  "observation_kind": "recap_signal",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "recap signal: 10:06 - Facilitator Recap: keep the import under review until validation is comple",
+  "summary": "10:06 - Facilitator Recap: keep the import under review until validation is complete.",
+  "evidence_nodes": [
+    "node-27d63def570fec36"
+  ],
+  "evidence_ranges": [
+    {
+      "structure_node_id": "node-27d63def570fec36",
+      "line_start": 12,
+      "line_end": 13
+    }
+  ],
+  "content_hash": "sha256:48b72eaedf8d0da3cca6a8897d4c87858fa926c34989e3c4944e0055bd6ac19e",
+  "blockers": []
+}

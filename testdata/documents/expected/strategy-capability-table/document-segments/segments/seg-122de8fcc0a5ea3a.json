@@ -1,14 +1,14 @@
 {
-  "authority_ids": [
-    "PROD-1",
-    "DOMAIN-1",
-    "DEC-15",
-    "WP-8",
-    "WP-9",
-    "WP-10"
-  ],
-  "blockers": [],
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-122de8fcc0a5ea3a",
+  "run_id": "run-doc-e4ff6601c602753e",
+  "source_document_id": "doc-strategy-capability-table",
+  "source_kind": "markdown",
+  "semantic_type": "decision",
+  "review_status": "ready",
   "confidence": "high",
+  "title": "adapters map segments after decomposition, not during decomposition",
+  "summary": "Decision: adapters map segments after decomposition, not during decomposition.",
   "evidence": {
     "kind": "location",
     "heading_path": [
@@ -19,13 +19,5 @@
     "line_end": 6,
     "content_hash": "sha256:eaf9c4806bef41ad5f5f7f795fc25928ca8ad347bf867896a0544b9cffc85f6c"
   },
-  "review_status": "ready",
-  "run_id": "run-doc-e4ff6601c602753e",
-  "schema_version": "document-segment/v0.1",
-  "segment_id": "seg-122de8fcc0a5ea3a",
-  "semantic_type": "decision",
-  "source_document_id": "doc-strategy-capability-table",
-  "source_kind": "markdown",
-  "summary": "Decision: adapters map segments after decomposition, not during decomposition.",
-  "title": "adapters map segments after decomposition, not during decomposition"
+  "blockers": []
 }

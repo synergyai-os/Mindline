@@ -1,0 +1,23 @@
+{
+  "schema_version": "semantic-observation/v0.1",
+  "observation_id": "obs-427393341d87411f",
+  "run_id": "run-sem-712942e3ab499d31",
+  "source_document_id": "doc-transcript-consolidated-action",
+  "observation_kind": "action_signal",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "action signal: 09:09 - Analyst I support the checklist because it will make handoff evidence cle",
+  "summary": "09:09 - Analyst I support the checklist because it will make handoff evidence clearer.",
+  "evidence_nodes": [
+    "node-68ef7b02f454e088"
+  ],
+  "evidence_ranges": [
+    {
+      "structure_node_id": "node-68ef7b02f454e088",
+      "line_start": 12,
+      "line_end": 13
+    }
+  ],
+  "content_hash": "sha256:78fed930f1404b750e30a02e376b8b766ebcc09d6b070e8cab70e87ef25699bb",
+  "blockers": []
+}

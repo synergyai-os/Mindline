@@ -1,0 +1,195 @@
+{
+  "schema_version": "document-structure-summary/v0.1",
+  "run_id": "run-struct-035f649b794d0fe1",
+  "source_count": 3,
+  "node_count": 19,
+  "needs_review_count": 0,
+  "blocked_count": 0,
+  "node_type_counts": {
+    "capability": 2,
+    "document": 3,
+    "requirement": 1,
+    "section": 1,
+    "table": 1,
+    "table_row": 1,
+    "transcript_turn": 10
+  },
+  "root_node_ids": [
+    "node-4f46b3bd0981f360",
+    "node-27bc66a606192c2f",
+    "node-ff5e3fe950bf9905"
+  ],
+  "nodes": [
+    {
+      "node_id": "node-4f46b3bd0981f360",
+      "source_document_id": "doc-process-capability-evidence",
+      "node_type": "document",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "intake-operating-model",
+      "preview_path": "previews/node-4f46b3bd0981f360.md"
+    },
+    {
+      "node_id": "node-332b000d88913479",
+      "source_document_id": "doc-process-capability-evidence",
+      "node_type": "section",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "intake-operating-model/intake-area",
+      "preview_path": "previews/node-332b000d88913479.md"
+    },
+    {
+      "node_id": "node-67b76ec1ab4bf1f0",
+      "source_document_id": "doc-process-capability-evidence",
+      "node_type": "requirement",
+      "review_status": "ready",
+      "confidence": "high",
+      "node_path": "intake-operating-model/intake-area/every-source-has-provenance-before-review",
+      "preview_path": "previews/node-67b76ec1ab4bf1f0.md"
+    },
+    {
+      "node_id": "node-c8631e21d1a35d70",
+      "source_document_id": "doc-process-capability-evidence",
+      "node_type": "capability",
+      "review_status": "ready",
+      "confidence": "high",
+      "node_path": "intake-operating-model/intake-area/pl-1-intake-routing",
+      "preview_path": "previews/node-c8631e21d1a35d70.md"
+    },
+    {
+      "node_id": "node-09e1698fedb83559",
+      "source_document_id": "doc-process-capability-evidence",
+      "node_type": "table",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "intake-operating-model/intake-area/table-intake-area",
+      "preview_path": "previews/node-09e1698fedb83559.md"
+    },
+    {
+      "node_id": "node-40596963c9438f4a",
+      "source_document_id": "doc-process-capability-evidence",
+      "node_type": "table_row",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "intake-operating-model/intake-area/table-intake-area/pl-2-evidence-review",
+      "preview_path": "previews/node-40596963c9438f4a.md"
+    },
+    {
+      "node_id": "node-b8b4161a8ba175d8",
+      "source_document_id": "doc-process-capability-evidence",
+      "node_type": "capability",
+      "review_status": "ready",
+      "confidence": "high",
+      "node_path": "intake-operating-model/intake-area/table-intake-area/pl-2-evidence-review/pl-2-evidence-review",
+      "preview_path": "previews/node-b8b4161a8ba175d8.md"
+    },
+    {
+      "node_id": "node-27bc66a606192c2f",
+      "source_document_id": "doc-transcript-consolidated-action",
+      "node_type": "document",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "synthetic-planning-transcript",
+      "preview_path": "previews/node-27bc66a606192c2f.md"
+    },
+    {
+      "node_id": "node-0fe508dd044cf9a9",
+      "source_document_id": "doc-transcript-consolidated-action",
+      "node_type": "transcript_turn",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "synthetic-planning-transcript/09-00-facilitator",
+      "preview_path": "previews/node-0fe508dd044cf9a9.md"
+    },
+    {
+      "node_id": "node-067e324d52f25bff",
+      "source_document_id": "doc-transcript-consolidated-action",
+      "node_type": "transcript_turn",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "synthetic-planning-transcript/09-03-analyst",
+      "preview_path": "previews/node-067e324d52f25bff.md"
+    },
+    {
+      "node_id": "node-64b6bb0de4aa3782",
+      "source_document_id": "doc-transcript-consolidated-action",
+      "node_type": "transcript_turn",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "synthetic-planning-transcript/09-05-lead",
+      "preview_path": "previews/node-64b6bb0de4aa3782.md"
+    },
+    {
+      "node_id": "node-68ef7b02f454e088",
+      "source_document_id": "doc-transcript-consolidated-action",
+      "node_type": "transcript_turn",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "synthetic-planning-transcript/09-09-analyst",
+      "preview_path": "previews/node-68ef7b02f454e088.md"
+    },
+    {
+      "node_id": "node-262592341686a94b",
+      "source_document_id": "doc-transcript-consolidated-action",
+      "node_type": "transcript_turn",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "synthetic-planning-transcript/09-12-lead",
+      "preview_path": "previews/node-262592341686a94b.md"
+    },
+    {
+      "node_id": "node-b89259969784f6ae",
+      "source_document_id": "doc-transcript-consolidated-action",
+      "node_type": "transcript_turn",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "synthetic-planning-transcript/09-15-facilitator",
+      "preview_path": "previews/node-b89259969784f6ae.md"
+    },
+    {
+      "node_id": "node-ff5e3fe950bf9905",
+      "source_document_id": "doc-transcript-contradicted-observation",
+      "node_type": "document",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "synthetic-contradiction-transcript",
+      "preview_path": "previews/node-ff5e3fe950bf9905.md"
+    },
+    {
+      "node_id": "node-9fe582b1e14d82fc",
+      "source_document_id": "doc-transcript-contradicted-observation",
+      "node_type": "transcript_turn",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "synthetic-contradiction-transcript/10-00-facilitator",
+      "preview_path": "previews/node-9fe582b1e14d82fc.md"
+    },
+    {
+      "node_id": "node-c87e0b2d89043a83",
+      "source_document_id": "doc-transcript-contradicted-observation",
+      "node_type": "transcript_turn",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "synthetic-contradiction-transcript/10-02-operator",
+      "preview_path": "previews/node-c87e0b2d89043a83.md"
+    },
+    {
+      "node_id": "node-dece7bc306f624ae",
+      "source_document_id": "doc-transcript-contradicted-observation",
+      "node_type": "transcript_turn",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "synthetic-contradiction-transcript/10-04-reviewer",
+      "preview_path": "previews/node-dece7bc306f624ae.md"
+    },
+    {
+      "node_id": "node-27d63def570fec36",
+      "source_document_id": "doc-transcript-contradicted-observation",
+      "node_type": "transcript_turn",
+      "review_status": "ready",
+      "confidence": "medium",
+      "node_path": "synthetic-contradiction-transcript/10-06-facilitator",
+      "preview_path": "previews/node-27d63def570fec36.md"
+    }
+  ]
+}

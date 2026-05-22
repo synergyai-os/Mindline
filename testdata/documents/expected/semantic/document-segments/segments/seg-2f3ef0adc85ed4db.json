@@ -1,0 +1,22 @@
+{
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-2f3ef0adc85ed4db",
+  "run_id": "run-doc-df6548611870eecc",
+  "source_document_id": "doc-transcript-consolidated-action",
+  "source_kind": "markdown",
+  "semantic_type": "reference",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "I support the checklist because it will make handoff evidence clearer",
+  "summary": "I support the checklist because it will make handoff evidence clearer.",
+  "evidence": {
+    "kind": "location",
+    "heading_path": [
+      "Synthetic Planning Transcript"
+    ],
+    "line_start": 13,
+    "line_end": 13,
+    "content_hash": "sha256:e6aea2d21b7c73f348545b7df256d56d84ecb60ae4d695813424d55f44fa2061"
+  },
+  "blockers": []
+}

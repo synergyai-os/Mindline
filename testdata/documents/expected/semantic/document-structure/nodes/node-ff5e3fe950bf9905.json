@@ -1,0 +1,49 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-ff5e3fe950bf9905",
+  "run_id": "run-struct-035f649b794d0fe1",
+  "source_document_id": "doc-transcript-contradicted-observation",
+  "node_type": "document",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "Synthetic Contradiction Transcript",
+  "summary": "Document structure root.",
+  "parent_node_id": "",
+  "child_node_ids": [
+    "node-9fe582b1e14d82fc",
+    "node-c87e0b2d89043a83",
+    "node-dece7bc306f624ae",
+    "node-27d63def570fec36"
+  ],
+  "related_segment_ids": [
+    "seg-a5e61004aac504fd",
+    "seg-f4ca1c040d960fcb",
+    "seg-a5ec20782b366ace",
+    "seg-81f80d9f05392e1d",
+    "seg-b593bc7356df52ed",
+    "seg-71c2e4ed53bacc09",
+    "seg-a3ee950788c8a003",
+    "seg-bcd3f8b5dd469147"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-transcript-contradicted-observation",
+    "heading_path": [
+      "Synthetic Contradiction Transcript"
+    ],
+    "line_start": 1,
+    "line_end": 13,
+    "content_hash": "sha256:fddc5bfc844b16e87306416c54dd4f51d4bd24c83f9fe343c1bfbe6755fde50d",
+    "related_segment_ids": [
+      "seg-a5e61004aac504fd",
+      "seg-f4ca1c040d960fcb",
+      "seg-a5ec20782b366ace",
+      "seg-81f80d9f05392e1d",
+      "seg-b593bc7356df52ed",
+      "seg-71c2e4ed53bacc09",
+      "seg-a3ee950788c8a003",
+      "seg-bcd3f8b5dd469147"
+    ]
+  },
+  "blockers": []
+}

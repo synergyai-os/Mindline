@@ -1,0 +1,22 @@
+{
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-a5ec20782b366ace",
+  "run_id": "run-doc-df6548611870eecc",
+  "source_document_id": "doc-transcript-contradicted-observation",
+  "source_kind": "markdown",
+  "semantic_type": "source_note",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "10:02 - Operator",
+  "summary": "10:02 - Operator",
+  "evidence": {
+    "kind": "location",
+    "heading_path": [
+      "Synthetic Contradiction Transcript"
+    ],
+    "line_start": 6,
+    "line_end": 6,
+    "content_hash": "sha256:91ed9b9209e0054c341d6a610a855529a03deba68a24b7eeea0eb78b49c409bf"
+  },
+  "blockers": []
+}

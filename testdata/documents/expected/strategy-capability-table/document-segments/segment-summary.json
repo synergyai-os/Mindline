@@ -1,16 +1,15 @@
 {
-  "authority_ids": [
-    "PROD-1",
-    "DOMAIN-1",
-    "DEC-15",
-    "WP-8",
-    "WP-9",
-    "WP-10"
-  ],
-  "needs_review_count": 0,
-  "run_id": "run-doc-e4ff6601c602753e",
   "schema_version": "document-segment-summary/v0.1",
+  "run_id": "run-doc-e4ff6601c602753e",
+  "source_count": 1,
   "segment_count": 8,
+  "needs_review_count": 0,
+  "type_counts": {
+    "decision": 1,
+    "reference": 4,
+    "standard": 2,
+    "work_item": 1
+  },
   "segments": [
     {
       "segment_id": "seg-315843ff3c834b45",
@@ -84,12 +83,5 @@
       "segment_path": "segments/seg-3bb61a90097b5e12.json",
       "preview_path": "previews/seg-3bb61a90097b5e12.md"
     }
-  ],
-  "source_count": 1,
-  "type_counts": {
-    "decision": 1,
-    "reference": 4,
-    "standard": 2,
-    "work_item": 1
-  }
+  ]
 }

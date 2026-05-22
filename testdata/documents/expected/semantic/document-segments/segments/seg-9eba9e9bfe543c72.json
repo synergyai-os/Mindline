@@ -1,0 +1,22 @@
+{
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-9eba9e9bfe543c72",
+  "run_id": "run-doc-df6548611870eecc",
+  "source_document_id": "doc-transcript-consolidated-action",
+  "source_kind": "markdown",
+  "semantic_type": "source_note",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "09:03 - Analyst",
+  "summary": "09:03 - Analyst",
+  "evidence": {
+    "kind": "location",
+    "heading_path": [
+      "Synthetic Planning Transcript"
+    ],
+    "line_start": 6,
+    "line_end": 6,
+    "content_hash": "sha256:3224104e0535e95282eaca51fe87061d8f7e9ae1e0d99b38fb14f29e65da062e"
+  },
+  "blockers": []
+}

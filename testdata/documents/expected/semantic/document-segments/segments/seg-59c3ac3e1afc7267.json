@@ -1,0 +1,23 @@
+{
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-59c3ac3e1afc7267",
+  "run_id": "run-doc-df6548611870eecc",
+  "source_document_id": "doc-process-capability-evidence",
+  "source_kind": "markdown",
+  "semantic_type": "reference",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "Reference table: Intake Area",
+  "summary": "Table records structured reference material for this section.",
+  "evidence": {
+    "kind": "location",
+    "heading_path": [
+      "Intake Operating Model",
+      "Intake Area"
+    ],
+    "line_start": 10,
+    "line_end": 12,
+    "content_hash": "sha256:236f798797a77923d105f10ae7b9958ce99a3d2a9325b060f522417002d41323"
+  },
+  "blockers": []
+}

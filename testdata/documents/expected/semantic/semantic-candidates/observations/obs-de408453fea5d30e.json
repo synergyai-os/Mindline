@@ -1,0 +1,23 @@
+{
+  "schema_version": "semantic-observation/v0.1",
+  "observation_id": "obs-de408453fea5d30e",
+  "run_id": "run-sem-712942e3ab499d31",
+  "source_document_id": "doc-transcript-contradicted-observation",
+  "observation_kind": "objection",
+  "review_status": "needs_review",
+  "confidence": "low",
+  "title": "objection: 10:04 - Reviewer Objection: the import is not ready because validation is incomplete.",
+  "summary": "10:04 - Reviewer Objection: the import is not ready because validation is incomplete.",
+  "evidence_nodes": [
+    "node-dece7bc306f624ae"
+  ],
+  "evidence_ranges": [
+    {
+      "structure_node_id": "node-dece7bc306f624ae",
+      "line_start": 9,
+      "line_end": 10
+    }
+  ],
+  "content_hash": "sha256:d521d819e149116f6a8ca4658a1a98103e37ecee2eaa040f7df32a53cb920142",
+  "blockers": []
+}

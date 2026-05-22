@@ -1,0 +1,37 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-40596963c9438f4a",
+  "run_id": "run-struct-035f649b794d0fe1",
+  "source_document_id": "doc-process-capability-evidence",
+  "node_type": "table_row",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "PL-2 - Evidence review",
+  "summary": "PL-2 - Evidence review - Requirement evidence must stay linked to source nodes.",
+  "parent_node_id": "node-09e1698fedb83559",
+  "child_node_ids": [
+    "node-b8b4161a8ba175d8"
+  ],
+  "related_segment_ids": [
+    "seg-59c3ac3e1afc7267",
+    "seg-acd3a4518f8e7e2c"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-process-capability-evidence",
+    "heading_path": [
+      "Intake Operating Model",
+      "Intake Area",
+      "Table: Intake Area",
+      "PL-2 - Evidence review"
+    ],
+    "line_start": 12,
+    "line_end": 12,
+    "content_hash": "sha256:a84a0b1bf1483ced42c430e9da1ce851e070c88a9623d8e3fb6b1b6a7a7c7e1e",
+    "related_segment_ids": [
+      "seg-59c3ac3e1afc7267",
+      "seg-acd3a4518f8e7e2c"
+    ]
+  },
+  "blockers": []
+}

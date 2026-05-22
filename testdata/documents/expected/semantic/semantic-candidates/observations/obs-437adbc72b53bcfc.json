@@ -1,0 +1,23 @@
+{
+  "schema_version": "semantic-observation/v0.1",
+  "observation_id": "obs-437adbc72b53bcfc",
+  "run_id": "run-sem-712942e3ab499d31",
+  "source_document_id": "doc-transcript-contradicted-observation",
+  "observation_kind": "proposal",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "proposal: 10:02 - Operator Proposal: mark the import ready now.",
+  "summary": "10:02 - Operator Proposal: mark the import ready now.",
+  "evidence_nodes": [
+    "node-c87e0b2d89043a83"
+  ],
+  "evidence_ranges": [
+    {
+      "structure_node_id": "node-c87e0b2d89043a83",
+      "line_start": 6,
+      "line_end": 7
+    }
+  ],
+  "content_hash": "sha256:988eb654eeb0bf3ef5a2b43bdd8fa4e1feccd62068bbc42e920e84999c41470b",
+  "blockers": []
+}

@@ -1,0 +1,22 @@
+{
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-1fe984a900452f4e",
+  "run_id": "run-doc-df6548611870eecc",
+  "source_document_id": "doc-transcript-consolidated-action",
+  "source_kind": "markdown",
+  "semantic_type": "source_note",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "09:15 - Facilitator",
+  "summary": "09:15 - Facilitator",
+  "evidence": {
+    "kind": "location",
+    "heading_path": [
+      "Synthetic Planning Transcript"
+    ],
+    "line_start": 18,
+    "line_end": 18,
+    "content_hash": "sha256:b6b06541c1ffa4be566a6e4b9ea6a0a9e02e0cbbff21fa40646763ea902aea69"
+  },
+  "blockers": []
+}

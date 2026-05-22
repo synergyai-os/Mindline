@@ -1,0 +1,22 @@
+{
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-38bfac571ef0ab31",
+  "run_id": "run-doc-df6548611870eecc",
+  "source_document_id": "doc-transcript-consolidated-action",
+  "source_kind": "markdown",
+  "semantic_type": "reference",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "Recap: Lead will prepare the checklist by Friday",
+  "summary": "Recap: Lead will prepare the checklist by Friday.",
+  "evidence": {
+    "kind": "location",
+    "heading_path": [
+      "Synthetic Planning Transcript"
+    ],
+    "line_start": 19,
+    "line_end": 19,
+    "content_hash": "sha256:9bb93aeced1c6fc853e8d33e1e8f7ae1ae9f98bc5e5d41e5a22e1a7662631b8a"
+  },
+  "blockers": []
+}
