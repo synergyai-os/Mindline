@@ -114,7 +114,7 @@ Candidate fixture JSON used by `candidate` and `candidate_batch` sources must us
   "external_id": "fixture:pipeline-text-only",
   "captured_at": "2026-05-20T09:00:00Z",
   "author": {
-    "name": "Randy Hereman"
+    "name": "Example Author"
   },
   "visibility": "public",
   "text": "Mindline should keep raw capture, method policy, and destination preview separate.",
@@ -429,7 +429,7 @@ Exact candidate fixture bodies:
     "source_adapter_id": "fixture",
     "external_id": "fixture:pipeline-text-only",
     "captured_at": "2026-05-20T09:00:00Z",
-    "author": {"name": "Randy Hereman"},
+    "author": {"name": "Example Author"},
     "visibility": "public",
     "text": "Mindline should keep raw capture, method policy, and destination preview separate.",
     "urls": [],
@@ -441,7 +441,7 @@ Exact candidate fixture bodies:
     "source_adapter_id": "fixture",
     "external_id": "fixture:pipeline-youtube-url",
     "captured_at": "2026-05-20T09:01:00Z",
-    "author": {"name": "Randy Hereman"},
+    "author": {"name": "Example Author"},
     "visibility": "public",
     "text": "Watch this for Mindline processor routing: https://www.youtube.com/watch?v=wp6example",
     "urls": [{"url": "https://www.youtube.com/watch?v=wp6example", "kind": "youtube_url"}],
@@ -453,7 +453,7 @@ Exact candidate fixture bodies:
     "source_adapter_id": "fixture",
     "external_id": "fixture:pipeline-linkedin-with-website",
     "captured_at": "2026-05-20T09:02:00Z",
-    "author": {"name": "Randy Hereman"},
+    "author": {"name": "Example Author"},
     "visibility": "public",
     "text": "LinkedIn post with outbound context: https://www.linkedin.com/posts/example-mindline and https://example.com/mindline-routing",
     "urls": [
@@ -468,7 +468,7 @@ Exact candidate fixture bodies:
     "source_adapter_id": "fixture",
     "external_id": "fixture:pipeline-pdf-url",
     "captured_at": "2026-05-20T09:03:00Z",
-    "author": {"name": "Randy Hereman"},
+    "author": {"name": "Example Author"},
     "visibility": "public",
     "text": "PDF source: https://example.com/reports/mindline.pdf",
     "urls": [{"url": "https://example.com/reports/mindline.pdf", "kind": "pdf_url"}],
@@ -480,7 +480,7 @@ Exact candidate fixture bodies:
     "source_adapter_id": "fixture",
     "external_id": "fixture:pipeline-mixed-links",
     "captured_at": "2026-05-20T09:04:00Z",
-    "author": {"name": "Randy Hereman"},
+    "author": {"name": "Example Author"},
     "visibility": "public",
     "text": "Mixed source set: https://www.youtube.com/watch?v=wp6example https://example.com/mindline-routing https://example.com/reports/mindline.pdf",
     "urls": [
@@ -496,7 +496,7 @@ Exact candidate fixture bodies:
     "source_adapter_id": "fixture",
     "external_id": "fixture:pipeline-unknown-source",
     "captured_at": "2026-05-20T09:05:00Z",
-    "author": {"name": "Randy Hereman"},
+    "author": {"name": "Example Author"},
     "visibility": "public",
     "text": "unclassified://mindline/local-capture",
     "urls": [{"url": "unclassified://mindline/local-capture", "kind": "unknown"}],
@@ -508,7 +508,7 @@ Exact candidate fixture bodies:
     "source_adapter_id": "fixture",
     "external_id": "fixture:pipeline-private-provenance",
     "captured_at": "2026-05-20T09:06:00Z",
-    "author": {"name": "Randy Hereman"},
+    "author": {"name": "Example Author"},
     "visibility": "private",
     "text": "PRIVATE_DM_SENTINEL_DO_NOT_WRITE",
     "urls": [],
@@ -520,7 +520,7 @@ Exact candidate fixture bodies:
     "source_adapter_id": "fixture",
     "external_id": "fixture:pipeline-secret-like",
     "captured_at": "2026-05-20T09:07:00Z",
-    "author": {"name": "Randy Hereman"},
+    "author": {"name": "Example Author"},
     "visibility": "public",
     "text": "sk-test-secret-do-not-leak",
     "urls": [],
@@ -540,14 +540,14 @@ Exact Slack export batch body:
     {
       "external_id": "slack-text-only",
       "ts": "2026-05-20T09:10:00Z",
-      "author": "Randy Hereman",
+      "author": "Example Author",
       "text": "Mindline should keep raw capture, method policy, and destination preview separate.",
       "urls": []
     },
     {
       "external_id": "slack-youtube-url",
       "ts": "2026-05-20T09:11:00Z",
-      "author": "Randy Hereman",
+      "author": "Example Author",
       "text": "Watch this for Mindline processor routing: https://www.youtube.com/watch?v=wp6example",
       "urls": ["https://www.youtube.com/watch?v=wp6example"]
     }

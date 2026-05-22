@@ -1,0 +1,39 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-ff7a08ecaebd4ff0",
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_document_id": "doc-audience-capability-list",
+  "node_type": "section",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "Workflow Steps",
+  "summary": "Section derived from Markdown heading hierarchy.",
+  "parent_node_id": "node-52c9bd0190abaaea",
+  "child_node_ids": [
+    "node-0703a736495e7e5d",
+    "node-c2d48d1318620eba",
+    "node-738d1b730b629b13"
+  ],
+  "related_segment_ids": [
+    "seg-6c3f83add757aa21",
+    "seg-d75255c4b96f35da",
+    "seg-924f2bdfdcc9fa54"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-audience-capability-list",
+    "heading_path": [
+      "Service Playbook",
+      "Workflow Steps"
+    ],
+    "line_start": 9,
+    "line_end": 13,
+    "content_hash": "sha256:94091e6e509d7ff420d89d2cea0b3031f9acb4c830cd1b8cd1b146a17db60dea",
+    "related_segment_ids": [
+      "seg-6c3f83add757aa21",
+      "seg-d75255c4b96f35da",
+      "seg-924f2bdfdcc9fa54"
+    ]
+  },
+  "blockers": []
+}

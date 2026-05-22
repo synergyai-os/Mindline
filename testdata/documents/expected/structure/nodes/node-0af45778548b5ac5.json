@@ -1,0 +1,36 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-0af45778548b5ac5",
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_document_id": "doc-process-capability-table",
+  "node_type": "capability",
+  "review_status": "ready",
+  "confidence": "high",
+  "title": "CAP-002",
+  "summary": "CAP-002 - Normalize source records - Workflow: route structured candidates - Processing",
+  "parent_node_id": "node-735bba546a99d7aa",
+  "child_node_ids": [],
+  "related_segment_ids": [
+    "seg-033a97d3fea5c818",
+    "seg-1845f0ed31e657ee"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-process-capability-table",
+    "heading_path": [
+      "Operating Model",
+      "Intake Capabilities",
+      "Table: Intake Capabilities",
+      "CAP-002",
+      "capability"
+    ],
+    "line_start": 8,
+    "line_end": 8,
+    "content_hash": "sha256:93253bcc3369f3d002b283750b435e05202a16710003213c25d6d50971a7f391",
+    "related_segment_ids": [
+      "seg-033a97d3fea5c818",
+      "seg-1845f0ed31e657ee"
+    ]
+  },
+  "blockers": []
+}

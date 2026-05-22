@@ -1,0 +1,31 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-d4d5ef9ed35bfb2f",
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_document_id": "doc-process-no-h1-capabilities",
+  "node_type": "capability",
+  "review_status": "ready",
+  "confidence": "high",
+  "title": "P-S1 — Maintain chemical inventory",
+  "summary": "P-S1 — Maintain chemical inventory",
+  "parent_node_id": "node-d0a8e8dffd786065",
+  "child_node_ids": [],
+  "related_segment_ids": [
+    "seg-0a521947305430b4"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-process-no-h1-capabilities",
+    "heading_path": [
+      "Essential Master Data Access",
+      "P-S1 — Maintain chemical inventory"
+    ],
+    "line_start": 11,
+    "line_end": 11,
+    "content_hash": "sha256:2cbd1519a696b8b4cee1ba28b888f37bd93940d3944a787e616ca84a43fa7921",
+    "related_segment_ids": [
+      "seg-0a521947305430b4"
+    ]
+  },
+  "blockers": []
+}

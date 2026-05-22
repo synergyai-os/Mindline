@@ -1,0 +1,45 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-5f6ea5e4f308c130",
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_document_id": "doc-mixed-structure",
+  "node_type": "document",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "Knowledge Runbook",
+  "summary": "Document structure root.",
+  "parent_node_id": "",
+  "child_node_ids": [
+    "node-65ac4586cfaf0033",
+    "node-6fa482ae0b38ead9"
+  ],
+  "related_segment_ids": [
+    "seg-d78675961ada36d9",
+    "seg-f791e5129342c638",
+    "seg-fb2194d5ba2fd277",
+    "seg-8cbc82dd0bd20c61",
+    "seg-405d1f09ee8cf3c1",
+    "seg-8d9d273935bd8160",
+    "seg-4ded1a8ae1a20a5f"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-mixed-structure",
+    "heading_path": [
+      "Knowledge Runbook"
+    ],
+    "line_start": 1,
+    "line_end": 18,
+    "content_hash": "sha256:d80706bccbb1542897940412a543c7736f941920e440e8e365709ed968a8e6cc",
+    "related_segment_ids": [
+      "seg-d78675961ada36d9",
+      "seg-f791e5129342c638",
+      "seg-fb2194d5ba2fd277",
+      "seg-8cbc82dd0bd20c61",
+      "seg-405d1f09ee8cf3c1",
+      "seg-8d9d273935bd8160",
+      "seg-4ded1a8ae1a20a5f"
+    ]
+  },
+  "blockers": []
+}

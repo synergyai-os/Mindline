@@ -1,0 +1,35 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-71f8173acdbb8f5b",
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_document_id": "doc-malformed-ambiguous",
+  "node_type": "section",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "Broken Table",
+  "summary": "Section derived from Markdown heading hierarchy.",
+  "parent_node_id": "node-baa09c07c72f8604",
+  "child_node_ids": [
+    "node-be0d94d59ebb054b"
+  ],
+  "related_segment_ids": [
+    "seg-e21d6714ced82a22",
+    "seg-5e6a3c91b80ae04d"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-malformed-ambiguous",
+    "heading_path": [
+      "Ambiguous Process",
+      "Broken Table"
+    ],
+    "line_start": 3,
+    "line_end": 6,
+    "content_hash": "sha256:9c0f999415b461f8db9722b46c8029b3a414e286c1ced734fcffbf82aea55348",
+    "related_segment_ids": [
+      "seg-e21d6714ced82a22",
+      "seg-5e6a3c91b80ae04d"
+    ]
+  },
+  "blockers": []
+}

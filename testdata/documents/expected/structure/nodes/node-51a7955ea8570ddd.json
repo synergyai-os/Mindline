@@ -1,0 +1,37 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-51a7955ea8570ddd",
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_document_id": "doc-process-capability-table",
+  "node_type": "table_row",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "CAP-001",
+  "summary": "CAP-001 - Capture request context - Requirement: preserve source line evidence - Intake",
+  "parent_node_id": "node-8ef3412777393010",
+  "child_node_ids": [
+    "node-f73a6a150fb6c22e"
+  ],
+  "related_segment_ids": [
+    "seg-033a97d3fea5c818",
+    "seg-cfe0bb76e0e3dfcf"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-process-capability-table",
+    "heading_path": [
+      "Operating Model",
+      "Intake Capabilities",
+      "Table: Intake Capabilities",
+      "CAP-001"
+    ],
+    "line_start": 7,
+    "line_end": 7,
+    "content_hash": "sha256:d8bdb25f395e785b11017c8baed5cfeef3cb5c3b01fe5ae19fb1bcf7907c4209",
+    "related_segment_ids": [
+      "seg-033a97d3fea5c818",
+      "seg-cfe0bb76e0e3dfcf"
+    ]
+  },
+  "blockers": []
+}

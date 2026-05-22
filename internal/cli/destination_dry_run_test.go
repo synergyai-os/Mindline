@@ -237,7 +237,7 @@ func TestDestinationDryRunWritesRedactedAttentionPreview(t *testing.T) {
 
 func TestDestinationDryRunRejectsProtectedOutputRootAndSymlink(t *testing.T) {
 	base := t.TempDir()
-	vault := filepath.Join(base, "PKM - Tolaria")
+	vault := filepath.Join(base, "protected-vault")
 	outside := filepath.Join(base, "outside")
 	if err := os.MkdirAll(vault, 0o755); err != nil {
 		t.Fatalf("mkdir vault: %v", err)
@@ -271,6 +271,32 @@ func TestDestinationDryRunRejectsProtectedOutputRootAndSymlink(t *testing.T) {
 				t.Fatalf("protected dry-run directory was created before rejection")
 			}
 		})
+	}
+}
+
+func TestConfiguredProtectedRootsDefaultsWhenEnvUnset(t *testing.T) {
+	t.Setenv(protectedRootsEnv, "")
+
+	roots := configuredProtectedRoots()
+
+	if len(roots) == 0 {
+		t.Fatalf("expected default protected roots when %s is unset", protectedRootsEnv)
+	}
+	for _, root := range roots {
+		if root == defaultTolariaProtectedRoot {
+			return
+		}
+	}
+	t.Fatalf("expected default Tolaria protected root %q in %+v", defaultTolariaProtectedRoot, roots)
+}
+
+func TestConfiguredProtectedRootsDefaultsWhenEnvParsesEmpty(t *testing.T) {
+	t.Setenv(protectedRootsEnv, string(os.PathListSeparator))
+
+	roots := configuredProtectedRoots()
+
+	if len(roots) != 1 || roots[0] != defaultTolariaProtectedRoot {
+		t.Fatalf("expected default protected root for empty parsed env, got %+v", roots)
 	}
 }
 

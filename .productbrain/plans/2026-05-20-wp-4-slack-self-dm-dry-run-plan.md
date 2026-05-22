@@ -306,7 +306,7 @@ Add a structural assertion in CLI tests for generated candidates from `private-d
 Run:
 
 ```bash
-rg "net/http|http\\.Get|http\\.Post|oauth|token|SLACK|slack\\.com/api|conversations\\.history|chat\\.getPermalink|PKM - Tolaria|Tolaria/" internal cmd
+rg "net/http|http\\.Get|http\\.Post|oauth|token|SLACK|slack\\.com/api|conversations\\.history|chat\\.getPermalink|protected-vault|Tolaria/" internal cmd
 ```
 
 Expected: no matches. README may mention “no Tolaria writes” as boundary documentation; implementation code must not reference Tolaria paths or live Slack/network/auth surfaces.

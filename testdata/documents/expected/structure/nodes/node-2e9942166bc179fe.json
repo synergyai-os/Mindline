@@ -1,0 +1,33 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-2e9942166bc179fe",
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_document_id": "doc-transcript-turns",
+  "node_type": "transcript_turn",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "01:14 - Participant Two",
+  "summary": "Transcript turn by Participant Two at 01:14.",
+  "parent_node_id": "node-716d4cdb3be40177",
+  "child_node_ids": [],
+  "related_segment_ids": [
+    "seg-bb032f6d5fd21f1e",
+    "seg-bbba8e2dbf0c571a"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-transcript-turns",
+    "heading_path": [
+      "transcript-turns",
+      "01:14 - Participant Two"
+    ],
+    "line_start": 4,
+    "line_end": 5,
+    "content_hash": "sha256:52cf0463c48488f80f903985c1a7fc9d9a9d72bfb8875c55f0c07e38a307d200",
+    "related_segment_ids": [
+      "seg-bb032f6d5fd21f1e",
+      "seg-bbba8e2dbf0c571a"
+    ]
+  },
+  "blockers": []
+}

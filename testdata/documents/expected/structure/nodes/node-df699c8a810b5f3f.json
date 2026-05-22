@@ -1,0 +1,31 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-df699c8a810b5f3f",
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_document_id": "doc-process-no-h1-capabilities",
+  "node_type": "capability",
+  "review_status": "ready",
+  "confidence": "high",
+  "title": "PL-1 - Access and central entry",
+  "summary": "PL-1 - Access and central entry",
+  "parent_node_id": "node-d0a8e8dffd786065",
+  "child_node_ids": [],
+  "related_segment_ids": [
+    "seg-c864975e8b47d59e"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-process-no-h1-capabilities",
+    "heading_path": [
+      "Essential Master Data Access",
+      "PL-1 - Access and central entry"
+    ],
+    "line_start": 9,
+    "line_end": 9,
+    "content_hash": "sha256:fa96ed319264441378b73a307c00281a6973d610b160f599ac9e8914532162e3",
+    "related_segment_ids": [
+      "seg-c864975e8b47d59e"
+    ]
+  },
+  "blockers": []
+}

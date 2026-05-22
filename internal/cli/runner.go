@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"unicode"
@@ -25,9 +26,10 @@ const (
 	ExitArtifactWrite = 3
 )
 
-const usage = "usage: mindline process <candidate.json> [--out <dir>]\nusage: mindline slack normalize <slack-export.json> [--out <dir>]\nusage: mindline destination dry-run <sbos-result.json> --adapter tolaria --out <dir>\nusage: mindline pipeline dry-run <pipeline-input.json> --method basb-para-code --destination tolaria --out <dir>\nusage: mindline product-brain propose <run-dir> --profile <profile.json> --out <dir>\nusage: mindline documents decompose <markdown-path-or-dir> --out <dir>\n"
+const usage = "usage: mindline process <candidate.json> [--out <dir>]\nusage: mindline slack normalize <slack-export.json> [--out <dir>]\nusage: mindline destination dry-run <sbos-result.json> --adapter tolaria --out <dir>\nusage: mindline pipeline dry-run <pipeline-input.json> --method basb-para-code --destination tolaria --out <dir>\nusage: mindline product-brain propose <run-dir> --profile <profile.json> --out <dir>\nusage: mindline documents decompose <markdown-path-or-dir> --out <dir>\nusage: mindline documents structure <markdown-path-or-dir> --out <dir>\n"
 
-const tolariaVaultPath = "/Users/randyhereman/Young Human Club Dropbox/02. Areas/PKM - Tolaria"
+const protectedRootsEnv = "MINDLINE_PROTECTED_ROOTS"
+const defaultTolariaProtectedRoot = "/Users/randyhereman/Young Human Club Dropbox/02. Areas/PKM - Tolaria"
 
 var cliAuthorityIDs = []string{
 	"DEC-4",
@@ -109,11 +111,29 @@ type SlackNormalizeCandidateItem struct {
 }
 
 func NewRunner(fileSystem FileSystem) Runner {
-	return NewRunnerWithProtectedRoots(fileSystem, []string{tolariaVaultPath})
+	return NewRunnerWithProtectedRoots(fileSystem, configuredProtectedRoots())
 }
 
 func NewRunnerWithProtectedRoots(fileSystem FileSystem, protectedRoots []string) Runner {
 	return Runner{fs: fileSystem, protectedRoots: append([]string(nil), protectedRoots...)}
+}
+
+func configuredProtectedRoots() []string {
+	raw := strings.TrimSpace(os.Getenv(protectedRootsEnv))
+	if raw == "" {
+		return []string{defaultTolariaProtectedRoot}
+	}
+	parts := strings.Split(raw, string(os.PathListSeparator))
+	roots := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if root := strings.TrimSpace(part); root != "" {
+			roots = append(roots, root)
+		}
+	}
+	if len(roots) == 0 {
+		return []string{defaultTolariaProtectedRoot}
+	}
+	return roots
 }
 
 func (r Runner) Run(args []string, stdout, stderr io.Writer) int {
@@ -208,7 +228,10 @@ func (r Runner) Run(args []string, stdout, stderr io.Writer) int {
 }
 
 func (r Runner) runDocuments(args []string, stdout, stderr io.Writer) int {
-	inputPath, outDir, parseError := parseDocumentsDecomposeArgs(args)
+	if len(args) > 0 && args[0] == "structure" {
+		return r.runDocumentsStructure(args, stdout, stderr)
+	}
+	inputPath, outDir, parseError := parseDocumentsArgs(args, "decompose")
 	if parseError != parseErrorNone {
 		fmt.Fprint(stderr, usage)
 		return ExitUsage
@@ -220,6 +243,30 @@ func (r Runner) runDocuments(args []string, stdout, stderr io.Writer) int {
 			return ExitArtifactWrite
 		}
 		fmt.Fprintf(stderr, "decompose documents: %v\n", err)
+		return ExitProcess
+	}
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(summary); err != nil {
+		fmt.Fprintf(stderr, "write stdout: %v\n", err)
+		return ExitUsage
+	}
+	return ExitOK
+}
+
+func (r Runner) runDocumentsStructure(args []string, stdout, stderr io.Writer) int {
+	inputPath, outDir, parseError := parseDocumentsArgs(args, "structure")
+	if parseError != parseErrorNone {
+		fmt.Fprint(stderr, usage)
+		return ExitUsage
+	}
+	summary, err := documents.StructurePath(inputPath, outDir)
+	if err != nil {
+		if documents.IsArtifactWriteError(err) {
+			fmt.Fprintf(stderr, "write document structure: %v\n", err)
+			return ExitArtifactWrite
+		}
+		fmt.Fprintf(stderr, "structure documents: %v\n", err)
 		return ExitProcess
 	}
 	encoder := json.NewEncoder(stdout)
@@ -579,8 +626,8 @@ func parseProductBrainProposeArgs(args []string) (runDir string, profilePath str
 	return runDir, profilePath, outDir, parseErrorNone
 }
 
-func parseDocumentsDecomposeArgs(args []string) (inputPath string, outDir string, err parseError) {
-	if len(args) != 4 || args[0] != "decompose" || strings.TrimSpace(args[1]) == "" {
+func parseDocumentsArgs(args []string, command string) (inputPath string, outDir string, err parseError) {
+	if len(args) != 4 || args[0] != command || strings.TrimSpace(args[1]) == "" {
 		return "", "", parseErrorUsage
 	}
 	inputPath = args[1]

@@ -1,0 +1,39 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-33bf5032ab357dc8",
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_document_id": "doc-process-no-h1-capabilities",
+  "node_type": "section",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "Programme Rulebook",
+  "summary": "Section derived from Markdown heading hierarchy.",
+  "parent_node_id": "node-13a768d7ad6ff235",
+  "child_node_ids": [
+    "node-bf1fb7368d4da534",
+    "node-e1dd639b356bfc85"
+  ],
+  "related_segment_ids": [
+    "seg-296e1d3b781631fe",
+    "seg-9752347215db3f50",
+    "seg-d915f0fdd4d48baf",
+    "seg-18fb3b9c312c0740"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-process-no-h1-capabilities",
+    "heading_path": [
+      "Programme Rulebook"
+    ],
+    "line_start": 16,
+    "line_end": 22,
+    "content_hash": "sha256:81507683ab6a57c16da92b2d0dc026e8f885c997ab2a62c70bef1c7d98b7fd08",
+    "related_segment_ids": [
+      "seg-296e1d3b781631fe",
+      "seg-9752347215db3f50",
+      "seg-d915f0fdd4d48baf",
+      "seg-18fb3b9c312c0740"
+    ]
+  },
+  "blockers": []
+}

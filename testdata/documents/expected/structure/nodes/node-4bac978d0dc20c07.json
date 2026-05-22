@@ -1,0 +1,36 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-4bac978d0dc20c07",
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_document_id": "doc-process-no-h1-capabilities",
+  "node_type": "table_row",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "PL-23 - Contacts and relationships",
+  "summary": "PL-23 - Contacts and relationships - Shared reference",
+  "parent_node_id": "node-bf1fb7368d4da534",
+  "child_node_ids": [
+    "node-3c3d161c03017eda"
+  ],
+  "related_segment_ids": [
+    "seg-296e1d3b781631fe",
+    "seg-9752347215db3f50"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-process-no-h1-capabilities",
+    "heading_path": [
+      "Programme Rulebook",
+      "Table: Programme Rulebook",
+      "PL-23 - Contacts and relationships"
+    ],
+    "line_start": 20,
+    "line_end": 20,
+    "content_hash": "sha256:2f7e6399ac8842166666005caa435910e466676d97b67a78a56b8a2ef2fd63f0",
+    "related_segment_ids": [
+      "seg-296e1d3b781631fe",
+      "seg-9752347215db3f50"
+    ]
+  },
+  "blockers": []
+}

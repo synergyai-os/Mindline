@@ -1,0 +1,33 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-d8f75d5cb482a4a2",
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_document_id": "doc-transcript-turns",
+  "node_type": "transcript_turn",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "00:02 - Facilitator",
+  "summary": "Transcript turn by Facilitator at 00:02.",
+  "parent_node_id": "node-716d4cdb3be40177",
+  "child_node_ids": [],
+  "related_segment_ids": [
+    "seg-5d4127f2841bd5e9",
+    "seg-b638487ff445beb9"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-transcript-turns",
+    "heading_path": [
+      "transcript-turns",
+      "00:02 - Facilitator"
+    ],
+    "line_start": 1,
+    "line_end": 2,
+    "content_hash": "sha256:168333f3ad72a97adace1c9616e8493aa91e252dccbb4fff749783e142c92aaf",
+    "related_segment_ids": [
+      "seg-5d4127f2841bd5e9",
+      "seg-b638487ff445beb9"
+    ]
+  },
+  "blockers": []
+}

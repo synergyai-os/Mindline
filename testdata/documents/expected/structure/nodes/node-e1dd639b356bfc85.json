@@ -1,0 +1,33 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-e1dd639b356bfc85",
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_document_id": "doc-process-no-h1-capabilities",
+  "node_type": "section",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "Nested Operating Detail",
+  "summary": "Section derived from Markdown heading hierarchy.",
+  "parent_node_id": "node-33bf5032ab357dc8",
+  "child_node_ids": [
+    "node-3c844340dc4abf42"
+  ],
+  "related_segment_ids": [
+    "seg-1fb856efa7b7fc86"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-process-no-h1-capabilities",
+    "heading_path": [
+      "Programme Rulebook",
+      "Nested Operating Detail"
+    ],
+    "line_start": 24,
+    "line_end": 26,
+    "content_hash": "sha256:7dffa0b691b37bcad84e716900da248cc66da9f754d5de18cf2da62c9171a43f",
+    "related_segment_ids": [
+      "seg-1fb856efa7b7fc86"
+    ]
+  },
+  "blockers": []
+}

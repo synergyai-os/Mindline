@@ -1,0 +1,42 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-d99bf48d907c5cd2",
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_document_id": "doc-malformed-ambiguous",
+  "node_type": "table_row",
+  "review_status": "needs_review",
+  "confidence": "low",
+  "title": "maybe this row is a table but delimiter is missing",
+  "summary": "maybe this row is a table but delimiter is missing",
+  "parent_node_id": "node-be0d94d59ebb054b",
+  "child_node_ids": [
+    "node-2e143301b8052bb8"
+  ],
+  "related_segment_ids": [
+    "seg-e21d6714ced82a22",
+    "seg-5e6a3c91b80ae04d"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-malformed-ambiguous",
+    "heading_path": [
+      "Ambiguous Process",
+      "Broken Table",
+      "Table: Broken Table",
+      "maybe this row is a table but delimiter is missing"
+    ],
+    "line_start": 6,
+    "line_end": 6,
+    "content_hash": "sha256:b55bb1bd1d0217a315c2ae0a7df9777c1567ccc590bb36ae6582b7983a45c170",
+    "related_segment_ids": [
+      "seg-e21d6714ced82a22",
+      "seg-5e6a3c91b80ae04d"
+    ]
+  },
+  "blockers": [
+    {
+      "code": "malformed_structure",
+      "message": "Row belongs to a malformed Markdown table block."
+    }
+  ]
+}

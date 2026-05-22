@@ -1,0 +1,33 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-b0d875d358c4bbf8",
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_document_id": "doc-transcript-turns",
+  "node_type": "transcript_turn",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "12:44 - Product Lead",
+  "summary": "Transcript turn by Product Lead at 12:44.",
+  "parent_node_id": "node-716d4cdb3be40177",
+  "child_node_ids": [],
+  "related_segment_ids": [
+    "seg-661f7ce3b78fdc42",
+    "seg-3e7443ac97be5a61"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-transcript-turns",
+    "heading_path": [
+      "transcript-turns",
+      "12:44 - Product Lead"
+    ],
+    "line_start": 7,
+    "line_end": 8,
+    "content_hash": "sha256:c3d590a3fbbb01a8700da19bb641fcfa5602623d70297c6ae0624257a5a66a98",
+    "related_segment_ids": [
+      "seg-661f7ce3b78fdc42",
+      "seg-3e7443ac97be5a61"
+    ]
+  },
+  "blockers": []
+}

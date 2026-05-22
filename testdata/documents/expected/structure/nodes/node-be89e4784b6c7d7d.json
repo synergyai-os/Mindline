@@ -1,0 +1,36 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-be89e4784b6c7d7d",
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_document_id": "doc-process-no-h1-capabilities",
+  "node_type": "table_row",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "PL-10–12 — Rulebook stewardship",
+  "summary": "PL-10–12 — Rulebook stewardship - Shared platform rules",
+  "parent_node_id": "node-bf1fb7368d4da534",
+  "child_node_ids": [
+    "node-c05e62b8e903319e"
+  ],
+  "related_segment_ids": [
+    "seg-296e1d3b781631fe",
+    "seg-18fb3b9c312c0740"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-process-no-h1-capabilities",
+    "heading_path": [
+      "Programme Rulebook",
+      "Table: Programme Rulebook",
+      "PL-10–12 — Rulebook stewardship"
+    ],
+    "line_start": 22,
+    "line_end": 22,
+    "content_hash": "sha256:a7785e4712190f7d1e5659de06b202001975879c8a8c1f85580a56216ba3976e",
+    "related_segment_ids": [
+      "seg-296e1d3b781631fe",
+      "seg-18fb3b9c312c0740"
+    ]
+  },
+  "blockers": []
+}

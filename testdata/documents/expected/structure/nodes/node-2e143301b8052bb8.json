@@ -1,0 +1,36 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-2e143301b8052bb8",
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_document_id": "doc-malformed-ambiguous",
+  "node_type": "unknown",
+  "review_status": "needs_review",
+  "confidence": "low",
+  "title": "maybe this row is a table but delimiter is missing",
+  "summary": "maybe this row is a table but delimiter is missing",
+  "parent_node_id": "node-d99bf48d907c5cd2",
+  "child_node_ids": [],
+  "related_segment_ids": [
+    "seg-e21d6714ced82a22",
+    "seg-5e6a3c91b80ae04d"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-malformed-ambiguous",
+    "heading_path": [
+      "Ambiguous Process",
+      "Broken Table",
+      "Table: Broken Table",
+      "maybe this row is a table but delimiter is missing",
+      "unknown"
+    ],
+    "line_start": 6,
+    "line_end": 6,
+    "content_hash": "sha256:afd371958c272319ee154458ba2cbab1b3ab86f3b5768af91e9c9549ebb4a101",
+    "related_segment_ids": [
+      "seg-e21d6714ced82a22",
+      "seg-5e6a3c91b80ae04d"
+    ]
+  },
+  "blockers": []
+}

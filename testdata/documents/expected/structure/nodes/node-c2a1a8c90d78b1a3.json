@@ -1,0 +1,36 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-c2a1a8c90d78b1a3",
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_document_id": "doc-mixed-structure",
+  "node_type": "table",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "Table: Table And Notes",
+  "summary": "Markdown table block.",
+  "parent_node_id": "node-6fa482ae0b38ead9",
+  "child_node_ids": [
+    "node-222ce65bd78ffebe"
+  ],
+  "related_segment_ids": [
+    "seg-405d1f09ee8cf3c1",
+    "seg-8d9d273935bd8160"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-mixed-structure",
+    "heading_path": [
+      "Knowledge Runbook",
+      "Table And Notes",
+      "Table: Table And Notes"
+    ],
+    "line_start": 14,
+    "line_end": 16,
+    "content_hash": "sha256:b07a0e26760a8c51f49cf5e829c0d12c8ea678beafaaf58008f2fa8756d5daa6",
+    "related_segment_ids": [
+      "seg-405d1f09ee8cf3c1",
+      "seg-8d9d273935bd8160"
+    ]
+  },
+  "blockers": []
+}

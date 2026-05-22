@@ -175,7 +175,7 @@ The Tolaria dry-run adapter must map SBOS outputs as follows:
 - `StateNeedsEnrichment` -> `blocked` operation with enrichment blocker.
 - private provenance or redaction blockers -> no publish note; at most a redacted attention preview when SBOS already produced one.
 
-Tolaria paths must be deterministic and preview-only. They should encode intended workflow lane without writing to `/Users/randyhereman/Young Human Club Dropbox/02. Areas/PKM - Tolaria`.
+Tolaria paths must be deterministic and preview-only. They should encode intended workflow lane without writing to the configured Tolaria vault path.
 
 Tolaria adapter-specific invariants:
 

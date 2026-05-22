@@ -13,7 +13,7 @@ Status: Signed for Plan Ready in Product Brain via `DEC-21` and materialized as 
 - Pipeline authority: `DEC-17`, `DEC-18`, `DEC-19`, `DEC-20` - WP-7/WP-8 pipeline, ledger, queue, and remediation authority.
 - Architecture: `DEC-2`, `DEC-3`, `DEC-4` - Product Brain governs the system; Mindline is a headless engine with JSON adapter contracts.
 - Standards: `STD-10`, `STD-11`, `STD-12`, `STD-15`.
-- External design evidence, read-only: Product-OS kernel refactor docs in `/Users/randyhereman/Coding/Product-OS/docs/system/kernel-refactor/`, especially kernel-owned write primitives, workspace-owned collections, `externalRef`, idempotency, actor authority, provenance, and domain events.
+- External design evidence, read-only: Product-OS kernel refactor docs in the local Product-OS checkout under `docs/system/kernel-refactor/`, especially kernel-owned write primitives, workspace-owned collections, `externalRef`, idempotency, actor authority, provenance, and domain events.
 
 Runtime `authority_ids` in WP-9-owned proposal artifacts must carry the direct authority set in this order: `PROD-1`, `DOMAIN-1`, `DEC-15`, `WP-8`, `WP-9`. Product-OS kernel docs are evidence for compatibility, not Chain authority for Mindline.
 

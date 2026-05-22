@@ -416,8 +416,8 @@ func TestWriterWritesTextOnlyGoldenOutput(t *testing.T) {
 
 func TestWriterRejectsProtectedTolariaOutputAndSymlinkEscapes(t *testing.T) {
 	fs := newMemoryOrOSFixtureFS(t)
-	writer := artifacts.NewWriter(fs, []string{"/Users/randyhereman/Young Human Club Dropbox/02. Areas/PKM - Tolaria"})
-	err := writer.Write("/Users/randyhereman/Young Human Club Dropbox/02. Areas/PKM - Tolaria", goldenTextOnlyPipelineOutput())
+	writer := artifacts.NewWriter(fs, []string{"testdata/protected-vault"})
+	err := writer.Write("testdata/protected-vault", goldenTextOnlyPipelineOutput())
 	require.ErrorContains(t, err, "refusing to write pipeline output inside protected Tolaria vault")
 }
 ```

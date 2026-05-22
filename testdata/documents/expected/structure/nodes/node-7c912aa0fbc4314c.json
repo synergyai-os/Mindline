@@ -1,0 +1,39 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-7c912aa0fbc4314c",
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_document_id": "doc-audience-capability-list",
+  "node_type": "section",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "Audience Groups",
+  "summary": "Section derived from Markdown heading hierarchy.",
+  "parent_node_id": "node-52c9bd0190abaaea",
+  "child_node_ids": [
+    "node-7bf40b2901856b3c",
+    "node-15c2c15ebf2d36e7",
+    "node-5fce3506a77f17b9"
+  ],
+  "related_segment_ids": [
+    "seg-ffbbde485b05705e",
+    "seg-09d42d4c95811add",
+    "seg-4141e8c062b35359"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-audience-capability-list",
+    "heading_path": [
+      "Service Playbook",
+      "Audience Groups"
+    ],
+    "line_start": 3,
+    "line_end": 7,
+    "content_hash": "sha256:94aa5e215c657bfb467ec20e5aa355905a158a9e2dae0edf91aa51bb17b27291",
+    "related_segment_ids": [
+      "seg-ffbbde485b05705e",
+      "seg-09d42d4c95811add",
+      "seg-4141e8c062b35359"
+    ]
+  },
+  "blockers": []
+}

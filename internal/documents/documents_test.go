@@ -103,6 +103,330 @@ func TestGeneratedOutputMatchesGoldenFixtures(t *testing.T) {
 	}
 }
 
+func TestGeneratedStructureOutputMatchesGoldenFixtures(t *testing.T) {
+	out := t.TempDir()
+	if _, err := StructurePath(fixturePath(t, "structure"), out); err != nil {
+		t.Fatalf("structure: %v", err)
+	}
+	assertTreeMatches(t,
+		filepath.Join(out, "document-structure"),
+		fixturePath(t, "expected", "structure"),
+	)
+}
+
+func TestDocumentStructurePreservesHierarchyAndReviewStates(t *testing.T) {
+	out := t.TempDir()
+	summary, err := StructurePath(fixturePath(t, "structure"), out)
+	if err != nil {
+		t.Fatalf("structure: %v", err)
+	}
+	if summary.SchemaVersion != StructureSummarySchemaVersion {
+		t.Fatalf("unexpected schema: %s", summary.SchemaVersion)
+	}
+	if summary.SourceCount != 7 {
+		t.Fatalf("expected 7 sources, got %d", summary.SourceCount)
+	}
+	for nodeType, min := range map[StructureNodeType]int{
+		StructureNodeTypeDocument:       7,
+		StructureNodeTypeSection:        11,
+		StructureNodeTypeTable:          3,
+		StructureNodeTypeTableRow:       4,
+		StructureNodeTypeCapability:     12,
+		StructureNodeTypeTranscriptTurn: 4,
+		StructureNodeTypeRequirement:    2,
+		StructureNodeTypeWorkflow:       2,
+		StructureNodeTypeAudience:       1,
+		StructureNodeTypeUnknown:        2,
+	} {
+		if got := summary.NodeTypeCounts[nodeType]; got < min {
+			t.Fatalf("expected at least %d %s nodes, got %d in %+v", min, nodeType, got, summary.NodeTypeCounts)
+		}
+	}
+	if summary.NeedsReviewCount < 2 {
+		t.Fatalf("expected needs_review nodes, got %+v", summary)
+	}
+	for _, node := range summary.Nodes {
+		if !strings.Contains(node.NodePath, "broken-table") {
+			continue
+		}
+		if (node.NodeType == StructureNodeTypeTable || node.NodeType == StructureNodeTypeTableRow) && node.ReviewStatus == ReviewStatusReady {
+			t.Fatalf("malformed table node must need review, got %+v", node)
+		}
+	}
+	if summary.BlockedCount < 2 {
+		t.Fatalf("expected blocked unsafe nodes, got %+v", summary)
+	}
+	assertStructureNodePath(t, summary, StructureNodeTypeDocument, "process-no-h1-capabilities")
+	assertStructureNodePath(t, summary, StructureNodeTypeSection, "process-no-h1-capabilities/essential-master-data-access")
+	assertStructureNodePath(t, summary, StructureNodeTypeSection, "process-no-h1-capabilities/programme-rulebook")
+	assertMissingStructureNodePath(t, summary, "process-no-h1-capabilities/essential-master-data-access/programme-rulebook")
+	assertStructureNodePath(t, summary, StructureNodeTypeCapability, "process-no-h1-capabilities/essential-master-data-access/pl-1-access-and-central-entry")
+	assertStructureNodePath(t, summary, StructureNodeTypeCapability, "process-no-h1-capabilities/essential-master-data-access/pl-23-contacts-and-relationships")
+	assertStructureNodePath(t, summary, StructureNodeTypeCapability, "process-no-h1-capabilities/essential-master-data-access/p-s1-maintain-chemical-inventory")
+	assertStructureNodePath(t, summary, StructureNodeTypeCapability, "process-no-h1-capabilities/programme-rulebook/table-programme-rulebook/pl-23-contacts-and-relationships/pl-23-contacts-and-relationships")
+	assertStructureNodePath(t, summary, StructureNodeTypeCapability, "process-no-h1-capabilities/programme-rulebook/table-programme-rulebook/pl-10-12-rulebook-stewardship/pl-10-12-rulebook-stewardship")
+	assertMissingStructureNodePath(t, summary, "abc-1-not-a-capability")
+	assertMissingStructureNodePath(t, summary, "this-sentence-merely-mentions-pl-1-without-defining-it")
+	assertStructureNodeTitle(t, out, summary, StructureNodeTypeCapability, "process-no-h1-capabilities/essential-master-data-access/pl-23-contacts-and-relationships", "PL-23 - Contacts and relationships")
+	assertTranscriptTurnEvidence(t, out, summary)
+	assertGeneratedTreeExcludes(t, filepath.Join(out, "document-structure"), "private_content", "secret", "authority_ids", "authority_id", "example private person")
+}
+
+func TestDocumentStructureDeterministicAcrossRuns(t *testing.T) {
+	first := t.TempDir()
+	second := t.TempDir()
+	if _, err := StructurePath(fixturePath(t, "structure"), first); err != nil {
+		t.Fatalf("first structure: %v", err)
+	}
+	if _, err := StructurePath(fixturePath(t, "structure"), second); err != nil {
+		t.Fatalf("second structure: %v", err)
+	}
+	assertTreeMatches(t, filepath.Join(first, "document-structure"), filepath.Join(second, "document-structure"))
+}
+
+func TestDocumentStructureDuplicateBasenamesAreRelativePathDeterministic(t *testing.T) {
+	firstRoot := duplicateStructureTree(t)
+	secondRoot := duplicateStructureTree(t)
+	firstOut := t.TempDir()
+	secondOut := t.TempDir()
+	if _, err := StructurePath(firstRoot, firstOut); err != nil {
+		t.Fatalf("first structure: %v", err)
+	}
+	if _, err := StructurePath(secondRoot, secondOut); err != nil {
+		t.Fatalf("second structure: %v", err)
+	}
+	assertTreeMatches(t, filepath.Join(firstOut, "document-structure"), filepath.Join(secondOut, "document-structure"))
+}
+
+func TestDocumentStructureDisambiguatesSanitizedBasenameCollisions(t *testing.T) {
+	root := t.TempDir()
+	body := []byte("# Shared Title\n\nCapability: preserve source identity.\n")
+	for _, name := range []string{"a b.md", "a-b.md"} {
+		if err := os.WriteFile(filepath.Join(root, name), body, 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	out := t.TempDir()
+	summary, err := StructurePath(root, out)
+	if err != nil {
+		t.Fatalf("structure: %v", err)
+	}
+
+	sourceIDs := map[string]bool{}
+	for _, node := range summary.Nodes {
+		if node.NodeType == StructureNodeTypeDocument {
+			sourceIDs[node.SourceDocumentID] = true
+		}
+	}
+	if len(sourceIDs) != 2 {
+		t.Fatalf("expected two disambiguated source document ids, got %+v", sourceIDs)
+	}
+	for sourceID := range sourceIDs {
+		if !strings.HasPrefix(sourceID, "doc-a-b-") {
+			t.Fatalf("expected sanitized disambiguated id, got %s", sourceID)
+		}
+	}
+}
+
+func TestDocumentStructureUnsafeSourceIDsMatchDecomposeOutput(t *testing.T) {
+	root := t.TempDir()
+	inputPath := filepath.Join(root, "PRIVATE_CONTENT.md")
+	if err := os.WriteFile(inputPath, []byte("# Public Title\n\nSafe body.\n"), 0o644); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
+
+	decomposeOut := t.TempDir()
+	decomposeSummary, err := DecomposePath(inputPath, decomposeOut)
+	if err != nil {
+		t.Fatalf("decompose: %v", err)
+	}
+	if len(decomposeSummary.Segments) == 0 {
+		t.Fatalf("expected decompose segments")
+	}
+	wantSourceID := decomposeSummary.Segments[0].SourceDocumentID
+
+	structureOut := t.TempDir()
+	structureSummary, err := StructurePath(inputPath, structureOut)
+	if err != nil {
+		t.Fatalf("structure: %v", err)
+	}
+	for _, node := range structureSummary.Nodes {
+		if node.NodeType == StructureNodeTypeDocument && node.SourceDocumentID != wantSourceID {
+			t.Fatalf("expected structure source id %s to match decompose, got %s", wantSourceID, node.SourceDocumentID)
+		}
+	}
+}
+
+func TestDocumentStructurePreservesRepeatedHeadingSections(t *testing.T) {
+	root := t.TempDir()
+	inputPath := filepath.Join(root, "repeated-headings.md")
+	body := "# Root\n\n## Notes\n\n- Capability: first repeated section\n\n## Notes\n\n- Capability: second repeated section\n"
+	if err := os.WriteFile(inputPath, []byte(body), 0o644); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
+
+	out := t.TempDir()
+	summary, err := StructurePath(inputPath, out)
+	if err != nil {
+		t.Fatalf("structure: %v", err)
+	}
+
+	var notesSections []StructureNode
+	for _, item := range summary.Nodes {
+		if item.NodeType != StructureNodeTypeSection {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(out, "document-structure", StructureNodeJSONPath(item.NodeID)))
+		if err != nil {
+			t.Fatalf("read node %s: %v", item.NodeID, err)
+		}
+		var node StructureNode
+		if err := json.Unmarshal(data, &node); err != nil {
+			t.Fatalf("decode node %s: %v", item.NodeID, err)
+		}
+		if node.Title == "Notes" {
+			notesSections = append(notesSections, node)
+		}
+	}
+	if len(notesSections) != 2 {
+		t.Fatalf("expected two distinct repeated Notes sections, got %+v", notesSections)
+	}
+
+	parentIDsByTitle := map[string]string{}
+	for _, item := range summary.Nodes {
+		if item.NodeType != StructureNodeTypeCapability {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(out, "document-structure", StructureNodeJSONPath(item.NodeID)))
+		if err != nil {
+			t.Fatalf("read capability %s: %v", item.NodeID, err)
+		}
+		var node StructureNode
+		if err := json.Unmarshal(data, &node); err != nil {
+			t.Fatalf("decode capability %s: %v", item.NodeID, err)
+		}
+		parentIDsByTitle[node.Title] = node.ParentNodeID
+	}
+	if parentIDsByTitle["first repeated section"] == "" || parentIDsByTitle["second repeated section"] == "" {
+		t.Fatalf("expected repeated section capabilities, got %+v", parentIDsByTitle)
+	}
+	if parentIDsByTitle["first repeated section"] == parentIDsByTitle["second repeated section"] {
+		t.Fatalf("expected repeated section capabilities to have distinct parents, got %+v", parentIDsByTitle)
+	}
+}
+
+func TestDocumentStructureRelatedSegmentIDsMatchDecomposeOutput(t *testing.T) {
+	root := duplicateStructureTree(t)
+	decomposeOut := t.TempDir()
+	decomposeSummary, err := DecomposePath(root, decomposeOut)
+	if err != nil {
+		t.Fatalf("decompose: %v", err)
+	}
+	segmentIDs := map[string]bool{}
+	for _, segment := range decomposeSummary.Segments {
+		segmentIDs[segment.SegmentID] = true
+	}
+
+	structureOut := t.TempDir()
+	structureSummary, err := StructurePath(root, structureOut)
+	if err != nil {
+		t.Fatalf("structure: %v", err)
+	}
+	relatedCount := 0
+	for _, item := range structureSummary.Nodes {
+		data, err := os.ReadFile(filepath.Join(structureOut, "document-structure", StructureNodeJSONPath(item.NodeID)))
+		if err != nil {
+			t.Fatalf("read structure node %s: %v", item.NodeID, err)
+		}
+		var node StructureNode
+		if err := json.Unmarshal(data, &node); err != nil {
+			t.Fatalf("decode structure node %s: %v", item.NodeID, err)
+		}
+		for _, segmentID := range node.RelatedSegmentIDs {
+			relatedCount++
+			if !segmentIDs[segmentID] {
+				t.Fatalf("structure node %s related unknown segment %s; known=%+v", item.NodeID, segmentID, segmentIDs)
+			}
+		}
+	}
+	if relatedCount == 0 {
+		t.Fatalf("expected structure nodes to relate to decomposed segments")
+	}
+}
+
+func TestStructureWriterRejectsUnexpectedExistingFile(t *testing.T) {
+	out := t.TempDir()
+	stale := filepath.Join(out, "document-structure", "nodes", "stale.json")
+	if err := os.MkdirAll(filepath.Dir(stale), 0o755); err != nil {
+		t.Fatalf("mkdir stale parent: %v", err)
+	}
+	if err := os.WriteFile(stale, []byte("{}"), 0o644); err != nil {
+		t.Fatalf("write stale file: %v", err)
+	}
+	if err := WriteStructure(out, "run-struct-demo", 1, []StructureNode{validStructureNode()}); err == nil {
+		t.Fatalf("expected stale generated file rejection")
+	}
+}
+
+func TestStructureWriterRejectsSymlinkedGeneratedPath(t *testing.T) {
+	out := t.TempDir()
+	root := filepath.Join(out, "document-structure")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatalf("mkdir root: %v", err)
+	}
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(root, "nodes")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	if err := WriteStructure(out, "run-struct-demo", 1, []StructureNode{validStructureNode()}); err == nil {
+		t.Fatalf("expected symlink write error")
+	}
+}
+
+func TestStructureWriterRejectsDuplicateNodeIDs(t *testing.T) {
+	node := validStructureNode()
+	if err := WriteStructure(t.TempDir(), "run-struct-demo", 1, []StructureNode{node, node}); err == nil {
+		t.Fatalf("expected duplicate structure node id error")
+	}
+}
+
+func TestStructureWriterRedactsUnsafeProvidedNode(t *testing.T) {
+	out := t.TempDir()
+	node := validStructureNode()
+	node.Title = "PRIVATE_CONTENT node"
+	node.Summary = "secret " + unsafeTokenMarker() + " body"
+	node.SourceDocumentID = "doc-secret-" + unsafeTokenMarker()
+	node.Evidence.SourceDocumentID = node.SourceDocumentID
+	node.Evidence.HeadingPath = []string{"DEC-29 unsafe heading"}
+	node.NodePath = "WP-11/private"
+	if err := WriteStructure(out, "run-struct-demo", 1, []StructureNode{node}); err != nil {
+		t.Fatalf("write structure: %v", err)
+	}
+	assertGeneratedTreeExcludes(t, filepath.Join(out, "document-structure"), "private_content", "secret", unsafeTokenMarker(), "DEC-29", "WP-11")
+}
+
+func TestStructureWriterSerializesEmptyRelatedSegmentLists(t *testing.T) {
+	out := t.TempDir()
+	node := validStructureNode()
+	node.RelatedSegmentIDs = nil
+	node.Evidence.RelatedSegmentIDs = nil
+	if err := WriteStructure(out, "run-struct-demo", 1, []StructureNode{node}); err != nil {
+		t.Fatalf("write structure: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(out, "document-structure", StructureNodeJSONPath(node.NodeID)))
+	if err != nil {
+		t.Fatalf("read structure node: %v", err)
+	}
+	body := string(data)
+	if strings.Contains(body, `"related_segment_ids": null`) {
+		t.Fatalf("expected related segment ids to serialize as arrays:\n%s", body)
+	}
+	if !strings.Contains(body, `"related_segment_ids": []`) {
+		t.Fatalf("expected empty related segment array:\n%s", body)
+	}
+}
+
 func TestDocumentsDecomposeWritesCompleteArtifactTree(t *testing.T) {
 	out := t.TempDir()
 	summary, err := DecomposePath(fixturePath(t, "markdown", "mixed-thread-capture.md"), out)
@@ -161,26 +485,26 @@ func TestWriterRedactsUnsafeProvidedSegment(t *testing.T) {
 	out := t.TempDir()
 	segment := validSegment()
 	segment.Title = "PRIVATE_CONTENT ready segment"
-	segment.Summary = "secret token body must not persist"
+	segment.Summary = "secret " + unsafeTokenMarker() + " body must not persist"
 	segment.Evidence.HeadingPath = []string{"SECRET heading"}
-	segment.SourceDocumentID = "doc-secret-token"
+	segment.SourceDocumentID = "doc-secret-" + unsafeTokenMarker()
 	if err := Write(out, Summary{RunID: segment.RunID, SourceCount: 1}, []Segment{segment}); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	assertGeneratedTreeExcludes(t, filepath.Join(out, "document-segments"), "private_content", "secret", "token")
+	assertGeneratedTreeExcludes(t, filepath.Join(out, "document-segments"), "private_content", "secret", unsafeTokenMarker())
 }
 
 func TestWriterRebuildsSummaryFromFinalizedSegments(t *testing.T) {
 	out := t.TempDir()
 	segment := validSegment()
 	segment.Title = "PRIVATE_CONTENT ready segment"
-	segment.Summary = "secret token body must not persist"
-	segment.SourceDocumentID = "doc-secret-token"
+	segment.Summary = "secret " + unsafeTokenMarker() + " body must not persist"
+	segment.SourceDocumentID = "doc-secret-" + unsafeTokenMarker()
 	summary := BuildSummary(segment.RunID, 1, []Segment{segment})
 	if err := Write(out, summary, []Segment{segment}); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	assertGeneratedTreeExcludes(t, filepath.Join(out, "document-segments"), "private_content", "secret", "token", "doc-secret-token")
+	assertGeneratedTreeExcludes(t, filepath.Join(out, "document-segments"), "private_content", "secret", unsafeTokenMarker(), "doc-secret-"+unsafeTokenMarker())
 }
 
 func TestUnsupportedSchema(t *testing.T) {
@@ -232,7 +556,7 @@ func TestUnsafePrivateContentMarkerBlocksSegment(t *testing.T) {
 		t.Fatalf("expected blocker reason")
 	}
 	body := strings.ToLower(segment.Title + "\n" + segment.Summary)
-	for _, forbidden := range []string{"private_content", "secret", "token"} {
+	for _, forbidden := range []string{"private_content", "secret", unsafeTokenMarker()} {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("expected unsafe marker redaction, found %q in %s", forbidden, body)
 		}
@@ -262,7 +586,7 @@ func TestUnsafeMarkerTableArtifactsAreRedacted(t *testing.T) {
 		lines: []line{
 			{number: 1, text: "| Topic | Detail |"},
 			{number: 2, text: "| --- | --- |"},
-			{number: 3, text: "| PRIVATE_CONTENT row | token value must not persist |"},
+			{number: 3, text: "| PRIVATE_CONTENT row | " + unsafeTokenMarker() + " value must not persist |"},
 		},
 	})
 	if len(segments) == 0 {
@@ -271,7 +595,7 @@ func TestUnsafeMarkerTableArtifactsAreRedacted(t *testing.T) {
 	if err := Write(out, BuildSummary("run-doc-unsafe-table", 1, segments), segments); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	assertGeneratedTreeExcludes(t, filepath.Join(out, "document-segments"), "private_content", "token value must not persist")
+	assertGeneratedTreeExcludes(t, filepath.Join(out, "document-segments"), "private_content", unsafeTokenMarker()+" value must not persist")
 }
 
 func TestUnsafeMarkerHeadingArtifactsAreRedacted(t *testing.T) {
@@ -286,7 +610,7 @@ func TestUnsafeMarkerHeadingArtifactsAreRedacted(t *testing.T) {
 }
 
 func TestUnsafeMarkerFilenameArtifactsAreRedacted(t *testing.T) {
-	input := filepath.Join(t.TempDir(), "secret-token.md")
+	input := filepath.Join(t.TempDir(), "secret-"+unsafeTokenMarker()+".md")
 	if err := os.WriteFile(input, []byte("# Safe heading\n\nSafe body.\n"), 0o644); err != nil {
 		t.Fatalf("write input: %v", err)
 	}
@@ -294,7 +618,7 @@ func TestUnsafeMarkerFilenameArtifactsAreRedacted(t *testing.T) {
 	if _, err := DecomposePath(input, out); err != nil {
 		t.Fatalf("decompose: %v", err)
 	}
-	assertGeneratedTreeExcludes(t, filepath.Join(out, "document-segments"), "secret", "token")
+	assertGeneratedTreeExcludes(t, filepath.Join(out, "document-segments"), "secret", unsafeTokenMarker())
 }
 
 func TestDirectoryInputsDisambiguateDuplicateBasenames(t *testing.T) {
@@ -323,6 +647,20 @@ func TestDirectoryInputsDisambiguateDuplicateBasenames(t *testing.T) {
 	if len(sourceIDs) != 2 {
 		t.Fatalf("expected distinct source document ids, got %+v", sourceIDs)
 	}
+}
+
+func TestDirectoryInputsWithUnsafeFilenamesAreRelativePathDeterministic(t *testing.T) {
+	firstRoot := unsafeFilenameTree(t)
+	secondRoot := unsafeFilenameTree(t)
+	firstOut := t.TempDir()
+	secondOut := t.TempDir()
+	if _, err := DecomposePath(firstRoot, firstOut); err != nil {
+		t.Fatalf("first decompose: %v", err)
+	}
+	if _, err := DecomposePath(secondRoot, secondOut); err != nil {
+		t.Fatalf("second decompose: %v", err)
+	}
+	assertTreeMatches(t, filepath.Join(firstOut, "document-segments"), filepath.Join(secondOut, "document-segments"))
 }
 
 func TestDecomposePathRejectsMarkdownScannerErrors(t *testing.T) {
@@ -357,6 +695,24 @@ func TestParseSectionsPreservesHeadingHierarchy(t *testing.T) {
 	assertHeadingPath(t, sections[0].headingPath, []string{"Strategy"})
 	assertHeadingPath(t, sections[1].headingPath, []string{"Strategy", "Risks"})
 	assertHeadingPath(t, sections[2].headingPath, []string{"Strategy", "Risks", "Follow up"})
+}
+
+func TestParseSectionsNormalizesNoH1HeadingHierarchy(t *testing.T) {
+	sections, err := parseSections("Intro note.\n\n### First Area\n\nSource content.\n\n### Second Area\n\nMore content.\n\n## Later Top Area\n\nTop content.\n\n### Later Child Detail\n\nNested content.\n")
+	if err != nil {
+		t.Fatalf("parse sections: %v", err)
+	}
+	if len(sections) != 5 {
+		t.Fatalf("expected pre-heading plus 4 headed sections, got %d: %+v", len(sections), sections)
+	}
+	assertHeadingPath(t, sections[0].headingPath, nil)
+	assertHeadingPath(t, sections[1].headingPath, []string{"First Area"})
+	assertHeadingPath(t, sections[2].headingPath, []string{"Second Area"})
+	assertHeadingPath(t, sections[3].headingPath, []string{"Later Top Area"})
+	assertHeadingPath(t, sections[4].headingPath, []string{"Later Top Area", "Later Child Detail"})
+	if sections[1].sourceHeadingLevel != 3 || sections[1].normalizedHeadingLevel != 1 {
+		t.Fatalf("expected source h3 normalized to level 1, got %+v", sections[1])
+	}
 }
 
 func TestMixedTableSectionKeepsNonTableSegments(t *testing.T) {
@@ -515,8 +871,8 @@ func TestSegmentIDSerializesLineStartNumerically(t *testing.T) {
 }
 
 func TestSourceDocumentIDRedactsUnsafeFilename(t *testing.T) {
-	got := SourceDocumentID("/tmp/secret-token.md")
-	if strings.Contains(got, "secret") || strings.Contains(got, "token") {
+	got := SourceDocumentID("/tmp/secret-" + unsafeTokenMarker() + ".md")
+	if strings.Contains(got, "secret") || strings.Contains(got, unsafeTokenMarker()) {
 		t.Fatalf("expected redacted source document id, got %s", got)
 	}
 	if !strings.HasPrefix(got, "doc-redacted-") {
@@ -643,6 +999,67 @@ func validSegment() Segment {
 	}
 }
 
+func duplicateStructureTree(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	for _, dir := range []string{"alpha", "beta"} {
+		path := filepath.Join(root, dir, "notes.md")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir duplicate tree: %v", err)
+		}
+		body := "# Duplicate Notes\n\n## Capability Set\n\n- Capability: preserve relative path identity\n"
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatalf("write duplicate tree: %v", err)
+		}
+	}
+	return root
+}
+
+func unsafeFilenameTree(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	for _, dir := range []string{"alpha", "beta"} {
+		path := filepath.Join(root, dir, "secret-"+unsafeTokenMarker()+".md")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir unsafe tree: %v", err)
+		}
+		body := "# Safe Heading\n\nDecision: redact unsafe filenames without path drift.\n"
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatalf("write unsafe tree: %v", err)
+		}
+	}
+	return root
+}
+
+func validStructureNode() StructureNode {
+	return StructureNode{
+		SchemaVersion:    StructureNodeSchemaVersion,
+		NodeID:           "node-demo",
+		RunID:            "run-struct-demo",
+		SourceDocumentID: "doc-demo",
+		NodeType:         StructureNodeTypeSection,
+		ReviewStatus:     ReviewStatusReady,
+		Confidence:       ConfidenceMedium,
+		Title:            "Demo section",
+		Summary:          "Synthetic section summary.",
+		ParentNodeID:     "",
+		ChildNodeIDs:     []string{},
+		RelatedSegmentIDs: []string{
+			"seg-demo",
+		},
+		Evidence: StructureEvidence{
+			SourceKind:        SourceKindMarkdown,
+			SourceDocumentID:  "doc-demo",
+			HeadingPath:       []string{"Demo section"},
+			LineStart:         1,
+			LineEnd:           2,
+			ContentHash:       "sha256:abc",
+			RelatedSegmentIDs: []string{"seg-demo"},
+		},
+		Blockers: []Blocker{},
+	}
+}
+
 func countStatus(t *testing.T, out string, summary Summary, status ReviewStatus) int {
 	t.Helper()
 	count := 0
@@ -714,6 +1131,87 @@ func assertGeneratedTreeExcludes(t *testing.T, root string, forbidden ...string)
 				t.Fatalf("generated artifact %s leaked %q:\n%s", path, value, body)
 			}
 		}
+	}
+}
+
+func assertStructureNodePath(t *testing.T, summary StructureSummary, nodeType StructureNodeType, nodePath string) {
+	t.Helper()
+	for _, node := range summary.Nodes {
+		if node.NodeType == nodeType && node.NodePath == nodePath {
+			return
+		}
+	}
+	t.Fatalf("expected %s node path %q in %+v", nodeType, nodePath, summary.Nodes)
+}
+
+func assertMissingStructureNodePath(t *testing.T, summary StructureSummary, nodePathFragment string) {
+	t.Helper()
+	for _, node := range summary.Nodes {
+		if strings.Contains(node.NodePath, nodePathFragment) {
+			t.Fatalf("unexpected node path containing %q: %+v", nodePathFragment, node)
+		}
+	}
+}
+
+func assertStructureNodeTitle(t *testing.T, out string, summary StructureSummary, nodeType StructureNodeType, nodePath, wantTitle string) {
+	t.Helper()
+	for _, item := range summary.Nodes {
+		if item.NodeType != nodeType || item.NodePath != nodePath {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(out, "document-structure", StructureNodeJSONPath(item.NodeID)))
+		if err != nil {
+			t.Fatalf("read structure node: %v", err)
+		}
+		var node StructureNode
+		if err := json.Unmarshal(data, &node); err != nil {
+			t.Fatalf("decode structure node: %v", err)
+		}
+		if node.Title != wantTitle {
+			t.Fatalf("unexpected node title got=%q want=%q node=%+v", node.Title, wantTitle, node)
+		}
+		if strings.Contains(node.Title, "*") || strings.Contains(strings.Join(node.Evidence.HeadingPath, "/"), "*") {
+			t.Fatalf("expected emphasis-free title and evidence path, got %+v", node)
+		}
+		return
+	}
+	t.Fatalf("missing %s node at %q", nodeType, nodePath)
+}
+
+func assertTranscriptTurnEvidence(t *testing.T, out string, summary StructureSummary) {
+	t.Helper()
+	foundReady := false
+	foundNeedsReview := false
+	for _, item := range summary.Nodes {
+		if item.NodeType != StructureNodeTypeTranscriptTurn {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(out, "document-structure", StructureNodeJSONPath(item.NodeID)))
+		if err != nil {
+			t.Fatalf("read transcript turn node: %v", err)
+		}
+		var node StructureNode
+		if err := json.Unmarshal(data, &node); err != nil {
+			t.Fatalf("decode transcript turn node: %v", err)
+		}
+		if !strings.Contains(node.Title, " - ") {
+			t.Fatalf("expected timestamp and speaker in title, got %+v", node)
+		}
+		if node.Evidence.LineStart <= 0 || node.Evidence.LineEnd < node.Evidence.LineStart {
+			t.Fatalf("expected transcript turn line range, got %+v", node)
+		}
+		if len(node.RelatedSegmentIDs) == 0 && node.ReviewStatus == ReviewStatusReady {
+			t.Fatalf("ready transcript turn should preserve related segment ids: %+v", node)
+		}
+		if node.ReviewStatus == ReviewStatusReady {
+			foundReady = true
+		}
+		if node.ReviewStatus == ReviewStatusNeedsReview {
+			foundNeedsReview = true
+		}
+	}
+	if !foundReady || !foundNeedsReview {
+		t.Fatalf("expected ready and needs_review transcript turns, ready=%v needsReview=%v", foundReady, foundNeedsReview)
 	}
 }
 

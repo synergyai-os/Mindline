@@ -1,0 +1,38 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-65ac4586cfaf0033",
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_document_id": "doc-mixed-structure",
+  "node_type": "section",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "Capture",
+  "summary": "Section derived from Markdown heading hierarchy.",
+  "parent_node_id": "node-5f6ea5e4f308c130",
+  "child_node_ids": [
+    "node-72e0974363849711",
+    "node-27fb78d239c32b66"
+  ],
+  "related_segment_ids": [
+    "seg-f791e5129342c638",
+    "seg-fb2194d5ba2fd277",
+    "seg-8cbc82dd0bd20c61"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-mixed-structure",
+    "heading_path": [
+      "Knowledge Runbook",
+      "Capture"
+    ],
+    "line_start": 5,
+    "line_end": 10,
+    "content_hash": "sha256:01527331f0613f2c99f9148b05a55ecdc4cc8dca86b3940e07795dddd0f0d88a",
+    "related_segment_ids": [
+      "seg-f791e5129342c638",
+      "seg-fb2194d5ba2fd277",
+      "seg-8cbc82dd0bd20c61"
+    ]
+  },
+  "blockers": []
+}

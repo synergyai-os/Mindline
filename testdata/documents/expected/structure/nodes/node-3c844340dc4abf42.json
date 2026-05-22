@@ -1,0 +1,32 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-3c844340dc4abf42",
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_document_id": "doc-process-no-h1-capabilities",
+  "node_type": "requirement",
+  "review_status": "ready",
+  "confidence": "high",
+  "title": "preserve the original source line evidence",
+  "summary": "Requirement: preserve the original source line evidence.",
+  "parent_node_id": "node-e1dd639b356bfc85",
+  "child_node_ids": [],
+  "related_segment_ids": [
+    "seg-1fb856efa7b7fc86"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-process-no-h1-capabilities",
+    "heading_path": [
+      "Programme Rulebook",
+      "Nested Operating Detail",
+      "preserve the original source line evidence"
+    ],
+    "line_start": 26,
+    "line_end": 26,
+    "content_hash": "sha256:3cddf4623bc1dd20ac4c420394de48d9d3bb3daf04979cdaec1684dc45ce637b",
+    "related_segment_ids": [
+      "seg-1fb856efa7b7fc86"
+    ]
+  },
+  "blockers": []
+}

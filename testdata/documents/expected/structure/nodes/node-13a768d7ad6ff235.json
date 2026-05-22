@@ -1,0 +1,60 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-13a768d7ad6ff235",
+  "run_id": "run-struct-9420d2a6e2c77d4d",
+  "source_document_id": "doc-process-no-h1-capabilities",
+  "node_type": "document",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "process-no-h1-capabilities",
+  "summary": "Document structure root.",
+  "parent_node_id": "",
+  "child_node_ids": [
+    "node-ffc053795f31ea39",
+    "node-d0a8e8dffd786065",
+    "node-33bf5032ab357dc8"
+  ],
+  "related_segment_ids": [
+    "seg-8964edc602889ef2",
+    "seg-d8a69cb7bfd1a087",
+    "seg-255a4457db329544",
+    "seg-c864975e8b47d59e",
+    "seg-2f897b89cf5ce74d",
+    "seg-0a521947305430b4",
+    "seg-70f430a90de3f9ef",
+    "seg-b76f1ad6892c6ae0",
+    "seg-bdec8bfa7ad6e84a",
+    "seg-296e1d3b781631fe",
+    "seg-9752347215db3f50",
+    "seg-d915f0fdd4d48baf",
+    "seg-18fb3b9c312c0740",
+    "seg-1fb856efa7b7fc86"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-process-no-h1-capabilities",
+    "heading_path": [
+      "process-no-h1-capabilities"
+    ],
+    "line_start": 1,
+    "line_end": 26,
+    "content_hash": "sha256:e0ba416ec357564c1ccc622dcf75938ddbc5a9f508c569694de852a930aa62fc",
+    "related_segment_ids": [
+      "seg-8964edc602889ef2",
+      "seg-d8a69cb7bfd1a087",
+      "seg-255a4457db329544",
+      "seg-c864975e8b47d59e",
+      "seg-2f897b89cf5ce74d",
+      "seg-0a521947305430b4",
+      "seg-70f430a90de3f9ef",
+      "seg-b76f1ad6892c6ae0",
+      "seg-bdec8bfa7ad6e84a",
+      "seg-296e1d3b781631fe",
+      "seg-9752347215db3f50",
+      "seg-d915f0fdd4d48baf",
+      "seg-18fb3b9c312c0740",
+      "seg-1fb856efa7b7fc86"
+    ]
+  },
+  "blockers": []
+}
