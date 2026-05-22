@@ -1770,6 +1770,25 @@ func TestSemanticAcceptanceRejectsExpectedPresentWithoutEvidence(t *testing.T) {
 	}
 }
 
+func TestSemanticAcceptanceRejectsBlankRequiredEvidence(t *testing.T) {
+	semanticRun := writeSemanticAcceptanceRun(t, nil)
+	answerKey := writeAcceptanceAnswerKey(t, SemanticAcceptanceAnswerKey{
+		SchemaVersion:    SemanticAcceptanceAnswerKeySchemaVersion,
+		AnswerKeyID:      "ak-blank-evidence",
+		SourceDocumentID: "doc-demo",
+		ExpectedOutcomes: []SemanticExpectedOutcome{{
+			ExpectedOutcomeID:      "exp-blank-evidence",
+			ExpectedState:          ExpectedOutcomePresent,
+			ExpectedKind:           SemanticCandidateKindAction,
+			RequiredEvidence:       []string{" "},
+			MinimumConfidenceFloor: ConfidenceLow,
+		}},
+	})
+	if _, err := AcceptSemantic(semanticRun, answerKey, t.TempDir()); err == nil {
+		t.Fatalf("expected blank required evidence rejection")
+	}
+}
+
 func TestSemanticAcceptanceRejectsPrivateMarkers(t *testing.T) {
 	semanticRun := writeSemanticAcceptanceRun(t, nil)
 	answerKey := writeAcceptanceAnswerKey(t, SemanticAcceptanceAnswerKey{

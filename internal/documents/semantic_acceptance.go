@@ -180,7 +180,7 @@ func ValidateSemanticAcceptanceAnswerKey(answerKey SemanticAcceptanceAnswerKey) 
 		if !validConfidence(outcome.MinimumConfidenceFloor) {
 			return fmt.Errorf("unsupported minimum confidence floor: %s", outcome.MinimumConfidenceFloor)
 		}
-		if outcome.ExpectedState == ExpectedOutcomePresent && len(outcome.RequiredEvidence) == 0 {
+		if outcome.ExpectedState == ExpectedOutcomePresent && !hasNonBlankString(outcome.RequiredEvidence) {
 			return fmt.Errorf("expected-present outcome requires evidence: %s", outcome.ExpectedOutcomeID)
 		}
 		if containsUnsafeOutcomeMarker(outcome) {
@@ -193,6 +193,15 @@ func ValidateSemanticAcceptanceAnswerKey(answerKey SemanticAcceptanceAnswerKey) 
 		}
 	}
 	return nil
+}
+
+func hasNonBlankString(values []string) bool {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func containsUnsafeOutcomeMarker(outcome SemanticExpectedOutcome) bool {
