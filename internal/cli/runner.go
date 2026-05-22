@@ -130,6 +130,9 @@ func configuredProtectedRoots() []string {
 			roots = append(roots, root)
 		}
 	}
+	if len(roots) == 0 {
+		return []string{defaultTolariaProtectedRoot}
+	}
 	return roots
 }
 

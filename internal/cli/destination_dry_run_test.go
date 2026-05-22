@@ -290,6 +290,16 @@ func TestConfiguredProtectedRootsDefaultsWhenEnvUnset(t *testing.T) {
 	t.Fatalf("expected default Tolaria protected root %q in %+v", defaultTolariaProtectedRoot, roots)
 }
 
+func TestConfiguredProtectedRootsDefaultsWhenEnvParsesEmpty(t *testing.T) {
+	t.Setenv(protectedRootsEnv, string(os.PathListSeparator))
+
+	roots := configuredProtectedRoots()
+
+	if len(roots) != 1 || roots[0] != defaultTolariaProtectedRoot {
+		t.Fatalf("expected default protected root for empty parsed env, got %+v", roots)
+	}
+}
+
 func TestDestinationDryRunResolvesArtifactPathsFromInputDirectory(t *testing.T) {
 	base := t.TempDir()
 	inputDir := filepath.Join(base, "input")

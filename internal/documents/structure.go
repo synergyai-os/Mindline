@@ -87,36 +87,35 @@ func structureFile(path, body, runID, sourceID string, segments []Segment) ([]St
 	title := documentTitle(path, sections)
 	root := newStructureNode(runID, sourceID, StructureNodeTypeDocument, "", []string{title}, 1, maxLine, title, "Document structure root.", segmentsForRange(segments, 1, maxLine))
 	nodes := []StructureNode{root}
-	sectionIDs := map[string]string{}
+	sectionIDs := map[int]string{}
+	latestSectionByPath := map[string]string{}
 	hasH1 := documentHasH1(sections)
-	for _, section := range sections {
+	for i, section := range sections {
 		if hasH1 && len(section.headingPath) <= 1 {
 			continue
 		}
 		if !hasH1 && len(section.headingPath) == 0 {
 			continue
 		}
-		key := strings.Join(section.headingPath, "\x00")
-		if _, ok := sectionIDs[key]; ok {
-			continue
-		}
 		parentID := root.NodeID
 		if len(section.headingPath) > 1 {
 			parentKey := strings.Join(section.headingPath[:len(section.headingPath)-1], "\x00")
-			if existing := sectionIDs[parentKey]; existing != "" {
+			if existing := latestSectionByPath[parentKey]; existing != "" {
 				parentID = existing
 			}
 		}
 		start, end := sectionLineRange(section)
 		node := newStructureNode(runID, sourceID, StructureNodeTypeSection, parentID, section.headingPath, start, end, headingTitle(section.headingPath), "Section derived from Markdown heading hierarchy.", segmentsForRange(segments, start, end))
-		sectionIDs[key] = node.NodeID
+		key := strings.Join(section.headingPath, "\x00")
+		sectionIDs[i] = node.NodeID
+		latestSectionByPath[key] = node.NodeID
 		nodes = append(nodes, node)
 	}
 	nodes = append(nodes, structureTranscriptTurns(runID, sourceID, root.NodeID, title, sections, segments)...)
-	for _, section := range sections {
+	for i, section := range sections {
 		parentID := root.NodeID
-		if key := strings.Join(section.headingPath, "\x00"); sectionIDs[key] != "" {
-			parentID = sectionIDs[key]
+		if sectionIDs[i] != "" {
+			parentID = sectionIDs[i]
 		}
 		nodes = append(nodes, structureSectionBlocks(runID, sourceID, parentID, section, segments)...)
 	}

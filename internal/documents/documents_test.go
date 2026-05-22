@@ -258,6 +258,64 @@ func TestDocumentStructureUnsafeSourceIDsMatchDecomposeOutput(t *testing.T) {
 	}
 }
 
+func TestDocumentStructurePreservesRepeatedHeadingSections(t *testing.T) {
+	root := t.TempDir()
+	inputPath := filepath.Join(root, "repeated-headings.md")
+	body := "# Root\n\n## Notes\n\n- Capability: first repeated section\n\n## Notes\n\n- Capability: second repeated section\n"
+	if err := os.WriteFile(inputPath, []byte(body), 0o644); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
+
+	out := t.TempDir()
+	summary, err := StructurePath(inputPath, out)
+	if err != nil {
+		t.Fatalf("structure: %v", err)
+	}
+
+	var notesSections []StructureNode
+	for _, item := range summary.Nodes {
+		if item.NodeType != StructureNodeTypeSection {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(out, "document-structure", StructureNodeJSONPath(item.NodeID)))
+		if err != nil {
+			t.Fatalf("read node %s: %v", item.NodeID, err)
+		}
+		var node StructureNode
+		if err := json.Unmarshal(data, &node); err != nil {
+			t.Fatalf("decode node %s: %v", item.NodeID, err)
+		}
+		if node.Title == "Notes" {
+			notesSections = append(notesSections, node)
+		}
+	}
+	if len(notesSections) != 2 {
+		t.Fatalf("expected two distinct repeated Notes sections, got %+v", notesSections)
+	}
+
+	parentIDsByTitle := map[string]string{}
+	for _, item := range summary.Nodes {
+		if item.NodeType != StructureNodeTypeCapability {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(out, "document-structure", StructureNodeJSONPath(item.NodeID)))
+		if err != nil {
+			t.Fatalf("read capability %s: %v", item.NodeID, err)
+		}
+		var node StructureNode
+		if err := json.Unmarshal(data, &node); err != nil {
+			t.Fatalf("decode capability %s: %v", item.NodeID, err)
+		}
+		parentIDsByTitle[node.Title] = node.ParentNodeID
+	}
+	if parentIDsByTitle["first repeated section"] == "" || parentIDsByTitle["second repeated section"] == "" {
+		t.Fatalf("expected repeated section capabilities, got %+v", parentIDsByTitle)
+	}
+	if parentIDsByTitle["first repeated section"] == parentIDsByTitle["second repeated section"] {
+		t.Fatalf("expected repeated section capabilities to have distinct parents, got %+v", parentIDsByTitle)
+	}
+}
+
 func TestDocumentStructureRelatedSegmentIDsMatchDecomposeOutput(t *testing.T) {
 	root := duplicateStructureTree(t)
 	decomposeOut := t.TempDir()
