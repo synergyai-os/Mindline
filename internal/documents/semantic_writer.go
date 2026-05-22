@@ -157,11 +157,12 @@ func ClassifyUnsafeSemanticObservation(observation SemanticObservation) Semantic
 }
 
 func ClassifyUnsafeSemanticCandidate(candidate SemanticCandidate) SemanticCandidate {
-	body := candidate.CandidateID + "\n" + candidate.Title + "\n" + candidate.Summary + "\n" + strings.Join(candidate.EvidenceNodes, "\n") + "\n" + strings.Join(candidate.ObservationIDs, "\n") + "\n" + strings.Join(candidate.RelationIDs, "\n")
+	body := candidate.CandidateID + "\n" + candidate.Title + "\n" + candidate.Summary + "\n" + candidate.SourceDocumentID + "\n" + strings.Join(candidate.EvidenceNodes, "\n") + "\n" + strings.Join(candidate.ObservationIDs, "\n") + "\n" + strings.Join(candidate.RelationIDs, "\n")
 	if containsUnsafeMarker(body) || containsGovernanceID(body) {
 		candidate.ReviewStatus = ReviewStatusBlocked
 		candidate.Confidence = ConfidenceLow
 		candidate.CandidateID = redactUnsafeSemanticID("cand", candidate.CandidateID)
+		candidate.SourceDocumentID = redactedDocumentID(candidate.SourceDocumentID)
 		candidate.Title = "Unsafe content redacted"
 		candidate.Summary = "Semantic candidate content was redacted because it contains an unsafe marker."
 		candidate.EvidenceNodes = redactUnsafeSemanticIDs("node", candidate.EvidenceNodes)

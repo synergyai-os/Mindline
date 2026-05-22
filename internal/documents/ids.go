@@ -117,6 +117,18 @@ func SemanticPreviewPath(id string) string {
 	return filepath.ToSlash(filepath.Join("previews", sanitizeID(id)+".md"))
 }
 
+func SemanticAcceptanceExpectedOutcomeJSONPath(expectedOutcomeID string) string {
+	return filepath.ToSlash(filepath.Join("expected-outcomes", sanitizeID(expectedOutcomeID)+".json"))
+}
+
+func SemanticAcceptanceItemJSONPath(candidateID string) string {
+	return filepath.ToSlash(filepath.Join("items", sanitizeID(candidateID)+".json"))
+}
+
+func SemanticAcceptancePreviewPath(candidateID string) string {
+	return filepath.ToSlash(filepath.Join("previews", sanitizeID(candidateID)+".md"))
+}
+
 func sanitizeID(value string) string {
 	var b strings.Builder
 	for _, r := range strings.ToLower(value) {

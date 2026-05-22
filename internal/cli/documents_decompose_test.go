@@ -187,6 +187,91 @@ func TestDocumentsSemanticsRejectsDestinationAndProfileFlags(t *testing.T) {
 	}
 }
 
+func TestDocumentsAccept(t *testing.T) {
+	semanticOut := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "semantics", documentsFixture(t, "semantic"),
+		"--out", semanticOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected semantic generation exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+
+	answerKey := filepath.Join(t.TempDir(), "answer-key.json")
+	if err := os.WriteFile(answerKey, []byte(`{
+  "schema_version": "semantic-acceptance-answer-key/v0.1",
+  "answer_key_id": "ak-cli",
+  "source_document_id": "doc-transcript-consolidated-action",
+  "expected_outcomes": [
+    {
+      "expected_outcome_id": "exp-action",
+      "expected_state": "expected_present",
+      "expected_kind": "action_candidate",
+      "required_evidence": ["node-262592341686a94b"],
+      "title_signals": ["checklist"],
+      "summary_signals": ["prepare"],
+      "minimum_confidence_floor": "low"
+    }
+  ]
+}`), 0o644); err != nil {
+		t.Fatalf("write answer key: %v", err)
+	}
+
+	acceptOut := t.TempDir()
+	stdout.Reset()
+	stderr.Reset()
+	code = NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "accept", semanticOut,
+		"--answer-key", answerKey,
+		"--out", acceptOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected accept exit %d, got %d stdout=%s stderr=%s", ExitOK, code, stdout.String(), stderr.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("expected empty stderr, got %q", stderr.String())
+	}
+	var summary struct {
+		SchemaVersion             string  `json:"schema_version"`
+		MatchedExpectedCount      int     `json:"matched_expected_count"`
+		PrecisionLikeMatchRate    float64 `json:"precision_like_match_rate"`
+		QualityStatement          string  `json:"quality_statement"`
+		RecallLikeOutcomeCoverage float64 `json:"recall_like_expected_outcome_coverage"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
+		t.Fatalf("decode stdout: %v\n%s", err, stdout.String())
+	}
+	if summary.SchemaVersion != "semantic-acceptance-summary/v0.1" {
+		t.Fatalf("unexpected schema: %s", summary.SchemaVersion)
+	}
+	if summary.MatchedExpectedCount != 1 || summary.PrecisionLikeMatchRate == 0 || summary.RecallLikeOutcomeCoverage == 0 {
+		t.Fatalf("unexpected acceptance summary: %+v", summary)
+	}
+	if !strings.Contains(summary.QualityStatement, "not calibrated") {
+		t.Fatalf("expected not-calibrated quality statement: %+v", summary)
+	}
+	if _, err := os.Stat(filepath.Join(acceptOut, "semantic-acceptance", "acceptance-summary.json")); err != nil {
+		t.Fatalf("expected acceptance summary artifact: %v", err)
+	}
+}
+
+func TestDocumentsAcceptRejectsDestinationAndProfileFlags(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "accept", t.TempDir(),
+		"--answer-key", filepath.Join(t.TempDir(), "answer-key.json"),
+		"--profile", documentsFixture(t, "..", "productbrain", "profiles", "default-governance.json"),
+		"--out", t.TempDir(),
+	}, &stdout, &stderr)
+	if code != ExitUsage {
+		t.Fatalf("expected usage exit for --profile, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "usage: mindline documents accept") {
+		t.Fatalf("expected documents accept usage, got %q", stderr.String())
+	}
+}
+
 func TestDocumentsStructureReportsWriteFailuresAsArtifactWrite(t *testing.T) {
 	outFile := filepath.Join(t.TempDir(), "not-a-directory")
 	if err := os.WriteFile(outFile, []byte("occupied"), 0o644); err != nil {

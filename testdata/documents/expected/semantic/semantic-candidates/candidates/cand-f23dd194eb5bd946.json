@@ -2,6 +2,7 @@
   "schema_version": "semantic-candidate/v0.1",
   "candidate_id": "cand-f23dd194eb5bd946",
   "run_id": "run-sem-712942e3ab499d31",
+  "source_document_id": "doc-transcript-consolidated-action",
   "candidate_kind": "action_candidate",
   "review_status": "ready",
   "confidence": "medium",
