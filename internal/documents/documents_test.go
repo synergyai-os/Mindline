@@ -2655,6 +2655,57 @@ func TestSemanticCalibrationRejectsNewExpectedOutcomeWithoutRichContext(t *testi
 	}
 }
 
+func TestSemanticCalibrationAllowsSparseAcceptedAbsentOutcome(t *testing.T) {
+	semanticRun := writeSemanticAcceptanceRun(t, nil)
+	answerKey := writeAcceptanceAnswerKey(t, SemanticAcceptanceAnswerKey{
+		SchemaVersion:    SemanticAcceptanceAnswerKeySchemaVersion,
+		AnswerKeyID:      "ak-absent",
+		SourceDocumentID: "doc-demo",
+		ExpectedOutcomes: []SemanticExpectedOutcome{{
+			ExpectedOutcomeID:      "exp-no-risk",
+			ExpectedState:          ExpectedOutcomeAbsent,
+			ExpectedKind:           SemanticCandidateKindRisk,
+			MinimumConfidenceFloor: ConfidenceLow,
+		}},
+	})
+	acceptanceOut := t.TempDir()
+	if _, err := AcceptSemantic(semanticRun, answerKey, acceptanceOut); err != nil {
+		t.Fatalf("accept semantic candidates: %v", err)
+	}
+	summary, err := CalibrateSemanticAcceptance(filepath.Join(acceptanceOut, "semantic-acceptance"), t.TempDir(), SemanticCalibrationOptions{Threshold: 0.98, HeldOut: true})
+	if err != nil {
+		t.Fatalf("accepted expected-absent outcome with no review item should not block calibration: %v", err)
+	}
+	if summary.ReviewItemCount != 0 {
+		t.Fatalf("accepted absent outcome should not create review items: %+v", summary)
+	}
+}
+
+func TestSemanticCalibrationRejectsSparseRejectedAbsentOutcome(t *testing.T) {
+	semanticRun := writeSemanticAcceptanceRun(t, []SemanticCandidate{
+		validSemanticCandidate(validSemanticObservation(validStructureNode()), validStructureNode()),
+	})
+	answerKey := writeAcceptanceAnswerKey(t, SemanticAcceptanceAnswerKey{
+		SchemaVersion:    SemanticAcceptanceAnswerKeySchemaVersion,
+		AnswerKeyID:      "ak-absent-rejected",
+		SourceDocumentID: "doc-demo",
+		ExpectedOutcomes: []SemanticExpectedOutcome{{
+			ExpectedOutcomeID:      "exp-no-action",
+			ExpectedState:          ExpectedOutcomeAbsent,
+			ExpectedKind:           SemanticCandidateKindAction,
+			RequiredEvidence:       []string{"node-demo"},
+			MinimumConfidenceFloor: ConfidenceLow,
+		}},
+	})
+	acceptanceOut := t.TempDir()
+	if _, err := AcceptSemantic(semanticRun, answerKey, acceptanceOut); err != nil {
+		t.Fatalf("accept semantic candidates: %v", err)
+	}
+	if _, err := CalibrateSemanticAcceptance(filepath.Join(acceptanceOut, "semantic-acceptance"), t.TempDir(), SemanticCalibrationOptions{Threshold: 0.98, HeldOut: true}); err == nil {
+		t.Fatalf("sparse rejected expected-absent outcome can feed review context and must be rejected")
+	}
+}
+
 func TestSemanticCalibrationRejectsSymlinkedExpectedOutcome(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink permissions vary on windows")

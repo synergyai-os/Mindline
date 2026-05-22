@@ -520,6 +520,13 @@ func semanticExpectedOutcomeHasRichContext(outcome SemanticExpectedOutcomeResult
 		strings.TrimSpace(outcome.Notes) != ""
 }
 
+func semanticExpectedOutcomeNeedsCalibrationContext(outcome SemanticExpectedOutcomeResult, referencedByItem bool) bool {
+	if outcome.ExpectedState == ExpectedOutcomePresent {
+		return true
+	}
+	return referencedByItem
+}
+
 func validateRichSemanticExpectedOutcomeResult(outcome SemanticExpectedOutcomeResult) error {
 	missing := []string{}
 	if !hasNonBlankString(outcome.RequiredEvidence) {
@@ -696,6 +703,7 @@ func readSemanticAcceptanceBundle(root string) (SemanticAcceptanceSummary, []Sem
 		items = append(items, item)
 	}
 	expected := make([]SemanticExpectedOutcomeResult, 0, len(summary.ExpectedOutcomes))
+	referencedExpectedOutcomes := semanticCalibrationReferencedExpectedOutcomes(items)
 	for _, expectedSummary := range summary.ExpectedOutcomes {
 		expectedPath, err := containedSemanticCalibrationPath(root, expectedSummary.ExpectedPath)
 		if err != nil {
@@ -708,7 +716,7 @@ func readSemanticAcceptanceBundle(root string) (SemanticAcceptanceSummary, []Sem
 		if outcome.SchemaVersion != SemanticAcceptanceExpectedOutcomeSchemaVersion && outcome.SchemaVersion != SemanticAcceptanceExpectedOutcomeLegacySchemaVersion {
 			return SemanticAcceptanceSummary{}, nil, nil, fmt.Errorf("unsupported semantic acceptance expected outcome schema version: %s", outcome.SchemaVersion)
 		}
-		if outcome.SchemaVersion == SemanticAcceptanceExpectedOutcomeSchemaVersion {
+		if outcome.SchemaVersion == SemanticAcceptanceExpectedOutcomeSchemaVersion && semanticExpectedOutcomeNeedsCalibrationContext(outcome, referencedExpectedOutcomes[outcome.ExpectedOutcomeID]) {
 			if err := validateRichSemanticExpectedOutcomeResult(outcome); err != nil {
 				return SemanticAcceptanceSummary{}, nil, nil, err
 			}
@@ -730,6 +738,16 @@ func readSemanticAcceptanceBundle(root string) (SemanticAcceptanceSummary, []Sem
 		expected = append(expected, outcome)
 	}
 	return summary, items, expected, nil
+}
+
+func semanticCalibrationReferencedExpectedOutcomes(items []SemanticAcceptanceItem) map[string]bool {
+	referenced := map[string]bool{}
+	for _, item := range items {
+		if strings.TrimSpace(item.ExpectedOutcomeID) != "" {
+			referenced[item.ExpectedOutcomeID] = true
+		}
+	}
+	return referenced
 }
 
 func readSemanticCalibrationSummary(root string) (SemanticCalibrationSummary, error) {
