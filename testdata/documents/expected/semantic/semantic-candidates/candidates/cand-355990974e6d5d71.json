@@ -1,0 +1,58 @@
+{
+  "schema_version": "semantic-candidate/v0.1",
+  "candidate_id": "cand-355990974e6d5d71",
+  "run_id": "run-sem-712942e3ab499d31",
+  "candidate_kind": "issue_candidate",
+  "review_status": "needs_review",
+  "confidence": "low",
+  "title": "Import remains under review",
+  "summary": "10:02 - Operator Proposal: mark the import ready now. 10:00 - Facilitator Question: should we mark the import ready today? 10:04 - Reviewer Objection: the import is not ready because validation is incomplete. 10:06 - Facilitator Recap: keep",
+  "evidence_nodes": [
+    "node-27d63def570fec36",
+    "node-9fe582b1e14d82fc",
+    "node-c87e0b2d89043a83",
+    "node-dece7bc306f624ae"
+  ],
+  "evidence_ranges": [
+    {
+      "structure_node_id": "node-c87e0b2d89043a83",
+      "line_start": 6,
+      "line_end": 7
+    },
+    {
+      "structure_node_id": "node-9fe582b1e14d82fc",
+      "line_start": 3,
+      "line_end": 4
+    },
+    {
+      "structure_node_id": "node-dece7bc306f624ae",
+      "line_start": 9,
+      "line_end": 10
+    },
+    {
+      "structure_node_id": "node-27d63def570fec36",
+      "line_start": 12,
+      "line_end": 13
+    }
+  ],
+  "observation_ids": [
+    "obs-437adbc72b53bcfc",
+    "obs-7cee560f045f4b1b",
+    "obs-de408453fea5d30e",
+    "obs-ead0e06d7bd3edc6"
+  ],
+  "relation_ids": [
+    "rel-97ca6f2d3792d6a5",
+    "rel-55b2f2bd75f6c72f",
+    "rel-4f728175a127f4ec",
+    "rel-692a63729faef3f5",
+    "rel-552613e2a48366a9"
+  ],
+  "destination_status": "unresolved",
+  "blockers": [
+    {
+      "code": "semantic_review_required",
+      "message": "Candidate requires review because evidence is weak, contradicted, or ambiguous."
+    }
+  ]
+}

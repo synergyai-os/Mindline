@@ -1,0 +1,33 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-262592341686a94b",
+  "run_id": "run-struct-035f649b794d0fe1",
+  "source_document_id": "doc-transcript-consolidated-action",
+  "node_type": "transcript_turn",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "09:12 - Lead",
+  "summary": "Transcript turn by Lead at 09:12.",
+  "parent_node_id": "node-27bc66a606192c2f",
+  "child_node_ids": [],
+  "related_segment_ids": [
+    "seg-0a494a0eae2e7eaf",
+    "seg-c76dcc7575428b80"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-transcript-consolidated-action",
+    "heading_path": [
+      "Synthetic Planning Transcript",
+      "09:12 - Lead"
+    ],
+    "line_start": 15,
+    "line_end": 16,
+    "content_hash": "sha256:dedf18eccc4e653c5137779ffc8659b58b47ed5582640227bcfcdcabe7d1b9d9",
+    "related_segment_ids": [
+      "seg-0a494a0eae2e7eaf",
+      "seg-c76dcc7575428b80"
+    ]
+  },
+  "blockers": []
+}

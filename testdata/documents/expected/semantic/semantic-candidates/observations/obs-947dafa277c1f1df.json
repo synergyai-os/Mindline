@@ -1,0 +1,23 @@
+{
+  "schema_version": "semantic-observation/v0.1",
+  "observation_id": "obs-947dafa277c1f1df",
+  "run_id": "run-sem-712942e3ab499d31",
+  "source_document_id": "doc-process-capability-evidence",
+  "observation_kind": "capability_statement",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "capability statement: PL-1 - Intake routing",
+  "summary": "PL-1 - Intake routing",
+  "evidence_nodes": [
+    "node-c8631e21d1a35d70"
+  ],
+  "evidence_ranges": [
+    {
+      "structure_node_id": "node-c8631e21d1a35d70",
+      "line_start": 5,
+      "line_end": 5
+    }
+  ],
+  "content_hash": "sha256:ad93749823a57f1fc20e9270205a1b9886cd24f9c85bddd7632f0aad7c4e851f",
+  "blockers": []
+}

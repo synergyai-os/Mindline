@@ -1,0 +1,22 @@
+{
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-bf569a28059ef96d",
+  "run_id": "run-doc-df6548611870eecc",
+  "source_document_id": "doc-transcript-consolidated-action",
+  "source_kind": "markdown",
+  "semantic_type": "reference",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "Proposal: create a lightweight checklist for source intake",
+  "summary": "Proposal: create a lightweight checklist for source intake.",
+  "evidence": {
+    "kind": "location",
+    "heading_path": [
+      "Synthetic Planning Transcript"
+    ],
+    "line_start": 10,
+    "line_end": 10,
+    "content_hash": "sha256:259d34ed766cdf01228fd5dae5cad3e209009cec53b75e8ee404947e347f44f7"
+  },
+  "blockers": []
+}

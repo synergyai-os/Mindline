@@ -1,0 +1,22 @@
+{
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-4590354ca85feca5",
+  "run_id": "run-doc-df6548611870eecc",
+  "source_document_id": "doc-transcript-consolidated-action",
+  "source_kind": "markdown",
+  "semantic_type": "action",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "Today we need to decide how the intake checklist moves forward",
+  "summary": "Today we need to decide how the intake checklist moves forward.",
+  "evidence": {
+    "kind": "location",
+    "heading_path": [
+      "Synthetic Planning Transcript"
+    ],
+    "line_start": 4,
+    "line_end": 4,
+    "content_hash": "sha256:6820165866705c39b643587f34264b0c5561b22f596752dbae6148f526f04fca"
+  },
+  "blockers": []
+}

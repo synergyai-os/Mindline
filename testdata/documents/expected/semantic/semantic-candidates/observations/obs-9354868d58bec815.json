@@ -1,0 +1,23 @@
+{
+  "schema_version": "semantic-observation/v0.1",
+  "observation_id": "obs-9354868d58bec815",
+  "run_id": "run-sem-712942e3ab499d31",
+  "source_document_id": "doc-transcript-consolidated-action",
+  "observation_kind": "question",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "question: 09:03 - Analyst What information is missing from the intake checklist?",
+  "summary": "09:03 - Analyst What information is missing from the intake checklist?",
+  "evidence_nodes": [
+    "node-067e324d52f25bff"
+  ],
+  "evidence_ranges": [
+    {
+      "structure_node_id": "node-067e324d52f25bff",
+      "line_start": 6,
+      "line_end": 7
+    }
+  ],
+  "content_hash": "sha256:2daf041f580fb77e73aedb63045ee1da906c036248d73731e4a97c8abe5f83ad",
+  "blockers": []
+}

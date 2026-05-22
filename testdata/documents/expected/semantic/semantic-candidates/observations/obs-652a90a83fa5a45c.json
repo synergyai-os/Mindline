@@ -1,0 +1,23 @@
+{
+  "schema_version": "semantic-observation/v0.1",
+  "observation_id": "obs-652a90a83fa5a45c",
+  "run_id": "run-sem-712942e3ab499d31",
+  "source_document_id": "doc-transcript-consolidated-action",
+  "observation_kind": "proposal",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "proposal: 09:05 - Lead Proposal: create a lightweight checklist for source intake.",
+  "summary": "09:05 - Lead Proposal: create a lightweight checklist for source intake.",
+  "evidence_nodes": [
+    "node-64b6bb0de4aa3782"
+  ],
+  "evidence_ranges": [
+    {
+      "structure_node_id": "node-64b6bb0de4aa3782",
+      "line_start": 9,
+      "line_end": 10
+    }
+  ],
+  "content_hash": "sha256:b5a6c3473e5ad3ceaab0e554ff4435824173863ab3741464118e7314cd27ca0a",
+  "blockers": []
+}

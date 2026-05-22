@@ -1,0 +1,23 @@
+{
+  "schema_version": "semantic-observation/v0.1",
+  "observation_id": "obs-4161d4622d2c8daa",
+  "run_id": "run-sem-712942e3ab499d31",
+  "source_document_id": "doc-transcript-consolidated-action",
+  "observation_kind": "action_signal",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "action signal: 09:15 - Facilitator Recap: Lead will prepare the checklist by Friday.",
+  "summary": "09:15 - Facilitator Recap: Lead will prepare the checklist by Friday.",
+  "evidence_nodes": [
+    "node-b89259969784f6ae"
+  ],
+  "evidence_ranges": [
+    {
+      "structure_node_id": "node-b89259969784f6ae",
+      "line_start": 18,
+      "line_end": 19
+    }
+  ],
+  "content_hash": "sha256:d2072f04fbe7c207c31b39c7ead3e4fccb9676be542e58d39bc079ec715ac9e3",
+  "blockers": []
+}

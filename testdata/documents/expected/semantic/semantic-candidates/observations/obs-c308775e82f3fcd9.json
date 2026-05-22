@@ -1,0 +1,23 @@
+{
+  "schema_version": "semantic-observation/v0.1",
+  "observation_id": "obs-c308775e82f3fcd9",
+  "run_id": "run-sem-712942e3ab499d31",
+  "source_document_id": "doc-process-capability-evidence",
+  "observation_kind": "capability_statement",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "capability statement: | PL-2 - Evidence review | Requirement evidence must stay linked to source",
+  "summary": "| PL-2 - Evidence review | Requirement evidence must stay linked to source nodes. |",
+  "evidence_nodes": [
+    "node-b8b4161a8ba175d8"
+  ],
+  "evidence_ranges": [
+    {
+      "structure_node_id": "node-b8b4161a8ba175d8",
+      "line_start": 12,
+      "line_end": 12
+    }
+  ],
+  "content_hash": "sha256:f3b5ade75eb61ee97f68032c74dcf802b3241a4ba584adc18acb21be2be6bc68",
+  "blockers": []
+}

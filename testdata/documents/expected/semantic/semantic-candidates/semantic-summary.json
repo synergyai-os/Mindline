@@ -1,0 +1,59 @@
+{
+  "schema_version": "semantic-candidate-summary/v0.1",
+  "run_id": "run-sem-712942e3ab499d31",
+  "source_count": 3,
+  "observation_count": 22,
+  "candidate_count": 3,
+  "relation_count": 20,
+  "needs_review_count": 7,
+  "blocked_count": 0,
+  "candidate_kind_counts": {
+    "action_candidate": 1,
+    "capability_candidate": 1,
+    "issue_candidate": 1
+  },
+  "observation_kind_counts": {
+    "action_signal": 2,
+    "agenda_frame": 1,
+    "capability_statement": 2,
+    "deadline_signal": 1,
+    "decision_signal": 2,
+    "dependency_statement": 2,
+    "objection": 1,
+    "proposal": 2,
+    "question": 2,
+    "recap_signal": 2,
+    "requirement_statement": 3,
+    "risk_statement": 2
+  },
+  "relationship_type_counts": {
+    "contradicts": 1,
+    "derived_from": 19
+  },
+  "candidates": [
+    {
+      "candidate_id": "cand-f23dd194eb5bd946",
+      "candidate_kind": "action_candidate",
+      "review_status": "ready",
+      "confidence": "medium",
+      "candidate_path": "candidates/cand-f23dd194eb5bd946.json",
+      "preview_path": "previews/cand-f23dd194eb5bd946.md"
+    },
+    {
+      "candidate_id": "cand-92ae8e8100a5eaac",
+      "candidate_kind": "capability_candidate",
+      "review_status": "ready",
+      "confidence": "medium",
+      "candidate_path": "candidates/cand-92ae8e8100a5eaac.json",
+      "preview_path": "previews/cand-92ae8e8100a5eaac.md"
+    },
+    {
+      "candidate_id": "cand-355990974e6d5d71",
+      "candidate_kind": "issue_candidate",
+      "review_status": "needs_review",
+      "confidence": "low",
+      "candidate_path": "candidates/cand-355990974e6d5d71.json",
+      "preview_path": "previews/cand-355990974e6d5d71.md"
+    }
+  ]
+}

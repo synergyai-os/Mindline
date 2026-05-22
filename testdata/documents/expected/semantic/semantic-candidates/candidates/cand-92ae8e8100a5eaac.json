@@ -1,0 +1,68 @@
+{
+  "schema_version": "semantic-candidate/v0.1",
+  "candidate_id": "cand-92ae8e8100a5eaac",
+  "run_id": "run-sem-712942e3ab499d31",
+  "candidate_kind": "capability_candidate",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "PL-1 - Intake routing",
+  "summary": "PL-1 - Intake routing - Requirement: every source has provenance before review. - Dependency: routing depends on source metadata. - Risk: missing source metadat PL-1 - Intake routing - Requirement: every source has provenance before review.",
+  "evidence_nodes": [
+    "node-332b000d88913479",
+    "node-4f46b3bd0981f360",
+    "node-67b76ec1ab4bf1f0",
+    "node-b8b4161a8ba175d8",
+    "node-c8631e21d1a35d70"
+  ],
+  "evidence_ranges": [
+    {
+      "structure_node_id": "node-332b000d88913479",
+      "line_start": 3,
+      "line_end": 12
+    },
+    {
+      "structure_node_id": "node-4f46b3bd0981f360",
+      "line_start": 1,
+      "line_end": 12
+    },
+    {
+      "structure_node_id": "node-c8631e21d1a35d70",
+      "line_start": 5,
+      "line_end": 5
+    },
+    {
+      "structure_node_id": "node-67b76ec1ab4bf1f0",
+      "line_start": 6,
+      "line_end": 6
+    },
+    {
+      "structure_node_id": "node-b8b4161a8ba175d8",
+      "line_start": 12,
+      "line_end": 12
+    }
+  ],
+  "observation_ids": [
+    "obs-12a85288cd9a5e02",
+    "obs-16cc8c7ff105bed6",
+    "obs-5f58078ea0350e7f",
+    "obs-947dafa277c1f1df",
+    "obs-9dac17c893f6ac0f",
+    "obs-b9b2db65f4c3eefd",
+    "obs-c308775e82f3fcd9",
+    "obs-d4c177f6c2398bb4",
+    "obs-f4779a2cfdd158b6"
+  ],
+  "relation_ids": [
+    "rel-49affbef901e4f18",
+    "rel-1703c4b7a4ab1e3b",
+    "rel-95717bb5c5ef15a5",
+    "rel-5b9e259ea46b5ca8",
+    "rel-b5a8322aef4a3c5e",
+    "rel-5f8530d95cbe0a38",
+    "rel-f59600202b617462",
+    "rel-0958958a359688eb",
+    "rel-711edfeb5c7db765"
+  ],
+  "destination_status": "unresolved",
+  "blockers": []
+}

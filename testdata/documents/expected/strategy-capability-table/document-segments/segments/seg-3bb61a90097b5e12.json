@@ -1,14 +1,14 @@
 {
-  "authority_ids": [
-    "PROD-1",
-    "DOMAIN-1",
-    "DEC-15",
-    "WP-8",
-    "WP-9",
-    "WP-10"
-  ],
-  "blockers": [],
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-3bb61a90097b5e12",
+  "run_id": "run-doc-e4ff6601c602753e",
+  "source_document_id": "doc-strategy-capability-table",
+  "source_kind": "markdown",
+  "semantic_type": "work_item",
+  "review_status": "ready",
   "confidence": "medium",
+  "title": "build a local command that decomposes Markdown files into document segme",
+  "summary": "Work item: build a local command that decomposes Markdown files into document segment artifacts.",
   "evidence": {
     "kind": "location",
     "heading_path": [
@@ -19,13 +19,5 @@
     "line_end": 19,
     "content_hash": "sha256:17c977f1af494dff555edda06b7a8c6a4476942544ef4757bf191ce71b7ad49b"
   },
-  "review_status": "ready",
-  "run_id": "run-doc-e4ff6601c602753e",
-  "schema_version": "document-segment/v0.1",
-  "segment_id": "seg-3bb61a90097b5e12",
-  "semantic_type": "work_item",
-  "source_document_id": "doc-strategy-capability-table",
-  "source_kind": "markdown",
-  "summary": "Work item: build a local command that decomposes Markdown files into document segment artifacts.",
-  "title": "build a local command that decomposes Markdown files into document segme"
+  "blockers": []
 }

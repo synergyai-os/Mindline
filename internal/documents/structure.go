@@ -56,13 +56,15 @@ func StructurePath(inputPath, outDir string) (StructureSummary, error) {
 	runID := StructureRunID(sourceIDs, contentHashes)
 	segmentRunID := RunID(wp10SourceIDs)
 	var nodes []StructureNode
+	var segments []Segment
 	for _, path := range paths {
 		sourceID := sourceIDsByPath[path]
-		segments, err := decomposeFile(path, segmentRunID, wp10SourceIDsByPath[path])
+		sourceSegments, err := decomposeFile(path, segmentRunID, wp10SourceIDsByPath[path])
 		if err != nil {
 			return StructureSummary{}, err
 		}
-		sourceNodes, err := structureFile(path, fileData[path], runID, sourceID, segments)
+		segments = append(segments, sourceSegments...)
+		sourceNodes, err := structureFile(path, fileData[path], runID, sourceID, sourceSegments)
 		if err != nil {
 			return StructureSummary{}, err
 		}
@@ -70,6 +72,9 @@ func StructurePath(inputPath, outDir string) (StructureSummary, error) {
 	}
 	nodes = orderStructureNodes(nodes)
 	if err := RejectDuplicateStructureNodeIDs(nodes); err != nil {
+		return StructureSummary{}, err
+	}
+	if err := Write(outDir, BuildSummary(segmentRunID, len(paths), segments), segments); err != nil {
 		return StructureSummary{}, err
 	}
 	if err := WriteStructure(outDir, runID, len(paths), nodes); err != nil {

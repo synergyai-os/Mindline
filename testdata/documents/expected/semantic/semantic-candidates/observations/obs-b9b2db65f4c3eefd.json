@@ -1,0 +1,23 @@
+{
+  "schema_version": "semantic-observation/v0.1",
+  "observation_id": "obs-b9b2db65f4c3eefd",
+  "run_id": "run-sem-712942e3ab499d31",
+  "source_document_id": "doc-process-capability-evidence",
+  "observation_kind": "requirement_statement",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "requirement statement: Requirement: every source has provenance before review.",
+  "summary": "Requirement: every source has provenance before review.",
+  "evidence_nodes": [
+    "node-67b76ec1ab4bf1f0"
+  ],
+  "evidence_ranges": [
+    {
+      "structure_node_id": "node-67b76ec1ab4bf1f0",
+      "line_start": 6,
+      "line_end": 6
+    }
+  ],
+  "content_hash": "sha256:87f7e6d52ddafba23f33458333c768dd642fafe23f25e5d6de02f9fa9b2070a3",
+  "blockers": []
+}

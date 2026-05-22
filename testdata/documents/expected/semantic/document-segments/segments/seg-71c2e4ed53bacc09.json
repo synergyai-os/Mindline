@@ -1,0 +1,22 @@
+{
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-71c2e4ed53bacc09",
+  "run_id": "run-doc-df6548611870eecc",
+  "source_document_id": "doc-transcript-contradicted-observation",
+  "source_kind": "markdown",
+  "semantic_type": "source_note",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "Objection: the import is not ready because validation is incomplete",
+  "summary": "Objection: the import is not ready because validation is incomplete.",
+  "evidence": {
+    "kind": "location",
+    "heading_path": [
+      "Synthetic Contradiction Transcript"
+    ],
+    "line_start": 10,
+    "line_end": 10,
+    "content_hash": "sha256:05c0adb0d6835ed8a6c3b720354103da80f45649fa10f220e93b43e2bffd44e9"
+  },
+  "blockers": []
+}

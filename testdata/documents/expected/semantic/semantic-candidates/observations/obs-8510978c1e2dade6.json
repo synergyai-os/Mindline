@@ -1,0 +1,23 @@
+{
+  "schema_version": "semantic-observation/v0.1",
+  "observation_id": "obs-8510978c1e2dade6",
+  "run_id": "run-sem-712942e3ab499d31",
+  "source_document_id": "doc-transcript-consolidated-action",
+  "observation_kind": "agenda_frame",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "agenda frame: 09:00 - Facilitator Today we need to decide how the intake checklist moves forward",
+  "summary": "09:00 - Facilitator Today we need to decide how the intake checklist moves forward.",
+  "evidence_nodes": [
+    "node-0fe508dd044cf9a9"
+  ],
+  "evidence_ranges": [
+    {
+      "structure_node_id": "node-0fe508dd044cf9a9",
+      "line_start": 3,
+      "line_end": 4
+    }
+  ],
+  "content_hash": "sha256:ac9dfed9ea70252daf1e87bbc7bd8bf82694f69f5dc8aa5cfb6e40a577d48014",
+  "blockers": []
+}

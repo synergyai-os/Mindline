@@ -1,0 +1,62 @@
+{
+  "schema_version": "semantic-candidate/v0.1",
+  "candidate_id": "cand-f23dd194eb5bd946",
+  "run_id": "run-sem-712942e3ab499d31",
+  "candidate_kind": "action_candidate",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "Prepare the checklist",
+  "summary": "09:12 - Lead Decision: use the lightweight checklist for the next intake run. 09:15 - Facilitator Recap: Lead will prepare the checklist by Friday. 09:09 - Analyst I support the checklist because it will make handoff evidence clearer. 09:00",
+  "evidence_nodes": [
+    "node-0fe508dd044cf9a9",
+    "node-262592341686a94b",
+    "node-64b6bb0de4aa3782",
+    "node-68ef7b02f454e088",
+    "node-b89259969784f6ae"
+  ],
+  "evidence_ranges": [
+    {
+      "structure_node_id": "node-262592341686a94b",
+      "line_start": 15,
+      "line_end": 16
+    },
+    {
+      "structure_node_id": "node-b89259969784f6ae",
+      "line_start": 18,
+      "line_end": 19
+    },
+    {
+      "structure_node_id": "node-68ef7b02f454e088",
+      "line_start": 12,
+      "line_end": 13
+    },
+    {
+      "structure_node_id": "node-0fe508dd044cf9a9",
+      "line_start": 3,
+      "line_end": 4
+    },
+    {
+      "structure_node_id": "node-64b6bb0de4aa3782",
+      "line_start": 9,
+      "line_end": 10
+    }
+  ],
+  "observation_ids": [
+    "obs-2a27a985ae5c96c1",
+    "obs-4161d4622d2c8daa",
+    "obs-427393341d87411f",
+    "obs-5e558bd7caf9a921",
+    "obs-652a90a83fa5a45c",
+    "obs-8ea82a275007de36"
+  ],
+  "relation_ids": [
+    "rel-42e4a5df8f3d764a",
+    "rel-cee3beeaf1171098",
+    "rel-bb54a875efe8e783",
+    "rel-1cc6c9b1fdede666",
+    "rel-2d52d36270486036",
+    "rel-399958900f6b2098"
+  ],
+  "destination_status": "unresolved",
+  "blockers": []
+}

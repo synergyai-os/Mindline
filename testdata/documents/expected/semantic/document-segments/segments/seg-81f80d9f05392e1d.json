@@ -1,0 +1,22 @@
+{
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-81f80d9f05392e1d",
+  "run_id": "run-doc-df6548611870eecc",
+  "source_document_id": "doc-transcript-contradicted-observation",
+  "source_kind": "markdown",
+  "semantic_type": "source_note",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "Proposal: mark the import ready now",
+  "summary": "Proposal: mark the import ready now.",
+  "evidence": {
+    "kind": "location",
+    "heading_path": [
+      "Synthetic Contradiction Transcript"
+    ],
+    "line_start": 7,
+    "line_end": 7,
+    "content_hash": "sha256:0bfe56b5098c3ddd4a9493b6e1ac593f55760648070e7ed2ec2361dfc70be01d"
+  },
+  "blockers": []
+}

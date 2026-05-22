@@ -1,0 +1,23 @@
+{
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-fcbfe1e2ec5ca79a",
+  "run_id": "run-doc-df6548611870eecc",
+  "source_document_id": "doc-process-capability-evidence",
+  "source_kind": "markdown",
+  "semantic_type": "source_note",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "Dependency: routing depends on source metadata",
+  "summary": "Dependency: routing depends on source metadata.",
+  "evidence": {
+    "kind": "location",
+    "heading_path": [
+      "Intake Operating Model",
+      "Intake Area"
+    ],
+    "line_start": 7,
+    "line_end": 7,
+    "content_hash": "sha256:9941b33a46d18106ff100b7626536cd358dfa80fead936420abc037e09194afc"
+  },
+  "blockers": []
+}

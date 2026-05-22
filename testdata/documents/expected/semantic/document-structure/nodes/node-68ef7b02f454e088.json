@@ -1,0 +1,33 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-68ef7b02f454e088",
+  "run_id": "run-struct-035f649b794d0fe1",
+  "source_document_id": "doc-transcript-consolidated-action",
+  "node_type": "transcript_turn",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "09:09 - Analyst",
+  "summary": "Transcript turn by Analyst at 09:09.",
+  "parent_node_id": "node-27bc66a606192c2f",
+  "child_node_ids": [],
+  "related_segment_ids": [
+    "seg-dd98dad184034a5c",
+    "seg-2f3ef0adc85ed4db"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-transcript-consolidated-action",
+    "heading_path": [
+      "Synthetic Planning Transcript",
+      "09:09 - Analyst"
+    ],
+    "line_start": 12,
+    "line_end": 13,
+    "content_hash": "sha256:e89a2209055aa64ee3a5495c55acd24b87df6ca92dc00d4c884e84d98eeee8e8",
+    "related_segment_ids": [
+      "seg-dd98dad184034a5c",
+      "seg-2f3ef0adc85ed4db"
+    ]
+  },
+  "blockers": []
+}

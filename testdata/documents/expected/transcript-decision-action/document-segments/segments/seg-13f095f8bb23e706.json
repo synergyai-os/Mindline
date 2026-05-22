@@ -1,14 +1,14 @@
 {
-  "authority_ids": [
-    "PROD-1",
-    "DOMAIN-1",
-    "DEC-15",
-    "WP-8",
-    "WP-9",
-    "WP-10"
-  ],
-  "blockers": [],
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-13f095f8bb23e706",
+  "run_id": "run-doc-f548e3343b9d956b",
+  "source_document_id": "doc-transcript-decision-action",
+  "source_kind": "markdown",
+  "semantic_type": "action",
+  "review_status": "ready",
   "confidence": "medium",
+  "title": "Product Lead to prepare the release checklist",
+  "summary": "Product Lead to prepare the release checklist.",
   "evidence": {
     "kind": "location",
     "heading_path": [
@@ -19,13 +19,5 @@
     "line_end": 15,
     "content_hash": "sha256:8be59684d7c74074963ebd5f1ba5d48c9a40e50e594727c3b2dc991fc9d63e4a"
   },
-  "review_status": "ready",
-  "run_id": "run-doc-f548e3343b9d956b",
-  "schema_version": "document-segment/v0.1",
-  "segment_id": "seg-13f095f8bb23e706",
-  "semantic_type": "action",
-  "source_document_id": "doc-transcript-decision-action",
-  "source_kind": "markdown",
-  "summary": "Product Lead to prepare the release checklist.",
-  "title": "Product Lead to prepare the release checklist"
+  "blockers": []
 }

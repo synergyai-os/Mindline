@@ -1,0 +1,33 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-9fe582b1e14d82fc",
+  "run_id": "run-struct-035f649b794d0fe1",
+  "source_document_id": "doc-transcript-contradicted-observation",
+  "node_type": "transcript_turn",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "10:00 - Facilitator",
+  "summary": "Transcript turn by Facilitator at 10:00.",
+  "parent_node_id": "node-ff5e3fe950bf9905",
+  "child_node_ids": [],
+  "related_segment_ids": [
+    "seg-a5e61004aac504fd",
+    "seg-f4ca1c040d960fcb"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-transcript-contradicted-observation",
+    "heading_path": [
+      "Synthetic Contradiction Transcript",
+      "10:00 - Facilitator"
+    ],
+    "line_start": 3,
+    "line_end": 4,
+    "content_hash": "sha256:953f4ef2ee78db7bea2c1dfb945e0c82820b6235c428ac2152b5550a2ba0d248",
+    "related_segment_ids": [
+      "seg-a5e61004aac504fd",
+      "seg-f4ca1c040d960fcb"
+    ]
+  },
+  "blockers": []
+}

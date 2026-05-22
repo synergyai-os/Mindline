@@ -1,0 +1,22 @@
+{
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-7358598ae4c4c405",
+  "run_id": "run-doc-df6548611870eecc",
+  "source_document_id": "doc-transcript-consolidated-action",
+  "source_kind": "markdown",
+  "semantic_type": "reference",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "What information is missing from the intake checklist?",
+  "summary": "What information is missing from the intake checklist?",
+  "evidence": {
+    "kind": "location",
+    "heading_path": [
+      "Synthetic Planning Transcript"
+    ],
+    "line_start": 7,
+    "line_end": 7,
+    "content_hash": "sha256:8e1e5f427cc1e3f12ec15d2e359c07a4f943481881c576d2e28a49af6b2777e3"
+  },
+  "blockers": []
+}

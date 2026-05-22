@@ -112,6 +112,81 @@ func TestDocumentsStructureDoesNotReadProductBrainProfile(t *testing.T) {
 	}
 }
 
+func TestDocumentsSemantics(t *testing.T) {
+	out := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "semantics", documentsFixture(t, "semantic"),
+		"--out", out,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("expected empty stderr, got %q", stderr.String())
+	}
+	var summary struct {
+		SchemaVersion    string `json:"schema_version"`
+		ObservationCount int    `json:"observation_count"`
+		CandidateCount   int    `json:"candidate_count"`
+		RelationCount    int    `json:"relation_count"`
+		Candidates       []struct {
+			CandidatePath string `json:"candidate_path"`
+			PreviewPath   string `json:"preview_path"`
+		} `json:"candidates"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
+		t.Fatalf("decode stdout: %v\n%s", err, stdout.String())
+	}
+	if summary.SchemaVersion != "semantic-candidate-summary/v0.1" {
+		t.Fatalf("unexpected schema: %s", summary.SchemaVersion)
+	}
+	if summary.ObservationCount == 0 || summary.CandidateCount == 0 || summary.RelationCount == 0 {
+		t.Fatalf("unexpected semantic counts: %+v", summary)
+	}
+	if _, err := os.Stat(filepath.Join(out, "document-structure", "structure-summary.json")); err != nil {
+		t.Fatalf("expected document structure beside semantic output: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(out, "semantic-candidates", "semantic-summary.json")); err != nil {
+		t.Fatalf("expected semantic summary artifact: %v", err)
+	}
+	for _, item := range summary.Candidates {
+		if _, err := os.Stat(filepath.Join(out, "semantic-candidates", item.CandidatePath)); err != nil {
+			t.Fatalf("expected candidate artifact %s: %v", item.CandidatePath, err)
+		}
+		if _, err := os.Stat(filepath.Join(out, "semantic-candidates", item.PreviewPath)); err != nil {
+			t.Fatalf("expected candidate preview %s: %v", item.PreviewPath, err)
+		}
+	}
+}
+
+func TestDocumentsSemanticsRejectsDestinationAndProfileFlags(t *testing.T) {
+	out := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "semantics", documentsFixture(t, "semantic"),
+		"--profile", documentsFixture(t, "..", "productbrain", "profiles", "default-governance.json"),
+		"--out", out,
+	}, &stdout, &stderr)
+	if code != ExitUsage {
+		t.Fatalf("expected usage exit for --profile, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "usage: mindline documents semantics") {
+		t.Fatalf("expected documents semantics usage, got %q", stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "semantics", documentsFixture(t, "semantic"),
+		"--destination", "tolaria",
+		"--out", out,
+	}, &stdout, &stderr)
+	if code != ExitUsage {
+		t.Fatalf("expected usage exit for --destination, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+}
+
 func TestDocumentsStructureReportsWriteFailuresAsArtifactWrite(t *testing.T) {
 	outFile := filepath.Join(t.TempDir(), "not-a-directory")
 	if err := os.WriteFile(outFile, []byte("occupied"), 0o644); err != nil {

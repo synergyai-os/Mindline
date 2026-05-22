@@ -1,0 +1,23 @@
+{
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-acd3a4518f8e7e2c",
+  "run_id": "run-doc-df6548611870eecc",
+  "source_document_id": "doc-process-capability-evidence",
+  "source_kind": "markdown",
+  "semantic_type": "reference",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "PL-2 - Evidence review",
+  "summary": "PL-2 - Evidence review - Requirement evidence must stay linked to source nodes.",
+  "evidence": {
+    "kind": "location",
+    "heading_path": [
+      "Intake Operating Model",
+      "Intake Area"
+    ],
+    "line_start": 12,
+    "line_end": 12,
+    "content_hash": "sha256:45c0defc19c80701b3ea3f81d1b5e38eb17edac5ef71f3017fad37b1d9aff7d7"
+  },
+  "blockers": []
+}

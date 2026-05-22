@@ -1,0 +1,33 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-0fe508dd044cf9a9",
+  "run_id": "run-struct-035f649b794d0fe1",
+  "source_document_id": "doc-transcript-consolidated-action",
+  "node_type": "transcript_turn",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "09:00 - Facilitator",
+  "summary": "Transcript turn by Facilitator at 09:00.",
+  "parent_node_id": "node-27bc66a606192c2f",
+  "child_node_ids": [],
+  "related_segment_ids": [
+    "seg-b227e6079e46515b",
+    "seg-4590354ca85feca5"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-transcript-consolidated-action",
+    "heading_path": [
+      "Synthetic Planning Transcript",
+      "09:00 - Facilitator"
+    ],
+    "line_start": 3,
+    "line_end": 4,
+    "content_hash": "sha256:e7d0075eae4181d1e77b6dacefee556492a6590ce2378d5ca2a286a1e7f9d038",
+    "related_segment_ids": [
+      "seg-b227e6079e46515b",
+      "seg-4590354ca85feca5"
+    ]
+  },
+  "blockers": []
+}

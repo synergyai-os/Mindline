@@ -1,0 +1,250 @@
+{
+  "schema_version": "document-segment-summary/v0.1",
+  "run_id": "run-doc-df6548611870eecc",
+  "source_count": 3,
+  "segment_count": 26,
+  "needs_review_count": 0,
+  "type_counts": {
+    "action": 1,
+    "decision": 1,
+    "reference": 6,
+    "source_note": 17,
+    "tension": 1
+  },
+  "segments": [
+    {
+      "segment_id": "seg-59c3ac3e1afc7267",
+      "source_document_id": "doc-process-capability-evidence",
+      "semantic_type": "reference",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-59c3ac3e1afc7267.json",
+      "preview_path": "previews/seg-59c3ac3e1afc7267.md"
+    },
+    {
+      "segment_id": "seg-acd3a4518f8e7e2c",
+      "source_document_id": "doc-process-capability-evidence",
+      "semantic_type": "reference",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-acd3a4518f8e7e2c.json",
+      "preview_path": "previews/seg-acd3a4518f8e7e2c.md"
+    },
+    {
+      "segment_id": "seg-6758aa76f66affb3",
+      "source_document_id": "doc-process-capability-evidence",
+      "semantic_type": "source_note",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-6758aa76f66affb3.json",
+      "preview_path": "previews/seg-6758aa76f66affb3.md"
+    },
+    {
+      "segment_id": "seg-907e32d1d8f9a785",
+      "source_document_id": "doc-process-capability-evidence",
+      "semantic_type": "source_note",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-907e32d1d8f9a785.json",
+      "preview_path": "previews/seg-907e32d1d8f9a785.md"
+    },
+    {
+      "segment_id": "seg-fcbfe1e2ec5ca79a",
+      "source_document_id": "doc-process-capability-evidence",
+      "semantic_type": "source_note",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-fcbfe1e2ec5ca79a.json",
+      "preview_path": "previews/seg-fcbfe1e2ec5ca79a.md"
+    },
+    {
+      "segment_id": "seg-f17df32f3c151067",
+      "source_document_id": "doc-process-capability-evidence",
+      "semantic_type": "tension",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-f17df32f3c151067.json",
+      "preview_path": "previews/seg-f17df32f3c151067.md"
+    },
+    {
+      "segment_id": "seg-b227e6079e46515b",
+      "source_document_id": "doc-transcript-consolidated-action",
+      "semantic_type": "source_note",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-b227e6079e46515b.json",
+      "preview_path": "previews/seg-b227e6079e46515b.md"
+    },
+    {
+      "segment_id": "seg-4590354ca85feca5",
+      "source_document_id": "doc-transcript-consolidated-action",
+      "semantic_type": "action",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-4590354ca85feca5.json",
+      "preview_path": "previews/seg-4590354ca85feca5.md"
+    },
+    {
+      "segment_id": "seg-9eba9e9bfe543c72",
+      "source_document_id": "doc-transcript-consolidated-action",
+      "semantic_type": "source_note",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-9eba9e9bfe543c72.json",
+      "preview_path": "previews/seg-9eba9e9bfe543c72.md"
+    },
+    {
+      "segment_id": "seg-7358598ae4c4c405",
+      "source_document_id": "doc-transcript-consolidated-action",
+      "semantic_type": "reference",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-7358598ae4c4c405.json",
+      "preview_path": "previews/seg-7358598ae4c4c405.md"
+    },
+    {
+      "segment_id": "seg-dd36b1a06121c764",
+      "source_document_id": "doc-transcript-consolidated-action",
+      "semantic_type": "source_note",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-dd36b1a06121c764.json",
+      "preview_path": "previews/seg-dd36b1a06121c764.md"
+    },
+    {
+      "segment_id": "seg-bf569a28059ef96d",
+      "source_document_id": "doc-transcript-consolidated-action",
+      "semantic_type": "reference",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-bf569a28059ef96d.json",
+      "preview_path": "previews/seg-bf569a28059ef96d.md"
+    },
+    {
+      "segment_id": "seg-dd98dad184034a5c",
+      "source_document_id": "doc-transcript-consolidated-action",
+      "semantic_type": "source_note",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-dd98dad184034a5c.json",
+      "preview_path": "previews/seg-dd98dad184034a5c.md"
+    },
+    {
+      "segment_id": "seg-2f3ef0adc85ed4db",
+      "source_document_id": "doc-transcript-consolidated-action",
+      "semantic_type": "reference",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-2f3ef0adc85ed4db.json",
+      "preview_path": "previews/seg-2f3ef0adc85ed4db.md"
+    },
+    {
+      "segment_id": "seg-0a494a0eae2e7eaf",
+      "source_document_id": "doc-transcript-consolidated-action",
+      "semantic_type": "source_note",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-0a494a0eae2e7eaf.json",
+      "preview_path": "previews/seg-0a494a0eae2e7eaf.md"
+    },
+    {
+      "segment_id": "seg-c76dcc7575428b80",
+      "source_document_id": "doc-transcript-consolidated-action",
+      "semantic_type": "decision",
+      "review_status": "ready",
+      "confidence": "high",
+      "segment_path": "segments/seg-c76dcc7575428b80.json",
+      "preview_path": "previews/seg-c76dcc7575428b80.md"
+    },
+    {
+      "segment_id": "seg-1fe984a900452f4e",
+      "source_document_id": "doc-transcript-consolidated-action",
+      "semantic_type": "source_note",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-1fe984a900452f4e.json",
+      "preview_path": "previews/seg-1fe984a900452f4e.md"
+    },
+    {
+      "segment_id": "seg-38bfac571ef0ab31",
+      "source_document_id": "doc-transcript-consolidated-action",
+      "semantic_type": "reference",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-38bfac571ef0ab31.json",
+      "preview_path": "previews/seg-38bfac571ef0ab31.md"
+    },
+    {
+      "segment_id": "seg-a5e61004aac504fd",
+      "source_document_id": "doc-transcript-contradicted-observation",
+      "semantic_type": "source_note",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-a5e61004aac504fd.json",
+      "preview_path": "previews/seg-a5e61004aac504fd.md"
+    },
+    {
+      "segment_id": "seg-f4ca1c040d960fcb",
+      "source_document_id": "doc-transcript-contradicted-observation",
+      "semantic_type": "source_note",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-f4ca1c040d960fcb.json",
+      "preview_path": "previews/seg-f4ca1c040d960fcb.md"
+    },
+    {
+      "segment_id": "seg-a5ec20782b366ace",
+      "source_document_id": "doc-transcript-contradicted-observation",
+      "semantic_type": "source_note",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-a5ec20782b366ace.json",
+      "preview_path": "previews/seg-a5ec20782b366ace.md"
+    },
+    {
+      "segment_id": "seg-81f80d9f05392e1d",
+      "source_document_id": "doc-transcript-contradicted-observation",
+      "semantic_type": "source_note",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-81f80d9f05392e1d.json",
+      "preview_path": "previews/seg-81f80d9f05392e1d.md"
+    },
+    {
+      "segment_id": "seg-b593bc7356df52ed",
+      "source_document_id": "doc-transcript-contradicted-observation",
+      "semantic_type": "source_note",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-b593bc7356df52ed.json",
+      "preview_path": "previews/seg-b593bc7356df52ed.md"
+    },
+    {
+      "segment_id": "seg-71c2e4ed53bacc09",
+      "source_document_id": "doc-transcript-contradicted-observation",
+      "semantic_type": "source_note",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-71c2e4ed53bacc09.json",
+      "preview_path": "previews/seg-71c2e4ed53bacc09.md"
+    },
+    {
+      "segment_id": "seg-a3ee950788c8a003",
+      "source_document_id": "doc-transcript-contradicted-observation",
+      "semantic_type": "source_note",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-a3ee950788c8a003.json",
+      "preview_path": "previews/seg-a3ee950788c8a003.md"
+    },
+    {
+      "segment_id": "seg-bcd3f8b5dd469147",
+      "source_document_id": "doc-transcript-contradicted-observation",
+      "semantic_type": "source_note",
+      "review_status": "ready",
+      "confidence": "medium",
+      "segment_path": "segments/seg-bcd3f8b5dd469147.json",
+      "preview_path": "previews/seg-bcd3f8b5dd469147.md"
+    }
+  ]
+}

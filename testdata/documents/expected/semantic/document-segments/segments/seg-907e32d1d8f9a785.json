@@ -1,0 +1,23 @@
+{
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-907e32d1d8f9a785",
+  "run_id": "run-doc-df6548611870eecc",
+  "source_document_id": "doc-process-capability-evidence",
+  "source_kind": "markdown",
+  "semantic_type": "source_note",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "Requirement: every source has provenance before review",
+  "summary": "Requirement: every source has provenance before review.",
+  "evidence": {
+    "kind": "location",
+    "heading_path": [
+      "Intake Operating Model",
+      "Intake Area"
+    ],
+    "line_start": 6,
+    "line_end": 6,
+    "content_hash": "sha256:4e43b4637638990012bbc367587b4ebd7cc4548c649e629b9d81140876c32ce1"
+  },
+  "blockers": []
+}

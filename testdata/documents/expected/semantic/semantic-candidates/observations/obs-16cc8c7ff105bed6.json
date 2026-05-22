@@ -1,0 +1,23 @@
+{
+  "schema_version": "semantic-observation/v0.1",
+  "observation_id": "obs-16cc8c7ff105bed6",
+  "run_id": "run-sem-712942e3ab499d31",
+  "source_document_id": "doc-process-capability-evidence",
+  "observation_kind": "risk_statement",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "risk statement: PL-1 - Intake routing - Requirement: every source has provenance before review.",
+  "summary": "PL-1 - Intake routing - Requirement: every source has provenance before review. - Dependency: routing depends on source metadata. - Risk: missing source metadat",
+  "evidence_nodes": [
+    "node-332b000d88913479"
+  ],
+  "evidence_ranges": [
+    {
+      "structure_node_id": "node-332b000d88913479",
+      "line_start": 3,
+      "line_end": 12
+    }
+  ],
+  "content_hash": "sha256:7813111e5942292e546255159c3c3814bfc7026cb0c3a72a87247b8bcd406054",
+  "blockers": []
+}

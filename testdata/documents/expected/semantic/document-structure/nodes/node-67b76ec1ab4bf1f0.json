@@ -1,0 +1,32 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-67b76ec1ab4bf1f0",
+  "run_id": "run-struct-035f649b794d0fe1",
+  "source_document_id": "doc-process-capability-evidence",
+  "node_type": "requirement",
+  "review_status": "ready",
+  "confidence": "high",
+  "title": "every source has provenance before review",
+  "summary": "Requirement: every source has provenance before review.",
+  "parent_node_id": "node-332b000d88913479",
+  "child_node_ids": [],
+  "related_segment_ids": [
+    "seg-907e32d1d8f9a785"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-process-capability-evidence",
+    "heading_path": [
+      "Intake Operating Model",
+      "Intake Area",
+      "every source has provenance before review"
+    ],
+    "line_start": 6,
+    "line_end": 6,
+    "content_hash": "sha256:be7812c30728f4f1eb670fe657dfb527eee1c7a1a4fbf80381b0b24268074a86",
+    "related_segment_ids": [
+      "seg-907e32d1d8f9a785"
+    ]
+  },
+  "blockers": []
+}

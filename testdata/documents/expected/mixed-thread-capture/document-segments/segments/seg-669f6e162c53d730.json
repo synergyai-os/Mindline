@@ -1,14 +1,14 @@
 {
-  "authority_ids": [
-    "PROD-1",
-    "DOMAIN-1",
-    "DEC-15",
-    "WP-8",
-    "WP-9",
-    "WP-10"
-  ],
-  "blockers": [],
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-669f6e162c53d730",
+  "run_id": "run-doc-dc28525bad06e31b",
+  "source_document_id": "doc-mixed-thread-capture",
+  "source_kind": "markdown",
+  "semantic_type": "reference",
+  "review_status": "ready",
   "confidence": "medium",
+  "title": "the pilot checklist includes intake, review, and export stages",
+  "summary": "Reference: the pilot checklist includes intake, review, and export stages.",
   "evidence": {
     "kind": "location",
     "heading_path": [
@@ -19,13 +19,5 @@
     "line_end": 9,
     "content_hash": "sha256:46608db6291a255b618f95f578514bd3eeea488a501141dbb04a67d9f9fc50a6"
   },
-  "review_status": "ready",
-  "run_id": "run-doc-dc28525bad06e31b",
-  "schema_version": "document-segment/v0.1",
-  "segment_id": "seg-669f6e162c53d730",
-  "semantic_type": "reference",
-  "source_document_id": "doc-mixed-thread-capture",
-  "source_kind": "markdown",
-  "summary": "Reference: the pilot checklist includes intake, review, and export stages.",
-  "title": "the pilot checklist includes intake, review, and export stages"
+  "blockers": []
 }

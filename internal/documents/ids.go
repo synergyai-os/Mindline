@@ -22,6 +22,12 @@ func StructureRunID(sourceIDs []string, contentHashes []string) string {
 	return "run-struct-" + hex.EncodeToString(sum[:])[:16]
 }
 
+func SemanticRunID(structureRunID string, nodeIDs []string) string {
+	parts := append([]string{structureRunID}, sortedStrings(nodeIDs)...)
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return "run-sem-" + hex.EncodeToString(sum[:])[:16]
+}
+
 func SourceDocumentID(path string) string {
 	base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	if containsUnsafeMarker(base) {
@@ -74,6 +80,41 @@ func StructureNodeJSONPath(nodeID string) string {
 
 func StructureNodePreviewPath(nodeID string) string {
 	return filepath.ToSlash(filepath.Join("previews", sanitizeID(nodeID)+".md"))
+}
+
+func SemanticObservationID(runID, nodeID string, kind SemanticObservationKind, title string) string {
+	seed := strings.Join([]string{runID, nodeID, string(kind), strings.TrimSpace(title)}, "\x00")
+	sum := sha256.Sum256([]byte(seed))
+	return "obs-" + hex.EncodeToString(sum[:])[:16]
+}
+
+func SemanticCandidateID(runID string, kind SemanticCandidateKind, sourceDocumentID, title string, evidenceNodes []string) string {
+	parts := []string{runID, string(kind), sourceDocumentID, strings.TrimSpace(title)}
+	parts = append(parts, sortedStrings(evidenceNodes)...)
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return "cand-" + hex.EncodeToString(sum[:])[:16]
+}
+
+func SemanticRelationID(runID string, relationshipType SemanticRelationshipType, fromID, toID string) string {
+	seed := strings.Join([]string{runID, string(relationshipType), fromID, toID}, "\x00")
+	sum := sha256.Sum256([]byte(seed))
+	return "rel-" + hex.EncodeToString(sum[:])[:16]
+}
+
+func SemanticObservationJSONPath(observationID string) string {
+	return filepath.ToSlash(filepath.Join("observations", sanitizeID(observationID)+".json"))
+}
+
+func SemanticCandidateJSONPath(candidateID string) string {
+	return filepath.ToSlash(filepath.Join("candidates", sanitizeID(candidateID)+".json"))
+}
+
+func SemanticRelationJSONPath(relationID string) string {
+	return filepath.ToSlash(filepath.Join("relations", sanitizeID(relationID)+".json"))
+}
+
+func SemanticPreviewPath(id string) string {
+	return filepath.ToSlash(filepath.Join("previews", sanitizeID(id)+".md"))
 }
 
 func sanitizeID(value string) string {

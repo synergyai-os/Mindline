@@ -1,0 +1,42 @@
+{
+  "schema_version": "document-structure-node/v0.1",
+  "node_id": "node-4f46b3bd0981f360",
+  "run_id": "run-struct-035f649b794d0fe1",
+  "source_document_id": "doc-process-capability-evidence",
+  "node_type": "document",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "Intake Operating Model",
+  "summary": "Document structure root.",
+  "parent_node_id": "",
+  "child_node_ids": [
+    "node-332b000d88913479"
+  ],
+  "related_segment_ids": [
+    "seg-59c3ac3e1afc7267",
+    "seg-acd3a4518f8e7e2c",
+    "seg-6758aa76f66affb3",
+    "seg-907e32d1d8f9a785",
+    "seg-fcbfe1e2ec5ca79a",
+    "seg-f17df32f3c151067"
+  ],
+  "evidence": {
+    "source_kind": "markdown",
+    "source_document_id": "doc-process-capability-evidence",
+    "heading_path": [
+      "Intake Operating Model"
+    ],
+    "line_start": 1,
+    "line_end": 12,
+    "content_hash": "sha256:daa5af87fa1d30825c7fa869ee4cff70427d66cfac8e38beecbd6f35c570e749",
+    "related_segment_ids": [
+      "seg-59c3ac3e1afc7267",
+      "seg-acd3a4518f8e7e2c",
+      "seg-6758aa76f66affb3",
+      "seg-907e32d1d8f9a785",
+      "seg-fcbfe1e2ec5ca79a",
+      "seg-f17df32f3c151067"
+    ]
+  },
+  "blockers": []
+}

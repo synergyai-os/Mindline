@@ -184,6 +184,230 @@ func TestDocumentStructureDeterministicAcrossRuns(t *testing.T) {
 	assertTreeMatches(t, filepath.Join(first, "document-structure"), filepath.Join(second, "document-structure"))
 }
 
+func TestSemanticCandidateArtifactsFromMarkdownDirectory(t *testing.T) {
+	out := t.TempDir()
+	summary, err := SemanticPath(fixturePath(t, "semantic"), out)
+	if err != nil {
+		t.Fatalf("semantic: %v", err)
+	}
+	if summary.SchemaVersion != SemanticSummarySchemaVersion {
+		t.Fatalf("unexpected schema: %s", summary.SchemaVersion)
+	}
+	if summary.SourceCount != 3 {
+		t.Fatalf("expected 3 sources, got %d", summary.SourceCount)
+	}
+	if summary.ObservationCount == 0 || summary.CandidateCount == 0 || summary.RelationCount == 0 {
+		t.Fatalf("expected observations, candidates, and relations, got %+v", summary)
+	}
+	if summary.CandidateKindCounts[SemanticCandidateKindAction] == 0 {
+		t.Fatalf("expected action candidate, got %+v", summary.CandidateKindCounts)
+	}
+	if summary.CandidateKindCounts[SemanticCandidateKindCapability] == 0 {
+		t.Fatalf("expected capability candidate, got %+v", summary.CandidateKindCounts)
+	}
+	if summary.RelationshipTypeCounts[SemanticRelationshipDerivedFrom] == 0 {
+		t.Fatalf("expected derived_from relation, got %+v", summary.RelationshipTypeCounts)
+	}
+	if _, err := os.Stat(filepath.Join(out, "document-structure", "structure-summary.json")); err != nil {
+		t.Fatalf("expected semantic markdown directory run to persist document structure: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(out, "semantic-candidates", "semantic-summary.json")); err != nil {
+		t.Fatalf("missing semantic summary artifact: %v", err)
+	}
+	for _, item := range summary.Candidates {
+		if _, err := os.Stat(filepath.Join(out, "semantic-candidates", item.CandidatePath)); err != nil {
+			t.Fatalf("missing candidate artifact %s: %v", item.CandidatePath, err)
+		}
+		if _, err := os.Stat(filepath.Join(out, "semantic-candidates", item.PreviewPath)); err != nil {
+			t.Fatalf("missing candidate preview %s: %v", item.PreviewPath, err)
+		}
+	}
+	assertGeneratedTreeExcludes(t, filepath.Join(out, "semantic-candidates"), "productbrain", "product brain", "tolaria", "notion", "obsidian", "slack", "authority_ids", "wp-13", "dec-49", ": null")
+}
+
+func TestSemanticTranscriptConsolidationAndContradiction(t *testing.T) {
+	out := t.TempDir()
+	summary, err := SemanticPath(fixturePath(t, "semantic"), out)
+	if err != nil {
+		t.Fatalf("semantic: %v", err)
+	}
+	var readyAction bool
+	var contradictedNeedsReview bool
+	for _, item := range summary.Candidates {
+		data, err := os.ReadFile(filepath.Join(out, "semantic-candidates", item.CandidatePath))
+		if err != nil {
+			t.Fatalf("read candidate %s: %v", item.CandidatePath, err)
+		}
+		var candidate SemanticCandidate
+		if err := json.Unmarshal(data, &candidate); err != nil {
+			t.Fatalf("decode candidate %s: %v", item.CandidatePath, err)
+		}
+		if candidate.CandidateKind == SemanticCandidateKindAction && candidate.ReviewStatus == ReviewStatusReady && len(candidate.ObservationIDs) >= 2 && len(candidate.RelationIDs) > 0 {
+			readyAction = true
+		}
+		if candidate.CandidateKind == SemanticCandidateKindIssue && candidate.ReviewStatus == ReviewStatusNeedsReview && len(candidate.Blockers) > 0 {
+			contradictedNeedsReview = true
+		}
+		if candidate.DestinationStatus != SemanticDestinationUnresolved {
+			t.Fatalf("destination status must stay unresolved, got %+v", candidate)
+		}
+	}
+	if !readyAction {
+		t.Fatalf("expected ready consolidated action candidate in %+v", summary.Candidates)
+	}
+	if !contradictedNeedsReview {
+		t.Fatalf("expected contradicted transcript candidate to remain needs_review in %+v", summary.Candidates)
+	}
+}
+
+func TestSemanticStructureRunInputPreservesTranscriptOutcomes(t *testing.T) {
+	structureOut := t.TempDir()
+	if _, err := StructurePath(fixturePath(t, "semantic"), structureOut); err != nil {
+		t.Fatalf("structure: %v", err)
+	}
+	out := t.TempDir()
+	summary, err := SemanticPath(filepath.Join(structureOut, "document-structure"), out)
+	if err != nil {
+		t.Fatalf("semantic from structure: %v", err)
+	}
+	var readyAction bool
+	var contradictedNeedsReview bool
+	for _, item := range summary.Candidates {
+		data, err := os.ReadFile(filepath.Join(out, "semantic-candidates", item.CandidatePath))
+		if err != nil {
+			t.Fatalf("read candidate %s: %v", item.CandidatePath, err)
+		}
+		var candidate SemanticCandidate
+		if err := json.Unmarshal(data, &candidate); err != nil {
+			t.Fatalf("decode candidate %s: %v", item.CandidatePath, err)
+		}
+		if candidate.CandidateKind == SemanticCandidateKindAction && candidate.ReviewStatus == ReviewStatusReady {
+			readyAction = true
+		}
+		if candidate.CandidateKind == SemanticCandidateKindIssue && candidate.ReviewStatus == ReviewStatusNeedsReview {
+			contradictedNeedsReview = true
+		}
+	}
+	if !readyAction || !contradictedNeedsReview {
+		t.Fatalf("expected structure-run input to preserve ready action and needs_review issue, got %+v", summary.Candidates)
+	}
+}
+
+func TestSemanticWriterRejectsDuplicateAndStaleGeneratedFiles(t *testing.T) {
+	node := validStructureNode()
+	observation := validSemanticObservation(node)
+	candidate := validSemanticCandidate(observation, node)
+	relation := validSemanticRelation(candidate, observation, node)
+	out := t.TempDir()
+	stale := filepath.Join(out, "semantic-candidates", "candidates", "stale.json")
+	if err := os.MkdirAll(filepath.Dir(stale), 0o755); err != nil {
+		t.Fatalf("mkdir stale parent: %v", err)
+	}
+	if err := os.WriteFile(stale, []byte("{}"), 0o644); err != nil {
+		t.Fatalf("write stale file: %v", err)
+	}
+	if err := WriteSemantic(out, "run-sem-demo", 1, []SemanticObservation{observation}, []SemanticCandidate{candidate}, []SemanticRelation{relation}); err == nil {
+		t.Fatalf("expected stale generated file rejection")
+	}
+	if err := WriteSemantic(t.TempDir(), "run-sem-demo", 1, []SemanticObservation{observation, observation}, []SemanticCandidate{candidate}, []SemanticRelation{relation}); err == nil {
+		t.Fatalf("expected duplicate observation id rejection")
+	}
+}
+
+func TestSemanticWriterRedactsUnsafeEndpointAndEvidenceFields(t *testing.T) {
+	node := validStructureNode()
+	observation := validSemanticObservation(node)
+	observation.ObservationID = "obs-private_content"
+	observation.SourceDocumentID = "doc-private_content"
+	observation.EvidenceNodes = []string{"node-safe", "DEC-49"}
+	observation.Title = "Unsafe semantic observation"
+	observation.Summary = "Contains private_content marker."
+	candidate := validSemanticCandidate(observation, node)
+	candidate.CandidateID = "cand-secret-" + unsafeTokenMarker()
+	candidate.EvidenceNodes = []string{"node-safe", "WP-13"}
+	candidate.ObservationIDs = []string{observation.ObservationID, "obs-secret-" + unsafeTokenMarker()}
+	candidate.Summary = "secret candidate summary"
+	relation := validSemanticRelation(candidate, observation, node)
+	relation.RelationID = "rel-private_content"
+	relation.FromID = "cand-secret-" + unsafeTokenMarker()
+	relation.ToID = "DEC-49"
+	relation.EvidenceNodes = []string{"node-safe", "private_content-node"}
+
+	out := t.TempDir()
+	if err := WriteSemantic(out, "run-sem-demo", 1, []SemanticObservation{observation}, []SemanticCandidate{candidate}, []SemanticRelation{relation}); err != nil {
+		t.Fatalf("write semantic: %v", err)
+	}
+	assertGeneratedTreeExcludes(t, filepath.Join(out, "semantic-candidates"), "private_content", "secret", unsafeTokenMarker(), "DEC-49", "WP-13")
+}
+
+func TestSemanticArtifactsReferenceInspectableStructureNodes(t *testing.T) {
+	out := t.TempDir()
+	summary, err := SemanticPath(fixturePath(t, "semantic"), out)
+	if err != nil {
+		t.Fatalf("semantic: %v", err)
+	}
+	structureNodes := map[string]bool{}
+	structureRoot := filepath.Join(out, "document-structure", "nodes")
+	if err := filepath.WalkDir(structureRoot, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		var node StructureNode
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if err := json.Unmarshal(data, &node); err != nil {
+			return err
+		}
+		structureNodes[node.NodeID] = true
+		return nil
+	}); err != nil {
+		t.Fatalf("read structure nodes: %v", err)
+	}
+	for _, item := range summary.Candidates {
+		data, err := os.ReadFile(filepath.Join(out, "semantic-candidates", item.CandidatePath))
+		if err != nil {
+			t.Fatalf("read candidate: %v", err)
+		}
+		var candidate SemanticCandidate
+		if err := json.Unmarshal(data, &candidate); err != nil {
+			t.Fatalf("decode candidate: %v", err)
+		}
+		if len(candidate.EvidenceNodes) == 0 {
+			t.Fatalf("candidate missing evidence nodes: %+v", candidate)
+		}
+		for _, nodeID := range candidate.EvidenceNodes {
+			if !structureNodes[nodeID] {
+				t.Fatalf("candidate references non-inspectable structure node %s", nodeID)
+			}
+		}
+	}
+}
+
+func TestGeneratedSemanticOutputMatchesGoldenFixtures(t *testing.T) {
+	out := t.TempDir()
+	if _, err := SemanticPath(fixturePath(t, "semantic"), out); err != nil {
+		t.Fatalf("semantic: %v", err)
+	}
+	assertTreeMatches(t,
+		filepath.Join(out, "semantic-candidates"),
+		fixturePath(t, "expected", "semantic", "semantic-candidates"),
+	)
+}
+
+func TestDocumentSemanticsDeterministicAcrossRuns(t *testing.T) {
+	first := t.TempDir()
+	second := t.TempDir()
+	if _, err := SemanticPath(fixturePath(t, "semantic"), first); err != nil {
+		t.Fatalf("first semantic: %v", err)
+	}
+	if _, err := SemanticPath(fixturePath(t, "semantic"), second); err != nil {
+		t.Fatalf("second semantic: %v", err)
+	}
+	assertTreeMatches(t, filepath.Join(first, "semantic-candidates"), filepath.Join(second, "semantic-candidates"))
+}
+
 func TestDocumentStructureDuplicateBasenamesAreRelativePathDeterministic(t *testing.T) {
 	firstRoot := duplicateStructureTree(t)
 	secondRoot := duplicateStructureTree(t)
@@ -1057,6 +1281,60 @@ func validStructureNode() StructureNode {
 			RelatedSegmentIDs: []string{"seg-demo"},
 		},
 		Blockers: []Blocker{},
+	}
+}
+
+func validSemanticObservation(node StructureNode) SemanticObservation {
+	return SemanticObservation{
+		SchemaVersion:    SemanticObservationSchemaVersion,
+		ObservationID:    "obs-demo",
+		RunID:            "run-sem-demo",
+		SourceDocumentID: node.SourceDocumentID,
+		ObservationKind:  SemanticObservationKindActionSignal,
+		ReviewStatus:     ReviewStatusReady,
+		Confidence:       ConfidenceMedium,
+		Title:            "Prepare checklist",
+		Summary:          "Lead will prepare the checklist.",
+		EvidenceNodes:    []string{node.NodeID},
+		EvidenceRanges:   []SemanticEvidenceRange{{StructureNodeID: node.NodeID, LineStart: 1, LineEnd: 2}},
+		ContentHash:      "sha256:abc",
+		Blockers:         []Blocker{},
+	}
+}
+
+func validSemanticCandidate(observation SemanticObservation, node StructureNode) SemanticCandidate {
+	return SemanticCandidate{
+		SchemaVersion:     SemanticCandidateSchemaVersion,
+		CandidateID:       "cand-demo",
+		RunID:             observation.RunID,
+		CandidateKind:     SemanticCandidateKindAction,
+		ReviewStatus:      ReviewStatusReady,
+		Confidence:        ConfidenceMedium,
+		Title:             "Prepare checklist",
+		Summary:           "Lead will prepare the checklist.",
+		EvidenceNodes:     []string{node.NodeID},
+		EvidenceRanges:    []SemanticEvidenceRange{{StructureNodeID: node.NodeID, LineStart: 1, LineEnd: 2}},
+		ObservationIDs:    []string{observation.ObservationID},
+		RelationIDs:       []string{"rel-demo"},
+		DestinationStatus: SemanticDestinationUnresolved,
+		Blockers:          []Blocker{},
+	}
+}
+
+func validSemanticRelation(candidate SemanticCandidate, observation SemanticObservation, node StructureNode) SemanticRelation {
+	return SemanticRelation{
+		SchemaVersion:    SemanticRelationSchemaVersion,
+		RelationID:       "rel-demo",
+		RunID:            candidate.RunID,
+		RelationshipType: SemanticRelationshipDerivedFrom,
+		FromID:           candidate.CandidateID,
+		FromType:         SemanticRelationEndpointCandidate,
+		ToID:             observation.ObservationID,
+		ToType:           SemanticRelationEndpointObservation,
+		EvidenceNodes:    []string{node.NodeID},
+		Confidence:       ConfidenceMedium,
+		ReviewStatus:     ReviewStatusReady,
+		Blockers:         []Blocker{},
 	}
 }
 

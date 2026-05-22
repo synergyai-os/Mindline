@@ -1,0 +1,22 @@
+{
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-f4ca1c040d960fcb",
+  "run_id": "run-doc-df6548611870eecc",
+  "source_document_id": "doc-transcript-contradicted-observation",
+  "source_kind": "markdown",
+  "semantic_type": "source_note",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "Question: should we mark the import ready today?",
+  "summary": "Question: should we mark the import ready today?",
+  "evidence": {
+    "kind": "location",
+    "heading_path": [
+      "Synthetic Contradiction Transcript"
+    ],
+    "line_start": 4,
+    "line_end": 4,
+    "content_hash": "sha256:09ea406851e0f2fe905585ad7c887cb841882ef3908b17eccd931c4b23a0bc9e"
+  },
+  "blockers": []
+}

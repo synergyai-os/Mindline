@@ -1,14 +1,14 @@
 {
-  "authority_ids": [
-    "PROD-1",
-    "DOMAIN-1",
-    "DEC-15",
-    "WP-8",
-    "WP-9",
-    "WP-10"
-  ],
-  "blockers": [],
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-f0707b79fba1780b",
+  "run_id": "run-doc-f548e3343b9d956b",
+  "source_document_id": "doc-transcript-decision-action",
+  "source_kind": "markdown",
+  "semantic_type": "decision",
+  "review_status": "ready",
   "confidence": "high",
+  "title": "keep the document importer deterministic for the first release",
+  "summary": "Decision: keep the document importer deterministic for the first release.",
   "evidence": {
     "kind": "location",
     "heading_path": [
@@ -19,13 +19,5 @@
     "line_end": 10,
     "content_hash": "sha256:8160627e03cbd4177f7c22a6744087ae7633a28ad0a0ac8d610569ef15793b17"
   },
-  "review_status": "ready",
-  "run_id": "run-doc-f548e3343b9d956b",
-  "schema_version": "document-segment/v0.1",
-  "segment_id": "seg-f0707b79fba1780b",
-  "semantic_type": "decision",
-  "source_document_id": "doc-transcript-decision-action",
-  "source_kind": "markdown",
-  "summary": "Decision: keep the document importer deterministic for the first release.",
-  "title": "keep the document importer deterministic for the first release"
+  "blockers": []
 }

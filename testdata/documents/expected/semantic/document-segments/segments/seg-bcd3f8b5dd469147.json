@@ -1,0 +1,22 @@
+{
+  "schema_version": "document-segment/v0.1",
+  "segment_id": "seg-bcd3f8b5dd469147",
+  "run_id": "run-doc-df6548611870eecc",
+  "source_document_id": "doc-transcript-contradicted-observation",
+  "source_kind": "markdown",
+  "semantic_type": "source_note",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "Recap: keep the import under review until validation is complete",
+  "summary": "Recap: keep the import under review until validation is complete.",
+  "evidence": {
+    "kind": "location",
+    "heading_path": [
+      "Synthetic Contradiction Transcript"
+    ],
+    "line_start": 13,
+    "line_end": 13,
+    "content_hash": "sha256:be5477e773542be6099ffb2807c0cc7e34378076c8170523fcf80874f4602360"
+  },
+  "blockers": []
+}
