@@ -1,24 +1,26 @@
 package documents
 
 const (
-	SegmentSummarySchemaVersion                    = "document-segment-summary/v0.1"
-	SegmentSchemaVersion                           = "document-segment/v0.1"
-	StructureSummarySchemaVersion                  = "document-structure-summary/v0.1"
-	StructureNodeSchemaVersion                     = "document-structure-node/v0.1"
-	SemanticSummarySchemaVersion                   = "semantic-candidate-summary/v0.1"
-	SemanticObservationSchemaVersion               = "semantic-observation/v0.1"
-	SemanticCandidateSchemaVersion                 = "semantic-candidate/v0.1"
-	SemanticRelationSchemaVersion                  = "semantic-relation/v0.1"
-	SemanticAcceptanceSummarySchemaVersion         = "semantic-acceptance-summary/v0.1"
-	SemanticAcceptanceAnswerKeySchemaVersion       = "semantic-acceptance-answer-key/v0.1"
-	SemanticAcceptanceExpectedOutcomeSchemaVersion = "semantic-acceptance-expected-outcome/v0.1"
-	SemanticAcceptanceItemSchemaVersion            = "semantic-acceptance-item/v0.1"
-	SemanticCalibrationSummarySchemaVersion        = "semantic-calibration-summary/v0.1"
-	SemanticCalibrationReviewItemSchemaVersion     = "semantic-calibration-review-item/v0.1"
-	SemanticCalibrationCursorSchemaVersion         = "semantic-calibration-cursor/v0.1"
-	SemanticCalibrationPageSchemaVersion           = "semantic-calibration-page/v0.1"
-	SourceKindMarkdown                             = "markdown"
-	EvidenceKindLocation                           = "location"
+	SegmentSummarySchemaVersion                          = "document-segment-summary/v0.1"
+	SegmentSchemaVersion                                 = "document-segment/v0.1"
+	StructureSummarySchemaVersion                        = "document-structure-summary/v0.1"
+	StructureNodeSchemaVersion                           = "document-structure-node/v0.1"
+	SemanticSummarySchemaVersion                         = "semantic-candidate-summary/v0.1"
+	SemanticObservationSchemaVersion                     = "semantic-observation/v0.1"
+	SemanticCandidateSchemaVersion                       = "semantic-candidate/v0.1"
+	SemanticRelationSchemaVersion                        = "semantic-relation/v0.1"
+	SemanticAcceptanceSummarySchemaVersion               = "semantic-acceptance-summary/v0.1"
+	SemanticAcceptanceAnswerKeySchemaVersion             = "semantic-acceptance-answer-key/v0.1"
+	SemanticAcceptanceExpectedOutcomeSchemaVersion       = "semantic-acceptance-expected-outcome/v0.2"
+	SemanticAcceptanceExpectedOutcomeLegacySchemaVersion = "semantic-acceptance-expected-outcome/v0.1"
+	SemanticAcceptanceItemSchemaVersion                  = "semantic-acceptance-item/v0.1"
+	SemanticCalibrationSummarySchemaVersion              = "semantic-calibration-summary/v0.1"
+	SemanticCalibrationReviewItemSchemaVersion           = "semantic-calibration-review-item/v0.2"
+	SemanticCalibrationReviewItemLegacySchemaVersion     = "semantic-calibration-review-item/v0.1"
+	SemanticCalibrationCursorSchemaVersion               = "semantic-calibration-cursor/v0.1"
+	SemanticCalibrationPageSchemaVersion                 = "semantic-calibration-page/v0.2"
+	SourceKindMarkdown                                   = "markdown"
+	EvidenceKindLocation                                 = "location"
 )
 
 var WP10AuthorityIDs = []string{"PROD-1", "DOMAIN-1", "DEC-15", "WP-8", "WP-9", "WP-10"}
@@ -400,14 +402,21 @@ type SemanticAcceptanceSummary struct {
 }
 
 type SemanticExpectedOutcomeResult struct {
-	SchemaVersion      string                       `json:"schema_version"`
-	ExpectedOutcomeID  string                       `json:"expected_outcome_id"`
-	ExpectedState      SemanticExpectedOutcomeState `json:"expected_state"`
-	ExpectedKind       SemanticCandidateKind        `json:"expected_kind"`
-	AcceptanceState    SemanticAcceptanceState      `json:"acceptance_state"`
-	Reason             SemanticAcceptanceReason     `json:"reason"`
-	MatchedCandidateID string                       `json:"matched_candidate_id,omitempty"`
-	ExpectedPath       string                       `json:"expected_path"`
+	SchemaVersion          string                       `json:"schema_version"`
+	ExpectedOutcomeID      string                       `json:"expected_outcome_id"`
+	ExpectedState          SemanticExpectedOutcomeState `json:"expected_state"`
+	ExpectedKind           SemanticCandidateKind        `json:"expected_kind"`
+	RequiredEvidence       []string                     `json:"required_evidence"`
+	AcceptableAlternates   []string                     `json:"acceptable_evidence_alternates"`
+	TitleSignals           []string                     `json:"title_signals"`
+	SummarySignals         []string                     `json:"summary_signals"`
+	RelationRequirements   []SemanticRelationshipType   `json:"relation_requirements"`
+	MinimumConfidenceFloor Confidence                   `json:"minimum_confidence_floor"`
+	Notes                  string                       `json:"notes,omitempty"`
+	AcceptanceState        SemanticAcceptanceState      `json:"acceptance_state"`
+	Reason                 SemanticAcceptanceReason     `json:"reason"`
+	MatchedCandidateID     string                       `json:"matched_candidate_id,omitempty"`
+	ExpectedPath           string                       `json:"expected_path"`
 }
 
 type SemanticAcceptanceItemSummary struct {
@@ -439,8 +448,10 @@ type SemanticAcceptanceItem struct {
 }
 
 type SemanticCalibrationOptions struct {
-	Threshold float64
-	HeldOut   bool
+	Threshold  float64
+	HeldOut    bool
+	SourceRoot string
+	SourcePath string
 }
 
 type SemanticCalibrationThresholdStatus string
@@ -501,26 +512,73 @@ type SemanticCalibrationReviewItemSummary struct {
 }
 
 type SemanticCalibrationReviewItem struct {
-	SchemaVersion     string                          `json:"schema_version"`
-	ReviewItemID      string                          `json:"review_item_id"`
-	ItemIndex         int                             `json:"item_index"`
-	RunID             string                          `json:"run_id"`
-	SourceDocumentID  string                          `json:"source_document_id,omitempty"`
-	CandidateID       string                          `json:"candidate_id,omitempty"`
-	ExpectedOutcomeID string                          `json:"expected_outcome_id,omitempty"`
-	CandidateKind     SemanticCandidateKind           `json:"candidate_kind,omitempty"`
-	ReviewStatus      ReviewStatus                    `json:"review_status,omitempty"`
-	Confidence        Confidence                      `json:"confidence,omitempty"`
-	Title             string                          `json:"title,omitempty"`
-	Summary           string                          `json:"summary,omitempty"`
-	EvidenceNodes     []string                        `json:"evidence_nodes"`
-	EvidenceRanges    []SemanticEvidenceRange         `json:"evidence_ranges"`
-	RelationIDs       []string                        `json:"relation_ids"`
-	AcceptanceState   SemanticAcceptanceState         `json:"acceptance_state"`
-	Reason            SemanticAcceptanceReason        `json:"reason"`
-	FailureClass      SemanticCalibrationFailureClass `json:"failure_class"`
-	NeedsAdjudication bool                            `json:"needs_adjudication"`
-	Blockers          []Blocker                       `json:"blockers"`
+	SchemaVersion     string                                    `json:"schema_version"`
+	ReviewItemID      string                                    `json:"review_item_id"`
+	ItemIndex         int                                       `json:"item_index"`
+	RunID             string                                    `json:"run_id"`
+	SourceDocumentID  string                                    `json:"source_document_id,omitempty"`
+	CandidateID       string                                    `json:"candidate_id,omitempty"`
+	ExpectedOutcomeID string                                    `json:"expected_outcome_id,omitempty"`
+	ExpectedOutcome   SemanticCalibrationExpectedOutcomeContext `json:"expected_outcome"`
+	CandidateKind     SemanticCandidateKind                     `json:"candidate_kind,omitempty"`
+	ReviewStatus      ReviewStatus                              `json:"review_status,omitempty"`
+	Confidence        Confidence                                `json:"confidence,omitempty"`
+	Title             string                                    `json:"title,omitempty"`
+	Summary           string                                    `json:"summary,omitempty"`
+	EvidenceNodes     []string                                  `json:"evidence_nodes"`
+	EvidenceRanges    []SemanticEvidenceRange                   `json:"evidence_ranges"`
+	EvidenceExcerpts  []SemanticCalibrationEvidenceExcerpt      `json:"evidence_excerpts"`
+	RelationIDs       []string                                  `json:"relation_ids"`
+	AcceptanceState   SemanticAcceptanceState                   `json:"acceptance_state"`
+	Reason            SemanticAcceptanceReason                  `json:"reason"`
+	FailureClass      SemanticCalibrationFailureClass           `json:"failure_class"`
+	NeedsAdjudication bool                                      `json:"needs_adjudication"`
+	Blockers          []Blocker                                 `json:"blockers"`
+}
+
+type SemanticCalibrationExpectedOutcomeContext struct {
+	ExpectedOutcomeID      string                       `json:"expected_outcome_id,omitempty"`
+	ExpectedState          SemanticExpectedOutcomeState `json:"expected_state,omitempty"`
+	ExpectedKind           SemanticCandidateKind        `json:"expected_kind,omitempty"`
+	MatchedCandidateID     string                       `json:"matched_candidate_id,omitempty"`
+	RequiredEvidence       []string                     `json:"required_evidence"`
+	AcceptableAlternates   []string                     `json:"acceptable_evidence_alternates"`
+	TitleSignals           []string                     `json:"title_signals"`
+	SummarySignals         []string                     `json:"summary_signals"`
+	RelationRequirements   []SemanticRelationshipType   `json:"relation_requirements"`
+	MinimumConfidenceFloor Confidence                   `json:"minimum_confidence_floor,omitempty"`
+	Notes                  string                       `json:"notes,omitempty"`
+	LegacyContext          bool                         `json:"legacy_context"`
+	Completeness           string                       `json:"completeness"`
+}
+
+type SemanticCalibrationEvidenceExcerpt struct {
+	SourceLabel       string `json:"source_label,omitempty"`
+	StructureNodeID   string `json:"structure_node_id"`
+	LineStart         int    `json:"line_start"`
+	LineEnd           int    `json:"line_end"`
+	Text              string `json:"text"`
+	Clamped           bool   `json:"clamped"`
+	Unavailable       bool   `json:"unavailable"`
+	UnavailableReason string `json:"unavailable_reason,omitempty"`
+}
+
+type SemanticCalibrationAdjudicationChoice struct {
+	Choice  string `json:"choice"`
+	Meaning string `json:"meaning"`
+}
+
+type SemanticCalibrationReviewContext struct {
+	ReviewItemID        string                                    `json:"review_item_id"`
+	SourceDocumentID    string                                    `json:"source_document_id,omitempty"`
+	SourceLabel         string                                    `json:"source_label,omitempty"`
+	CandidateID         string                                    `json:"candidate_id,omitempty"`
+	ExpectedOutcome     SemanticCalibrationExpectedOutcomeContext `json:"expected_outcome"`
+	FailureClass        SemanticCalibrationFailureClass           `json:"failure_class"`
+	AcceptanceState     SemanticAcceptanceState                   `json:"acceptance_state"`
+	Reason              SemanticAcceptanceReason                  `json:"reason"`
+	EvidenceExcerpts    []SemanticCalibrationEvidenceExcerpt      `json:"evidence_excerpts"`
+	AdjudicationChoices []SemanticCalibrationAdjudicationChoice   `json:"adjudication_choices"`
 }
 
 type SemanticCalibrationCursor struct {
@@ -534,8 +592,10 @@ type SemanticCalibrationCursor struct {
 }
 
 type SemanticCalibrationPage struct {
-	SchemaVersion string                         `json:"schema_version"`
-	Done          bool                           `json:"done"`
-	Cursor        SemanticCalibrationCursor      `json:"cursor"`
-	Item          *SemanticCalibrationReviewItem `json:"item,omitempty"`
+	SchemaVersion string                            `json:"schema_version"`
+	Done          bool                              `json:"done"`
+	Cursor        SemanticCalibrationCursor         `json:"cursor"`
+	Item          *SemanticCalibrationReviewItem    `json:"item,omitempty"`
+	ReviewContext *SemanticCalibrationReviewContext `json:"review_context,omitempty"`
+	PageMarkdown  string                            `json:"page_markdown,omitempty"`
 }

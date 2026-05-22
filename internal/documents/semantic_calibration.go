@@ -10,6 +10,12 @@ import (
 )
 
 const defaultSemanticCalibrationThreshold = 0.98
+const (
+	maxSemanticCalibrationExcerptRanges        = 3
+	maxSemanticCalibrationExcerptLines         = 6
+	maxSemanticCalibrationExcerptCharsPerRange = 1200
+	maxSemanticCalibrationExcerptCharsPerItem  = 4000
+)
 
 var semanticCalibrationFailureClasses = []SemanticCalibrationFailureClass{
 	SemanticCalibrationFailureAccepted,
@@ -33,11 +39,15 @@ func CalibrateSemanticAcceptance(inputDir, outDir string, options SemanticCalibr
 	if err != nil {
 		return SemanticCalibrationSummary{}, err
 	}
+	source, err := loadSemanticCalibrationSource(options)
+	if err != nil {
+		return SemanticCalibrationSummary{}, err
+	}
 	threshold := options.Threshold
 	if threshold < defaultSemanticCalibrationThreshold {
 		threshold = defaultSemanticCalibrationThreshold
 	}
-	summary := BuildSemanticCalibrationSummary(acceptance, items, expected, threshold, options.HeldOut)
+	summary := BuildSemanticCalibrationSummary(acceptance, items, expected, threshold, options.HeldOut, source)
 	if err := WriteSemanticCalibration(outDir, summary); err != nil {
 		return SemanticCalibrationSummary{}, err
 	}
@@ -86,11 +96,14 @@ func NextSemanticCalibrationReviewPage(inputDir string) (SemanticCalibrationPage
 	if err := readJSONFile(itemPath, &item); err != nil {
 		return SemanticCalibrationPage{}, fmt.Errorf("read calibration review item: %w", err)
 	}
-	if item.SchemaVersion != SemanticCalibrationReviewItemSchemaVersion {
+	if item.SchemaVersion != SemanticCalibrationReviewItemSchemaVersion && item.SchemaVersion != SemanticCalibrationReviewItemLegacySchemaVersion {
 		return SemanticCalibrationPage{}, fmt.Errorf("unsupported semantic calibration review item schema version: %s", item.SchemaVersion)
 	}
 	if item.ReviewItemID != itemSummary.ReviewItemID {
 		return SemanticCalibrationPage{}, fmt.Errorf("calibration review item id mismatch: %s", itemSummary.ReviewItemID)
+	}
+	if item.SchemaVersion == SemanticCalibrationReviewItemLegacySchemaVersion {
+		normalizeLegacySemanticCalibrationReviewItem(&item)
 	}
 	if err := ValidateSemanticCalibrationReviewItem(item); err != nil {
 		return SemanticCalibrationPage{}, err
@@ -107,11 +120,17 @@ func NextSemanticCalibrationReviewPage(inputDir string) (SemanticCalibrationPage
 		Done:          false,
 		Cursor:        cursor,
 		Item:          &item,
+		ReviewContext: semanticCalibrationReviewContext(item),
+		PageMarkdown:  semanticCalibrationPageMarkdown(item),
 	}, nil
 }
 
-func BuildSemanticCalibrationSummary(acceptance SemanticAcceptanceSummary, items []SemanticAcceptanceItem, expected []SemanticExpectedOutcomeResult, threshold float64, heldOut bool) SemanticCalibrationSummary {
-	reviewItems := semanticCalibrationReviewItems(acceptance.RunID, items, expected)
+func BuildSemanticCalibrationSummary(acceptance SemanticAcceptanceSummary, items []SemanticAcceptanceItem, expected []SemanticExpectedOutcomeResult, threshold float64, heldOut bool, sources ...semanticCalibrationSourceContext) SemanticCalibrationSummary {
+	source := semanticCalibrationSourceContext{}
+	if len(sources) > 0 {
+		source = sources[0]
+	}
+	reviewItems := semanticCalibrationReviewItems(acceptance.RunID, items, expected, source)
 	counts := emptySemanticCalibrationFailureClassCounts()
 	for _, item := range reviewItems {
 		counts[item.FailureClass]++
@@ -243,7 +262,7 @@ func writeSemanticCalibration(outDir string, summary SemanticCalibrationSummary)
 		if err := writeJSON(realRoot, item.ItemPath, full); err != nil {
 			return err
 		}
-		if err := writeFile(realRoot, item.PreviewPath, []byte(semanticCalibrationPreviewMarkdown(item))); err != nil {
+		if err := writeFile(realRoot, item.PreviewPath, []byte(semanticCalibrationPreviewMarkdown(full))); err != nil {
 			return err
 		}
 	}
@@ -268,6 +287,10 @@ func ValidateSemanticCalibrationSummary(summary SemanticCalibrationSummary) erro
 		body += "\n" + item.RunID + "\n" + item.ReviewItemID + "\n" + item.CandidateID + "\n" + item.ExpectedOutcomeID
 		body += "\n" + item.SourceDocumentID + "\n" + item.Title + "\n" + item.Summary + "\n" + strings.Join(item.EvidenceNodes, "\n")
 		body += "\n" + strings.Join(item.RelationIDs, "\n")
+		body += "\n" + semanticCalibrationExpectedOutcomeBody(item.ExpectedOutcome)
+		for _, excerpt := range item.EvidenceExcerpts {
+			body += "\n" + excerpt.SourceLabel + "\n" + excerpt.StructureNodeID + "\n" + excerpt.Text + "\n" + excerpt.UnavailableReason
+		}
 		for _, blocker := range item.Blockers {
 			body += "\n" + blocker.Code + "\n" + blocker.Message
 		}
@@ -281,10 +304,15 @@ func ValidateSemanticCalibrationSummary(summary SemanticCalibrationSummary) erro
 	return nil
 }
 
-func semanticCalibrationReviewItems(runID string, items []SemanticAcceptanceItem, expected []SemanticExpectedOutcomeResult) []SemanticCalibrationReviewItem {
+func semanticCalibrationReviewItems(runID string, items []SemanticAcceptanceItem, expected []SemanticExpectedOutcomeResult, source semanticCalibrationSourceContext) []SemanticCalibrationReviewItem {
 	out := make([]SemanticCalibrationReviewItem, 0, len(items)+len(expected))
+	expectedByID := map[string]SemanticExpectedOutcomeResult{}
+	for _, outcome := range expected {
+		expectedByID[outcome.ExpectedOutcomeID] = outcome
+	}
 	for _, item := range items {
 		failureClass := semanticCalibrationFailureClassForItem(item)
+		expectedContext := semanticCalibrationExpectedOutcomeContext(expectedByID[item.ExpectedOutcomeID], item.CandidateID)
 		out = append(out, SemanticCalibrationReviewItem{
 			SchemaVersion:     SemanticCalibrationReviewItemSchemaVersion,
 			ReviewItemID:      "review-" + item.CandidateID,
@@ -292,6 +320,7 @@ func semanticCalibrationReviewItems(runID string, items []SemanticAcceptanceItem
 			SourceDocumentID:  item.SourceDocumentID,
 			CandidateID:       item.CandidateID,
 			ExpectedOutcomeID: item.ExpectedOutcomeID,
+			ExpectedOutcome:   expectedContext,
 			CandidateKind:     item.CandidateKind,
 			ReviewStatus:      item.ReviewStatus,
 			Confidence:        item.Confidence,
@@ -299,6 +328,7 @@ func semanticCalibrationReviewItems(runID string, items []SemanticAcceptanceItem
 			Summary:           item.Summary,
 			EvidenceNodes:     cloneStringList(item.EvidenceNodes),
 			EvidenceRanges:    cloneSemanticEvidenceRanges(item.EvidenceRanges),
+			EvidenceExcerpts:  semanticCalibrationEvidenceExcerpts(source, item.EvidenceRanges),
 			RelationIDs:       cloneStringList(item.RelationIDs),
 			AcceptanceState:   item.AcceptanceState,
 			Reason:            item.Reason,
@@ -316,9 +346,11 @@ func semanticCalibrationReviewItems(runID string, items []SemanticAcceptanceItem
 			ReviewItemID:      "review-missed-" + outcome.ExpectedOutcomeID,
 			RunID:             runID,
 			ExpectedOutcomeID: outcome.ExpectedOutcomeID,
+			ExpectedOutcome:   semanticCalibrationExpectedOutcomeContext(outcome, ""),
 			CandidateKind:     outcome.ExpectedKind,
 			EvidenceNodes:     []string{},
 			EvidenceRanges:    []SemanticEvidenceRange{},
+			EvidenceExcerpts:  semanticCalibrationEvidenceExcerpts(source, nil),
 			RelationIDs:       []string{},
 			AcceptanceState:   outcome.AcceptanceState,
 			Reason:            outcome.Reason,
@@ -366,6 +398,255 @@ func emptySemanticCalibrationFailureClassCounts() map[SemanticCalibrationFailure
 		counts[class] = 0
 	}
 	return counts
+}
+
+type semanticCalibrationSourceContext struct {
+	Label string
+	Lines []string
+}
+
+func loadSemanticCalibrationSource(options SemanticCalibrationOptions) (semanticCalibrationSourceContext, error) {
+	if strings.TrimSpace(options.SourceRoot) == "" && strings.TrimSpace(options.SourcePath) == "" {
+		return semanticCalibrationSourceContext{}, nil
+	}
+	if strings.TrimSpace(options.SourceRoot) == "" || strings.TrimSpace(options.SourcePath) == "" {
+		return semanticCalibrationSourceContext{}, fmt.Errorf("source context requires --source-root and --source")
+	}
+	if filepath.IsAbs(options.SourcePath) {
+		return semanticCalibrationSourceContext{}, fmt.Errorf("source path must be relative")
+	}
+	cleanSource := filepath.Clean(options.SourcePath)
+	if cleanSource == "." || cleanSource == ".." || strings.HasPrefix(cleanSource, ".."+string(filepath.Separator)) {
+		return semanticCalibrationSourceContext{}, fmt.Errorf("source path escapes source root")
+	}
+	if strings.ToLower(filepath.Ext(cleanSource)) != ".md" {
+		return semanticCalibrationSourceContext{}, fmt.Errorf("source path must be markdown")
+	}
+	root, err := filepath.Abs(options.SourceRoot)
+	if err != nil {
+		return semanticCalibrationSourceContext{}, err
+	}
+	if err := rejectSymlinkAncestors(root); err != nil {
+		return semanticCalibrationSourceContext{}, err
+	}
+	if err := rejectIfSymlink(root); err != nil {
+		return semanticCalibrationSourceContext{}, err
+	}
+	info, err := os.Stat(root)
+	if err != nil {
+		return semanticCalibrationSourceContext{}, err
+	}
+	if !info.IsDir() {
+		return semanticCalibrationSourceContext{}, fmt.Errorf("source root is not a directory")
+	}
+	target := filepath.Join(root, cleanSource)
+	targetAbs, err := filepath.Abs(target)
+	if err != nil {
+		return semanticCalibrationSourceContext{}, err
+	}
+	if !isInside(root, targetAbs) {
+		return semanticCalibrationSourceContext{}, fmt.Errorf("source path escapes source root")
+	}
+	if err := rejectSymlinkAncestors(targetAbs); err != nil {
+		return semanticCalibrationSourceContext{}, err
+	}
+	if err := rejectIfSymlink(targetAbs); err != nil {
+		return semanticCalibrationSourceContext{}, err
+	}
+	sourceInfo, err := os.Stat(targetAbs)
+	if err != nil {
+		return semanticCalibrationSourceContext{}, err
+	}
+	if sourceInfo.IsDir() {
+		return semanticCalibrationSourceContext{}, fmt.Errorf("source path must be a file")
+	}
+	data, err := os.ReadFile(targetAbs)
+	if err != nil {
+		return semanticCalibrationSourceContext{}, err
+	}
+	return semanticCalibrationSourceContext{
+		Label: filepath.ToSlash(cleanSource),
+		Lines: semanticCalibrationSourceLines(string(data)),
+	}, nil
+}
+
+func semanticCalibrationSourceLines(text string) []string {
+	lines := strings.Split(text, "\n")
+	for len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return lines
+}
+
+func semanticCalibrationExpectedOutcomeContext(outcome SemanticExpectedOutcomeResult, matchedCandidateID string) SemanticCalibrationExpectedOutcomeContext {
+	if outcome.ExpectedOutcomeID == "" {
+		return SemanticCalibrationExpectedOutcomeContext{
+			LegacyContext: true,
+			Completeness:  "unavailable",
+		}
+	}
+	legacy := outcome.SchemaVersion == SemanticAcceptanceExpectedOutcomeLegacySchemaVersion
+	completeness := "complete"
+	if legacy {
+		completeness = "legacy_unavailable"
+	}
+	if matchedCandidateID == "" {
+		matchedCandidateID = outcome.MatchedCandidateID
+	}
+	return SemanticCalibrationExpectedOutcomeContext{
+		ExpectedOutcomeID:      outcome.ExpectedOutcomeID,
+		ExpectedState:          outcome.ExpectedState,
+		ExpectedKind:           outcome.ExpectedKind,
+		MatchedCandidateID:     matchedCandidateID,
+		RequiredEvidence:       cloneStringList(outcome.RequiredEvidence),
+		AcceptableAlternates:   cloneStringList(outcome.AcceptableAlternates),
+		TitleSignals:           cloneStringList(outcome.TitleSignals),
+		SummarySignals:         cloneStringList(outcome.SummarySignals),
+		RelationRequirements:   append([]SemanticRelationshipType(nil), outcome.RelationRequirements...),
+		MinimumConfidenceFloor: outcome.MinimumConfidenceFloor,
+		Notes:                  outcome.Notes,
+		LegacyContext:          legacy,
+		Completeness:           completeness,
+	}
+}
+
+func semanticExpectedOutcomeHasRichContext(outcome SemanticExpectedOutcomeResult) bool {
+	return hasNonBlankString(outcome.RequiredEvidence) ||
+		hasNonBlankString(outcome.AcceptableAlternates) ||
+		hasNonBlankString(outcome.TitleSignals) ||
+		hasNonBlankString(outcome.SummarySignals) ||
+		len(outcome.RelationRequirements) > 0 ||
+		outcome.MinimumConfidenceFloor != "" ||
+		strings.TrimSpace(outcome.Notes) != ""
+}
+
+func validateRichSemanticExpectedOutcomeResult(outcome SemanticExpectedOutcomeResult) error {
+	missing := []string{}
+	if !hasNonBlankString(outcome.RequiredEvidence) {
+		missing = append(missing, "required_evidence")
+	}
+	if !hasNonBlankString(outcome.AcceptableAlternates) {
+		missing = append(missing, "acceptable_evidence_alternates")
+	}
+	if !hasNonBlankString(outcome.TitleSignals) {
+		missing = append(missing, "title_signals")
+	}
+	if !hasNonBlankString(outcome.SummarySignals) {
+		missing = append(missing, "summary_signals")
+	}
+	if len(outcome.RelationRequirements) == 0 {
+		missing = append(missing, "relation_requirements")
+	}
+	if outcome.MinimumConfidenceFloor == "" {
+		missing = append(missing, "minimum_confidence_floor")
+	}
+	if strings.TrimSpace(outcome.Notes) == "" {
+		missing = append(missing, "notes")
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("semantic acceptance expected outcome lacks rich review context: %s missing %s", outcome.ExpectedOutcomeID, strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+func semanticCalibrationExpectedOutcomeBody(outcome SemanticCalibrationExpectedOutcomeContext) string {
+	var b strings.Builder
+	b.WriteString(outcome.ExpectedOutcomeID)
+	b.WriteString("\n" + string(outcome.ExpectedState))
+	b.WriteString("\n" + string(outcome.ExpectedKind))
+	b.WriteString("\n" + outcome.MatchedCandidateID)
+	b.WriteString("\n" + strings.Join(outcome.RequiredEvidence, "\n"))
+	b.WriteString("\n" + strings.Join(outcome.AcceptableAlternates, "\n"))
+	b.WriteString("\n" + strings.Join(outcome.TitleSignals, "\n"))
+	b.WriteString("\n" + strings.Join(outcome.SummarySignals, "\n"))
+	for _, requirement := range outcome.RelationRequirements {
+		b.WriteString("\n" + string(requirement))
+	}
+	b.WriteString("\n" + string(outcome.MinimumConfidenceFloor))
+	b.WriteString("\n" + outcome.Notes)
+	b.WriteString("\n" + outcome.Completeness)
+	return b.String()
+}
+
+func semanticCalibrationEvidenceExcerpts(source semanticCalibrationSourceContext, ranges []SemanticEvidenceRange) []SemanticCalibrationEvidenceExcerpt {
+	if len(ranges) == 0 {
+		return []SemanticCalibrationEvidenceExcerpt{semanticCalibrationUnavailableExcerpt(source.Label, "", "no evidence ranges")}
+	}
+	if len(source.Lines) == 0 {
+		return []SemanticCalibrationEvidenceExcerpt{semanticCalibrationUnavailableExcerpt(source.Label, ranges[0].StructureNodeID, "source excerpts unavailable")}
+	}
+	limit := len(ranges)
+	if limit > maxSemanticCalibrationExcerptRanges {
+		limit = maxSemanticCalibrationExcerptRanges
+	}
+	out := make([]SemanticCalibrationEvidenceExcerpt, 0, limit)
+	totalChars := 0
+	for i := 0; i < limit && totalChars < maxSemanticCalibrationExcerptCharsPerItem; i++ {
+		excerpt := semanticCalibrationEvidenceExcerpt(source, ranges[i], maxSemanticCalibrationExcerptCharsPerItem-totalChars)
+		totalChars += len(excerpt.Text)
+		out = append(out, excerpt)
+	}
+	if len(out) == 0 {
+		return []SemanticCalibrationEvidenceExcerpt{semanticCalibrationUnavailableExcerpt(source.Label, "", "source excerpts unavailable")}
+	}
+	return out
+}
+
+func semanticCalibrationEvidenceExcerpt(source semanticCalibrationSourceContext, evidenceRange SemanticEvidenceRange, remainingChars int) SemanticCalibrationEvidenceExcerpt {
+	lineCount := len(source.Lines)
+	start := evidenceRange.LineStart
+	end := evidenceRange.LineEnd
+	clamped := false
+	if start < 1 {
+		start = 1
+		clamped = true
+	}
+	if end < start {
+		end = start
+		clamped = true
+	}
+	if lineCount == 0 {
+		return semanticCalibrationUnavailableExcerpt(source.Label, evidenceRange.StructureNodeID, "source excerpts unavailable")
+	}
+	if start > lineCount {
+		start = lineCount
+		end = lineCount
+		clamped = true
+	}
+	if end > lineCount {
+		end = lineCount
+		clamped = true
+	}
+	if end-start+1 > maxSemanticCalibrationExcerptLines {
+		end = start + maxSemanticCalibrationExcerptLines - 1
+		clamped = true
+	}
+	text := strings.Join(source.Lines[start-1:end], "\n")
+	if len(text) > maxSemanticCalibrationExcerptCharsPerRange {
+		text = text[:maxSemanticCalibrationExcerptCharsPerRange]
+		clamped = true
+	}
+	if remainingChars > 0 && len(text) > remainingChars {
+		text = text[:remainingChars]
+		clamped = true
+	}
+	return SemanticCalibrationEvidenceExcerpt{
+		SourceLabel:     source.Label,
+		StructureNodeID: evidenceRange.StructureNodeID,
+		LineStart:       start,
+		LineEnd:         end,
+		Text:            text,
+		Clamped:         clamped,
+	}
+}
+
+func semanticCalibrationUnavailableExcerpt(sourceLabel, nodeID, reason string) SemanticCalibrationEvidenceExcerpt {
+	return SemanticCalibrationEvidenceExcerpt{
+		SourceLabel:       sourceLabel,
+		StructureNodeID:   nodeID,
+		Unavailable:       true,
+		UnavailableReason: reason,
+	}
 }
 
 func readSemanticAcceptanceBundle(root string) (SemanticAcceptanceSummary, []SemanticAcceptanceItem, []SemanticExpectedOutcomeResult, error) {
@@ -424,8 +705,13 @@ func readSemanticAcceptanceBundle(root string) (SemanticAcceptanceSummary, []Sem
 		if err := readJSONFile(expectedPath, &outcome); err != nil {
 			return SemanticAcceptanceSummary{}, nil, nil, fmt.Errorf("read expected outcome: %w", err)
 		}
-		if outcome.SchemaVersion != SemanticAcceptanceExpectedOutcomeSchemaVersion {
+		if outcome.SchemaVersion != SemanticAcceptanceExpectedOutcomeSchemaVersion && outcome.SchemaVersion != SemanticAcceptanceExpectedOutcomeLegacySchemaVersion {
 			return SemanticAcceptanceSummary{}, nil, nil, fmt.Errorf("unsupported semantic acceptance expected outcome schema version: %s", outcome.SchemaVersion)
+		}
+		if outcome.SchemaVersion == SemanticAcceptanceExpectedOutcomeSchemaVersion {
+			if err := validateRichSemanticExpectedOutcomeResult(outcome); err != nil {
+				return SemanticAcceptanceSummary{}, nil, nil, err
+			}
 		}
 		if _, err := containedSemanticCalibrationPath(root, outcome.ExpectedPath); err != nil {
 			return SemanticAcceptanceSummary{}, nil, nil, err
@@ -517,12 +803,16 @@ func validateSemanticCalibrationSummaryPaths(root string, summary SemanticCalibr
 }
 
 func ValidateSemanticCalibrationReviewItem(item SemanticCalibrationReviewItem) error {
-	if item.SchemaVersion != SemanticCalibrationReviewItemSchemaVersion {
+	if item.SchemaVersion != SemanticCalibrationReviewItemSchemaVersion && item.SchemaVersion != SemanticCalibrationReviewItemLegacySchemaVersion {
 		return fmt.Errorf("unsupported semantic calibration review item schema version: %s", item.SchemaVersion)
 	}
 	body := item.RunID + "\n" + item.ReviewItemID + "\n" + item.CandidateID + "\n" + item.ExpectedOutcomeID
 	body += "\n" + item.SourceDocumentID + "\n" + item.Title + "\n" + item.Summary + "\n" + strings.Join(item.EvidenceNodes, "\n")
 	body += "\n" + strings.Join(item.RelationIDs, "\n")
+	body += "\n" + semanticCalibrationExpectedOutcomeBody(item.ExpectedOutcome)
+	for _, excerpt := range item.EvidenceExcerpts {
+		body += "\n" + excerpt.SourceLabel + "\n" + excerpt.StructureNodeID + "\n" + excerpt.Text + "\n" + excerpt.UnavailableReason
+	}
 	for _, blocker := range item.Blockers {
 		body += "\n" + blocker.Code + "\n" + blocker.Message
 	}
@@ -533,6 +823,19 @@ func ValidateSemanticCalibrationReviewItem(item SemanticCalibrationReviewItem) e
 		return fmt.Errorf("semantic calibration review item contains private marker")
 	}
 	return nil
+}
+
+func normalizeLegacySemanticCalibrationReviewItem(item *SemanticCalibrationReviewItem) {
+	if item.ExpectedOutcome.ExpectedOutcomeID == "" && item.ExpectedOutcomeID != "" {
+		item.ExpectedOutcome = SemanticCalibrationExpectedOutcomeContext{
+			ExpectedOutcomeID: item.ExpectedOutcomeID,
+			LegacyContext:     true,
+			Completeness:      "legacy_unavailable",
+		}
+	}
+	if len(item.EvidenceExcerpts) == 0 {
+		item.EvidenceExcerpts = semanticCalibrationEvidenceExcerpts(semanticCalibrationSourceContext{}, item.EvidenceRanges)
+	}
 }
 
 func resolveSemanticAcceptanceRoot(path string) (string, error) {
@@ -614,14 +917,161 @@ func readJSONFile(path string, value any) error {
 	return nil
 }
 
-func semanticCalibrationPreviewMarkdown(item SemanticCalibrationReviewItemSummary) string {
+func semanticCalibrationReviewContext(item SemanticCalibrationReviewItem) *SemanticCalibrationReviewContext {
+	return &SemanticCalibrationReviewContext{
+		ReviewItemID:        item.ReviewItemID,
+		SourceDocumentID:    item.SourceDocumentID,
+		SourceLabel:         firstSemanticCalibrationSourceLabel(item.EvidenceExcerpts),
+		CandidateID:         item.CandidateID,
+		ExpectedOutcome:     item.ExpectedOutcome,
+		FailureClass:        item.FailureClass,
+		AcceptanceState:     item.AcceptanceState,
+		Reason:              item.Reason,
+		EvidenceExcerpts:    append([]SemanticCalibrationEvidenceExcerpt(nil), item.EvidenceExcerpts...),
+		AdjudicationChoices: semanticCalibrationAdjudicationChoices(),
+	}
+}
+
+func firstSemanticCalibrationSourceLabel(excerpts []SemanticCalibrationEvidenceExcerpt) string {
+	for _, excerpt := range excerpts {
+		if strings.TrimSpace(excerpt.SourceLabel) != "" {
+			return excerpt.SourceLabel
+		}
+	}
+	return ""
+}
+
+func semanticCalibrationAdjudicationChoices() []SemanticCalibrationAdjudicationChoice {
+	return []SemanticCalibrationAdjudicationChoice{
+		{Choice: "accept", Meaning: "candidate is correct calibration evidence"},
+		{Choice: "reject_false_positive", Meaning: "candidate should not have been emitted"},
+		{Choice: "missing_evidence", Meaning: "candidate may be right but lacks required evidence"},
+		{Choice: "ambiguous", Meaning: "candidate cannot be judged from available evidence"},
+		{Choice: "wrong_kind_or_scope", Meaning: "candidate kind or source scope is wrong"},
+		{Choice: "block_private_governance", Meaning: "candidate or evidence contains private/governance material"},
+	}
+}
+
+func semanticCalibrationPageMarkdown(item SemanticCalibrationReviewItem) string {
 	var b strings.Builder
 	b.WriteString("# Semantic calibration item\n\n")
 	b.WriteString("- Review item: " + item.ReviewItemID + "\n")
+	if item.SourceDocumentID != "" {
+		b.WriteString("- Source document: " + item.SourceDocumentID + "\n")
+	}
+	if item.CandidateID != "" {
+		b.WriteString("- Candidate: " + item.CandidateID + "\n")
+	}
+	if item.Title != "" {
+		b.WriteString("- Title: " + item.Title + "\n")
+	} else {
+		b.WriteString("- Title: no title\n")
+	}
+	b.WriteString("- Kind: " + string(item.CandidateKind) + "\n")
+	b.WriteString("- Confidence: " + string(item.Confidence) + "\n")
+	b.WriteString("- Review status: " + string(item.ReviewStatus) + "\n")
 	b.WriteString("- Failure class: " + string(item.FailureClass) + "\n")
 	b.WriteString("- Acceptance state: " + string(item.AcceptanceState) + "\n")
 	b.WriteString("- Reason: " + string(item.Reason) + "\n")
+	if item.Summary != "" {
+		b.WriteString("\n## Candidate summary\n\n")
+		b.WriteString(item.Summary + "\n")
+	} else {
+		b.WriteString("\n## Candidate summary\n\nno summary\n")
+	}
+	b.WriteString("\n## Expected outcome\n\n")
+	b.WriteString(semanticCalibrationExpectedOutcomeMarkdown(item.ExpectedOutcome, item.FailureClass))
+	b.WriteString("\n## Evidence\n\n")
+	if len(item.EvidenceRanges) == 0 {
+		b.WriteString("- Evidence ranges: unavailable\n")
+	} else {
+		for _, evidenceRange := range item.EvidenceRanges {
+			b.WriteString(fmt.Sprintf("- %s lines %d-%d\n", evidenceRange.StructureNodeID, evidenceRange.LineStart, evidenceRange.LineEnd))
+		}
+	}
+	b.WriteString("\n## Source excerpts\n\n")
+	for _, excerpt := range item.EvidenceExcerpts {
+		if excerpt.Unavailable {
+			reason := excerpt.UnavailableReason
+			if reason == "" {
+				reason = "source excerpts unavailable"
+			}
+			b.WriteString("- " + reason + "\n")
+			continue
+		}
+		b.WriteString(fmt.Sprintf("### %s lines %d-%d\n\n", excerpt.SourceLabel, excerpt.LineStart, excerpt.LineEnd))
+		b.WriteString(excerpt.Text + "\n")
+		if excerpt.Clamped {
+			b.WriteString("\n(clamped)\n")
+		}
+	}
+	if len(item.Blockers) > 0 {
+		b.WriteString("\n## Blockers\n\n")
+		for _, blocker := range item.Blockers {
+			b.WriteString("- " + blocker.Code + ": " + blocker.Message + "\n")
+		}
+	}
+	b.WriteString("\n## Adjudication choices\n\n")
+	for _, choice := range semanticCalibrationAdjudicationChoices() {
+		b.WriteString("- " + choice.Choice + ": " + choice.Meaning + "\n")
+	}
 	return b.String()
+}
+
+func semanticCalibrationPreviewMarkdown(item SemanticCalibrationReviewItem) string {
+	return semanticCalibrationPageMarkdown(item)
+}
+
+func semanticCalibrationExpectedOutcomeMarkdown(outcome SemanticCalibrationExpectedOutcomeContext, failureClass SemanticCalibrationFailureClass) string {
+	var b strings.Builder
+	if outcome.ExpectedOutcomeID == "" {
+		b.WriteString("- Expected outcome: unavailable\n")
+		return b.String()
+	}
+	b.WriteString("- Expected outcome: " + outcome.ExpectedOutcomeID + "\n")
+	b.WriteString("- Expected state: " + string(outcome.ExpectedState) + "\n")
+	b.WriteString("- Expected kind: " + string(outcome.ExpectedKind) + "\n")
+	if outcome.MatchedCandidateID != "" {
+		b.WriteString("- Matched candidate: " + outcome.MatchedCandidateID + "\n")
+	} else if failureClass == SemanticCalibrationFailureFalseNegative {
+		b.WriteString("- No candidate matched this expected outcome.\n")
+	}
+	writeListOrUnavailable(&b, "Required evidence", outcome.RequiredEvidence)
+	writeListOrUnavailable(&b, "Acceptable alternates", outcome.AcceptableAlternates)
+	writeListOrUnavailable(&b, "Title signals", outcome.TitleSignals)
+	writeListOrUnavailable(&b, "Summary signals", outcome.SummarySignals)
+	if len(outcome.RelationRequirements) == 0 {
+		b.WriteString("- Relation requirements: unavailable\n")
+	} else {
+		parts := make([]string, 0, len(outcome.RelationRequirements))
+		for _, requirement := range outcome.RelationRequirements {
+			parts = append(parts, string(requirement))
+		}
+		b.WriteString("- Relation requirements: " + strings.Join(parts, ", ") + "\n")
+	}
+	if outcome.MinimumConfidenceFloor == "" {
+		b.WriteString("- Minimum confidence floor: unavailable\n")
+	} else {
+		b.WriteString("- Minimum confidence floor: " + string(outcome.MinimumConfidenceFloor) + "\n")
+	}
+	if outcome.Notes == "" {
+		b.WriteString("- Notes: unavailable\n")
+	} else {
+		b.WriteString("- Notes: " + outcome.Notes + "\n")
+	}
+	if outcome.LegacyContext {
+		b.WriteString("- Legacy context: true\n")
+		b.WriteString("- Legacy calibration input lacks full expected-outcome context; this page is not fully adjudication-ready.\n")
+	}
+	return b.String()
+}
+
+func writeListOrUnavailable(b *strings.Builder, label string, values []string) {
+	if !hasNonBlankString(values) {
+		b.WriteString("- " + label + ": unavailable\n")
+		return
+	}
+	b.WriteString("- " + label + ": " + strings.Join(values, ", ") + "\n")
 }
 
 func semanticCalibrationReportMarkdown(summary SemanticCalibrationSummary) string {

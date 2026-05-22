@@ -103,6 +103,12 @@ func ValidateSemanticAcceptanceSummary(summary SemanticAcceptanceSummary) error 
 	body := summary.RunID + "\n" + summary.AnswerKeyID + "\n" + summary.QualityStatement
 	for _, outcome := range summary.ExpectedOutcomes {
 		body += "\n" + outcome.ExpectedOutcomeID + "\n" + outcome.MatchedCandidateID
+		body += "\n" + strings.Join(outcome.RequiredEvidence, "\n") + "\n" + strings.Join(outcome.AcceptableAlternates, "\n")
+		body += "\n" + strings.Join(outcome.TitleSignals, "\n") + "\n" + strings.Join(outcome.SummarySignals, "\n")
+		body += "\n" + outcome.Notes
+		for _, requirement := range outcome.RelationRequirements {
+			body += "\n" + string(requirement)
+		}
 	}
 	for _, item := range summary.Candidates {
 		body += "\n" + item.CandidateID

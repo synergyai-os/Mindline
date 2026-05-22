@@ -209,9 +209,12 @@ func TestDocumentsAccept(t *testing.T) {
       "expected_state": "expected_present",
       "expected_kind": "action_candidate",
       "required_evidence": ["node-262592341686a94b"],
+      "acceptable_evidence_alternates": ["node-262592341686a94b"],
       "title_signals": ["checklist"],
       "summary_signals": ["prepare"],
-      "minimum_confidence_floor": "low"
+      "relation_requirements": ["derived_from"],
+      "minimum_confidence_floor": "low",
+      "notes": "CLI expected action."
     }
   ]
 }`), 0o644); err != nil {
@@ -300,6 +303,8 @@ func TestDocumentsCalibrateAndCalibrateNext(t *testing.T) {
 		SchemaVersion string           `json:"schema_version"`
 		Done          bool             `json:"done"`
 		Item          *json.RawMessage `json:"item,omitempty"`
+		PageMarkdown  string           `json:"page_markdown"`
+		ReviewContext *json.RawMessage `json:"review_context,omitempty"`
 		Cursor        struct {
 			ProcessedCount int `json:"processed_count"`
 			RemainingCount int `json:"remaining_count"`
@@ -308,8 +313,11 @@ func TestDocumentsCalibrateAndCalibrateNext(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &page); err != nil {
 		t.Fatalf("decode calibrate-next stdout: %v\n%s", err, stdout.String())
 	}
-	if page.SchemaVersion != "semantic-calibration-page/v0.1" || page.Done || page.Item == nil || page.Cursor.ProcessedCount != 1 {
+	if page.SchemaVersion != "semantic-calibration-page/v0.2" || page.Done || page.Item == nil || page.ReviewContext == nil || page.PageMarkdown == "" || page.Cursor.ProcessedCount != 1 {
 		t.Fatalf("calibrate-next must return one item page: %+v", page)
+	}
+	if !strings.Contains(page.PageMarkdown, "Adjudication choices") {
+		t.Fatalf("expected content-rich calibration page markdown, got %q", page.PageMarkdown)
 	}
 }
 
@@ -465,9 +473,12 @@ func documentsAcceptanceFixture(t *testing.T) string {
       "expected_state": "expected_present",
       "expected_kind": "action_candidate",
       "required_evidence": ["node-262592341686a94b"],
+      "acceptable_evidence_alternates": ["node-262592341686a94b"],
       "title_signals": ["checklist"],
       "summary_signals": ["prepare"],
-      "minimum_confidence_floor": "low"
+      "relation_requirements": ["derived_from"],
+      "minimum_confidence_floor": "low",
+      "notes": "CLI expected action."
     }
   ]
 }`), 0o644); err != nil {

@@ -2131,6 +2131,316 @@ func TestSemanticCalibrationNextPaginatesOneItemAtATime(t *testing.T) {
 	}
 }
 
+func TestSemanticCalibrationNextReturnsSelfContainedPageWithExpectedContextAndExcerpts(t *testing.T) {
+	acceptanceDir := writeSemanticAcceptanceOutput(t, []SemanticCandidate{
+		validSemanticCandidate(validSemanticObservation(validStructureNode()), validStructureNode()),
+	}, true)
+	sourceRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(sourceRoot, "source.md"), []byte("Prepare checklist\nLead will prepare the checklist.\nExtra context\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	out := t.TempDir()
+	if _, err := CalibrateSemanticAcceptance(acceptanceDir, out, SemanticCalibrationOptions{
+		Threshold:  0.98,
+		HeldOut:    true,
+		SourceRoot: sourceRoot,
+		SourcePath: "source.md",
+	}); err != nil {
+		t.Fatalf("calibrate semantic acceptance: %v", err)
+	}
+	page, err := NextSemanticCalibrationReviewPage(filepath.Join(out, "semantic-calibration"))
+	if err != nil {
+		t.Fatalf("next page: %v", err)
+	}
+	if page.SchemaVersion != SemanticCalibrationPageSchemaVersion {
+		t.Fatalf("expected v0.2 page, got %+v", page)
+	}
+	if SemanticCalibrationPageSchemaVersion != "semantic-calibration-page/v0.2" {
+		t.Fatalf("unexpected page schema constant: %s", SemanticCalibrationPageSchemaVersion)
+	}
+	if page.ReviewContext == nil || page.PageMarkdown == "" {
+		t.Fatalf("expected review context and markdown: %+v", page)
+	}
+	if page.Item == nil || page.Item.ExpectedOutcome.LegacyContext || page.Item.ExpectedOutcome.Completeness != "complete" {
+		t.Fatalf("new output must carry rich expected-outcome context: %+v", page.Item)
+	}
+	for _, want := range []string{
+		"Prepare checklist",
+		"Required evidence: node-demo",
+		"Acceptable alternates: node-alt",
+		"Title signals: checklist",
+		"Summary signals: prepare",
+		"Relation requirements: derived_from",
+		"Minimum confidence floor: low",
+		"Notes: Expected checklist action.",
+		"Matched candidate: cand-demo",
+		"Lead will prepare the checklist.",
+		"Adjudication choices",
+	} {
+		if !strings.Contains(page.PageMarkdown, want) {
+			t.Fatalf("page markdown missing %q:\n%s", want, page.PageMarkdown)
+		}
+	}
+}
+
+func TestSemanticCalibrationFalseNegativePageHasExpectedOutcomeContext(t *testing.T) {
+	acceptanceDir := writeSemanticAcceptanceOutput(t, nil, true)
+	out := t.TempDir()
+	if _, err := CalibrateSemanticAcceptance(acceptanceDir, out, SemanticCalibrationOptions{Threshold: 0.98, HeldOut: true}); err != nil {
+		t.Fatalf("calibrate semantic acceptance: %v", err)
+	}
+	page, err := NextSemanticCalibrationReviewPage(filepath.Join(out, "semantic-calibration"))
+	if err != nil {
+		t.Fatalf("next page: %v", err)
+	}
+	if page.Item == nil || page.Item.FailureClass != SemanticCalibrationFailureFalseNegative {
+		t.Fatalf("expected false-negative page: %+v", page)
+	}
+	for _, want := range []string{
+		"No candidate matched this expected outcome.",
+		"Expected kind: action_candidate",
+		"Required evidence: node-demo",
+		"Acceptable alternates: node-alt",
+		"Title signals: checklist",
+		"Summary signals: prepare",
+		"Relation requirements: derived_from",
+		"Notes: Expected checklist action.",
+	} {
+		if !strings.Contains(page.PageMarkdown, want) {
+			t.Fatalf("false-negative page missing %q:\n%s", want, page.PageMarkdown)
+		}
+	}
+}
+
+func TestSemanticCalibrationRejectsEscapingSourcePath(t *testing.T) {
+	acceptanceDir := writeSemanticAcceptanceOutput(t, []SemanticCandidate{
+		validSemanticCandidate(validSemanticObservation(validStructureNode()), validStructureNode()),
+	}, true)
+	if _, err := CalibrateSemanticAcceptance(acceptanceDir, t.TempDir(), SemanticCalibrationOptions{
+		Threshold:  0.98,
+		HeldOut:    true,
+		SourceRoot: t.TempDir(),
+		SourcePath: "../source.md",
+	}); err == nil {
+		t.Fatalf("expected escaping source path to be rejected")
+	}
+}
+
+func TestSemanticCalibrationRejectsAbsoluteSourcePath(t *testing.T) {
+	acceptanceDir := writeSemanticAcceptanceOutput(t, []SemanticCandidate{
+		validSemanticCandidate(validSemanticObservation(validStructureNode()), validStructureNode()),
+	}, true)
+	sourcePath := filepath.Join(t.TempDir(), "source.md")
+	if err := os.WriteFile(sourcePath, []byte("source"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	if _, err := CalibrateSemanticAcceptance(acceptanceDir, t.TempDir(), SemanticCalibrationOptions{
+		Threshold:  0.98,
+		HeldOut:    true,
+		SourceRoot: filepath.Dir(sourcePath),
+		SourcePath: sourcePath,
+	}); err == nil {
+		t.Fatalf("expected absolute source path to be rejected")
+	}
+}
+
+func TestSemanticCalibrationRejectsNonMarkdownSourcePath(t *testing.T) {
+	acceptanceDir := writeSemanticAcceptanceOutput(t, []SemanticCandidate{
+		validSemanticCandidate(validSemanticObservation(validStructureNode()), validStructureNode()),
+	}, true)
+	sourceRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(sourceRoot, "source.txt"), []byte("source"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	if _, err := CalibrateSemanticAcceptance(acceptanceDir, t.TempDir(), SemanticCalibrationOptions{
+		Threshold:  0.98,
+		HeldOut:    true,
+		SourceRoot: sourceRoot,
+		SourcePath: "source.txt",
+	}); err == nil {
+		t.Fatalf("expected non-markdown source path to be rejected")
+	}
+}
+
+func TestSemanticCalibrationRejectsSymlinkedSourceFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink permissions vary on windows")
+	}
+	acceptanceDir := writeSemanticAcceptanceOutput(t, []SemanticCandidate{
+		validSemanticCandidate(validSemanticObservation(validStructureNode()), validStructureNode()),
+	}, true)
+	sourceRoot := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.md")
+	if err := os.WriteFile(outside, []byte("source"), 0o644); err != nil {
+		t.Fatalf("write outside source: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(sourceRoot, "source.md")); err != nil {
+		t.Fatalf("symlink source: %v", err)
+	}
+	if _, err := CalibrateSemanticAcceptance(acceptanceDir, t.TempDir(), SemanticCalibrationOptions{
+		Threshold:  0.98,
+		HeldOut:    true,
+		SourceRoot: sourceRoot,
+		SourcePath: "source.md",
+	}); err == nil {
+		t.Fatalf("expected symlinked source file to be rejected")
+	}
+}
+
+func TestSemanticCalibrationRejectsSymlinkedSourceRoot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink permissions vary on windows")
+	}
+	acceptanceDir := writeSemanticAcceptanceOutput(t, []SemanticCandidate{
+		validSemanticCandidate(validSemanticObservation(validStructureNode()), validStructureNode()),
+	}, true)
+	realRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(realRoot, "source.md"), []byte("source"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	linkRoot := filepath.Join(t.TempDir(), "source-root")
+	if err := os.Symlink(realRoot, linkRoot); err != nil {
+		t.Fatalf("symlink source root: %v", err)
+	}
+	if _, err := CalibrateSemanticAcceptance(acceptanceDir, t.TempDir(), SemanticCalibrationOptions{
+		Threshold:  0.98,
+		HeldOut:    true,
+		SourceRoot: linkRoot,
+		SourcePath: "source.md",
+	}); err == nil {
+		t.Fatalf("expected symlinked source root to be rejected")
+	}
+}
+
+func TestSemanticCalibrationRejectsSourceExcerptPrivateMarker(t *testing.T) {
+	acceptanceDir := writeSemanticAcceptanceOutput(t, []SemanticCandidate{
+		validSemanticCandidate(validSemanticObservation(validStructureNode()), validStructureNode()),
+	}, true)
+	sourceRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(sourceRoot, "source.md"), []byte("Prepare checklist\ncontains "+unsafeTokenMarker()+"\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	if _, err := CalibrateSemanticAcceptance(acceptanceDir, t.TempDir(), SemanticCalibrationOptions{
+		Threshold:  0.98,
+		HeldOut:    true,
+		SourceRoot: sourceRoot,
+		SourcePath: "source.md",
+	}); err == nil {
+		t.Fatalf("expected private marker in source excerpt to be rejected")
+	}
+}
+
+func TestSemanticCalibrationClampsSourceExcerpts(t *testing.T) {
+	candidate := validSemanticCandidate(validSemanticObservation(validStructureNode()), validStructureNode())
+	candidate.EvidenceRanges = []SemanticEvidenceRange{
+		{StructureNodeID: "node-one", LineStart: 1, LineEnd: 20},
+		{StructureNodeID: "node-two", LineStart: 2, LineEnd: 20},
+		{StructureNodeID: "node-three", LineStart: 3, LineEnd: 20},
+		{StructureNodeID: "node-four", LineStart: 4, LineEnd: 20},
+	}
+	acceptanceDir := writeSemanticAcceptanceOutput(t, []SemanticCandidate{candidate}, true)
+	sourceRoot := t.TempDir()
+	lines := make([]string, 0, 30)
+	for i := 0; i < 30; i++ {
+		lines = append(lines, strings.Repeat("x", 300))
+	}
+	if err := os.WriteFile(filepath.Join(sourceRoot, "source.md"), []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	out := t.TempDir()
+	if _, err := CalibrateSemanticAcceptance(acceptanceDir, out, SemanticCalibrationOptions{
+		Threshold:  0.98,
+		HeldOut:    true,
+		SourceRoot: sourceRoot,
+		SourcePath: "source.md",
+	}); err != nil {
+		t.Fatalf("calibrate semantic acceptance: %v", err)
+	}
+	page, err := NextSemanticCalibrationReviewPage(filepath.Join(out, "semantic-calibration"))
+	if err != nil {
+		t.Fatalf("next page: %v", err)
+	}
+	if got := len(page.Item.EvidenceExcerpts); got != maxSemanticCalibrationExcerptRanges {
+		t.Fatalf("expected %d excerpts, got %d", maxSemanticCalibrationExcerptRanges, got)
+	}
+	total := 0
+	for _, excerpt := range page.Item.EvidenceExcerpts {
+		total += len(excerpt.Text)
+		if excerpt.LineEnd-excerpt.LineStart+1 > maxSemanticCalibrationExcerptLines {
+			t.Fatalf("excerpt line cap not enforced: %+v", excerpt)
+		}
+		if len(excerpt.Text) > maxSemanticCalibrationExcerptCharsPerRange {
+			t.Fatalf("excerpt char cap not enforced: %d", len(excerpt.Text))
+		}
+		if !excerpt.Clamped {
+			t.Fatalf("expected oversized excerpt to be marked clamped: %+v", excerpt)
+		}
+	}
+	if total > maxSemanticCalibrationExcerptCharsPerItem {
+		t.Fatalf("total excerpt cap not enforced: %d", total)
+	}
+}
+
+func TestSemanticCalibrationClampsSourceExcerptBeyondEOF(t *testing.T) {
+	candidate := validSemanticCandidate(validSemanticObservation(validStructureNode()), validStructureNode())
+	candidate.EvidenceRanges = []SemanticEvidenceRange{{StructureNodeID: "node-late", LineStart: 99, LineEnd: 120}}
+	acceptanceDir := writeSemanticAcceptanceOutput(t, []SemanticCandidate{candidate}, true)
+	sourceRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(sourceRoot, "source.md"), []byte("first\nlast\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	out := t.TempDir()
+	if _, err := CalibrateSemanticAcceptance(acceptanceDir, out, SemanticCalibrationOptions{
+		Threshold:  0.98,
+		HeldOut:    true,
+		SourceRoot: sourceRoot,
+		SourcePath: "source.md",
+	}); err != nil {
+		t.Fatalf("calibrate semantic acceptance: %v", err)
+	}
+	page, err := NextSemanticCalibrationReviewPage(filepath.Join(out, "semantic-calibration"))
+	if err != nil {
+		t.Fatalf("next page: %v", err)
+	}
+	excerpt := page.Item.EvidenceExcerpts[0]
+	if excerpt.Unavailable || !excerpt.Clamped || excerpt.LineStart != 2 || excerpt.LineEnd != 2 || excerpt.Text != "last" {
+		t.Fatalf("expected beyond-EOF range clamped to final line: %+v", excerpt)
+	}
+}
+
+func TestSemanticCalibrationLegacyReviewItemReturnsDegradedV2Page(t *testing.T) {
+	acceptanceDir := writeSemanticAcceptanceOutput(t, []SemanticCandidate{
+		validSemanticCandidate(validSemanticObservation(validStructureNode()), validStructureNode()),
+	}, true)
+	out := t.TempDir()
+	if _, err := CalibrateSemanticAcceptance(acceptanceDir, out, SemanticCalibrationOptions{Threshold: 0.98, HeldOut: true}); err != nil {
+		t.Fatalf("calibrate semantic acceptance: %v", err)
+	}
+	itemPath := filepath.Join(out, "semantic-calibration", SemanticCalibrationReviewItemJSONPath("review-cand-demo"))
+	var item SemanticCalibrationReviewItem
+	data, err := os.ReadFile(itemPath)
+	if err != nil {
+		t.Fatalf("read review item: %v", err)
+	}
+	if err := json.Unmarshal(data, &item); err != nil {
+		t.Fatalf("decode review item: %v", err)
+	}
+	item.SchemaVersion = SemanticCalibrationReviewItemLegacySchemaVersion
+	item.ExpectedOutcome = SemanticCalibrationExpectedOutcomeContext{}
+	item.EvidenceExcerpts = nil
+	writeDocumentsTestJSON(t, itemPath, item)
+	page, err := NextSemanticCalibrationReviewPage(filepath.Join(out, "semantic-calibration"))
+	if err != nil {
+		t.Fatalf("next page: %v", err)
+	}
+	if page.SchemaVersion != SemanticCalibrationPageSchemaVersion || page.Item == nil || !page.Item.ExpectedOutcome.LegacyContext {
+		t.Fatalf("expected degraded v0.2 page from legacy item: %+v", page)
+	}
+	if !strings.Contains(page.PageMarkdown, "not fully adjudication-ready") {
+		t.Fatalf("expected legacy degradation marker:\n%s", page.PageMarkdown)
+	}
+}
+
 func TestSemanticCalibrationRejectsEscapingInputItemPath(t *testing.T) {
 	acceptanceDir := writeSemanticAcceptanceOutput(t, []SemanticCandidate{
 		validSemanticCandidate(validSemanticObservation(validStructureNode()), validStructureNode()),
@@ -2322,6 +2632,26 @@ func TestSemanticCalibrationRejectsExpectedOutcomeSummaryMismatch(t *testing.T) 
 	writeDocumentsTestJSON(t, expectedPath, outcome)
 	if _, err := CalibrateSemanticAcceptance(acceptanceDir, t.TempDir(), SemanticCalibrationOptions{Threshold: 0.98, HeldOut: true}); err == nil {
 		t.Fatalf("expected expected-outcome summary mismatch to be rejected")
+	}
+}
+
+func TestSemanticCalibrationRejectsNewExpectedOutcomeWithoutRichContext(t *testing.T) {
+	acceptanceDir := writeSemanticAcceptanceOutput(t, []SemanticCandidate{
+		validSemanticCandidate(validSemanticObservation(validStructureNode()), validStructureNode()),
+	}, true)
+	expectedPath := filepath.Join(acceptanceDir, SemanticAcceptanceExpectedOutcomeJSONPath("exp-action"))
+	var outcome SemanticExpectedOutcomeResult
+	data, err := os.ReadFile(expectedPath)
+	if err != nil {
+		t.Fatalf("read expected outcome: %v", err)
+	}
+	if err := json.Unmarshal(data, &outcome); err != nil {
+		t.Fatalf("decode expected outcome: %v", err)
+	}
+	outcome.TitleSignals = nil
+	writeDocumentsTestJSON(t, expectedPath, outcome)
+	if _, err := CalibrateSemanticAcceptance(acceptanceDir, t.TempDir(), SemanticCalibrationOptions{Threshold: 0.98, HeldOut: true}); err == nil {
+		t.Fatalf("expected sparse v0.2 expected outcome to be rejected")
 	}
 }
 
@@ -2572,9 +2902,12 @@ func writeSemanticAcceptanceOutput(t *testing.T, candidates []SemanticCandidate,
 		ExpectedState:          ExpectedOutcomePresent,
 		ExpectedKind:           SemanticCandidateKindAction,
 		RequiredEvidence:       []string{"node-demo"},
+		AcceptableAlternates:   []string{"node-alt"},
 		TitleSignals:           []string{"checklist"},
 		SummarySignals:         []string{"prepare"},
+		RelationRequirements:   []SemanticRelationshipType{SemanticRelationshipDerivedFrom},
 		MinimumConfidenceFloor: ConfidenceLow,
+		Notes:                  "Expected checklist action.",
 	}
 	if !expectPresent {
 		outcome.ExpectedState = ExpectedOutcomeAbsent
