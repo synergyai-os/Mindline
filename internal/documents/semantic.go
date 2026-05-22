@@ -293,24 +293,25 @@ func ConsolidateSemanticCandidates(runID string, observations []SemanticObservat
 	for sourceID, items := range bySource {
 		cands := candidatesForSource(runID, sourceID, items)
 		for i := range cands {
-			for _, observationID := range cands[i].ObservationIDs {
+			candidate := ClassifyUnsafeSemanticCandidate(cands[i])
+			for _, observationID := range candidate.ObservationIDs {
 				observation, ok := findObservation(items, observationID)
 				if !ok {
 					continue
 				}
-				relation := newSemanticRelation(runID, SemanticRelationshipDerivedFrom, cands[i].CandidateID, SemanticRelationEndpointCandidate, observation.ObservationID, SemanticRelationEndpointObservation, observation.EvidenceNodes, cands[i].ReviewStatus)
-				cands[i].RelationIDs = append(cands[i].RelationIDs, relation.RelationID)
+				relation := newSemanticRelation(runID, SemanticRelationshipDerivedFrom, candidate.CandidateID, SemanticRelationEndpointCandidate, observation.ObservationID, SemanticRelationEndpointObservation, observation.EvidenceNodes, candidate.ReviewStatus)
+				candidate.RelationIDs = append(candidate.RelationIDs, relation.RelationID)
 				relations = append(relations, relation)
 			}
 			if hasObservationKind(items, SemanticObservationKindObjection) {
 				if proposal, ok := firstObservation(items, SemanticObservationKindProposal); ok {
 					if objection, ok := firstObservation(items, SemanticObservationKindObjection); ok {
 						relations = append(relations, newSemanticRelation(runID, SemanticRelationshipContradicts, objection.ObservationID, SemanticRelationEndpointObservation, proposal.ObservationID, SemanticRelationEndpointObservation, mergeUniqueStrings(objection.EvidenceNodes, proposal.EvidenceNodes), ReviewStatusNeedsReview))
-						cands[i].RelationIDs = append(cands[i].RelationIDs, relations[len(relations)-1].RelationID)
+						candidate.RelationIDs = append(candidate.RelationIDs, relations[len(relations)-1].RelationID)
 					}
 				}
 			}
-			candidates = append(candidates, ClassifyUnsafeSemanticCandidate(cands[i]))
+			candidates = append(candidates, candidate)
 		}
 	}
 	return orderSemanticCandidates(candidates), orderSemanticRelations(finalizeSemanticRelations(relations))
