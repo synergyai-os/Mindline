@@ -2,6 +2,7 @@
   "schema_version": "review-queue-item/v0.1",
   "run_id": "run-0123456789abcdef",
   "record_id": "review-blocked",
+  "source_candidate_id": "review-blocked",
   "state": "blocked",
   "priority": "high",
   "reason": "unknown_product_brain_intent",

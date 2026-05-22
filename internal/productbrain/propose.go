@@ -30,11 +30,12 @@ func Propose(runDir string, profilePath string, outDir string) (Summary, error) 
 	proposals := make([]Proposal, 0, len(reviewItems))
 	for _, item := range reviewItems {
 		proposals = append(proposals, Resolve(ResolveInput{
-			RunID:        item.RunID,
-			ReviewItemID: item.RecordID,
-			SafeTitle:    item.SafeTitle,
-			SafeContext:  item.SafeContext,
-			Reason:       item.Reason,
+			RunID:             item.RunID,
+			ReviewItemID:      item.RecordID,
+			SourceCandidateID: item.SourceCandidateID,
+			SafeTitle:         item.SafeTitle,
+			SafeContext:       item.SafeContext,
+			Reason:            item.Reason,
 		}, profile))
 	}
 	if len(proposals) == 0 {
@@ -88,6 +89,9 @@ func readReviewItems(runDir string) ([]runs.ReviewQueueItem, error) {
 		}
 		if item.SchemaVersion != runs.ReviewItemSchemaVersion {
 			return nil, fmt.Errorf("invalid review item")
+		}
+		if strings.TrimSpace(item.SourceCandidateID) == "" {
+			return nil, fmt.Errorf("review item %s missing source_candidate_id", item.RecordID)
 		}
 		items = append(items, item)
 	}

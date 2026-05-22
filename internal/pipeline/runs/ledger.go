@@ -120,6 +120,7 @@ type ReviewQueueItem struct {
 	SchemaVersion       string            `json:"schema_version"`
 	RunID               string            `json:"run_id"`
 	RecordID            string            `json:"record_id"`
+	SourceCandidateID   string            `json:"source_candidate_id"`
 	State               string            `json:"state"`
 	Priority            string            `json:"priority"`
 	Reason              string            `json:"reason"`
@@ -306,11 +307,16 @@ func BuildReviewQueueItems(items []LedgerItem, authorityIDs []string) []ReviewQu
 
 func buildReviewQueueItem(item LedgerItem, authorityIDs []string, ledgerItemPath string) ReviewQueueItem {
 	recordID := BuildSafeID(item.RecordID)
+	sourceCandidateID := BuildSafeID(item.SourceCandidateID)
+	if sourceCandidateID == "" {
+		sourceCandidateID = recordID
+	}
 	reason := safeReason(item.ReviewReason)
 	return ReviewQueueItem{
 		SchemaVersion:       ReviewItemSchemaVersion,
 		RunID:               item.RunID,
 		RecordID:            recordID,
+		SourceCandidateID:   sourceCandidateID,
 		State:               item.State,
 		Priority:            priorityForState(item.State),
 		Reason:              reason,
