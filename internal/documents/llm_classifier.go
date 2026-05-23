@@ -113,6 +113,7 @@ func buildLLMSemanticObservationsAndArtifacts(runID string, nodes []StructureNod
 		}
 		var candidateObservations []SemanticObservation
 		seenEvidenceNodes := map[string]bool{}
+		discriminator := llmCandidateDiscriminator(index)
 		for _, nodeID := range item.EvidenceNodes {
 			node, ok := resolveLLMEvidenceNode(nodesByID, nodeID)
 			if !ok {
@@ -124,7 +125,7 @@ func buildLLMSemanticObservationsAndArtifacts(runID string, nodes []StructureNod
 			seenEvidenceNodes[node.NodeID] = true
 			observation := SemanticObservation{
 				SchemaVersion:    SemanticObservationSchemaVersion,
-				ObservationID:    SemanticObservationID(runID, node.NodeID, observationKindForCandidateKind(kind), item.Title),
+				ObservationID:    SemanticObservationID(runID, node.NodeID, observationKindForCandidateKind(kind), item.Title+"\x00"+discriminator),
 				RunID:            runID,
 				SourceDocumentID: node.SourceDocumentID,
 				ObservationKind:  observationKindForCandidateKind(kind),
@@ -149,7 +150,7 @@ func buildLLMSemanticObservationsAndArtifacts(runID string, nodes []StructureNod
 			return nil, nil, nil, fmt.Errorf("LLM candidate missing usable evidence nodes")
 		}
 		candidate := newSemanticCandidate(runID, candidateObservations[0].SourceDocumentID, kind, ReviewStatusReady, confidence, item.Title, item.Summary, candidateObservations)
-		candidate.CandidateID = SemanticCandidateID(runID, kind, candidate.SourceDocumentID, item.Title, candidate.EvidenceNodes)
+		candidate.CandidateID = SemanticCandidateID(runID, kind, candidate.SourceDocumentID, item.Title+"\x00"+discriminator, candidate.EvidenceNodes)
 		candidate.EvidenceExcerpts = llmEvidenceExcerpts(candidate.EvidenceNodes, textByNodeID)
 		for _, observation := range candidateObservations {
 			relation := newSemanticRelation(runID, SemanticRelationshipDerivedFrom, candidate.CandidateID, SemanticRelationEndpointCandidate, observation.ObservationID, SemanticRelationEndpointObservation, observation.EvidenceNodes, candidate.ReviewStatus)
@@ -159,6 +160,10 @@ func buildLLMSemanticObservationsAndArtifacts(runID string, nodes []StructureNod
 		candidates = append(candidates, ClassifyUnsafeSemanticCandidate(candidate))
 	}
 	return orderSemanticObservations(observations), orderSemanticCandidates(candidates), orderSemanticRelations(relations), nil
+}
+
+func llmCandidateDiscriminator(index int) string {
+	return fmt.Sprintf("llm-candidate-index:%d", index)
 }
 
 func llmEvidenceExcerpts(evidenceNodes []string, textByNodeID map[string]string) []SemanticEvidenceExcerpt {

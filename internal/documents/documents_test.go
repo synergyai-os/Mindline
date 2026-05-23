@@ -437,6 +437,54 @@ func TestLLMClassifierBuildsProviderNeutralArtifacts(t *testing.T) {
 	}
 }
 
+func TestLLMClassifierDisambiguatesDuplicateCandidateOutput(t *testing.T) {
+	nodes := []StructureNode{{
+		NodeID:           "node-real",
+		SourceDocumentID: "doc-test",
+		Evidence: StructureEvidence{
+			LineStart: 3,
+			LineEnd:   5,
+		},
+	}}
+	response := llmSemanticResponse{Candidates: []llmSemanticCandidate{
+		{
+			Kind:          string(SemanticCandidateKindAction),
+			Title:         "Prepare evidence pack",
+			Summary:       "Prepare the evidence pack from the cited node.",
+			Confidence:    string(ConfidenceMedium),
+			EvidenceNodes: []string{"node-real"},
+		},
+		{
+			Kind:          string(SemanticCandidateKindAction),
+			Title:         "Prepare evidence pack",
+			Summary:       "Prepare the evidence pack from the cited node.",
+			Confidence:    string(ConfidenceMedium),
+			EvidenceNodes: []string{"node-real"},
+		},
+	}}
+
+	observations, candidates, relations, err := buildLLMSemanticObservationsAndArtifacts("run-test", nodes, LLMSemanticRequest{}, response)
+
+	if err != nil {
+		t.Fatalf("build duplicate LLM artifacts: %v", err)
+	}
+	if len(observations) != 2 || len(candidates) != 2 || len(relations) != 2 {
+		t.Fatalf("expected two observations, candidates, and relations; got obs=%d candidates=%d relations=%d", len(observations), len(candidates), len(relations))
+	}
+	if observations[0].ObservationID == observations[1].ObservationID {
+		t.Fatalf("expected duplicate LLM observations to get distinct IDs: %+v", observations)
+	}
+	if candidates[0].CandidateID == candidates[1].CandidateID {
+		t.Fatalf("expected duplicate LLM candidates to get distinct IDs: %+v", candidates)
+	}
+	if relations[0].RelationID == relations[1].RelationID {
+		t.Fatalf("expected duplicate LLM relations to get distinct IDs: %+v", relations)
+	}
+	if err := WriteSemantic(t.TempDir(), "run-test", 1, observations, candidates, relations); err != nil {
+		t.Fatalf("duplicate LLM artifacts should remain writable: %v", err)
+	}
+}
+
 func TestOpenAIProviderPostsResponsesRequestAndParsesCandidates(t *testing.T) {
 	var capturedPath string
 	var capturedAuth string
