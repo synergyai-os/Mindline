@@ -1,5 +1,7 @@
 package documents
 
+import "time"
+
 const (
 	SegmentSummarySchemaVersion                          = "document-segment-summary/v0.1"
 	SegmentSchemaVersion                                 = "document-segment/v0.1"
@@ -19,6 +21,11 @@ const (
 	SemanticCalibrationReviewItemLegacySchemaVersion     = "semantic-calibration-review-item/v0.1"
 	SemanticCalibrationCursorSchemaVersion               = "semantic-calibration-cursor/v0.1"
 	SemanticCalibrationPageSchemaVersion                 = "semantic-calibration-page/v0.2"
+	SemanticJudgmentSummarySchemaVersion                 = "semantic-judgment-summary/v0.1"
+	SemanticJudgmentCandidateSchemaVersion               = "semantic-judgment-candidate/v0.1"
+	SemanticJudgmentCursorSchemaVersion                  = "semantic-judgment-cursor/v0.1"
+	SemanticJudgmentRecordSchemaVersion                  = "semantic-judgment-record/v0.1"
+	SemanticJudgmentPageSchemaVersion                    = "semantic-judgment-page/v0.1"
 	SourceKindMarkdown                                   = "markdown"
 	EvidenceKindLocation                                 = "location"
 )
@@ -620,4 +627,113 @@ type SemanticCalibrationPage struct {
 	Item          *SemanticCalibrationReviewItem    `json:"item,omitempty"`
 	ReviewContext *SemanticCalibrationReviewContext `json:"review_context,omitempty"`
 	PageMarkdown  string                            `json:"page_markdown,omitempty"`
+}
+
+type SemanticJudgmentOptions struct {
+	SourceRoot string
+	SourcePath string
+}
+
+type SemanticJudgmentChoice string
+
+const (
+	SemanticJudgmentChoiceAccept    SemanticJudgmentChoice = "accept"
+	SemanticJudgmentChoiceReject    SemanticJudgmentChoice = "reject"
+	SemanticJudgmentChoiceUnclear   SemanticJudgmentChoice = "unclear"
+	SemanticJudgmentChoiceDuplicate SemanticJudgmentChoice = "duplicate"
+	SemanticJudgmentChoiceWrongKind SemanticJudgmentChoice = "wrong-kind"
+)
+
+type SemanticJudgmentSummary struct {
+	SchemaVersion     string                             `json:"schema_version"`
+	RunID             string                             `json:"run_id"`
+	SourceCount       int                                `json:"source_count"`
+	CandidateCount    int                                `json:"candidate_count"`
+	JudgedCount       int                                `json:"judged_count"`
+	RemainingCount    int                                `json:"remaining_count"`
+	AcceptedCount     int                                `json:"accepted_count"`
+	RejectedCount     int                                `json:"rejected_count"`
+	UnclearCount      int                                `json:"unclear_count"`
+	DuplicateCount    int                                `json:"duplicate_count"`
+	WrongKindCount    int                                `json:"wrong_kind_count"`
+	BlockedCount      int                                `json:"blocked_count"`
+	SkippedCount      int                                `json:"skipped_count"`
+	ReviewBurdenCount int                                `json:"review_burden_count"`
+	PrecisionEstimate float64                            `json:"precision_estimate"`
+	FailureModeCounts map[SemanticJudgmentChoice]int     `json:"failure_mode_counts"`
+	QualityStatement  string                             `json:"quality_statement"`
+	CursorPath        string                             `json:"cursor_path"`
+	ReportPath        string                             `json:"report_path"`
+	Candidates        []SemanticJudgmentCandidateSummary `json:"candidates"`
+	Items             []SemanticJudgmentCandidate        `json:"-"`
+	Judgments         []SemanticJudgmentRecord           `json:"-"`
+}
+
+type SemanticJudgmentCandidateSummary struct {
+	CandidateID      string                 `json:"candidate_id"`
+	CandidateKind    SemanticCandidateKind  `json:"candidate_kind"`
+	ReviewStatus     ReviewStatus           `json:"review_status"`
+	Confidence       Confidence             `json:"confidence"`
+	JudgmentChoice   SemanticJudgmentChoice `json:"judgment_choice,omitempty"`
+	CandidatePath    string                 `json:"candidate_path"`
+	PagePath         string                 `json:"page_path"`
+	JudgmentPath     string                 `json:"judgment_path,omitempty"`
+	SourceDocumentID string                 `json:"source_document_id,omitempty"`
+}
+
+type SemanticJudgmentCandidate struct {
+	SchemaVersion    string                               `json:"schema_version"`
+	CandidateID      string                               `json:"candidate_id"`
+	RunID            string                               `json:"run_id"`
+	SourceDocumentID string                               `json:"source_document_id,omitempty"`
+	CandidateKind    SemanticCandidateKind                `json:"candidate_kind"`
+	ReviewStatus     ReviewStatus                         `json:"review_status"`
+	Confidence       Confidence                           `json:"confidence"`
+	Title            string                               `json:"title"`
+	Summary          string                               `json:"summary"`
+	EvidenceNodes    []string                             `json:"evidence_nodes"`
+	EvidenceRanges   []SemanticEvidenceRange              `json:"evidence_ranges"`
+	EvidenceExcerpts []SemanticCalibrationEvidenceExcerpt `json:"evidence_excerpts"`
+	RelationIDs      []string                             `json:"relation_ids"`
+	Blockers         []Blocker                            `json:"blockers"`
+	Judgment         *SemanticJudgmentRecord              `json:"judgment,omitempty"`
+}
+
+type SemanticJudgmentRecord struct {
+	SchemaVersion    string                 `json:"schema_version"`
+	RunID            string                 `json:"run_id"`
+	CandidateID      string                 `json:"candidate_id"`
+	SourceDocumentID string                 `json:"source_document_id,omitempty"`
+	CandidateKind    SemanticCandidateKind  `json:"candidate_kind"`
+	Confidence       Confidence             `json:"confidence"`
+	Choice           SemanticJudgmentChoice `json:"choice"`
+	Note             string                 `json:"note,omitempty"`
+	ReviewerID       string                 `json:"reviewer_id,omitempty"`
+	RecordedAt       string                 `json:"recorded_at"`
+}
+
+type SemanticJudgmentCursor struct {
+	SchemaVersion  string `json:"schema_version"`
+	RunID          string `json:"run_id"`
+	NextIndex      int    `json:"next_index"`
+	TotalCount     int    `json:"total_count"`
+	JudgedCount    int    `json:"judged_count"`
+	RemainingCount int    `json:"remaining_count"`
+	Exhausted      bool   `json:"exhausted"`
+}
+
+type SemanticJudgmentPage struct {
+	SchemaVersion string                     `json:"schema_version"`
+	Done          bool                       `json:"done"`
+	Cursor        SemanticJudgmentCursor     `json:"cursor"`
+	Item          *SemanticJudgmentCandidate `json:"item,omitempty"`
+	PageMarkdown  string                     `json:"page_markdown,omitempty"`
+}
+
+type SemanticJudgmentRecordInput struct {
+	CandidateID string
+	Choice      SemanticJudgmentChoice
+	Note        string
+	ReviewerID  string
+	RecordedAt  time.Time
 }

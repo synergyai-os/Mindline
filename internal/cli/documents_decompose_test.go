@@ -364,6 +364,103 @@ func TestDocumentsCalibrateAndCalibrateNext(t *testing.T) {
 	}
 }
 
+func TestDocumentsJudgeJudgeNextAndJudgeRecord(t *testing.T) {
+	semanticOut := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "semantics", documentsFixture(t, "semantic"),
+		"--out", semanticOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected semantic generation exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+
+	judgeOut := t.TempDir()
+	stdout.Reset()
+	stderr.Reset()
+	code = NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "judge", semanticOut,
+		"--out", judgeOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected judge exit %d, got %d stdout=%s stderr=%s", ExitOK, code, stdout.String(), stderr.String())
+	}
+	var summary struct {
+		SchemaVersion  string `json:"schema_version"`
+		CandidateCount int    `json:"candidate_count"`
+		RemainingCount int    `json:"remaining_count"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
+		t.Fatalf("decode judge stdout: %v\n%s", err, stdout.String())
+	}
+	if summary.SchemaVersion != "semantic-judgment-summary/v0.1" || summary.CandidateCount == 0 || summary.RemainingCount != summary.CandidateCount {
+		t.Fatalf("unexpected judgment summary: %+v", summary)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "judge-next", filepath.Join(judgeOut, "semantic-judgment"),
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected judge-next exit %d, got %d stdout=%s stderr=%s", ExitOK, code, stdout.String(), stderr.String())
+	}
+	var page struct {
+		SchemaVersion string `json:"schema_version"`
+		Done          bool   `json:"done"`
+		PageMarkdown  string `json:"page_markdown"`
+		Item          *struct {
+			CandidateID string `json:"candidate_id"`
+		} `json:"item"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &page); err != nil {
+		t.Fatalf("decode judge-next stdout: %v\n%s", err, stdout.String())
+	}
+	if page.SchemaVersion != "semantic-judgment-page/v0.1" || page.Done || page.Item == nil || !strings.Contains(page.PageMarkdown, "Adjudication choices") {
+		t.Fatalf("unexpected judgment page: %+v", page)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "judge-record", filepath.Join(judgeOut, "semantic-judgment"),
+		"--candidate", page.Item.CandidateID,
+		"--choice", "accept",
+		"--note", "Looks useful.",
+		"--reviewer", "cli-test",
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected judge-record exit %d, got %d stdout=%s stderr=%s", ExitOK, code, stdout.String(), stderr.String())
+	}
+	var updated struct {
+		SchemaVersion string  `json:"schema_version"`
+		JudgedCount   int     `json:"judged_count"`
+		AcceptedCount int     `json:"accepted_count"`
+		Precision     float64 `json:"precision_estimate"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &updated); err != nil {
+		t.Fatalf("decode judge-record stdout: %v\n%s", err, stdout.String())
+	}
+	if updated.SchemaVersion != "semantic-judgment-summary/v0.1" || updated.JudgedCount != 1 || updated.AcceptedCount != 1 || updated.Precision != 1 {
+		t.Fatalf("unexpected judgment record summary: %+v", updated)
+	}
+}
+
+func TestDocumentsJudgeRejectsDestinationAndProfileFlags(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "judge", t.TempDir(),
+		"--profile", documentsFixture(t, "..", "productbrain", "profiles", "default-governance.json"),
+		"--out", t.TempDir(),
+	}, &stdout, &stderr)
+	if code != ExitUsage {
+		t.Fatalf("expected usage exit for --profile, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "usage: mindline documents judge") {
+		t.Fatalf("expected documents judge usage, got %q", stderr.String())
+	}
+}
+
 func TestDocumentsAcceptRejectsDestinationAndProfileFlags(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := NewRunner(NewOSFileSystem()).Run([]string{
