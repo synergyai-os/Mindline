@@ -371,7 +371,7 @@ func (r Runner) runDocumentsJudgeServe(args []string, stdout, stderr io.Writer) 
 	}
 	defer listener.Close()
 	fmt.Fprintf(stdout, "Mindline review UI: http://%s\n", listener.Addr().String())
-	if err := http.Serve(listener, newSemanticJudgmentUIHandler(inputPath, reviewerID)); err != nil {
+	if err := http.Serve(listener, newSemanticJudgmentUIHandlerWithAllowedHosts(inputPath, reviewerID, []string{addr, listener.Addr().String()})); err != nil {
 		fmt.Fprintf(stderr, "serve semantic judgment UI: %v\n", err)
 		return ExitProcess
 	}

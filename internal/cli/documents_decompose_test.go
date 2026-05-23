@@ -705,6 +705,110 @@ func TestDocumentsJudgeServeRejectsNonLoopbackHostEvenWithToken(t *testing.T) {
 	}
 }
 
+func TestDocumentsJudgeServeAllowsConfiguredLoopbackAliasHost(t *testing.T) {
+	semanticOut := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "semantics", documentsFixture(t, "semantic"),
+		"--out", semanticOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected semantic generation exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+
+	judgeOut := t.TempDir()
+	stdout.Reset()
+	stderr.Reset()
+	code = NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "judge", semanticOut,
+		"--out", judgeOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected judge exit %d, got %d stdout=%s stderr=%s", ExitOK, code, stdout.String(), stderr.String())
+	}
+	aliasHost := "review.localhost:8787"
+	handler := newSemanticJudgmentUIHandlerWithAllowedHosts(filepath.Join(judgeOut, "semantic-judgment"), "ui-test", []string{aliasHost})
+	token := judgmentUITokenForHost(t, handler, aliasHost)
+	state := getJudgmentUIStateForHost(t, handler, aliasHost)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/judgments", strings.NewReader(`{"candidate_id":"`+state.Page.Item.CandidateID+`","choice":"accept"}`))
+	req.Host = aliasHost
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Mindline-Review-Token", token)
+	req.Header.Set("Origin", "http://"+aliasHost)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected configured alias host status 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDocumentsJudgeServeRejectsUnconfiguredLocalhostAliasHost(t *testing.T) {
+	semanticOut := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "semantics", documentsFixture(t, "semantic"),
+		"--out", semanticOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected semantic generation exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+
+	judgeOut := t.TempDir()
+	stdout.Reset()
+	stderr.Reset()
+	code = NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "judge", semanticOut,
+		"--out", judgeOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected judge exit %d, got %d stdout=%s stderr=%s", ExitOK, code, stdout.String(), stderr.String())
+	}
+	aliasHost := "review.localhost:8787"
+	handler := newSemanticJudgmentUIHandler(filepath.Join(judgeOut, "semantic-judgment"), "ui-test")
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = aliasHost
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected unconfigured localhost alias host status 403, got %d", rec.Code)
+	}
+}
+
+func TestDocumentsJudgeServeRejectsConfiguredNonLocalAliasHost(t *testing.T) {
+	semanticOut := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "semantics", documentsFixture(t, "semantic"),
+		"--out", semanticOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected semantic generation exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+
+	judgeOut := t.TempDir()
+	stdout.Reset()
+	stderr.Reset()
+	code = NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "judge", semanticOut,
+		"--out", judgeOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected judge exit %d, got %d stdout=%s stderr=%s", ExitOK, code, stdout.String(), stderr.String())
+	}
+	attackerHost := "attacker.test:8787"
+	handler := newSemanticJudgmentUIHandlerWithAllowedHosts(filepath.Join(judgeOut, "semantic-judgment"), "ui-test", []string{attackerHost})
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = attackerHost
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected configured non-local alias host status 403, got %d", rec.Code)
+	}
+}
+
 func TestDocumentsJudgeServeLoopbackValidation(t *testing.T) {
 	for _, addr := range []string{"127.0.0.1:8787", "localhost:8787", "[::1]:8787"} {
 		t.Run("accepts_"+addr, func(t *testing.T) {
@@ -726,8 +830,13 @@ const judgmentUITestHost = "127.0.0.1:8787"
 
 func judgmentUIToken(t *testing.T, handler http.Handler) string {
 	t.Helper()
+	return judgmentUITokenForHost(t, handler, judgmentUITestHost)
+}
+
+func judgmentUITokenForHost(t *testing.T, handler http.Handler, host string) string {
+	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.Host = judgmentUITestHost
+	req.Host = host
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -749,8 +858,13 @@ func judgmentUIToken(t *testing.T, handler http.Handler) string {
 
 func getJudgmentUIState(t *testing.T, handler http.Handler) semanticJudgmentUIState {
 	t.Helper()
+	return getJudgmentUIStateForHost(t, handler, judgmentUITestHost)
+}
+
+func getJudgmentUIStateForHost(t *testing.T, handler http.Handler, host string) semanticJudgmentUIState {
+	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/state", nil)
-	req.Host = judgmentUITestHost
+	req.Host = host
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {

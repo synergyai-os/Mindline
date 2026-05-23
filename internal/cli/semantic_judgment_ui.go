@@ -35,14 +35,19 @@ type semanticJudgmentUITemplateData struct {
 }
 
 func newSemanticJudgmentUIHandler(root, reviewerID string) http.Handler {
+	return newSemanticJudgmentUIHandlerWithAllowedHosts(root, reviewerID, nil)
+}
+
+func newSemanticJudgmentUIHandlerWithAllowedHosts(root, reviewerID string, allowedHosts []string) http.Handler {
 	token, err := newSemanticJudgmentReviewToken()
 	if err != nil {
 		panic(err)
 	}
-	return newSemanticJudgmentUIHandlerWithToken(root, reviewerID, token)
+	return newSemanticJudgmentUIHandlerWithToken(root, reviewerID, token, allowedHosts)
 }
 
-func newSemanticJudgmentUIHandlerWithToken(root, reviewerID, reviewToken string) http.Handler {
+func newSemanticJudgmentUIHandlerWithToken(root, reviewerID, reviewToken string, allowedHosts []string) http.Handler {
+	hostAllowlist := semanticJudgmentHostAllowlist(allowedHosts)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -75,7 +80,7 @@ func newSemanticJudgmentUIHandlerWithToken(root, reviewerID, reviewToken string)
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if status, err := validateSemanticJudgmentWriteRequest(r, reviewToken); err != nil {
+		if status, err := validateSemanticJudgmentWriteRequest(r, reviewToken, hostAllowlist); err != nil {
 			http.Error(w, err.Error(), status)
 			return
 		}
@@ -107,12 +112,23 @@ func newSemanticJudgmentUIHandlerWithToken(root, reviewerID, reviewToken string)
 		writeJSONResponse(w, state)
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := validateSemanticJudgmentLoopbackHost(r.Host); err != nil {
+		if err := validateSemanticJudgmentLoopbackHost(r.Host, hostAllowlist); err != nil {
 			http.Error(w, err.Error(), http.StatusForbidden)
 			return
 		}
 		mux.ServeHTTP(w, r)
 	})
+}
+
+func semanticJudgmentHostAllowlist(hosts []string) map[string]bool {
+	out := map[string]bool{}
+	for _, hostPort := range hosts {
+		hostKey := semanticJudgmentRequestHostPort(hostPort)
+		if hostKey != "" {
+			out[hostKey] = true
+		}
+	}
+	return out
 }
 
 func newSemanticJudgmentReviewToken() (string, error) {
@@ -123,7 +139,7 @@ func newSemanticJudgmentReviewToken() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(raw[:]), nil
 }
 
-func validateSemanticJudgmentWriteRequest(r *http.Request, reviewToken string) (int, error) {
+func validateSemanticJudgmentWriteRequest(r *http.Request, reviewToken string, allowedHosts map[string]bool) (int, error) {
 	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/json" {
 		return http.StatusUnsupportedMediaType, fmt.Errorf("content type must be application/json")
@@ -131,28 +147,28 @@ func validateSemanticJudgmentWriteRequest(r *http.Request, reviewToken string) (
 	if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Mindline-Review-Token")), []byte(reviewToken)) != 1 {
 		return http.StatusForbidden, fmt.Errorf("missing or invalid review token")
 	}
-	if err := validateSemanticJudgmentSameOrigin(r); err != nil {
+	if err := validateSemanticJudgmentSameOrigin(r, allowedHosts); err != nil {
 		return http.StatusForbidden, err
 	}
 	return http.StatusOK, nil
 }
 
-func validateSemanticJudgmentSameOrigin(r *http.Request) error {
+func validateSemanticJudgmentSameOrigin(r *http.Request, allowedHosts map[string]bool) error {
 	if origin := strings.TrimSpace(r.Header.Get("Origin")); origin != "" {
-		return requireSemanticJudgmentSameOrigin(origin, r)
+		return requireSemanticJudgmentSameOrigin(origin, r, allowedHosts)
 	}
 	if referer := strings.TrimSpace(r.Header.Get("Referer")); referer != "" {
-		return requireSemanticJudgmentSameOrigin(referer, r)
+		return requireSemanticJudgmentSameOrigin(referer, r, allowedHosts)
 	}
 	return nil
 }
 
-func requireSemanticJudgmentSameOrigin(raw string, r *http.Request) error {
+func requireSemanticJudgmentSameOrigin(raw string, r *http.Request, allowedHosts map[string]bool) error {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Host == "" {
 		return fmt.Errorf("invalid request origin")
 	}
-	if err := validateSemanticJudgmentLoopbackHost(parsed.Host); err != nil {
+	if err := validateSemanticJudgmentLoopbackHost(parsed.Host, allowedHosts); err != nil {
 		return err
 	}
 	if !strings.EqualFold(parsed.Host, r.Host) {
@@ -168,16 +184,15 @@ func requireSemanticJudgmentSameOrigin(raw string, r *http.Request) error {
 	return nil
 }
 
-func validateSemanticJudgmentLoopbackHost(hostPort string) error {
-	hostPort = strings.TrimSpace(hostPort)
-	if hostPort == "" {
+func validateSemanticJudgmentLoopbackHost(hostPort string, allowedHosts map[string]bool) error {
+	hostKey := semanticJudgmentRequestHostPort(hostPort)
+	host := semanticJudgmentRequestHost(hostKey)
+	if hostKey == "" || host == "" {
 		return fmt.Errorf("request host must be loopback")
 	}
-	host, _, err := net.SplitHostPort(hostPort)
-	if err != nil {
-		host = hostPort
+	if allowedHosts[hostKey] && semanticJudgmentNonRebindableHost(host) {
+		return nil
 	}
-	host = strings.Trim(host, "[]")
 	if strings.EqualFold(host, "localhost") {
 		return nil
 	}
@@ -186,6 +201,30 @@ func validateSemanticJudgmentLoopbackHost(hostPort string) error {
 		return nil
 	}
 	return fmt.Errorf("request host must be loopback")
+}
+
+func semanticJudgmentRequestHostPort(hostPort string) string {
+	hostPort = strings.TrimSpace(hostPort)
+	if hostPort == "" {
+		return ""
+	}
+	return strings.ToLower(hostPort)
+}
+
+func semanticJudgmentRequestHost(hostPort string) string {
+	hostPort = strings.TrimSpace(hostPort)
+	if hostPort == "" {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(hostPort)
+	if err != nil {
+		host = hostPort
+	}
+	return strings.ToLower(strings.Trim(host, "[]"))
+}
+
+func semanticJudgmentNonRebindableHost(host string) bool {
+	return strings.EqualFold(host, "localhost") || strings.HasSuffix(strings.ToLower(host), ".localhost")
 }
 
 func loadSemanticJudgmentUIState(root string) (semanticJudgmentUIState, error) {
