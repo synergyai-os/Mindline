@@ -33,48 +33,56 @@ func readSemanticAcceptanceInput(runDir string) (SemanticSummary, []SemanticCand
 	if !isSemanticRoot(root) {
 		root = filepath.Join(runDir, "semantic-candidates")
 	}
-	summaryPath, err := containedSemanticAcceptancePath(root, "semantic-summary.json")
+	summary, candidates, err := readSemanticSummaryAndCandidates(root)
 	if err != nil {
 		return SemanticSummary{}, nil, nil, err
-	}
-	data, err := os.ReadFile(summaryPath)
-	if err != nil {
-		return SemanticSummary{}, nil, nil, fmt.Errorf("read semantic summary: %w", err)
-	}
-	var summary SemanticSummary
-	if err := json.Unmarshal(data, &summary); err != nil {
-		return SemanticSummary{}, nil, nil, fmt.Errorf("decode semantic summary: %w", err)
-	}
-	candidates := make([]SemanticCandidate, 0, len(summary.Candidates))
-	for _, item := range summary.Candidates {
-		if item.CandidatePath != SemanticCandidateJSONPath(item.CandidateID) {
-			return SemanticSummary{}, nil, nil, fmt.Errorf("unexpected semantic candidate path for %s: %s", item.CandidateID, item.CandidatePath)
-		}
-		candidatePath, err := containedSemanticAcceptancePath(root, item.CandidatePath)
-		if err != nil {
-			return SemanticSummary{}, nil, nil, err
-		}
-		candidateData, err := os.ReadFile(candidatePath)
-		if err != nil {
-			return SemanticSummary{}, nil, nil, fmt.Errorf("read semantic candidate: %w", err)
-		}
-		var candidate SemanticCandidate
-		if err := json.Unmarshal(candidateData, &candidate); err != nil {
-			return SemanticSummary{}, nil, nil, fmt.Errorf("decode semantic candidate: %w", err)
-		}
-		candidates = append(candidates, candidate)
-	}
-	candidates = finalizeSemanticCandidates(candidates)
-	for _, candidate := range candidates {
-		if err := ValidateSemanticCandidate(candidate); err != nil {
-			return SemanticSummary{}, nil, nil, fmt.Errorf("invalid semantic candidate: %w", err)
-		}
 	}
 	relations, err := readSemanticAcceptanceRelations(root, candidates)
 	if err != nil {
 		return SemanticSummary{}, nil, nil, err
 	}
 	return summary, orderSemanticCandidates(candidates), relations, nil
+}
+
+func readSemanticSummaryAndCandidates(root string) (SemanticSummary, []SemanticCandidate, error) {
+	summaryPath, err := containedSemanticAcceptancePath(root, "semantic-summary.json")
+	if err != nil {
+		return SemanticSummary{}, nil, err
+	}
+	data, err := os.ReadFile(summaryPath)
+	if err != nil {
+		return SemanticSummary{}, nil, fmt.Errorf("read semantic summary: %w", err)
+	}
+	var summary SemanticSummary
+	if err := json.Unmarshal(data, &summary); err != nil {
+		return SemanticSummary{}, nil, fmt.Errorf("decode semantic summary: %w", err)
+	}
+	candidates := make([]SemanticCandidate, 0, len(summary.Candidates))
+	for _, item := range summary.Candidates {
+		if item.CandidatePath != SemanticCandidateJSONPath(item.CandidateID) {
+			return SemanticSummary{}, nil, fmt.Errorf("unexpected semantic candidate path for %s: %s", item.CandidateID, item.CandidatePath)
+		}
+		candidatePath, err := containedSemanticAcceptancePath(root, item.CandidatePath)
+		if err != nil {
+			return SemanticSummary{}, nil, err
+		}
+		candidateData, err := os.ReadFile(candidatePath)
+		if err != nil {
+			return SemanticSummary{}, nil, fmt.Errorf("read semantic candidate: %w", err)
+		}
+		var candidate SemanticCandidate
+		if err := json.Unmarshal(candidateData, &candidate); err != nil {
+			return SemanticSummary{}, nil, fmt.Errorf("decode semantic candidate: %w", err)
+		}
+		candidates = append(candidates, candidate)
+	}
+	candidates = finalizeSemanticCandidates(candidates)
+	for _, candidate := range candidates {
+		if err := ValidateSemanticCandidate(candidate); err != nil {
+			return SemanticSummary{}, nil, fmt.Errorf("invalid semantic candidate: %w", err)
+		}
+	}
+	return summary, orderSemanticCandidates(candidates), nil
 }
 
 func readSemanticAcceptanceRelations(root string, candidates []SemanticCandidate) ([]SemanticRelation, error) {

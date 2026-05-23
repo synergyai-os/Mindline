@@ -485,7 +485,7 @@ func TestDocumentsJudgeServeStateAndRecord(t *testing.T) {
 	if _, err := html.ReadFrom(rec.Body); err != nil {
 		t.Fatalf("read ui html: %v", err)
 	}
-	for _, want := range []string{"Mindline Review", "Review", "Guide", "How to review", "Decision meanings", "remaining", "current-candidate", "decision-controls", "evidence", "Relation ids", "Blockers"} {
+	for _, want := range []string{"Mindline Review", "Review", "Guide", "How to review", "Decision meanings", "remaining", "current-candidate", "decision-controls", "evidence", "Relation context", "Other endpoint role", "Relation ids", "Blockers"} {
 		if !strings.Contains(html.String(), want) {
 			t.Fatalf("expected UI HTML to contain %q, got %s", want, html.String())
 		}
@@ -503,6 +503,12 @@ func TestDocumentsJudgeServeStateAndRecord(t *testing.T) {
 	}
 	if len(state.Page.Item.RelationIDs) == 0 || len(state.Page.Item.Blockers) == 0 {
 		t.Fatalf("expected fixture current item to exercise relations and blockers: %+v", state.Page.Item)
+	}
+	if len(state.Page.Item.RelationContext) == 0 {
+		t.Fatalf("expected UI state to include resolved relation context: %+v", state.Page.Item)
+	}
+	if strings.TrimSpace(state.Page.Item.RelationContext[0].OtherEndpoint.Role) == "" {
+		t.Fatalf("expected UI relation context to include other endpoint role: %+v", state.Page.Item.RelationContext[0])
 	}
 	firstCandidateID := state.Page.Item.CandidateID
 

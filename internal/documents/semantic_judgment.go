@@ -1,6 +1,7 @@
 package documents
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,7 +11,7 @@ import (
 )
 
 func JudgeSemanticCandidates(semanticRunDir, outDir string, options SemanticJudgmentOptions) (SemanticJudgmentSummary, error) {
-	semanticSummary, candidates, _, err := readSemanticAcceptanceInput(semanticRunDir)
+	semanticSummary, candidates, relations, observations, err := readSemanticJudgmentInput(semanticRunDir)
 	if err != nil {
 		return SemanticJudgmentSummary{}, err
 	}
@@ -18,12 +19,112 @@ func JudgeSemanticCandidates(semanticRunDir, outDir string, options SemanticJudg
 	if err != nil {
 		return SemanticJudgmentSummary{}, err
 	}
-	items := semanticJudgmentCandidates(candidates, source, nil)
+	items := semanticJudgmentCandidates(candidates, relations, observations, source, nil)
 	summary := BuildSemanticJudgmentSummary(semanticSummary.RunID, semanticSummary.SourceCount, items, nil)
 	if err := WriteSemanticJudgment(outDir, summary); err != nil {
 		return SemanticJudgmentSummary{}, err
 	}
 	return summary, nil
+}
+
+func readSemanticJudgmentInput(runDir string) (SemanticSummary, []SemanticCandidate, []SemanticRelation, []SemanticObservation, error) {
+	root := runDir
+	if !isSemanticRoot(root) {
+		root = filepath.Join(runDir, "semantic-candidates")
+	}
+	summary, candidates, err := readSemanticSummaryAndCandidates(root)
+	if err != nil {
+		return SemanticSummary{}, nil, nil, nil, err
+	}
+	relations, err := readSemanticJudgmentRelations(root, candidates)
+	if err != nil {
+		return SemanticSummary{}, nil, nil, nil, err
+	}
+	observations, err := readSemanticJudgmentObservations(root, candidates, relations)
+	if err != nil {
+		return SemanticSummary{}, nil, nil, nil, err
+	}
+	return summary, candidates, relations, observations, nil
+}
+
+func readSemanticJudgmentRelations(root string, candidates []SemanticCandidate) ([]SemanticRelation, error) {
+	seen := map[string]bool{}
+	var relations []SemanticRelation
+	for _, candidate := range candidates {
+		for _, relationID := range candidate.RelationIDs {
+			if seen[relationID] {
+				continue
+			}
+			seen[relationID] = true
+			relationPath, err := containedSemanticAcceptancePath(root, SemanticRelationJSONPath(relationID))
+			if err != nil {
+				return nil, err
+			}
+			data, err := os.ReadFile(relationPath)
+			if os.IsNotExist(err) {
+				continue
+			}
+			if err != nil {
+				return nil, fmt.Errorf("read semantic relation: %w", err)
+			}
+			var relation SemanticRelation
+			if err := json.Unmarshal(data, &relation); err != nil {
+				return nil, fmt.Errorf("decode semantic relation: %w", err)
+			}
+			if err := ValidateSemanticRelation(relation); err != nil {
+				return nil, fmt.Errorf("invalid semantic relation: %w", err)
+			}
+			relations = append(relations, relation)
+		}
+	}
+	return orderSemanticRelations(relations), nil
+}
+
+func readSemanticJudgmentObservations(root string, candidates []SemanticCandidate, relations []SemanticRelation) ([]SemanticObservation, error) {
+	seen := map[string]bool{}
+	var observations []SemanticObservation
+	for _, observationID := range semanticJudgmentObservationIDs(candidates, relations) {
+		if seen[observationID] {
+			continue
+		}
+		seen[observationID] = true
+		observationPath, err := containedSemanticAcceptancePath(root, SemanticObservationJSONPath(observationID))
+		if err != nil {
+			return nil, err
+		}
+		data, err := os.ReadFile(observationPath)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			continue
+		}
+		var observation SemanticObservation
+		if err := json.Unmarshal(data, &observation); err != nil {
+			continue
+		}
+		if err := ValidateSemanticObservation(observation); err != nil {
+			continue
+		}
+		observations = append(observations, observation)
+	}
+	return orderSemanticObservations(observations), nil
+}
+
+func semanticJudgmentObservationIDs(candidates []SemanticCandidate, relations []SemanticRelation) []string {
+	var ids []string
+	for _, candidate := range candidates {
+		ids = append(ids, candidate.ObservationIDs...)
+	}
+	for _, relation := range relations {
+		if relation.FromType == SemanticRelationEndpointObservation {
+			ids = append(ids, relation.FromID)
+		}
+		if relation.ToType == SemanticRelationEndpointObservation {
+			ids = append(ids, relation.ToID)
+		}
+	}
+	return ids
 }
 
 func NextSemanticJudgmentPage(inputDir string) (SemanticJudgmentPage, error) {
@@ -166,8 +267,11 @@ func withSemanticJudgmentBundleLock(root string, fn func() error) error {
 	}
 }
 
-func semanticJudgmentCandidates(candidates []SemanticCandidate, source semanticCalibrationSourceContext, judgments []SemanticJudgmentRecord) []SemanticJudgmentCandidate {
+func semanticJudgmentCandidates(candidates []SemanticCandidate, relations []SemanticRelation, observations []SemanticObservation, source semanticCalibrationSourceContext, judgments []SemanticJudgmentRecord) []SemanticJudgmentCandidate {
 	judged := semanticJudgmentsByCandidate(judgments)
+	relationByID := semanticRelationsByID(relations)
+	candidateByID := semanticCandidatesByID(candidates)
+	observationByID := semanticObservationsByID(observations)
 	out := make([]SemanticJudgmentCandidate, 0, len(candidates))
 	for _, candidate := range orderSemanticCandidates(candidates) {
 		item := SemanticJudgmentCandidate{
@@ -184,12 +288,108 @@ func semanticJudgmentCandidates(candidates []SemanticCandidate, source semanticC
 			EvidenceRanges:   cloneSemanticEvidenceRanges(candidate.EvidenceRanges),
 			EvidenceExcerpts: semanticCalibrationEvidenceExcerpts(source, candidate.EvidenceRanges),
 			RelationIDs:      cloneStringList(candidate.RelationIDs),
+			RelationContext:  semanticJudgmentRelationContext(candidate, relationByID, candidateByID, observationByID),
 			Blockers:         cloneBlockerList(candidate.Blockers),
 			Judgment:         judged[candidate.CandidateID],
 		}
 		out = append(out, item)
 	}
 	return out
+}
+
+func semanticJudgmentRelationContext(candidate SemanticCandidate, relationByID map[string]SemanticRelation, candidateByID map[string]SemanticCandidate, observationByID map[string]SemanticObservation) []SemanticJudgmentRelationContext {
+	context := make([]SemanticJudgmentRelationContext, 0, len(candidate.RelationIDs))
+	for _, relationID := range candidate.RelationIDs {
+		relation, ok := relationByID[relationID]
+		if !ok {
+			continue
+		}
+		context = append(context, SemanticJudgmentRelationContext{
+			RelationID:       relation.RelationID,
+			RelationshipType: relation.RelationshipType,
+			FromID:           relation.FromID,
+			FromType:         relation.FromType,
+			ToID:             relation.ToID,
+			ToType:           relation.ToType,
+			Confidence:       relation.Confidence,
+			ReviewStatus:     relation.ReviewStatus,
+			EvidenceNodes:    cloneStringList(relation.EvidenceNodes),
+			Blockers:         cloneBlockerList(relation.Blockers),
+			OtherEndpoint:    semanticJudgmentOtherEndpoint(candidate.CandidateID, relation, candidateByID, observationByID),
+			ReviewHint:       semanticJudgmentRelationHint(relation.RelationshipType),
+		})
+	}
+	return context
+}
+
+func semanticJudgmentOtherEndpoint(candidateID string, relation SemanticRelation, candidateByID map[string]SemanticCandidate, observationByID map[string]SemanticObservation) SemanticJudgmentEndpointContext {
+	endpointID := relation.ToID
+	endpointType := relation.ToType
+	role := "to"
+	if relation.FromID == candidateID {
+		endpointID = relation.ToID
+		endpointType = relation.ToType
+		role = "to"
+	} else if relation.ToID == candidateID {
+		endpointID = relation.FromID
+		endpointType = relation.FromType
+		role = "from"
+	} else {
+		return SemanticJudgmentEndpointContext{
+			Role:              "unknown",
+			Unavailable:       true,
+			UnavailableReason: "relation does not reference current candidate",
+		}
+	}
+	context := SemanticJudgmentEndpointContext{EndpointID: endpointID, EndpointType: endpointType, Role: role}
+	switch endpointType {
+	case SemanticRelationEndpointCandidate:
+		if candidate, ok := candidateByID[endpointID]; ok {
+			context.Label = semanticJudgmentEndpointLabel(candidate.Title)
+			context.Summary = semanticJudgmentEndpointSummary(candidate.Summary)
+			return context
+		}
+	case SemanticRelationEndpointObservation:
+		if observation, ok := observationByID[endpointID]; ok {
+			context.Label = semanticJudgmentEndpointLabel(observation.Title)
+			context.Summary = semanticJudgmentEndpointSummary(observation.Summary)
+			return context
+		}
+	}
+	context.Unavailable = true
+	context.UnavailableReason = "endpoint context unavailable"
+	return context
+}
+
+func semanticJudgmentEndpointLabel(value string) string {
+	return trimSemanticText(strings.Join(strings.Fields(value), " "), 96)
+}
+
+func semanticJudgmentEndpointSummary(value string) string {
+	return semanticSummaryText(value)
+}
+
+func semanticJudgmentRelationHint(relationship SemanticRelationshipType) string {
+	switch relationship {
+	case SemanticRelationshipDerivedFrom:
+		return "This is the evidence link from the candidate back to the source observation or structure."
+	case SemanticRelationshipContradicts:
+		return "This candidate conflicts with another semantic object; inspect whether it is stale, resolved, or should be marked unclear/reject."
+	case SemanticRelationshipSupersedes:
+		return "This candidate may replace an older semantic object; check whether the older item should not be accepted as current."
+	case SemanticRelationshipSameTopicAs:
+		return "This candidate overlaps another semantic object; use duplicate when it repeats the same useful object."
+	case SemanticRelationshipDependsOn:
+		return "This candidate depends on another object; check whether it is actionable or incomplete without that dependency."
+	case SemanticRelationshipAssignsAction:
+		return "This relation suggests ownership or assignment; check whether the action candidate has the right owner/scope."
+	case SemanticRelationshipMentionsOwner:
+		return "This relation contributes owner context; check whether the candidate uses it correctly."
+	case SemanticRelationshipMentionsDeadline:
+		return "This relation contributes deadline context; check whether the candidate uses it correctly."
+	default:
+		return "Use this relation to decide whether the candidate is supported, duplicated, stale, or incomplete."
+	}
 }
 
 func BuildSemanticJudgmentSummary(runID string, sourceCount int, items []SemanticJudgmentCandidate, judgments []SemanticJudgmentRecord) SemanticJudgmentSummary {
@@ -200,6 +400,12 @@ func BuildSemanticJudgmentSummary(runID string, sourceCount int, items []Semanti
 		SemanticJudgmentChoiceDuplicate: 0,
 		SemanticJudgmentChoiceWrongKind: 0,
 	}
+	byKind := map[SemanticCandidateKind]map[SemanticJudgmentChoice]int{}
+	byConfidence := map[Confidence]map[SemanticJudgmentChoice]int{}
+	byReviewStatus := map[ReviewStatus]map[SemanticJudgmentChoice]int{}
+	bySource := map[string]map[SemanticJudgmentChoice]int{}
+	byRelationPresence := map[string]map[SemanticJudgmentChoice]int{}
+	byRelationType := map[SemanticRelationshipType]map[SemanticJudgmentChoice]int{}
 	accepted := 0
 	rejected := 0
 	unclear := 0
@@ -221,6 +427,22 @@ func BuildSemanticJudgmentSummary(runID string, sourceCount int, items []Semanti
 		if judgment != nil {
 			choice = judgment.Choice
 			judgmentPath = SemanticJudgmentRecordJSONPath(item.CandidateID)
+			incrementSemanticJudgmentGroup(byKind, item.CandidateKind, choice)
+			incrementSemanticJudgmentGroup(byConfidence, item.Confidence, choice)
+			incrementSemanticJudgmentGroup(byReviewStatus, item.ReviewStatus, choice)
+			sourceKey := item.SourceDocumentID
+			if sourceKey == "" {
+				sourceKey = "unknown_source"
+			}
+			incrementSemanticJudgmentGroup(bySource, sourceKey, choice)
+			presenceKey := "without_relations"
+			if len(item.RelationIDs) > 0 {
+				presenceKey = "with_relations"
+			}
+			incrementSemanticJudgmentGroup(byRelationPresence, presenceKey, choice)
+			for _, relationType := range distinctSemanticJudgmentRelationTypes(item.RelationContext) {
+				incrementSemanticJudgmentGroup(byRelationType, relationType, choice)
+			}
 			switch judgment.Choice {
 			case SemanticJudgmentChoiceAccept:
 				accepted++
@@ -255,29 +477,80 @@ func BuildSemanticJudgmentSummary(runID string, sourceCount int, items []Semanti
 	remaining := len(items) - judgedCount
 	reviewBurden := remaining + rejected + unclear + duplicate + wrongKind
 	return SemanticJudgmentSummary{
-		SchemaVersion:     SemanticJudgmentSummarySchemaVersion,
-		RunID:             runID,
-		SourceCount:       sourceCount,
-		CandidateCount:    len(items),
-		JudgedCount:       judgedCount,
-		RemainingCount:    remaining,
-		AcceptedCount:     accepted,
-		RejectedCount:     rejected,
-		UnclearCount:      unclear,
-		DuplicateCount:    duplicate,
-		WrongKindCount:    wrongKind,
-		BlockedCount:      blocked,
-		SkippedCount:      skipped,
-		ReviewBurdenCount: reviewBurden,
-		PrecisionEstimate: ratio(accepted, judgedCount),
-		FailureModeCounts: counts,
-		QualityStatement:  "Judgments are calibration evidence only; no-human readiness still requires held-out >=98% accuracy.",
-		CursorPath:        "cursor.json",
-		ReportPath:        "reports/judgment-report.md",
-		Candidates:        summaries,
-		Items:             items,
-		Judgments:         orderSemanticJudgmentRecords(judgments),
+		SchemaVersion:              SemanticJudgmentSummarySchemaVersion,
+		RunID:                      runID,
+		SourceCount:                sourceCount,
+		CandidateCount:             len(items),
+		JudgedCount:                judgedCount,
+		RemainingCount:             remaining,
+		AcceptedCount:              accepted,
+		RejectedCount:              rejected,
+		UnclearCount:               unclear,
+		DuplicateCount:             duplicate,
+		WrongKindCount:             wrongKind,
+		BlockedCount:               blocked,
+		SkippedCount:               skipped,
+		ReviewBurdenCount:          reviewBurden,
+		PrecisionEstimate:          ratio(accepted, judgedCount),
+		FailureModeCounts:          counts,
+		JudgmentByCandidateKind:    byKind,
+		JudgmentByConfidence:       byConfidence,
+		JudgmentByReviewStatus:     byReviewStatus,
+		JudgmentBySourceDocument:   bySource,
+		JudgmentByRelationPresence: byRelationPresence,
+		JudgmentByRelationType:     byRelationType,
+		QualityStatement:           "Judgments are calibration evidence only; no-human readiness still requires held-out >=98% accuracy.",
+		CursorPath:                 "cursor.json",
+		ReportPath:                 "reports/judgment-report.md",
+		Candidates:                 summaries,
+		Items:                      items,
+		Judgments:                  orderSemanticJudgmentRecords(judgments),
 	}
+}
+
+func incrementSemanticJudgmentGroup[K comparable](groups map[K]map[SemanticJudgmentChoice]int, key K, choice SemanticJudgmentChoice) {
+	if groups[key] == nil {
+		groups[key] = map[SemanticJudgmentChoice]int{}
+	}
+	groups[key][choice]++
+}
+
+func distinctSemanticJudgmentRelationTypes(context []SemanticJudgmentRelationContext) []SemanticRelationshipType {
+	seen := map[SemanticRelationshipType]bool{}
+	var out []SemanticRelationshipType
+	for _, relation := range context {
+		if seen[relation.RelationshipType] {
+			continue
+		}
+		seen[relation.RelationshipType] = true
+		out = append(out, relation.RelationshipType)
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
+func semanticRelationsByID(relations []SemanticRelation) map[string]SemanticRelation {
+	out := map[string]SemanticRelation{}
+	for _, relation := range relations {
+		out[relation.RelationID] = relation
+	}
+	return out
+}
+
+func semanticCandidatesByID(candidates []SemanticCandidate) map[string]SemanticCandidate {
+	out := map[string]SemanticCandidate{}
+	for _, candidate := range candidates {
+		out[candidate.CandidateID] = candidate
+	}
+	return out
+}
+
+func semanticObservationsByID(observations []SemanticObservation) map[string]SemanticObservation {
+	out := map[string]SemanticObservation{}
+	for _, observation := range observations {
+		out[observation.ObservationID] = observation
+	}
+	return out
 }
 
 func readSemanticJudgmentSummary(root string) (SemanticJudgmentSummary, error) {
@@ -420,6 +693,12 @@ func ValidateSemanticJudgmentSummary(summary SemanticJudgmentSummary) error {
 	for _, judgment := range summary.Judgments {
 		body += "\n" + semanticJudgmentRecordBody(judgment)
 	}
+	body += "\n" + semanticJudgmentChoiceGroupBody(summary.JudgmentByCandidateKind)
+	body += "\n" + semanticJudgmentChoiceGroupBody(summary.JudgmentByConfidence)
+	body += "\n" + semanticJudgmentChoiceGroupBody(summary.JudgmentByReviewStatus)
+	body += "\n" + semanticJudgmentChoiceGroupBody(summary.JudgmentBySourceDocument)
+	body += "\n" + semanticJudgmentChoiceGroupBody(summary.JudgmentByRelationPresence)
+	body += "\n" + semanticJudgmentChoiceGroupBody(summary.JudgmentByRelationType)
 	if containsUnsafeMarker(body) || containsGovernanceID(body) {
 		return fmt.Errorf("semantic judgment output contains private marker")
 	}
@@ -469,6 +748,17 @@ func ValidateSemanticJudgmentRecord(record SemanticJudgmentRecord) error {
 	return nil
 }
 
+func semanticJudgmentChoiceGroupBody[K ~string](groups map[K]map[SemanticJudgmentChoice]int) string {
+	var b strings.Builder
+	for key, counts := range groups {
+		b.WriteString("\n" + string(key))
+		for choice := range counts {
+			b.WriteString("\n" + string(choice))
+		}
+	}
+	return b.String()
+}
+
 func semanticJudgmentCandidateBody(item SemanticJudgmentCandidate) string {
 	var b strings.Builder
 	b.WriteString(item.RunID + "\n" + item.CandidateID + "\n" + item.SourceDocumentID)
@@ -479,6 +769,16 @@ func semanticJudgmentCandidateBody(item SemanticJudgmentCandidate) string {
 	}
 	for _, excerpt := range item.EvidenceExcerpts {
 		b.WriteString("\n" + excerpt.SourceLabel + "\n" + excerpt.StructureNodeID + "\n" + excerpt.Text + "\n" + excerpt.UnavailableReason)
+	}
+	for _, relation := range item.RelationContext {
+		b.WriteString("\n" + relation.RelationID + "\n" + string(relation.RelationshipType))
+		b.WriteString("\n" + relation.FromID + "\n" + string(relation.FromType) + "\n" + relation.ToID + "\n" + string(relation.ToType))
+		b.WriteString("\n" + string(relation.Confidence) + "\n" + string(relation.ReviewStatus) + "\n" + strings.Join(relation.EvidenceNodes, "\n") + "\n" + relation.ReviewHint)
+		b.WriteString("\n" + relation.OtherEndpoint.EndpointID + "\n" + string(relation.OtherEndpoint.EndpointType) + "\n" + relation.OtherEndpoint.Role)
+		b.WriteString("\n" + relation.OtherEndpoint.Label + "\n" + relation.OtherEndpoint.Summary + "\n" + relation.OtherEndpoint.UnavailableReason)
+		for _, blocker := range relation.Blockers {
+			b.WriteString("\n" + blocker.Code + "\n" + blocker.Message)
+		}
 	}
 	for _, blocker := range item.Blockers {
 		b.WriteString("\n" + blocker.Code + "\n" + blocker.Message)
@@ -538,6 +838,47 @@ func semanticJudgmentPageMarkdown(item SemanticJudgmentCandidate, cursor Semanti
 		b.WriteString(fmt.Sprintf("### %s lines %d-%d\n\n", excerpt.SourceLabel, excerpt.LineStart, excerpt.LineEnd))
 		b.WriteString(excerpt.Text + "\n")
 	}
+	b.WriteString("\n## Relation context\n\n")
+	if len(item.RelationContext) == 0 {
+		if len(item.RelationIDs) == 0 {
+			b.WriteString("- No relations\n")
+		} else {
+			b.WriteString("- Relation context unavailable for: " + strings.Join(item.RelationIDs, ", ") + "\n")
+		}
+	} else {
+		for _, relation := range item.RelationContext {
+			b.WriteString(fmt.Sprintf("### %s (%s)\n\n", relation.RelationID, relation.RelationshipType))
+			b.WriteString(fmt.Sprintf("- From: %s `%s`\n", relation.FromType, relation.FromID))
+			b.WriteString(fmt.Sprintf("- To: %s `%s`\n", relation.ToType, relation.ToID))
+			b.WriteString(fmt.Sprintf("- Confidence: %s\n", relation.Confidence))
+			b.WriteString(fmt.Sprintf("- Review status: %s\n", relation.ReviewStatus))
+			if len(relation.EvidenceNodes) > 0 {
+				b.WriteString("- Evidence nodes: " + strings.Join(relation.EvidenceNodes, ", ") + "\n")
+			}
+			b.WriteString("- Review hint: " + relation.ReviewHint + "\n")
+			b.WriteString("- Other endpoint role: " + fallbackText(relation.OtherEndpoint.Role, "unknown") + "\n")
+			b.WriteString("- Other endpoint: " + semanticJudgmentEndpointMarkdown(relation.OtherEndpoint) + "\n")
+			for _, blocker := range relation.Blockers {
+				b.WriteString(fmt.Sprintf("- Blocker: %s - %s\n", blocker.Code, blocker.Message))
+			}
+			b.WriteString("\n")
+		}
+		if len(item.RelationIDs) > len(item.RelationContext) {
+			loaded := map[string]bool{}
+			for _, relation := range item.RelationContext {
+				loaded[relation.RelationID] = true
+			}
+			var missing []string
+			for _, relationID := range item.RelationIDs {
+				if !loaded[relationID] {
+					missing = append(missing, relationID)
+				}
+			}
+			if len(missing) > 0 {
+				b.WriteString("- Relation context unavailable for: " + strings.Join(missing, ", ") + "\n")
+			}
+		}
+	}
 	b.WriteString("\n## Adjudication choices\n\n")
 	b.WriteString("- accept - useful, correct, and evidence-supported\n")
 	b.WriteString("- reject - should not have been emitted\n")
@@ -545,6 +886,19 @@ func semanticJudgmentPageMarkdown(item SemanticJudgmentCandidate, cursor Semanti
 	b.WriteString("- duplicate - repeats another candidate\n")
 	b.WriteString("- wrong-kind - useful content but wrong candidate type or scope\n")
 	return b.String()
+}
+
+func semanticJudgmentEndpointMarkdown(endpoint SemanticJudgmentEndpointContext) string {
+	if endpoint.Unavailable {
+		reason := endpoint.UnavailableReason
+		if reason == "" {
+			reason = "endpoint context unavailable"
+		}
+		return fmt.Sprintf("%s `%s` (%s)", endpoint.EndpointType, endpoint.EndpointID, reason)
+	}
+	label := fallbackText(endpoint.Label, "no label")
+	summary := fallbackText(endpoint.Summary, "no summary")
+	return fmt.Sprintf("%s `%s` - %s; %s", endpoint.EndpointType, endpoint.EndpointID, label, summary)
 }
 
 func fallbackText(value, fallback string) string {

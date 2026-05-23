@@ -415,6 +415,18 @@ section { min-width: 0; }
   overflow-wrap: anywhere;
   font-size: 14px;
 }
+.relation-list { display: grid; gap: 10px; }
+.relation-card {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  background: #fbfbf9;
+  padding: 10px 12px;
+  display: grid;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
+.relation-card p { margin: 0; }
 .muted { color: var(--muted); }
 aside { padding: 16px; align-self: start; display: grid; gap: 14px; }
 textarea {
@@ -604,6 +616,7 @@ function renderReview(page, summary) {
   const sourceTag = item.source_document_id ? "<span class=\"tag\">" + escapeHtml(item.source_document_id) + "</span>" : "";
   const rangesHtml = ranges || "<span class=\"tag\">No evidence ranges</span>";
   const relationIds = (item.relation_ids || []).map(id => "<span class=\"tag\">" + escapeHtml(id) + "</span>").join("") || "<span class=\"tag\">No relation ids</span>";
+  const relationContext = renderRelationContext(item);
   const blockers = (item.blockers || []).map(blocker => "<div class=\"evidence warn\"><strong>" + escapeHtml(blocker.code || "blocker") + "</strong>\n" + escapeHtml(blocker.message || "No blocker message") + "</div>").join("") || "<div class=\"evidence muted\">No blockers</div>";
   document.getElementById("current-candidate").innerHTML =
     "<div class=\"candidate-head\">" +
@@ -620,6 +633,7 @@ function renderReview(page, summary) {
       "<div><h3>Summary</h3><p class=\"summary\">" + escapeHtml(item.summary || "No summary") + "</p></div>" +
       "<div><h3>Evidence</h3><div class=\"tags\">" + rangesHtml + "</div></div>" +
       "<div class=\"evidence-list\">" + excerpts + "</div>" +
+      "<div><h3>Relation context</h3>" + relationContext + "</div>" +
       "<div><h3>Relation ids</h3><div class=\"tags\">" + relationIds + "</div></div>" +
       "<div><h3>Blockers</h3><div class=\"evidence-list\">" + blockers + "</div></div>" +
     "</div>";
@@ -627,6 +641,44 @@ function renderReview(page, summary) {
   for (const button of document.querySelectorAll("[data-choice]")) {
     button.addEventListener("click", () => submitChoice(button.dataset.choice));
   }
+}
+
+function renderRelationContext(item) {
+  const contexts = item.relation_context || [];
+  if (contexts.length === 0) {
+    if ((item.relation_ids || []).length === 0) {
+      return "<div class=\"evidence muted\">No relations</div>";
+    }
+    return "<div class=\"evidence muted\">Relation context unavailable for: " + escapeHtml(item.relation_ids.join(", ")) + "</div>";
+  }
+  const loaded = new Set(contexts.map(relation => relation.relation_id));
+  const missing = (item.relation_ids || []).filter(id => !loaded.has(id));
+  const cards = contexts.map(relation => {
+    const endpoint = relation.other_endpoint || {};
+    const endpointText = endpoint.unavailable
+      ? escapeHtml((endpoint.endpoint_type || "endpoint") + " " + (endpoint.endpoint_id || "") + " - " + (endpoint.unavailable_reason || "endpoint context unavailable"))
+      : escapeHtml((endpoint.endpoint_type || "endpoint") + " " + (endpoint.endpoint_id || "") + " - " + (endpoint.label || "no label") + "; " + (endpoint.summary || "no summary"));
+    const endpointRole = endpoint.role ? escapeHtml(endpoint.role) : "unknown";
+    const blockers = (relation.blockers || []).map(blocker => "<p><strong>Blocker:</strong> " + escapeHtml(blocker.code || "blocker") + " - " + escapeHtml(blocker.message || "No blocker message") + "</p>").join("");
+    return "<div class=\"relation-card\">" +
+      "<div class=\"tags\">" +
+        "<span class=\"tag\">" + escapeHtml(relation.relationship_type) + "</span>" +
+        "<span class=\"tag\">" + escapeHtml(relation.confidence) + "</span>" +
+        "<span class=\"tag\">" + escapeHtml(relation.review_status) + "</span>" +
+        "<span class=\"tag\">" + escapeHtml(relation.relation_id) + "</span>" +
+      "</div>" +
+      "<p><strong>From:</strong> " + escapeHtml(relation.from_type) + " " + escapeHtml(relation.from_id) + "</p>" +
+      "<p><strong>To:</strong> " + escapeHtml(relation.to_type) + " " + escapeHtml(relation.to_id) + "</p>" +
+      "<p><strong>Other endpoint role:</strong> " + endpointRole + "</p>" +
+      "<p><strong>Other endpoint:</strong> " + endpointText + "</p>" +
+      "<p><strong>Review hint:</strong> " + escapeHtml(relation.review_hint || "Use this relation to judge the candidate.") + "</p>" +
+      blockers +
+    "</div>";
+  });
+  if (missing.length > 0) {
+    cards.push("<div class=\"evidence muted\">Relation context unavailable for: " + escapeHtml(missing.join(", ")) + "</div>");
+  }
+  return "<div class=\"relation-list\">" + cards.join("") + "</div>";
 }
 
 async function submitChoice(choice) {
