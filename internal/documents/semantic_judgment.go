@@ -268,6 +268,14 @@ func readSemanticJudgmentSummary(root string) (SemanticJudgmentSummary, error) {
 	return summary, nil
 }
 
+func ReadSemanticJudgmentSummary(inputDir string) (SemanticJudgmentSummary, error) {
+	root, err := resolveSemanticJudgmentRoot(inputDir)
+	if err != nil {
+		return SemanticJudgmentSummary{}, err
+	}
+	return readSemanticJudgmentSummary(root)
+}
+
 func readSemanticJudgmentBundle(root string, summary SemanticJudgmentSummary) ([]SemanticJudgmentCandidate, []SemanticJudgmentRecord, error) {
 	items := make([]SemanticJudgmentCandidate, 0, len(summary.Candidates))
 	judgments := make([]SemanticJudgmentRecord, 0)
