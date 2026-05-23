@@ -60,9 +60,6 @@ func NextSemanticJudgmentPage(inputDir string) (SemanticJudgmentPage, error) {
 		RemainingCount: len(items) - len(judgments),
 		Exhausted:      next == nil,
 	}
-	if err := writeJSON(root, "cursor.json", cursor); err != nil {
-		return SemanticJudgmentPage{}, ArtifactWriteError{Err: err}
-	}
 	if next == nil {
 		return SemanticJudgmentPage{
 			SchemaVersion: SemanticJudgmentPageSchemaVersion,
@@ -87,56 +84,86 @@ func RecordSemanticJudgment(inputDir string, input SemanticJudgmentRecordInput) 
 	if !validSemanticJudgmentChoice(input.Choice) {
 		return SemanticJudgmentSummary{}, fmt.Errorf("unsupported semantic judgment choice: %s", input.Choice)
 	}
-	summary, err := readSemanticJudgmentSummary(root)
-	if err != nil {
-		return SemanticJudgmentSummary{}, err
-	}
-	items, judgments, err := readSemanticJudgmentBundle(root, summary)
-	if err != nil {
-		return SemanticJudgmentSummary{}, err
-	}
-	if semanticJudgmentsByCandidate(judgments)[input.CandidateID] != nil {
-		return SemanticJudgmentSummary{}, fmt.Errorf("semantic judgment already exists: %s", input.CandidateID)
-	}
-	var target *SemanticJudgmentCandidate
-	for i := range items {
-		if items[i].CandidateID == input.CandidateID {
-			target = &items[i]
-			break
+	var updated SemanticJudgmentSummary
+	err = withSemanticJudgmentBundleLock(root, func() error {
+		summary, err := readSemanticJudgmentSummary(root)
+		if err != nil {
+			return err
 		}
-	}
-	if target == nil {
-		return SemanticJudgmentSummary{}, fmt.Errorf("unknown semantic judgment candidate: %s", input.CandidateID)
-	}
-	recordedAt := input.RecordedAt
-	if recordedAt.IsZero() {
-		recordedAt = time.Now().UTC()
-	}
-	record := SemanticJudgmentRecord{
-		SchemaVersion:    SemanticJudgmentRecordSchemaVersion,
-		RunID:            target.RunID,
-		CandidateID:      target.CandidateID,
-		SourceDocumentID: target.SourceDocumentID,
-		CandidateKind:    target.CandidateKind,
-		Confidence:       target.Confidence,
-		Choice:           input.Choice,
-		Note:             strings.TrimSpace(input.Note),
-		ReviewerID:       strings.TrimSpace(input.ReviewerID),
-		RecordedAt:       recordedAt.UTC().Format(time.RFC3339),
-	}
-	if err := ValidateSemanticJudgmentRecord(record); err != nil {
-		return SemanticJudgmentSummary{}, err
-	}
-	judgments = append(judgments, record)
-	judgedByCandidate := semanticJudgmentsByCandidate(judgments)
-	for i := range items {
-		items[i].Judgment = judgedByCandidate[items[i].CandidateID]
-	}
-	updated := BuildSemanticJudgmentSummary(summary.RunID, summary.SourceCount, items, judgments)
-	if err := WriteSemanticJudgmentRoot(root, updated); err != nil {
+		items, judgments, err := readSemanticJudgmentBundle(root, summary)
+		if err != nil {
+			return err
+		}
+		if semanticJudgmentsByCandidate(judgments)[input.CandidateID] != nil {
+			return fmt.Errorf("semantic judgment already exists: %s", input.CandidateID)
+		}
+		var target *SemanticJudgmentCandidate
+		for i := range items {
+			if items[i].CandidateID == input.CandidateID {
+				target = &items[i]
+				break
+			}
+		}
+		if target == nil {
+			return fmt.Errorf("unknown semantic judgment candidate: %s", input.CandidateID)
+		}
+		recordedAt := input.RecordedAt
+		if recordedAt.IsZero() {
+			recordedAt = time.Now().UTC()
+		}
+		record := SemanticJudgmentRecord{
+			SchemaVersion:    SemanticJudgmentRecordSchemaVersion,
+			RunID:            target.RunID,
+			CandidateID:      target.CandidateID,
+			SourceDocumentID: target.SourceDocumentID,
+			CandidateKind:    target.CandidateKind,
+			Confidence:       target.Confidence,
+			Choice:           input.Choice,
+			Note:             strings.TrimSpace(input.Note),
+			ReviewerID:       strings.TrimSpace(input.ReviewerID),
+			RecordedAt:       recordedAt.UTC().Format(time.RFC3339),
+		}
+		if err := ValidateSemanticJudgmentRecord(record); err != nil {
+			return err
+		}
+		judgments = append(judgments, record)
+		judgedByCandidate := semanticJudgmentsByCandidate(judgments)
+		for i := range items {
+			items[i].Judgment = judgedByCandidate[items[i].CandidateID]
+		}
+		updated = BuildSemanticJudgmentSummary(summary.RunID, summary.SourceCount, items, judgments)
+		if err := writeSemanticJudgmentRoot(root, updated); err != nil {
+			return ArtifactWriteError{Err: err}
+		}
+		return nil
+	})
+	if err != nil {
 		return SemanticJudgmentSummary{}, err
 	}
 	return updated, nil
+}
+
+func withSemanticJudgmentBundleLock(root string, fn func() error) error {
+	lockDir := filepath.Join(root, ".semantic-judgment.lock")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		err := os.Mkdir(lockDir, 0o700)
+		if err == nil {
+			defer os.Remove(lockDir)
+			return fn()
+		}
+		if !os.IsExist(err) {
+			return err
+		}
+		info, statErr := os.Lstat(lockDir)
+		if statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("semantic judgment lock path is unsafe")
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out waiting for semantic judgment lock")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 func semanticJudgmentCandidates(candidates []SemanticCandidate, source semanticCalibrationSourceContext, judgments []SemanticJudgmentRecord) []SemanticJudgmentCandidate {

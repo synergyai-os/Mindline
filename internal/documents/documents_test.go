@@ -3,6 +3,7 @@ package documents
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -2464,6 +2465,87 @@ func TestSemanticJudgmentRecordsChoiceAndUpdatesReport(t *testing.T) {
 	}
 	if !strings.Contains(string(report), "Accepted: 1") || !strings.Contains(string(report), "Review burden: 1") {
 		t.Fatalf("report did not update counts:\n%s", string(report))
+	}
+}
+
+func TestSemanticJudgmentSerializesConcurrentRecords(t *testing.T) {
+	node := validStructureNode()
+	candidate := validSemanticCandidate(validSemanticObservation(node), node)
+	semanticRun := writeSemanticAcceptanceRun(t, []SemanticCandidate{candidate})
+	out := t.TempDir()
+	if _, err := JudgeSemanticCandidates(semanticRun, out, SemanticJudgmentOptions{}); err != nil {
+		t.Fatalf("judge semantic candidates: %v", err)
+	}
+	root := filepath.Join(out, "semantic-judgment")
+
+	const attempts = 12
+	start := make(chan struct{})
+	results := make(chan error, attempts)
+	for i := 0; i < attempts; i++ {
+		i := i
+		go func() {
+			<-start
+			choice := SemanticJudgmentChoiceReject
+			if i%2 == 0 {
+				choice = SemanticJudgmentChoiceAccept
+			}
+			_, err := RecordSemanticJudgment(root, SemanticJudgmentRecordInput{
+				CandidateID: candidate.CandidateID,
+				Choice:      choice,
+				ReviewerID:  fmt.Sprintf("reviewer-%d", i),
+				RecordedAt:  fixedTestTime(),
+			})
+			results <- err
+		}()
+	}
+	close(start)
+
+	successes := 0
+	for i := 0; i < attempts; i++ {
+		err := <-results
+		if err == nil {
+			successes++
+			continue
+		}
+		if !strings.Contains(err.Error(), "semantic judgment already exists") {
+			t.Fatalf("expected duplicate judgment error, got %v", err)
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("expected exactly one concurrent judgment success, got %d", successes)
+	}
+	summary, err := ReadSemanticJudgmentSummary(root)
+	if err != nil {
+		t.Fatalf("read semantic judgment summary: %v", err)
+	}
+	if summary.JudgedCount != 1 || summary.RemainingCount != 0 {
+		t.Fatalf("expected one durable judgment after concurrent writes: %+v", summary)
+	}
+}
+
+func TestSemanticJudgmentNextPageDoesNotMutateCursorArtifact(t *testing.T) {
+	node := validStructureNode()
+	candidate := validSemanticCandidate(validSemanticObservation(node), node)
+	semanticRun := writeSemanticAcceptanceRun(t, []SemanticCandidate{candidate})
+	out := t.TempDir()
+	if _, err := JudgeSemanticCandidates(semanticRun, out, SemanticJudgmentOptions{}); err != nil {
+		t.Fatalf("judge semantic candidates: %v", err)
+	}
+	root := filepath.Join(out, "semantic-judgment")
+	cursorPath := filepath.Join(root, "cursor.json")
+	oldTime := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
+	if err := os.Chtimes(cursorPath, oldTime, oldTime); err != nil {
+		t.Fatalf("set cursor timestamp: %v", err)
+	}
+	if _, err := NextSemanticJudgmentPage(root); err != nil {
+		t.Fatalf("next semantic judgment page: %v", err)
+	}
+	info, err := os.Stat(cursorPath)
+	if err != nil {
+		t.Fatalf("stat cursor: %v", err)
+	}
+	if !info.ModTime().Equal(oldTime) {
+		t.Fatalf("next page should not rewrite cursor artifact; got modtime %s want %s", info.ModTime(), oldTime)
 	}
 }
 

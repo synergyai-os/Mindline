@@ -1,11 +1,16 @@
 package cli
 
 import (
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"mime"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -25,7 +30,19 @@ type semanticJudgmentUIPost struct {
 	ReviewerID  string `json:"reviewer_id"`
 }
 
+type semanticJudgmentUITemplateData struct {
+	ReviewToken string
+}
+
 func newSemanticJudgmentUIHandler(root, reviewerID string) http.Handler {
+	token, err := newSemanticJudgmentReviewToken()
+	if err != nil {
+		panic(err)
+	}
+	return newSemanticJudgmentUIHandlerWithToken(root, reviewerID, token)
+}
+
+func newSemanticJudgmentUIHandlerWithToken(root, reviewerID, reviewToken string) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -37,7 +54,7 @@ func newSemanticJudgmentUIHandler(root, reviewerID string) http.Handler {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := semanticJudgmentUITemplate.Execute(w, nil); err != nil {
+		if err := semanticJudgmentUITemplate.Execute(w, semanticJudgmentUITemplateData{ReviewToken: reviewToken}); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	})
@@ -56,6 +73,10 @@ func newSemanticJudgmentUIHandler(root, reviewerID string) http.Handler {
 	mux.HandleFunc("/api/judgments", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if status, err := validateSemanticJudgmentWriteRequest(r, reviewToken); err != nil {
+			http.Error(w, err.Error(), status)
 			return
 		}
 		defer r.Body.Close()
@@ -85,7 +106,86 @@ func newSemanticJudgmentUIHandler(root, reviewerID string) http.Handler {
 		}
 		writeJSONResponse(w, state)
 	})
-	return mux
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := validateSemanticJudgmentLoopbackHost(r.Host); err != nil {
+			http.Error(w, err.Error(), http.StatusForbidden)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
+}
+
+func newSemanticJudgmentReviewToken() (string, error) {
+	var raw [32]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw[:]), nil
+}
+
+func validateSemanticJudgmentWriteRequest(r *http.Request, reviewToken string) (int, error) {
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		return http.StatusUnsupportedMediaType, fmt.Errorf("content type must be application/json")
+	}
+	if subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Mindline-Review-Token")), []byte(reviewToken)) != 1 {
+		return http.StatusForbidden, fmt.Errorf("missing or invalid review token")
+	}
+	if err := validateSemanticJudgmentSameOrigin(r); err != nil {
+		return http.StatusForbidden, err
+	}
+	return http.StatusOK, nil
+}
+
+func validateSemanticJudgmentSameOrigin(r *http.Request) error {
+	if origin := strings.TrimSpace(r.Header.Get("Origin")); origin != "" {
+		return requireSemanticJudgmentSameOrigin(origin, r)
+	}
+	if referer := strings.TrimSpace(r.Header.Get("Referer")); referer != "" {
+		return requireSemanticJudgmentSameOrigin(referer, r)
+	}
+	return nil
+}
+
+func requireSemanticJudgmentSameOrigin(raw string, r *http.Request) error {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" {
+		return fmt.Errorf("invalid request origin")
+	}
+	if err := validateSemanticJudgmentLoopbackHost(parsed.Host); err != nil {
+		return err
+	}
+	if !strings.EqualFold(parsed.Host, r.Host) {
+		return fmt.Errorf("request origin is not the review UI origin")
+	}
+	expectedScheme := "http"
+	if r.TLS != nil {
+		expectedScheme = "https"
+	}
+	if parsed.Scheme != "" && parsed.Scheme != expectedScheme {
+		return fmt.Errorf("request origin is not the review UI origin")
+	}
+	return nil
+}
+
+func validateSemanticJudgmentLoopbackHost(hostPort string) error {
+	hostPort = strings.TrimSpace(hostPort)
+	if hostPort == "" {
+		return fmt.Errorf("request host must be loopback")
+	}
+	host, _, err := net.SplitHostPort(hostPort)
+	if err != nil {
+		host = hostPort
+	}
+	host = strings.Trim(host, "[]")
+	if strings.EqualFold(host, "localhost") {
+		return nil
+	}
+	ip := net.ParseIP(host)
+	if ip != nil && ip.IsLoopback() {
+		return nil
+	}
+	return fmt.Errorf("request host must be loopback")
 }
 
 func loadSemanticJudgmentUIState(root string) (semanticJudgmentUIState, error) {
@@ -147,6 +247,7 @@ var semanticJudgmentUITemplate = template.Must(template.New("semantic-judgment-u
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="mindline-review-token" content="{{.ReviewToken}}">
 <title>Mindline Review</title>
 <style>
 :root {
@@ -370,6 +471,7 @@ const choices = [
   ["duplicate", "Duplicate", ""],
   ["wrong-kind", "Wrong kind", "warn"]
 ];
+const reviewToken = "{{.ReviewToken}}";
 let currentCandidateId = "";
 let currentState = null;
 let mode = "review";
@@ -494,7 +596,7 @@ async function submitChoice(choice) {
   for (const button of document.querySelectorAll("[data-choice]")) button.disabled = true;
   const response = await fetch("/api/judgments", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-Mindline-Review-Token": reviewToken },
     body: JSON.stringify({ candidate_id: currentCandidateId, choice, note: document.getElementById("note").value })
   });
   if (!response.ok) {

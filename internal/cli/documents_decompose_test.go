@@ -472,8 +472,10 @@ func TestDocumentsJudgeServeStateAndRecord(t *testing.T) {
 	}
 	root := filepath.Join(judgeOut, "semantic-judgment")
 	handler := newSemanticJudgmentUIHandler(root, "ui-test")
+	token := judgmentUIToken(t, handler)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = judgmentUITestHost
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -505,7 +507,9 @@ func TestDocumentsJudgeServeStateAndRecord(t *testing.T) {
 	firstCandidateID := state.Page.Item.CandidateID
 
 	req = httptest.NewRequest(http.MethodPost, "/api/judgments", strings.NewReader(`{"candidate_id":"`+firstCandidateID+`","choice":"accept","note":"useful"}`))
+	req.Host = judgmentUITestHost
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Mindline-Review-Token", token)
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -545,10 +549,13 @@ func TestDocumentsJudgeServeRejectsBadChoice(t *testing.T) {
 		t.Fatalf("expected judge exit %d, got %d stdout=%s stderr=%s", ExitOK, code, stdout.String(), stderr.String())
 	}
 	handler := newSemanticJudgmentUIHandler(filepath.Join(judgeOut, "semantic-judgment"), "ui-test")
+	token := judgmentUIToken(t, handler)
 
 	state := getJudgmentUIState(t, handler)
 	req := httptest.NewRequest(http.MethodPost, "/api/judgments", strings.NewReader(`{"candidate_id":"`+state.Page.Item.CandidateID+`","choice":"maybe"}`))
+	req.Host = judgmentUITestHost
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Mindline-Review-Token", token)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
@@ -556,11 +563,145 @@ func TestDocumentsJudgeServeRejectsBadChoice(t *testing.T) {
 	}
 
 	req = httptest.NewRequest(http.MethodPost, "/api/judgments", strings.NewReader(`{"candidate_id":"cand-missing","choice":"accept"}`))
+	req.Host = judgmentUITestHost
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Mindline-Review-Token", token)
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected unknown candidate status 400, got %d", rec.Code)
+	}
+}
+
+func TestDocumentsJudgeServeRejectsTokenlessAndCrossOriginPosts(t *testing.T) {
+	semanticOut := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "semantics", documentsFixture(t, "semantic"),
+		"--out", semanticOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected semantic generation exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+
+	judgeOut := t.TempDir()
+	stdout.Reset()
+	stderr.Reset()
+	code = NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "judge", semanticOut,
+		"--out", judgeOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected judge exit %d, got %d stdout=%s stderr=%s", ExitOK, code, stdout.String(), stderr.String())
+	}
+	handler := newSemanticJudgmentUIHandler(filepath.Join(judgeOut, "semantic-judgment"), "ui-test")
+	state := getJudgmentUIState(t, handler)
+
+	payload := `{"candidate_id":"` + state.Page.Item.CandidateID + `","choice":"accept"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/judgments", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Host = judgmentUITestHost
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected tokenless judgment status 403, got %d", rec.Code)
+	}
+
+	token := judgmentUIToken(t, handler)
+	req = httptest.NewRequest(http.MethodPost, "/api/judgments", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Mindline-Review-Token", token)
+	req.Header.Set("Origin", "https://example.invalid")
+	req.Host = judgmentUITestHost
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected cross-origin judgment status 403, got %d", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/judgments", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Mindline-Review-Token", token)
+	req.Header.Set("Origin", "http://"+judgmentUITestHost)
+	req.Host = judgmentUITestHost
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected same-origin tokened judgment status 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDocumentsJudgeServeRejectsNonJSONPosts(t *testing.T) {
+	semanticOut := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "semantics", documentsFixture(t, "semantic"),
+		"--out", semanticOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected semantic generation exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+
+	judgeOut := t.TempDir()
+	stdout.Reset()
+	stderr.Reset()
+	code = NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "judge", semanticOut,
+		"--out", judgeOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected judge exit %d, got %d stdout=%s stderr=%s", ExitOK, code, stdout.String(), stderr.String())
+	}
+	handler := newSemanticJudgmentUIHandler(filepath.Join(judgeOut, "semantic-judgment"), "ui-test")
+	state := getJudgmentUIState(t, handler)
+	token := judgmentUIToken(t, handler)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/judgments", strings.NewReader("candidate_id="+state.Page.Item.CandidateID+"&choice=accept"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Mindline-Review-Token", token)
+	req.Header.Set("Origin", "http://"+judgmentUITestHost)
+	req.Host = judgmentUITestHost
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("expected non-json judgment status 415, got %d", rec.Code)
+	}
+}
+
+func TestDocumentsJudgeServeRejectsNonLoopbackHostEvenWithToken(t *testing.T) {
+	semanticOut := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "semantics", documentsFixture(t, "semantic"),
+		"--out", semanticOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected semantic generation exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+
+	judgeOut := t.TempDir()
+	stdout.Reset()
+	stderr.Reset()
+	code = NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "judge", semanticOut,
+		"--out", judgeOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected judge exit %d, got %d stdout=%s stderr=%s", ExitOK, code, stdout.String(), stderr.String())
+	}
+	handler := newSemanticJudgmentUIHandler(filepath.Join(judgeOut, "semantic-judgment"), "ui-test")
+	state := getJudgmentUIState(t, handler)
+	token := judgmentUIToken(t, handler)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/judgments", strings.NewReader(`{"candidate_id":"`+state.Page.Item.CandidateID+`","choice":"accept"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Mindline-Review-Token", token)
+	req.Header.Set("Origin", "http://attacker.test:8787")
+	req.Host = "attacker.test:8787"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected non-loopback host status 403, got %d", rec.Code)
 	}
 }
 
@@ -581,9 +722,35 @@ func TestDocumentsJudgeServeLoopbackValidation(t *testing.T) {
 	}
 }
 
+const judgmentUITestHost = "127.0.0.1:8787"
+
+func judgmentUIToken(t *testing.T, handler http.Handler) string {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = judgmentUITestHost
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected ui status 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	const marker = `name="mindline-review-token" content="`
+	start := strings.Index(body, marker)
+	if start < 0 {
+		t.Fatalf("review token marker missing from UI HTML")
+	}
+	start += len(marker)
+	end := strings.Index(body[start:], `"`)
+	if end < 0 {
+		t.Fatalf("review token content missing closing quote")
+	}
+	return body[start : start+end]
+}
+
 func getJudgmentUIState(t *testing.T, handler http.Handler) semanticJudgmentUIState {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/api/state", nil)
+	req.Host = judgmentUITestHost
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
