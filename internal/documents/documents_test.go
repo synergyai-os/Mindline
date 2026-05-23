@@ -2494,6 +2494,47 @@ func TestSemanticJudgmentIncludesRelationEndpointContext(t *testing.T) {
 	}
 }
 
+func TestSemanticJudgmentLoadsRelationEndpointObservationContext(t *testing.T) {
+	node := validStructureNode()
+	observation := validSemanticObservation(node)
+	action := validSemanticCandidate(observation, node)
+	relatedObservation := observation
+	relatedObservation.ObservationID = "obs-related-owner"
+	relatedObservation.Title = "Owner signal"
+	relatedObservation.Summary = "Sam owns the rollout follow-up."
+	relationID := "rel-action-owner"
+	action.RelationIDs = []string{relationID}
+	semanticRun := writeSemanticAcceptanceRun(t, []SemanticCandidate{action})
+	writeDocumentsTestJSON(t, filepath.Join(semanticRun, "semantic-candidates", SemanticObservationJSONPath(relatedObservation.ObservationID)), relatedObservation)
+	writeDocumentsTestJSON(t, filepath.Join(semanticRun, "semantic-candidates", SemanticRelationJSONPath(relationID)), SemanticRelation{
+		SchemaVersion:    SemanticRelationSchemaVersion,
+		RelationID:       relationID,
+		RunID:            action.RunID,
+		RelationshipType: SemanticRelationshipMentionsOwner,
+		FromID:           action.CandidateID,
+		FromType:         SemanticRelationEndpointCandidate,
+		ToID:             relatedObservation.ObservationID,
+		ToType:           SemanticRelationEndpointObservation,
+		EvidenceNodes:    []string{"node-demo"},
+		Confidence:       ConfidenceMedium,
+		ReviewStatus:     ReviewStatusNeedsReview,
+		Blockers:         []Blocker{},
+	})
+
+	out := t.TempDir()
+	summary, err := JudgeSemanticCandidates(semanticRun, out, SemanticJudgmentOptions{})
+	if err != nil {
+		t.Fatalf("judge semantic candidates: %v", err)
+	}
+	if len(summary.Items) != 1 || len(summary.Items[0].RelationContext) != 1 {
+		t.Fatalf("expected relation context for action candidate: %+v", summary.Items)
+	}
+	endpoint := summary.Items[0].RelationContext[0].OtherEndpoint
+	if endpoint.Unavailable || endpoint.EndpointID != relatedObservation.ObservationID || endpoint.Label != relatedObservation.Title || endpoint.Summary != relatedObservation.Summary {
+		t.Fatalf("expected loaded relation endpoint observation context, got %+v", endpoint)
+	}
+}
+
 func TestSemanticJudgmentMarksUnrelatedRelationEndpointUnavailable(t *testing.T) {
 	node := validStructureNode()
 	action := validSemanticCandidate(validSemanticObservation(node), node)

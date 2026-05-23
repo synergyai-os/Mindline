@@ -40,7 +40,7 @@ func readSemanticJudgmentInput(runDir string) (SemanticSummary, []SemanticCandid
 	if err != nil {
 		return SemanticSummary{}, nil, nil, nil, err
 	}
-	observations, err := readSemanticJudgmentObservations(root, candidates)
+	observations, err := readSemanticJudgmentObservations(root, candidates, relations)
 	if err != nil {
 		return SemanticSummary{}, nil, nil, nil, err
 	}
@@ -80,37 +80,51 @@ func readSemanticJudgmentRelations(root string, candidates []SemanticCandidate) 
 	return orderSemanticRelations(relations), nil
 }
 
-func readSemanticJudgmentObservations(root string, candidates []SemanticCandidate) ([]SemanticObservation, error) {
+func readSemanticJudgmentObservations(root string, candidates []SemanticCandidate, relations []SemanticRelation) ([]SemanticObservation, error) {
 	seen := map[string]bool{}
 	var observations []SemanticObservation
-	for _, candidate := range candidates {
-		for _, observationID := range candidate.ObservationIDs {
-			if seen[observationID] {
-				continue
-			}
-			seen[observationID] = true
-			observationPath, err := containedSemanticAcceptancePath(root, SemanticObservationJSONPath(observationID))
-			if err != nil {
-				return nil, err
-			}
-			data, err := os.ReadFile(observationPath)
-			if os.IsNotExist(err) {
-				continue
-			}
-			if err != nil {
-				continue
-			}
-			var observation SemanticObservation
-			if err := json.Unmarshal(data, &observation); err != nil {
-				continue
-			}
-			if err := ValidateSemanticObservation(observation); err != nil {
-				continue
-			}
-			observations = append(observations, observation)
+	for _, observationID := range semanticJudgmentObservationIDs(candidates, relations) {
+		if seen[observationID] {
+			continue
 		}
+		seen[observationID] = true
+		observationPath, err := containedSemanticAcceptancePath(root, SemanticObservationJSONPath(observationID))
+		if err != nil {
+			return nil, err
+		}
+		data, err := os.ReadFile(observationPath)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			continue
+		}
+		var observation SemanticObservation
+		if err := json.Unmarshal(data, &observation); err != nil {
+			continue
+		}
+		if err := ValidateSemanticObservation(observation); err != nil {
+			continue
+		}
+		observations = append(observations, observation)
 	}
 	return orderSemanticObservations(observations), nil
+}
+
+func semanticJudgmentObservationIDs(candidates []SemanticCandidate, relations []SemanticRelation) []string {
+	var ids []string
+	for _, candidate := range candidates {
+		ids = append(ids, candidate.ObservationIDs...)
+	}
+	for _, relation := range relations {
+		if relation.FromType == SemanticRelationEndpointObservation {
+			ids = append(ids, relation.FromID)
+		}
+		if relation.ToType == SemanticRelationEndpointObservation {
+			ids = append(ids, relation.ToID)
+		}
+	}
+	return ids
 }
 
 func NextSemanticJudgmentPage(inputDir string) (SemanticJudgmentPage, error) {
