@@ -187,6 +187,49 @@ func TestDocumentsSemanticsRejectsDestinationAndProfileFlags(t *testing.T) {
 	}
 }
 
+func TestDocumentsSemanticsLLMRequiresConfiguredProviderBeforeSourceRead(t *testing.T) {
+	fs := NewMemoryFS()
+	fs.files["temp/private.md"] = []byte("# Private\nsource")
+	runner := NewRunner(fs)
+	var stdout, stderr bytes.Buffer
+
+	code := runner.Run([]string{
+		"documents", "semantics", "temp/private.md",
+		"--out", "out",
+		"--classifier", "llm",
+		"--llm-provider", "openai",
+	}, &stdout, &stderr)
+
+	if code != ExitUsage {
+		t.Fatalf("expected usage exit, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "missing OpenAI model") {
+		t.Fatalf("expected missing OpenAI model before source read, got %q", stderr.String())
+	}
+}
+
+func TestDocumentsSemanticsRejectsUnsupportedLLMProviderBeforeSourceRead(t *testing.T) {
+	fs := NewMemoryFS()
+	fs.files["temp/private.md"] = []byte("# Private\nsource")
+	runner := NewRunner(fs)
+	var stdout, stderr bytes.Buffer
+
+	code := runner.Run([]string{
+		"documents", "semantics", "temp/private.md",
+		"--out", "out",
+		"--classifier", "llm",
+		"--llm-provider", "gemini",
+		"--llm-model", "gemini-test",
+	}, &stdout, &stderr)
+
+	if code != ExitUsage {
+		t.Fatalf("expected usage exit, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "unsupported LLM provider: gemini") {
+		t.Fatalf("expected unsupported provider before source read, got %q", stderr.String())
+	}
+}
+
 func TestDocumentsAccept(t *testing.T) {
 	semanticOut := t.TempDir()
 	var stdout, stderr bytes.Buffer

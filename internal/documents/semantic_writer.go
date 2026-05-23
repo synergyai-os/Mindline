@@ -9,13 +9,17 @@ import (
 )
 
 func WriteSemantic(outDir, runID string, sourceCount int, observations []SemanticObservation, candidates []SemanticCandidate, relations []SemanticRelation) error {
-	if err := writeSemantic(outDir, runID, sourceCount, observations, candidates, relations); err != nil {
+	return WriteSemanticWithSkippedReason(outDir, runID, sourceCount, observations, candidates, relations, "")
+}
+
+func WriteSemanticWithSkippedReason(outDir, runID string, sourceCount int, observations []SemanticObservation, candidates []SemanticCandidate, relations []SemanticRelation, skippedReason string) error {
+	if err := writeSemantic(outDir, runID, sourceCount, observations, candidates, relations, skippedReason); err != nil {
 		return ArtifactWriteError{Err: err}
 	}
 	return nil
 }
 
-func writeSemantic(outDir, runID string, sourceCount int, observations []SemanticObservation, candidates []SemanticCandidate, relations []SemanticRelation) error {
+func writeSemantic(outDir, runID string, sourceCount int, observations []SemanticObservation, candidates []SemanticCandidate, relations []SemanticRelation, skippedReason string) error {
 	if strings.TrimSpace(outDir) == "" {
 		return fmt.Errorf("missing required --out")
 	}
@@ -81,7 +85,7 @@ func writeSemantic(outDir, runID string, sourceCount int, observations []Semanti
 	if err := rejectUnexpectedExistingFiles(realRoot, expectedFiles); err != nil {
 		return err
 	}
-	summary := BuildSemanticSummary(runID, sourceCount, observations, candidates, relations)
+	summary := BuildSemanticSummaryWithSkippedReason(runID, sourceCount, observations, candidates, relations, skippedReason)
 	if err := writeJSON(realRoot, "semantic-summary.json", summary); err != nil {
 		return err
 	}
@@ -120,6 +124,7 @@ func finalizeSemanticCandidates(candidates []SemanticCandidate) []SemanticCandid
 	out := make([]SemanticCandidate, 0, len(candidates))
 	for _, candidate := range candidates {
 		candidate.EvidenceNodes = cloneStringList(candidate.EvidenceNodes)
+		candidate.EvidenceExcerpts = cloneSemanticEvidenceExcerpts(candidate.EvidenceExcerpts)
 		candidate.ObservationIDs = cloneStringList(candidate.ObservationIDs)
 		candidate.RelationIDs = cloneStringList(candidate.RelationIDs)
 		candidate.Blockers = cloneBlockerList(candidate.Blockers)
@@ -157,7 +162,7 @@ func ClassifyUnsafeSemanticObservation(observation SemanticObservation) Semantic
 }
 
 func ClassifyUnsafeSemanticCandidate(candidate SemanticCandidate) SemanticCandidate {
-	body := candidate.CandidateID + "\n" + candidate.Title + "\n" + candidate.Summary + "\n" + candidate.SourceDocumentID + "\n" + strings.Join(candidate.EvidenceNodes, "\n") + "\n" + strings.Join(candidate.ObservationIDs, "\n") + "\n" + strings.Join(candidate.RelationIDs, "\n")
+	body := candidate.CandidateID + "\n" + candidate.Title + "\n" + candidate.Summary + "\n" + candidate.SourceDocumentID + "\n" + strings.Join(candidate.EvidenceNodes, "\n") + "\n" + strings.Join(candidate.ObservationIDs, "\n") + "\n" + strings.Join(candidate.RelationIDs, "\n") + "\n" + semanticEvidenceExcerptBody(candidate.EvidenceExcerpts)
 	if containsUnsafeMarker(body) || containsGovernanceID(body) {
 		candidate.ReviewStatus = ReviewStatusBlocked
 		candidate.Confidence = ConfidenceLow
@@ -169,11 +174,23 @@ func ClassifyUnsafeSemanticCandidate(candidate SemanticCandidate) SemanticCandid
 		for i := range candidate.EvidenceRanges {
 			candidate.EvidenceRanges[i].StructureNodeID = redactUnsafeSemanticID("node", candidate.EvidenceRanges[i].StructureNodeID)
 		}
+		candidate.EvidenceExcerpts = nil
 		candidate.ObservationIDs = redactUnsafeSemanticIDs("obs", candidate.ObservationIDs)
 		candidate.RelationIDs = redactUnsafeSemanticIDs("rel", candidate.RelationIDs)
 		candidate.Blockers = append(candidate.Blockers, Blocker{Code: "unsafe_private_marker", Message: "Semantic candidate contains an unsafe or private marker."})
 	}
 	return candidate
+}
+
+func semanticEvidenceExcerptBody(excerpts []SemanticEvidenceExcerpt) string {
+	if len(excerpts) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(excerpts)*2)
+	for _, excerpt := range excerpts {
+		parts = append(parts, excerpt.StructureNodeID, excerpt.Text)
+	}
+	return strings.Join(parts, "\n")
 }
 
 func ClassifyUnsafeSemanticRelation(relation SemanticRelation) SemanticRelation {
@@ -373,6 +390,19 @@ func semanticPreviewMarkdown(candidate SemanticCandidate) string {
 	b.WriteString("\n\n")
 	b.WriteString(candidate.Summary)
 	b.WriteString("\n")
+	if len(candidate.EvidenceExcerpts) > 0 {
+		b.WriteString("\n## Evidence\n\n")
+		for _, excerpt := range candidate.EvidenceExcerpts {
+			if strings.TrimSpace(excerpt.Text) == "" {
+				continue
+			}
+			b.WriteString("- ")
+			b.WriteString(excerpt.StructureNodeID)
+			b.WriteString(": ")
+			b.WriteString(excerpt.Text)
+			b.WriteString("\n")
+		}
+	}
 	return b.String()
 }
 
@@ -405,4 +435,11 @@ func cloneBlockerList(values []Blocker) []Blocker {
 		return []Blocker{}
 	}
 	return append([]Blocker(nil), values...)
+}
+
+func cloneSemanticEvidenceExcerpts(values []SemanticEvidenceExcerpt) []SemanticEvidenceExcerpt {
+	if len(values) == 0 {
+		return nil
+	}
+	return append([]SemanticEvidenceExcerpt(nil), values...)
 }
