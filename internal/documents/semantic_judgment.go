@@ -312,10 +312,20 @@ func semanticJudgmentOtherEndpoint(candidateID string, relation SemanticRelation
 	endpointID := relation.ToID
 	endpointType := relation.ToType
 	role := "to"
-	if relation.ToID == candidateID {
+	if relation.FromID == candidateID {
+		endpointID = relation.ToID
+		endpointType = relation.ToType
+		role = "to"
+	} else if relation.ToID == candidateID {
 		endpointID = relation.FromID
 		endpointType = relation.FromType
 		role = "from"
+	} else {
+		return SemanticJudgmentEndpointContext{
+			Role:              "unknown",
+			Unavailable:       true,
+			UnavailableReason: "relation does not reference current candidate",
+		}
 	}
 	context := SemanticJudgmentEndpointContext{EndpointID: endpointID, EndpointType: endpointType, Role: role}
 	switch endpointType {

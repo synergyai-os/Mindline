@@ -2494,6 +2494,48 @@ func TestSemanticJudgmentIncludesRelationEndpointContext(t *testing.T) {
 	}
 }
 
+func TestSemanticJudgmentMarksUnrelatedRelationEndpointUnavailable(t *testing.T) {
+	node := validStructureNode()
+	action := validSemanticCandidate(validSemanticObservation(node), node)
+	relationID := "rel-objection-proposal"
+	action.RelationIDs = []string{relationID}
+	semanticRun := writeSemanticAcceptanceRun(t, []SemanticCandidate{action})
+	writeDocumentsTestJSON(t, filepath.Join(semanticRun, "semantic-candidates", SemanticRelationJSONPath(relationID)), SemanticRelation{
+		SchemaVersion:    SemanticRelationSchemaVersion,
+		RelationID:       relationID,
+		RunID:            action.RunID,
+		RelationshipType: SemanticRelationshipContradicts,
+		FromID:           "obs-objection",
+		FromType:         SemanticRelationEndpointObservation,
+		ToID:             "obs-proposal",
+		ToType:           SemanticRelationEndpointObservation,
+		EvidenceNodes:    []string{"node-demo"},
+		Confidence:       ConfidenceMedium,
+		ReviewStatus:     ReviewStatusNeedsReview,
+		Blockers:         []Blocker{},
+	})
+	out := t.TempDir()
+	summary, err := JudgeSemanticCandidates(semanticRun, out, SemanticJudgmentOptions{})
+	if err != nil {
+		t.Fatalf("judge semantic candidates: %v", err)
+	}
+	if len(summary.Items) != 1 || len(summary.Items[0].RelationContext) != 1 {
+		t.Fatalf("expected unrelated relation context to remain visible: %+v", summary.Items)
+	}
+	endpoint := summary.Items[0].RelationContext[0].OtherEndpoint
+	if !endpoint.Unavailable || endpoint.Role != "unknown" || endpoint.UnavailableReason != "relation does not reference current candidate" {
+		t.Fatalf("expected unrelated relation endpoint to be unknown and unavailable, got %+v", endpoint)
+	}
+	page, err := NextSemanticJudgmentPage(filepath.Join(out, "semantic-judgment"))
+	if err != nil {
+		t.Fatalf("next semantic judgment page: %v", err)
+	}
+	if !strings.Contains(page.PageMarkdown, "Other endpoint role: unknown") ||
+		!strings.Contains(page.PageMarkdown, "relation does not reference current candidate") {
+		t.Fatalf("expected unknown unrelated relation endpoint in page:\n%s", page.PageMarkdown)
+	}
+}
+
 func TestSemanticJudgmentRejectsUnsafeRelationContext(t *testing.T) {
 	node := validStructureNode()
 	candidate := validSemanticCandidate(validSemanticObservation(node), node)
