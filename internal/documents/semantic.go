@@ -12,6 +12,21 @@ import (
 type semanticSourceText map[string]map[int]string
 
 func SemanticPath(inputPath, outDir string) (SemanticSummary, error) {
+	return SemanticPathWithOptions(inputPath, outDir, SemanticOptions{Classifier: SemanticClassifierDeterministic})
+}
+
+func SemanticPathWithOptions(inputPath, outDir string, options SemanticOptions) (SemanticSummary, error) {
+	if options.Classifier == "" {
+		options.Classifier = SemanticClassifierDeterministic
+	}
+	var provider LLMSemanticProvider
+	if options.Classifier == SemanticClassifierLLM {
+		var err error
+		provider, err = semanticLLMProvider(options)
+		if err != nil {
+			return SemanticSummary{}, err
+		}
+	}
 	structureRoot, sourceText, err := prepareSemanticStructure(inputPath, outDir)
 	if err != nil {
 		return SemanticSummary{}, err
@@ -24,13 +39,51 @@ func SemanticPath(inputPath, outDir string) (SemanticSummary, error) {
 	for _, node := range nodes {
 		nodeIDs = append(nodeIDs, node.NodeID)
 	}
-	runID := SemanticRunID(structureSummary.RunID, append(nodeIDs, semanticSourceFingerprint(sourceText)))
+	runIDInputs := append(nodeIDs, semanticSourceFingerprint(sourceText))
+	if options.Classifier == SemanticClassifierLLM {
+		runIDInputs = append(runIDInputs, "classifier:llm", "provider:"+options.LLMProvider, "model:"+options.LLMModel)
+	}
+	runID := SemanticRunID(structureSummary.RunID, runIDInputs)
 	observations := ExtractSemanticObservations(runID, nodes, sourceText)
 	candidates, relations := ConsolidateSemanticCandidates(runID, observations)
+	if options.Classifier == SemanticClassifierLLM {
+		request := buildLLMSemanticRequest(nodes, sourceText)
+		if len(request.Nodes) == 0 {
+			skippedReason := "all structure nodes are blocked or empty; no semantic candidates expected"
+			if err := WriteSemanticWithSkippedReason(outDir, runID, structureSummary.SourceCount, []SemanticObservation{}, []SemanticCandidate{}, []SemanticRelation{}, skippedReason); err != nil {
+				return SemanticSummary{}, err
+			}
+			return BuildSemanticSummaryWithSkippedReason(runID, structureSummary.SourceCount, []SemanticObservation{}, []SemanticCandidate{}, []SemanticRelation{}, skippedReason), nil
+		}
+		response, err := provider.Classify(request)
+		if err != nil {
+			return SemanticSummary{}, err
+		}
+		observations, candidates, relations, err = buildLLMSemanticObservationsAndArtifacts(runID, nodes, request, response)
+		if err != nil {
+			return SemanticSummary{}, err
+		}
+	}
 	if err := WriteSemantic(outDir, runID, structureSummary.SourceCount, observations, candidates, relations); err != nil {
 		return SemanticSummary{}, err
 	}
 	return BuildSemanticSummary(runID, structureSummary.SourceCount, observations, candidates, relations), nil
+}
+
+func semanticLLMProvider(options SemanticOptions) (LLMSemanticProvider, error) {
+	if options.LLMClient != nil {
+		return options.LLMClient, nil
+	}
+	if options.LLMProvider != "openai" {
+		return nil, fmt.Errorf("unsupported LLM provider: %s", options.LLMProvider)
+	}
+	if strings.TrimSpace(options.LLMModel) == "" {
+		return nil, fmt.Errorf("missing OpenAI model")
+	}
+	if strings.TrimSpace(options.LLMAPIKey) == "" {
+		return nil, fmt.Errorf("missing OpenAI API key")
+	}
+	return NewOpenAIProvider(options.LLMAPIKey, options.LLMModel, nil), nil
 }
 
 func semanticSourceFingerprint(sourceText semanticSourceText) string {
@@ -392,10 +445,15 @@ func newSemanticRelation(runID string, relationshipType SemanticRelationshipType
 }
 
 func BuildSemanticSummary(runID string, sourceCount int, observations []SemanticObservation, candidates []SemanticCandidate, relations []SemanticRelation) SemanticSummary {
+	return BuildSemanticSummaryWithSkippedReason(runID, sourceCount, observations, candidates, relations, "")
+}
+
+func BuildSemanticSummaryWithSkippedReason(runID string, sourceCount int, observations []SemanticObservation, candidates []SemanticCandidate, relations []SemanticRelation, skippedReason string) SemanticSummary {
 	summary := SemanticSummary{
 		SchemaVersion:          SemanticSummarySchemaVersion,
 		RunID:                  runID,
 		SourceCount:            sourceCount,
+		SkippedReason:          strings.TrimSpace(skippedReason),
 		CandidateKindCounts:    map[SemanticCandidateKind]int{},
 		ObservationKindCounts:  map[SemanticObservationKind]int{},
 		RelationshipTypeCounts: map[SemanticRelationshipType]int{},

@@ -67,10 +67,10 @@ func RejectDuplicateSegmentIDs(segments []Segment) error {
 
 func ClassifyUnsafeMarkers(segment Segment) Segment {
 	body := segment.Title + "\n" + segment.Summary + "\n" + strings.Join(segment.Evidence.HeadingPath, "\n") + "\n" + segment.SourceDocumentID
-	if containsUnsafeMarker(body) {
+	if containsUnsafeMarker(body) || containsGovernanceID(body) {
 		segment.ReviewStatus = ReviewStatusBlocked
 		segment.Confidence = ConfidenceLow
-		if containsUnsafeMarker(segment.SourceDocumentID) {
+		if containsUnsafeMarker(segment.SourceDocumentID) || containsGovernanceID(segment.SourceDocumentID) {
 			segment.SourceDocumentID = redactedDocumentID(segment.SourceDocumentID)
 		}
 		segment.Title = "Unsafe content redacted"

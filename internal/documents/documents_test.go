@@ -1,13 +1,43 @@
 package documents
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 )
+
+type httpRoundTripper func(*http.Request) (*http.Response, error)
+
+func (fn httpRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	return fn(req)
+}
+
+type fakeLLMSemanticProvider struct {
+	request LLMSemanticRequest
+	calls   int
+}
+
+func (provider *fakeLLMSemanticProvider) Classify(request LLMSemanticRequest) (llmSemanticResponse, error) {
+	provider.calls++
+	provider.request = request
+	evidenceNode := ""
+	if len(request.Nodes) > 0 {
+		evidenceNode = request.Nodes[0].NodeID
+	}
+	return llmSemanticResponse{Candidates: []llmSemanticCandidate{{
+		Kind:          string(SemanticCandidateKindAction),
+		Title:         "Prepare the migration checklist",
+		Summary:       "Prepare the migration checklist using the cited structure node.",
+		Confidence:    string(ConfidenceMedium),
+		EvidenceNodes: []string{evidenceNode},
+	}}}, nil
+}
 
 func TestGoldenMarkdownDecomposition(t *testing.T) {
 	cases := []struct {
@@ -340,6 +370,201 @@ func TestSemanticWriterRedactsUnsafeEndpointAndEvidenceFields(t *testing.T) {
 	assertGeneratedTreeExcludes(t, filepath.Join(out, "semantic-candidates"), "private_content", "secret", unsafeTokenMarker(), "DEC-49", "WP-13")
 }
 
+func TestLLMClassifierRejectsInventedEvidenceNode(t *testing.T) {
+	nodes := []StructureNode{{
+		NodeID:           "node-real",
+		SourceDocumentID: "doc-test",
+		Evidence: StructureEvidence{
+			LineStart: 1,
+			LineEnd:   1,
+		},
+	}}
+	response := llmSemanticResponse{Candidates: []llmSemanticCandidate{{
+		Kind:          string(SemanticCandidateKindAction),
+		Title:         "Do it",
+		Summary:       "Do it",
+		Confidence:    string(ConfidenceMedium),
+		EvidenceNodes: []string{"node-fake"},
+	}}}
+
+	_, _, err := buildLLMSemanticArtifacts("run-test", nodes, response)
+
+	if err == nil || !strings.Contains(err.Error(), "unknown evidence node: node-fake") {
+		t.Fatalf("expected unknown evidence node rejection, got %v", err)
+	}
+}
+
+func TestLLMClassifierBuildsProviderNeutralArtifacts(t *testing.T) {
+	nodes := []StructureNode{{
+		NodeID:           "node-real",
+		SourceDocumentID: "doc-test",
+		Evidence: StructureEvidence{
+			LineStart: 3,
+			LineEnd:   5,
+		},
+	}}
+	response := llmSemanticResponse{Candidates: []llmSemanticCandidate{{
+		Kind:          string(SemanticCandidateKindDecision),
+		Title:         "Adopt the review gate",
+		Summary:       "The team decided to use review gates before publishing.",
+		Confidence:    string(ConfidenceHigh),
+		EvidenceNodes: []string{"node-real"},
+	}}}
+
+	candidates, relations, err := buildLLMSemanticArtifacts("run-test", nodes, response)
+
+	if err != nil {
+		t.Fatalf("build LLM artifacts: %v", err)
+	}
+	if len(candidates) != 1 {
+		t.Fatalf("expected one candidate, got %+v", candidates)
+	}
+	candidate := candidates[0]
+	if candidate.CandidateKind != SemanticCandidateKindDecision {
+		t.Fatalf("unexpected candidate kind: %s", candidate.CandidateKind)
+	}
+	if candidate.DestinationStatus != SemanticDestinationUnresolved {
+		t.Fatalf("expected unresolved destination, got %s", candidate.DestinationStatus)
+	}
+	if candidate.SourceDocumentID != "doc-test" {
+		t.Fatalf("unexpected source: %s", candidate.SourceDocumentID)
+	}
+	if len(candidate.ObservationIDs) == 0 || len(candidate.RelationIDs) == 0 {
+		t.Fatalf("expected observation and relation IDs: %+v", candidate)
+	}
+	if len(relations) != 1 || relations[0].RelationshipType != SemanticRelationshipDerivedFrom {
+		t.Fatalf("expected derived_from relation, got %+v", relations)
+	}
+}
+
+func TestLLMClassifierDisambiguatesDuplicateCandidateOutput(t *testing.T) {
+	nodes := []StructureNode{{
+		NodeID:           "node-real",
+		SourceDocumentID: "doc-test",
+		Evidence: StructureEvidence{
+			LineStart: 3,
+			LineEnd:   5,
+		},
+	}}
+	response := llmSemanticResponse{Candidates: []llmSemanticCandidate{
+		{
+			Kind:          string(SemanticCandidateKindAction),
+			Title:         "Prepare evidence pack",
+			Summary:       "Prepare the evidence pack from the cited node.",
+			Confidence:    string(ConfidenceMedium),
+			EvidenceNodes: []string{"node-real"},
+		},
+		{
+			Kind:          string(SemanticCandidateKindAction),
+			Title:         "Prepare evidence pack",
+			Summary:       "Prepare the evidence pack from the cited node.",
+			Confidence:    string(ConfidenceMedium),
+			EvidenceNodes: []string{"node-real"},
+		},
+	}}
+
+	observations, candidates, relations, err := buildLLMSemanticObservationsAndArtifacts("run-test", nodes, LLMSemanticRequest{}, response)
+
+	if err != nil {
+		t.Fatalf("build duplicate LLM artifacts: %v", err)
+	}
+	if len(observations) != 2 || len(candidates) != 2 || len(relations) != 2 {
+		t.Fatalf("expected two observations, candidates, and relations; got obs=%d candidates=%d relations=%d", len(observations), len(candidates), len(relations))
+	}
+	if observations[0].ObservationID == observations[1].ObservationID {
+		t.Fatalf("expected duplicate LLM observations to get distinct IDs: %+v", observations)
+	}
+	if candidates[0].CandidateID == candidates[1].CandidateID {
+		t.Fatalf("expected duplicate LLM candidates to get distinct IDs: %+v", candidates)
+	}
+	if relations[0].RelationID == relations[1].RelationID {
+		t.Fatalf("expected duplicate LLM relations to get distinct IDs: %+v", relations)
+	}
+	if err := WriteSemantic(t.TempDir(), "run-test", 1, observations, candidates, relations); err != nil {
+		t.Fatalf("duplicate LLM artifacts should remain writable: %v", err)
+	}
+}
+
+func TestOpenAIProviderPostsResponsesRequestAndParsesCandidates(t *testing.T) {
+	var capturedPath string
+	var capturedAuth string
+	var capturedBody map[string]any
+	provider := NewOpenAIProvider("sk-test", "gpt-test", httpRoundTripper(func(req *http.Request) (*http.Response, error) {
+		capturedPath = req.URL.Path
+		capturedAuth = req.Header.Get("Authorization")
+		body, err := io.ReadAll(req.Body)
+		if err != nil {
+			t.Fatalf("read request body: %v", err)
+		}
+		if bytes.Contains(body, []byte("sk-test")) {
+			t.Fatalf("request body must not contain API key: %s", string(body))
+		}
+		if err := json.Unmarshal(body, &capturedBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		return &http.Response{
+			StatusCode: 200,
+			Body: io.NopCloser(strings.NewReader(`{
+				"output": [{
+					"content": [{
+						"type": "output_text",
+						"text": "{\"candidates\":[{\"kind\":\"action_candidate\",\"title\":\"Prepare rollout checklist\",\"summary\":\"Prepare the rollout checklist from the cited evidence.\",\"confidence\":\"medium\",\"evidence_nodes\":[\"node-1\"]}]}"
+					}]
+				}]
+			}`)),
+			Header: make(http.Header),
+		}, nil
+	}))
+	request := LLMSemanticRequest{
+		SourceDocumentID: "doc-test",
+		Nodes: []LLMSemanticNode{{
+			NodeID: "node-1",
+			Text:   "Prepare the rollout checklist.",
+		}},
+	}
+
+	response, err := provider.Classify(request)
+
+	if err != nil {
+		t.Fatalf("classify: %v", err)
+	}
+	if capturedPath != "/v1/responses" {
+		t.Fatalf("expected responses endpoint, got %s", capturedPath)
+	}
+	if capturedAuth != "Bearer sk-test" {
+		t.Fatalf("expected authorization header")
+	}
+	if got := int(capturedBody["max_output_tokens"].(float64)); got != openAISemanticMaxOutputTokens {
+		t.Fatalf("expected semantic response token budget %d, got %d", openAISemanticMaxOutputTokens, got)
+	}
+	if len(response.Candidates) != 1 || response.Candidates[0].Kind != string(SemanticCandidateKindAction) {
+		t.Fatalf("unexpected response: %+v", response)
+	}
+}
+
+func TestOpenAIProviderRejectsMalformedCandidateJSON(t *testing.T) {
+	provider := NewOpenAIProvider("sk-test", "gpt-test", httpRoundTripper(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: 200,
+			Body: io.NopCloser(strings.NewReader(`{
+				"output": [{
+					"content": [{
+						"type": "output_text",
+						"text": "not-json"
+					}]
+				}]
+			}`)),
+			Header: make(http.Header),
+		}, nil
+	}))
+
+	_, err := provider.Classify(LLMSemanticRequest{SourceDocumentID: "doc-test"})
+
+	if err == nil || !strings.Contains(err.Error(), "parse OpenAI semantic response") {
+		t.Fatalf("expected malformed JSON rejection, got %v", err)
+	}
+}
+
 func TestConsolidateSemanticCandidatesKeepsRedactedCandidateRelationEndpoint(t *testing.T) {
 	node := validStructureNode()
 	observation := validSemanticObservation(node)
@@ -437,6 +662,159 @@ func TestDocumentSemanticsDeterministicAcrossRuns(t *testing.T) {
 		t.Fatalf("second semantic: %v", err)
 	}
 	assertTreeMatches(t, filepath.Join(first, "semantic-candidates"), filepath.Join(second, "semantic-candidates"))
+}
+
+func TestSemanticPathWithLLMProviderWritesSemanticArtifacts(t *testing.T) {
+	out := t.TempDir()
+	provider := &fakeLLMSemanticProvider{}
+
+	summary, err := SemanticPathWithOptions(fixturePath(t, "semantic"), out, SemanticOptions{
+		Classifier:  SemanticClassifierLLM,
+		LLMProvider: "openai",
+		LLMModel:    "fake-model",
+		LLMAPIKey:   "fake-key",
+		LLMClient:   provider,
+	})
+
+	if err != nil {
+		t.Fatalf("semantic LLM path: %v", err)
+	}
+	if provider.request.SourceDocumentID == "" || len(provider.request.Nodes) == 0 {
+		t.Fatalf("expected provider request with source and nodes: %+v", provider.request)
+	}
+	if summary.CandidateCount != 1 {
+		t.Fatalf("expected one LLM candidate, got %+v", summary)
+	}
+	if got := summary.CandidateKindCounts[SemanticCandidateKindAction]; got != 1 {
+		t.Fatalf("expected action candidate count 1, got %d in %+v", got, summary.CandidateKindCounts)
+	}
+	if _, err := os.Stat(filepath.Join(out, "semantic-candidates", "semantic-summary.json")); err != nil {
+		t.Fatalf("expected semantic summary: %v", err)
+	}
+	previews, err := filepath.Glob(filepath.Join(out, "semantic-candidates", "previews", "*.md"))
+	if err != nil || len(previews) != 1 {
+		t.Fatalf("expected one semantic preview, previews=%v err=%v", previews, err)
+	}
+	previewBody, err := os.ReadFile(previews[0])
+	if err != nil {
+		t.Fatalf("read semantic preview: %v", err)
+	}
+	if !strings.Contains(string(previewBody), "## Evidence") || !strings.Contains(string(previewBody), "Requirement: every source") {
+		t.Fatalf("expected inline evidence excerpt in preview:\n%s", string(previewBody))
+	}
+}
+
+func TestSemanticPathWithLLMProviderFailsBeforeWritingStructureArtifacts(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "private.md")
+	if err := os.WriteFile(source, []byte("# Private\n\nDo not read or write artifacts without LLM config.\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	out := t.TempDir()
+
+	_, err := SemanticPathWithOptions(source, out, SemanticOptions{
+		Classifier:  SemanticClassifierLLM,
+		LLMProvider: "openai",
+	})
+
+	if err == nil || !strings.Contains(err.Error(), "missing OpenAI model") {
+		t.Fatalf("expected missing model before artifact writes, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(out, "document-structure")); !os.IsNotExist(statErr) {
+		t.Fatalf("expected no structure artifacts before LLM config validation, stat err=%v", statErr)
+	}
+}
+
+func TestSemanticPathWithLLMProviderExplainsAllBlockedInput(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "review.md")
+	if err := os.WriteFile(source, []byte("# WP-17 Review\n\nDEC-75 private review material should be blocked.\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	out := t.TempDir()
+	provider := &fakeLLMSemanticProvider{}
+
+	summary, err := SemanticPathWithOptions(source, out, SemanticOptions{
+		Classifier:  SemanticClassifierLLM,
+		LLMProvider: "openai",
+		LLMModel:    "fake-model",
+		LLMAPIKey:   "fake-key",
+		LLMClient:   provider,
+	})
+
+	if err != nil {
+		t.Fatalf("semantic LLM path: %v", err)
+	}
+	if provider.calls != 0 {
+		t.Fatalf("expected all-blocked input to skip provider call, got %d calls", provider.calls)
+	}
+	if summary.CandidateCount != 0 || !strings.Contains(summary.SkippedReason, "all structure nodes are blocked") {
+		t.Fatalf("expected explicit skipped reason, got %+v", summary)
+	}
+	data, err := os.ReadFile(filepath.Join(out, "semantic-candidates", "semantic-summary.json"))
+	if err != nil {
+		t.Fatalf("read semantic summary: %v", err)
+	}
+	if !strings.Contains(string(data), "skipped_reason") {
+		t.Fatalf("expected persisted skipped reason:\n%s", string(data))
+	}
+}
+
+func TestLLMClassifierAcceptsBareUniqueEvidenceNodeSuffix(t *testing.T) {
+	nodes := []StructureNode{{
+		NodeID:           "node-abc123",
+		SourceDocumentID: "doc",
+		Evidence: StructureEvidence{
+			LineStart: 1,
+			LineEnd:   1,
+		},
+	}}
+
+	candidates, _, err := buildLLMSemanticArtifacts("run", nodes, llmSemanticResponse{Candidates: []llmSemanticCandidate{{
+		Kind:          string(SemanticCandidateKindDecision),
+		Title:         "Use review pagination",
+		Summary:       "Use review pagination for human acceptance.",
+		Confidence:    string(ConfidenceHigh),
+		EvidenceNodes: []string{"abc123"},
+	}}})
+
+	if err != nil {
+		t.Fatalf("expected bare node suffix to resolve: %v", err)
+	}
+	if len(candidates) != 1 || candidates[0].EvidenceNodes[0] != "node-abc123" {
+		t.Fatalf("expected normalized evidence node, got %+v", candidates)
+	}
+}
+
+func TestLLMClassifierDeduplicatesRepeatedEvidenceNodes(t *testing.T) {
+	nodes := []StructureNode{{
+		NodeID:           "node-abc123",
+		SourceDocumentID: "doc",
+		Evidence: StructureEvidence{
+			LineStart: 1,
+			LineEnd:   1,
+		},
+	}}
+
+	request := LLMSemanticRequest{Nodes: []LLMSemanticNode{{NodeID: "node-abc123", Text: "Prepare the evidence pack from the real source excerpt."}}}
+	observations, candidates, relations, err := buildLLMSemanticObservationsAndArtifacts("run", nodes, request, llmSemanticResponse{Candidates: []llmSemanticCandidate{{
+		Kind:          string(SemanticCandidateKindAction),
+		Title:         "Prepare evidence pack",
+		Summary:       "Prepare the evidence pack from the cited node.",
+		Confidence:    string(ConfidenceMedium),
+		EvidenceNodes: []string{"node-abc123", "abc123", "node-abc123"},
+	}}})
+
+	if err != nil {
+		t.Fatalf("expected repeated evidence nodes to deduplicate: %v", err)
+	}
+	if len(observations) != 1 || len(candidates) != 1 || len(relations) != 1 {
+		t.Fatalf("expected one observation, candidate, and relation; got obs=%d candidates=%d relations=%d", len(observations), len(candidates), len(relations))
+	}
+	if len(candidates[0].EvidenceNodes) != 1 || candidates[0].EvidenceNodes[0] != "node-abc123" {
+		t.Fatalf("expected one normalized evidence node, got %+v", candidates[0].EvidenceNodes)
+	}
+	if len(candidates[0].EvidenceExcerpts) != 1 || !strings.Contains(candidates[0].EvidenceExcerpts[0].Text, "real source excerpt") {
+		t.Fatalf("expected evidence excerpt, got %+v", candidates[0].EvidenceExcerpts)
+	}
 }
 
 func TestDocumentStructureDuplicateBasenamesAreRelativePathDeterministic(t *testing.T) {
@@ -747,6 +1125,34 @@ func TestWriterRedactsUnsafeProvidedSegment(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 	assertGeneratedTreeExcludes(t, filepath.Join(out, "document-segments"), "private_content", "secret", unsafeTokenMarker())
+}
+
+func TestWriterRedactsGovernanceIDProvidedSegment(t *testing.T) {
+	out := t.TempDir()
+	segment := validSegment()
+	segment.Title = "WP-17 private review notes"
+	segment.Summary = "Review notes for DEC-75 should not persist in segment previews."
+	segment.Evidence.HeadingPath = []string{"WP-17 review"}
+	if err := Write(out, Summary{RunID: segment.RunID, SourceCount: 1}, []Segment{segment}); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	assertGeneratedTreeExcludes(t, filepath.Join(out, "document-segments"), "wp-17", "dec-75", "private review notes")
+}
+
+func TestSemanticWriterRedactsUnsafeEvidenceExcerpt(t *testing.T) {
+	out := t.TempDir()
+	node := validStructureNode()
+	observation := validSemanticObservation(node)
+	candidate := validSemanticCandidate(observation, node)
+	candidate.EvidenceExcerpts = []SemanticEvidenceExcerpt{{
+		StructureNodeID: "node-demo",
+		Text:            "This excerpt contains DEC-75 and must be redacted.",
+	}}
+	relation := validSemanticRelation(candidate, observation, node)
+	if err := WriteSemantic(out, candidate.RunID, 1, []SemanticObservation{observation}, []SemanticCandidate{candidate}, []SemanticRelation{relation}); err != nil {
+		t.Fatalf("write semantic: %v", err)
+	}
+	assertGeneratedTreeExcludes(t, filepath.Join(out, "semantic-candidates"), "dec-75", "must be redacted")
 }
 
 func TestWriterRebuildsSummaryFromFinalizedSegments(t *testing.T) {

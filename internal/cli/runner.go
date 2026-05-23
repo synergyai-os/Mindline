@@ -28,7 +28,7 @@ const (
 	ExitArtifactWrite = 3
 )
 
-const usage = "usage: mindline process <candidate.json> [--out <dir>]\nusage: mindline slack normalize <slack-export.json> [--out <dir>]\nusage: mindline destination dry-run <sbos-result.json> --adapter tolaria --out <dir>\nusage: mindline pipeline dry-run <pipeline-input.json> --method basb-para-code --destination tolaria --out <dir>\nusage: mindline product-brain propose <run-dir> --profile <profile.json> --out <dir>\nusage: mindline documents decompose <markdown-path-or-dir> --out <dir>\nusage: mindline documents structure <markdown-path-or-dir> --out <dir>\nusage: mindline documents semantics <structure-run-dir-or-markdown-path-or-markdown-dir> --out <dir>\nusage: mindline documents accept <semantic-run-dir> --answer-key <answer-key.json> --out <dir>\nusage: mindline documents calibrate <semantic-acceptance-dir-or-parent> --out <dir> [--threshold 0.98] [--held-out] [--source-root <dir> --source <relative.md>]\nusage: mindline documents calibrate-next <semantic-calibration-dir-or-parent>\n"
+const usage = "usage: mindline process <candidate.json> [--out <dir>]\nusage: mindline slack normalize <slack-export.json> [--out <dir>]\nusage: mindline destination dry-run <sbos-result.json> --adapter tolaria --out <dir>\nusage: mindline pipeline dry-run <pipeline-input.json> --method basb-para-code --destination tolaria --out <dir>\nusage: mindline product-brain propose <run-dir> --profile <profile.json> --out <dir>\nusage: mindline documents decompose <markdown-path-or-dir> --out <dir>\nusage: mindline documents structure <markdown-path-or-dir> --out <dir>\nusage: mindline documents semantics <structure-run-dir-or-markdown-path-or-markdown-dir> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents accept <semantic-run-dir> --answer-key <answer-key.json> --out <dir>\nusage: mindline documents calibrate <semantic-acceptance-dir-or-parent> --out <dir> [--threshold 0.98] [--held-out] [--source-root <dir> --source <relative.md>]\nusage: mindline documents calibrate-next <semantic-calibration-dir-or-parent>\n"
 
 const protectedRootsEnv = "MINDLINE_PROTECTED_ROOTS"
 const defaultTolariaProtectedRoot = "/Users/randyhereman/Young Human Club Dropbox/02. Areas/PKM - Tolaria"
@@ -341,12 +341,16 @@ func (r Runner) runDocumentsCalibrateNext(args []string, stdout, stderr io.Write
 }
 
 func (r Runner) runDocumentsSemantics(args []string, stdout, stderr io.Writer) int {
-	inputPath, outDir, parseError := parseDocumentsArgs(args, "semantics")
+	inputPath, outDir, options, parseError, configError := r.parseDocumentsSemanticsArgs(args)
+	if configError != "" {
+		fmt.Fprintln(stderr, configError)
+		return ExitUsage
+	}
 	if parseError != parseErrorNone {
 		fmt.Fprint(stderr, usage)
 		return ExitUsage
 	}
-	summary, err := documents.SemanticPath(inputPath, outDir)
+	summary, err := documents.SemanticPathWithOptions(inputPath, outDir, options)
 	if err != nil {
 		if documents.IsArtifactWriteError(err) {
 			fmt.Fprintf(stderr, "write semantic candidates: %v\n", err)
@@ -745,6 +749,113 @@ func parseDocumentsArgs(args []string, command string) (inputPath string, outDir
 		return "", "", parseErrorUsage
 	}
 	return inputPath, args[3], parseErrorNone
+}
+
+func (r Runner) parseDocumentsSemanticsArgs(args []string) (inputPath string, outDir string, options documents.SemanticOptions, err parseError, configError string) {
+	options.Classifier = documents.SemanticClassifierDeterministic
+	if len(args) < 4 || args[0] != "semantics" || strings.TrimSpace(args[1]) == "" {
+		return "", "", options, parseErrorUsage, ""
+	}
+	inputPath = args[1]
+	for i := 2; i < len(args); {
+		switch args[i] {
+		case "--out":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", options, parseErrorUsage, ""
+			}
+			outDir = args[i+1]
+			i += 2
+		case "--classifier":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", options, parseErrorUsage, ""
+			}
+			classifier := documents.SemanticClassifier(args[i+1])
+			if classifier != documents.SemanticClassifierDeterministic && classifier != documents.SemanticClassifierLLM {
+				return "", "", options, parseErrorUsage, ""
+			}
+			options.Classifier = classifier
+			i += 2
+		case "--llm-provider":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", options, parseErrorUsage, ""
+			}
+			options.LLMProvider = strings.TrimSpace(args[i+1])
+			i += 2
+		case "--llm-model":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", options, parseErrorUsage, ""
+			}
+			options.LLMModel = strings.TrimSpace(args[i+1])
+			i += 2
+		case "--profile", "--destination":
+			return "", "", options, parseErrorUsage, ""
+		default:
+			return "", "", options, parseErrorUsage, ""
+		}
+	}
+	if outDir == "" {
+		return "", "", options, parseErrorUsage, ""
+	}
+	options = r.resolveSemanticLLMEnv(options)
+	if options.Classifier == documents.SemanticClassifierLLM {
+		if options.LLMProvider == "" {
+			return "", "", options, parseErrorNone, "missing LLM provider"
+		}
+		if options.LLMProvider != "openai" {
+			return "", "", options, parseErrorNone, fmt.Sprintf("unsupported LLM provider: %s", options.LLMProvider)
+		}
+		if options.LLMModel == "" {
+			return "", "", options, parseErrorNone, "missing OpenAI model"
+		}
+		if options.LLMAPIKey == "" {
+			return "", "", options, parseErrorNone, "missing OpenAI API key"
+		}
+	}
+	return inputPath, outDir, options, parseErrorNone, ""
+}
+
+func (r Runner) resolveSemanticLLMEnv(options documents.SemanticOptions) documents.SemanticOptions {
+	values := map[string]string{}
+	if wd, err := r.fs.Getwd(); err == nil {
+		if data, err := r.fs.ReadFile(filepath.Join(wd, ".env.local")); err == nil {
+			for key, value := range parseDotEnv(string(data)) {
+				values[key] = value
+			}
+		}
+	}
+	for _, key := range []string{"MINDLINE_LLM_PROVIDER", "OPENAI_API_KEY", "OPENAI_MODEL"} {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			values[key] = value
+		}
+	}
+	if options.LLMProvider == "" {
+		options.LLMProvider = values["MINDLINE_LLM_PROVIDER"]
+	}
+	if options.LLMModel == "" {
+		options.LLMModel = values["OPENAI_MODEL"]
+	}
+	options.LLMAPIKey = values["OPENAI_API_KEY"]
+	return options
+}
+
+func parseDotEnv(raw string) map[string]string {
+	out := map[string]string{}
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = strings.Trim(strings.TrimSpace(value), `"'`)
+		if key != "" {
+			out[key] = value
+		}
+	}
+	return out
 }
 
 func parseDocumentsAcceptArgs(args []string) (inputPath string, answerKeyPath string, outDir string, err parseError) {

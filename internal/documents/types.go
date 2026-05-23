@@ -251,7 +251,23 @@ type SemanticSummary struct {
 	CandidateKindCounts    map[SemanticCandidateKind]int    `json:"candidate_kind_counts"`
 	ObservationKindCounts  map[SemanticObservationKind]int  `json:"observation_kind_counts"`
 	RelationshipTypeCounts map[SemanticRelationshipType]int `json:"relationship_type_counts"`
+	SkippedReason          string                           `json:"skipped_reason,omitempty"`
 	Candidates             []SemanticSummaryCandidate       `json:"candidates"`
+}
+
+type SemanticClassifier string
+
+const (
+	SemanticClassifierDeterministic SemanticClassifier = "deterministic"
+	SemanticClassifierLLM           SemanticClassifier = "llm"
+)
+
+type SemanticOptions struct {
+	Classifier  SemanticClassifier
+	LLMProvider string
+	LLMModel    string
+	LLMAPIKey   string
+	LLMClient   LLMSemanticProvider
 }
 
 type SemanticSummaryCandidate struct {
@@ -267,6 +283,11 @@ type SemanticEvidenceRange struct {
 	StructureNodeID string `json:"structure_node_id"`
 	LineStart       int    `json:"line_start"`
 	LineEnd         int    `json:"line_end"`
+}
+
+type SemanticEvidenceExcerpt struct {
+	StructureNodeID string `json:"structure_node_id"`
+	Text            string `json:"text"`
 }
 
 type SemanticObservation struct {
@@ -297,6 +318,7 @@ type SemanticCandidate struct {
 	Summary           string                    `json:"summary"`
 	EvidenceNodes     []string                  `json:"evidence_nodes"`
 	EvidenceRanges    []SemanticEvidenceRange   `json:"evidence_ranges"`
+	EvidenceExcerpts  []SemanticEvidenceExcerpt `json:"evidence_excerpts,omitempty"`
 	ObservationIDs    []string                  `json:"observation_ids"`
 	RelationIDs       []string                  `json:"relation_ids"`
 	DestinationStatus SemanticDestinationStatus `json:"destination_status"`
