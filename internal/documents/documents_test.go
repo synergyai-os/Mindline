@@ -3,6 +3,7 @@ package documents
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 type httpRoundTripper func(*http.Request) (*http.Response, error)
@@ -2396,6 +2398,211 @@ func TestSemanticCalibrationFailsClosedBelowThreshold(t *testing.T) {
 	}
 }
 
+func TestSemanticJudgmentInitializesReviewBundleAndPagesOneCandidate(t *testing.T) {
+	node := validStructureNode()
+	candidate := validSemanticCandidate(validSemanticObservation(node), node)
+	candidate.EvidenceRanges = []SemanticEvidenceRange{{StructureNodeID: node.NodeID, LineStart: 2, LineEnd: 4}}
+	semanticRun := writeSemanticAcceptanceRun(t, []SemanticCandidate{candidate})
+	sourceRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(sourceRoot, "source.md"), []byte("one\ntwo\nthree\nfour\nfive\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	out := t.TempDir()
+	summary, err := JudgeSemanticCandidates(semanticRun, out, SemanticJudgmentOptions{SourceRoot: sourceRoot, SourcePath: "source.md"})
+	if err != nil {
+		t.Fatalf("judge semantic candidates: %v", err)
+	}
+	if summary.SchemaVersion != SemanticJudgmentSummarySchemaVersion || summary.CandidateCount != 1 || summary.RemainingCount != 1 {
+		t.Fatalf("unexpected judgment summary: %+v", summary)
+	}
+	page, err := NextSemanticJudgmentPage(filepath.Join(out, "semantic-judgment"))
+	if err != nil {
+		t.Fatalf("next semantic judgment page: %v", err)
+	}
+	if page.SchemaVersion != SemanticJudgmentPageSchemaVersion || page.Done || page.Item == nil {
+		t.Fatalf("expected one judgment page: %+v", page)
+	}
+	if !strings.Contains(page.PageMarkdown, "Prepare checklist") ||
+		!strings.Contains(page.PageMarkdown, "Adjudication choices") ||
+		!strings.Contains(page.PageMarkdown, "source.md lines 2-4") ||
+		!strings.Contains(page.PageMarkdown, "two\nthree\nfour") {
+		t.Fatalf("judgment page is not self-contained:\n%s", page.PageMarkdown)
+	}
+}
+
+func TestSemanticJudgmentRecordsChoiceAndUpdatesReport(t *testing.T) {
+	node := validStructureNode()
+	action := validSemanticCandidate(validSemanticObservation(node), node)
+	decision := unexpectedDecisionCandidate()
+	semanticRun := writeSemanticAcceptanceRun(t, []SemanticCandidate{action, decision})
+	out := t.TempDir()
+	if _, err := JudgeSemanticCandidates(semanticRun, out, SemanticJudgmentOptions{}); err != nil {
+		t.Fatalf("judge semantic candidates: %v", err)
+	}
+	summary, err := RecordSemanticJudgment(filepath.Join(out, "semantic-judgment"), SemanticJudgmentRecordInput{
+		CandidateID: action.CandidateID,
+		Choice:      SemanticJudgmentChoiceAccept,
+		Note:        "Useful action.",
+		ReviewerID:  "tester",
+		RecordedAt:  fixedTestTime(),
+	})
+	if err != nil {
+		t.Fatalf("record semantic judgment: %v", err)
+	}
+	if summary.JudgedCount != 1 || summary.AcceptedCount != 1 || summary.RemainingCount != 1 || summary.PrecisionEstimate != 1 {
+		t.Fatalf("unexpected judgment counts after accept: %+v", summary)
+	}
+	if _, err := RecordSemanticJudgment(filepath.Join(out, "semantic-judgment"), SemanticJudgmentRecordInput{
+		CandidateID: action.CandidateID,
+		Choice:      SemanticJudgmentChoiceReject,
+		RecordedAt:  fixedTestTime(),
+	}); err == nil {
+		t.Fatalf("expected duplicate judgment to fail closed")
+	}
+	report, err := os.ReadFile(filepath.Join(out, "semantic-judgment", "reports", "judgment-report.md"))
+	if err != nil {
+		t.Fatalf("read judgment report: %v", err)
+	}
+	if !strings.Contains(string(report), "Accepted: 1") || !strings.Contains(string(report), "Review burden: 1") {
+		t.Fatalf("report did not update counts:\n%s", string(report))
+	}
+}
+
+func TestSemanticJudgmentSerializesConcurrentRecords(t *testing.T) {
+	node := validStructureNode()
+	candidate := validSemanticCandidate(validSemanticObservation(node), node)
+	semanticRun := writeSemanticAcceptanceRun(t, []SemanticCandidate{candidate})
+	out := t.TempDir()
+	if _, err := JudgeSemanticCandidates(semanticRun, out, SemanticJudgmentOptions{}); err != nil {
+		t.Fatalf("judge semantic candidates: %v", err)
+	}
+	root := filepath.Join(out, "semantic-judgment")
+
+	const attempts = 12
+	start := make(chan struct{})
+	results := make(chan error, attempts)
+	for i := 0; i < attempts; i++ {
+		i := i
+		go func() {
+			<-start
+			choice := SemanticJudgmentChoiceReject
+			if i%2 == 0 {
+				choice = SemanticJudgmentChoiceAccept
+			}
+			_, err := RecordSemanticJudgment(root, SemanticJudgmentRecordInput{
+				CandidateID: candidate.CandidateID,
+				Choice:      choice,
+				ReviewerID:  fmt.Sprintf("reviewer-%d", i),
+				RecordedAt:  fixedTestTime(),
+			})
+			results <- err
+		}()
+	}
+	close(start)
+
+	successes := 0
+	for i := 0; i < attempts; i++ {
+		err := <-results
+		if err == nil {
+			successes++
+			continue
+		}
+		if !strings.Contains(err.Error(), "semantic judgment already exists") {
+			t.Fatalf("expected duplicate judgment error, got %v", err)
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("expected exactly one concurrent judgment success, got %d", successes)
+	}
+	summary, err := ReadSemanticJudgmentSummary(root)
+	if err != nil {
+		t.Fatalf("read semantic judgment summary: %v", err)
+	}
+	if summary.JudgedCount != 1 || summary.RemainingCount != 0 {
+		t.Fatalf("expected one durable judgment after concurrent writes: %+v", summary)
+	}
+}
+
+func TestSemanticJudgmentNextPageDoesNotMutateCursorArtifact(t *testing.T) {
+	node := validStructureNode()
+	candidate := validSemanticCandidate(validSemanticObservation(node), node)
+	semanticRun := writeSemanticAcceptanceRun(t, []SemanticCandidate{candidate})
+	out := t.TempDir()
+	if _, err := JudgeSemanticCandidates(semanticRun, out, SemanticJudgmentOptions{}); err != nil {
+		t.Fatalf("judge semantic candidates: %v", err)
+	}
+	root := filepath.Join(out, "semantic-judgment")
+	cursorPath := filepath.Join(root, "cursor.json")
+	oldTime := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
+	if err := os.Chtimes(cursorPath, oldTime, oldTime); err != nil {
+		t.Fatalf("set cursor timestamp: %v", err)
+	}
+	if _, err := NextSemanticJudgmentPage(root); err != nil {
+		t.Fatalf("next semantic judgment page: %v", err)
+	}
+	info, err := os.Stat(cursorPath)
+	if err != nil {
+		t.Fatalf("stat cursor: %v", err)
+	}
+	if !info.ModTime().Equal(oldTime) {
+		t.Fatalf("next page should not rewrite cursor artifact; got modtime %s want %s", info.ModTime(), oldTime)
+	}
+}
+
+func TestSemanticJudgmentRejectsUnsafeInputs(t *testing.T) {
+	node := validStructureNode()
+	candidate := validSemanticCandidate(validSemanticObservation(node), node)
+	semanticRun := writeSemanticAcceptanceRun(t, []SemanticCandidate{candidate})
+	out := t.TempDir()
+	if _, err := JudgeSemanticCandidates(semanticRun, out, SemanticJudgmentOptions{}); err != nil {
+		t.Fatalf("judge semantic candidates: %v", err)
+	}
+	if _, err := RecordSemanticJudgment(filepath.Join(out, "semantic-judgment"), SemanticJudgmentRecordInput{
+		CandidateID: "cand-missing",
+		Choice:      SemanticJudgmentChoiceAccept,
+		RecordedAt:  fixedTestTime(),
+	}); err == nil {
+		t.Fatalf("expected unknown candidate to fail closed")
+	}
+	if _, err := RecordSemanticJudgment(filepath.Join(out, "semantic-judgment"), SemanticJudgmentRecordInput{
+		CandidateID: candidate.CandidateID,
+		Choice:      SemanticJudgmentChoice("promote"),
+		RecordedAt:  fixedTestTime(),
+	}); err == nil {
+		t.Fatalf("expected unsupported judgment choice to fail closed")
+	}
+}
+
+func TestSemanticJudgmentRejectsEscapingSourcePath(t *testing.T) {
+	node := validStructureNode()
+	candidate := validSemanticCandidate(validSemanticObservation(node), node)
+	semanticRun := writeSemanticAcceptanceRun(t, []SemanticCandidate{candidate})
+	sourceRoot := t.TempDir()
+	if _, err := JudgeSemanticCandidates(semanticRun, t.TempDir(), SemanticJudgmentOptions{
+		SourceRoot: sourceRoot,
+		SourcePath: "../outside.md",
+	}); err == nil {
+		t.Fatalf("expected escaping source path to fail closed")
+	}
+}
+
+func TestSemanticJudgmentRejectsSymlinkedOutputParent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink behavior differs on windows")
+	}
+	node := validStructureNode()
+	candidate := validSemanticCandidate(validSemanticObservation(node), node)
+	semanticRun := writeSemanticAcceptanceRun(t, []SemanticCandidate{candidate})
+	linkParent := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(linkParent, "linked")); err != nil {
+		t.Fatalf("create symlink: %v", err)
+	}
+	if _, err := JudgeSemanticCandidates(semanticRun, filepath.Join(linkParent, "linked", "out"), SemanticJudgmentOptions{}); err == nil {
+		t.Fatalf("expected symlinked output parent to fail closed")
+	}
+}
+
 func TestSemanticCalibrationThresholdCannotLowerTrustGate(t *testing.T) {
 	acceptanceDir := writeSemanticAcceptanceOutput(t, []SemanticCandidate{
 		validSemanticCandidate(validSemanticObservation(validStructureNode()), validStructureNode()),
@@ -3462,6 +3669,10 @@ func firstString(values []string) string {
 		return "obs-demo"
 	}
 	return values[0]
+}
+
+func fixedTestTime() time.Time {
+	return time.Date(2026, 5, 23, 10, 0, 0, 0, time.UTC)
 }
 
 func writeAcceptanceAnswerKey(t *testing.T, answerKey SemanticAcceptanceAnswerKey) string {

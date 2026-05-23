@@ -3,6 +3,9 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -361,6 +364,536 @@ func TestDocumentsCalibrateAndCalibrateNext(t *testing.T) {
 	}
 	if !strings.Contains(page.PageMarkdown, "Adjudication choices") {
 		t.Fatalf("expected content-rich calibration page markdown, got %q", page.PageMarkdown)
+	}
+}
+
+func TestDocumentsJudgeJudgeNextAndJudgeRecord(t *testing.T) {
+	semanticOut := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "semantics", documentsFixture(t, "semantic"),
+		"--out", semanticOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected semantic generation exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+
+	judgeOut := t.TempDir()
+	stdout.Reset()
+	stderr.Reset()
+	code = NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "judge", semanticOut,
+		"--out", judgeOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected judge exit %d, got %d stdout=%s stderr=%s", ExitOK, code, stdout.String(), stderr.String())
+	}
+	var summary struct {
+		SchemaVersion  string `json:"schema_version"`
+		CandidateCount int    `json:"candidate_count"`
+		RemainingCount int    `json:"remaining_count"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
+		t.Fatalf("decode judge stdout: %v\n%s", err, stdout.String())
+	}
+	if summary.SchemaVersion != "semantic-judgment-summary/v0.1" || summary.CandidateCount == 0 || summary.RemainingCount != summary.CandidateCount {
+		t.Fatalf("unexpected judgment summary: %+v", summary)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "judge-next", filepath.Join(judgeOut, "semantic-judgment"),
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected judge-next exit %d, got %d stdout=%s stderr=%s", ExitOK, code, stdout.String(), stderr.String())
+	}
+	var page struct {
+		SchemaVersion string `json:"schema_version"`
+		Done          bool   `json:"done"`
+		PageMarkdown  string `json:"page_markdown"`
+		Item          *struct {
+			CandidateID string `json:"candidate_id"`
+		} `json:"item"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &page); err != nil {
+		t.Fatalf("decode judge-next stdout: %v\n%s", err, stdout.String())
+	}
+	if page.SchemaVersion != "semantic-judgment-page/v0.1" || page.Done || page.Item == nil || !strings.Contains(page.PageMarkdown, "Adjudication choices") {
+		t.Fatalf("unexpected judgment page: %+v", page)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "judge-record", filepath.Join(judgeOut, "semantic-judgment"),
+		"--candidate", page.Item.CandidateID,
+		"--choice", "accept",
+		"--note", "Looks useful.",
+		"--reviewer", "cli-test",
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected judge-record exit %d, got %d stdout=%s stderr=%s", ExitOK, code, stdout.String(), stderr.String())
+	}
+	var updated struct {
+		SchemaVersion string  `json:"schema_version"`
+		JudgedCount   int     `json:"judged_count"`
+		AcceptedCount int     `json:"accepted_count"`
+		Precision     float64 `json:"precision_estimate"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &updated); err != nil {
+		t.Fatalf("decode judge-record stdout: %v\n%s", err, stdout.String())
+	}
+	if updated.SchemaVersion != "semantic-judgment-summary/v0.1" || updated.JudgedCount != 1 || updated.AcceptedCount != 1 || updated.Precision != 1 {
+		t.Fatalf("unexpected judgment record summary: %+v", updated)
+	}
+}
+
+func TestDocumentsJudgeServeStateAndRecord(t *testing.T) {
+	semanticOut := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "semantics", documentsFixture(t, "semantic"),
+		"--out", semanticOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected semantic generation exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+
+	judgeOut := t.TempDir()
+	stdout.Reset()
+	stderr.Reset()
+	code = NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "judge", semanticOut,
+		"--out", judgeOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected judge exit %d, got %d stdout=%s stderr=%s", ExitOK, code, stdout.String(), stderr.String())
+	}
+	root := filepath.Join(judgeOut, "semantic-judgment")
+	handler := newSemanticJudgmentUIHandler(root, "ui-test")
+	token := judgmentUIToken(t, handler)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = judgmentUITestHost
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected ui status 200, got %d", rec.Code)
+	}
+	var html bytes.Buffer
+	if _, err := html.ReadFrom(rec.Body); err != nil {
+		t.Fatalf("read ui html: %v", err)
+	}
+	for _, want := range []string{"Mindline Review", "Review", "Guide", "How to review", "Decision meanings", "remaining", "current-candidate", "decision-controls", "evidence", "Relation ids", "Blockers"} {
+		if !strings.Contains(html.String(), want) {
+			t.Fatalf("expected UI HTML to contain %q, got %s", want, html.String())
+		}
+	}
+
+	state := getJudgmentUIState(t, handler)
+	if state.SchemaVersion != "semantic-judgment-ui-state/v0.1" {
+		t.Fatalf("unexpected state schema: %+v", state)
+	}
+	if state.Summary.CandidateCount == 0 || state.Summary.RemainingCount != state.Summary.CandidateCount {
+		t.Fatalf("expected aggregate review context in state: %+v", state.Summary)
+	}
+	if state.Page.Done || state.Page.Item == nil {
+		t.Fatalf("expected exactly one current candidate in state: %+v", state.Page)
+	}
+	if len(state.Page.Item.RelationIDs) == 0 || len(state.Page.Item.Blockers) == 0 {
+		t.Fatalf("expected fixture current item to exercise relations and blockers: %+v", state.Page.Item)
+	}
+	firstCandidateID := state.Page.Item.CandidateID
+
+	req = httptest.NewRequest(http.MethodPost, "/api/judgments", strings.NewReader(`{"candidate_id":"`+firstCandidateID+`","choice":"accept","note":"useful"}`))
+	req.Host = judgmentUITestHost
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Mindline-Review-Token", token)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected judgment status 200, got %d", rec.Code)
+	}
+	updated := decodeJudgmentUIState(t, rec.Body)
+	if updated.Summary.JudgedCount != 1 || updated.Summary.AcceptedCount != 1 || updated.Summary.RemainingCount != state.Summary.CandidateCount-1 {
+		t.Fatalf("expected updated aggregate context after UI judgment: %+v", updated.Summary)
+	}
+	if updated.Page.Item != nil && updated.Page.Item.CandidateID == firstCandidateID {
+		t.Fatalf("expected UI to advance after recording judgment, still on %s", firstCandidateID)
+	}
+	if _, err := os.Stat(filepath.Join(root, "judgments", firstCandidateID+".json")); err != nil {
+		t.Fatalf("expected UI judgment artifact: %v", err)
+	}
+}
+
+func TestDocumentsJudgeServeRejectsBadChoice(t *testing.T) {
+	semanticOut := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "semantics", documentsFixture(t, "semantic"),
+		"--out", semanticOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected semantic generation exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+
+	judgeOut := t.TempDir()
+	stdout.Reset()
+	stderr.Reset()
+	code = NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "judge", semanticOut,
+		"--out", judgeOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected judge exit %d, got %d stdout=%s stderr=%s", ExitOK, code, stdout.String(), stderr.String())
+	}
+	handler := newSemanticJudgmentUIHandler(filepath.Join(judgeOut, "semantic-judgment"), "ui-test")
+	token := judgmentUIToken(t, handler)
+
+	state := getJudgmentUIState(t, handler)
+	req := httptest.NewRequest(http.MethodPost, "/api/judgments", strings.NewReader(`{"candidate_id":"`+state.Page.Item.CandidateID+`","choice":"maybe"}`))
+	req.Host = judgmentUITestHost
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Mindline-Review-Token", token)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected bad choice status 400, got %d", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/judgments", strings.NewReader(`{"candidate_id":"cand-missing","choice":"accept"}`))
+	req.Host = judgmentUITestHost
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Mindline-Review-Token", token)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected unknown candidate status 400, got %d", rec.Code)
+	}
+}
+
+func TestDocumentsJudgeServeRejectsTokenlessAndCrossOriginPosts(t *testing.T) {
+	semanticOut := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "semantics", documentsFixture(t, "semantic"),
+		"--out", semanticOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected semantic generation exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+
+	judgeOut := t.TempDir()
+	stdout.Reset()
+	stderr.Reset()
+	code = NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "judge", semanticOut,
+		"--out", judgeOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected judge exit %d, got %d stdout=%s stderr=%s", ExitOK, code, stdout.String(), stderr.String())
+	}
+	handler := newSemanticJudgmentUIHandler(filepath.Join(judgeOut, "semantic-judgment"), "ui-test")
+	state := getJudgmentUIState(t, handler)
+
+	payload := `{"candidate_id":"` + state.Page.Item.CandidateID + `","choice":"accept"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/judgments", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Host = judgmentUITestHost
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected tokenless judgment status 403, got %d", rec.Code)
+	}
+
+	token := judgmentUIToken(t, handler)
+	req = httptest.NewRequest(http.MethodPost, "/api/judgments", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Mindline-Review-Token", token)
+	req.Header.Set("Origin", "https://example.invalid")
+	req.Host = judgmentUITestHost
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected cross-origin judgment status 403, got %d", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/judgments", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Mindline-Review-Token", token)
+	req.Header.Set("Origin", "http://"+judgmentUITestHost)
+	req.Host = judgmentUITestHost
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected same-origin tokened judgment status 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDocumentsJudgeServeRejectsNonJSONPosts(t *testing.T) {
+	semanticOut := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "semantics", documentsFixture(t, "semantic"),
+		"--out", semanticOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected semantic generation exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+
+	judgeOut := t.TempDir()
+	stdout.Reset()
+	stderr.Reset()
+	code = NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "judge", semanticOut,
+		"--out", judgeOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected judge exit %d, got %d stdout=%s stderr=%s", ExitOK, code, stdout.String(), stderr.String())
+	}
+	handler := newSemanticJudgmentUIHandler(filepath.Join(judgeOut, "semantic-judgment"), "ui-test")
+	state := getJudgmentUIState(t, handler)
+	token := judgmentUIToken(t, handler)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/judgments", strings.NewReader("candidate_id="+state.Page.Item.CandidateID+"&choice=accept"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("X-Mindline-Review-Token", token)
+	req.Header.Set("Origin", "http://"+judgmentUITestHost)
+	req.Host = judgmentUITestHost
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("expected non-json judgment status 415, got %d", rec.Code)
+	}
+}
+
+func TestDocumentsJudgeServeRejectsNonLoopbackHostEvenWithToken(t *testing.T) {
+	semanticOut := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "semantics", documentsFixture(t, "semantic"),
+		"--out", semanticOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected semantic generation exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+
+	judgeOut := t.TempDir()
+	stdout.Reset()
+	stderr.Reset()
+	code = NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "judge", semanticOut,
+		"--out", judgeOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected judge exit %d, got %d stdout=%s stderr=%s", ExitOK, code, stdout.String(), stderr.String())
+	}
+	handler := newSemanticJudgmentUIHandler(filepath.Join(judgeOut, "semantic-judgment"), "ui-test")
+	state := getJudgmentUIState(t, handler)
+	token := judgmentUIToken(t, handler)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/judgments", strings.NewReader(`{"candidate_id":"`+state.Page.Item.CandidateID+`","choice":"accept"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Mindline-Review-Token", token)
+	req.Header.Set("Origin", "http://attacker.test:8787")
+	req.Host = "attacker.test:8787"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected non-loopback host status 403, got %d", rec.Code)
+	}
+}
+
+func TestDocumentsJudgeServeAllowsConfiguredLoopbackAliasHost(t *testing.T) {
+	semanticOut := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "semantics", documentsFixture(t, "semantic"),
+		"--out", semanticOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected semantic generation exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+
+	judgeOut := t.TempDir()
+	stdout.Reset()
+	stderr.Reset()
+	code = NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "judge", semanticOut,
+		"--out", judgeOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected judge exit %d, got %d stdout=%s stderr=%s", ExitOK, code, stdout.String(), stderr.String())
+	}
+	aliasHost := "review.localhost:8787"
+	handler := newSemanticJudgmentUIHandlerWithAllowedHosts(filepath.Join(judgeOut, "semantic-judgment"), "ui-test", []string{aliasHost})
+	token := judgmentUITokenForHost(t, handler, aliasHost)
+	state := getJudgmentUIStateForHost(t, handler, aliasHost)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/judgments", strings.NewReader(`{"candidate_id":"`+state.Page.Item.CandidateID+`","choice":"accept"}`))
+	req.Host = aliasHost
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Mindline-Review-Token", token)
+	req.Header.Set("Origin", "http://"+aliasHost)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected configured alias host status 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDocumentsJudgeServeRejectsUnconfiguredLocalhostAliasHost(t *testing.T) {
+	semanticOut := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "semantics", documentsFixture(t, "semantic"),
+		"--out", semanticOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected semantic generation exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+
+	judgeOut := t.TempDir()
+	stdout.Reset()
+	stderr.Reset()
+	code = NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "judge", semanticOut,
+		"--out", judgeOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected judge exit %d, got %d stdout=%s stderr=%s", ExitOK, code, stdout.String(), stderr.String())
+	}
+	aliasHost := "review.localhost:8787"
+	handler := newSemanticJudgmentUIHandler(filepath.Join(judgeOut, "semantic-judgment"), "ui-test")
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = aliasHost
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected unconfigured localhost alias host status 403, got %d", rec.Code)
+	}
+}
+
+func TestDocumentsJudgeServeRejectsConfiguredNonLocalAliasHost(t *testing.T) {
+	semanticOut := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "semantics", documentsFixture(t, "semantic"),
+		"--out", semanticOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected semantic generation exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+
+	judgeOut := t.TempDir()
+	stdout.Reset()
+	stderr.Reset()
+	code = NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "judge", semanticOut,
+		"--out", judgeOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected judge exit %d, got %d stdout=%s stderr=%s", ExitOK, code, stdout.String(), stderr.String())
+	}
+	attackerHost := "attacker.test:8787"
+	handler := newSemanticJudgmentUIHandlerWithAllowedHosts(filepath.Join(judgeOut, "semantic-judgment"), "ui-test", []string{attackerHost})
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = attackerHost
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected configured non-local alias host status 403, got %d", rec.Code)
+	}
+}
+
+func TestDocumentsJudgeServeLoopbackValidation(t *testing.T) {
+	for _, addr := range []string{"127.0.0.1:8787", "localhost:8787", "[::1]:8787"} {
+		t.Run("accepts_"+addr, func(t *testing.T) {
+			if err := validateLoopbackAddr(addr); err != nil {
+				t.Fatalf("expected loopback addr %q to pass: %v", addr, err)
+			}
+		})
+	}
+	for _, addr := range []string{"0.0.0.0:8787", "[::]:8787", "192.168.1.20:8787"} {
+		t.Run("rejects_"+addr, func(t *testing.T) {
+			if err := validateLoopbackAddr(addr); err == nil {
+				t.Fatalf("expected non-loopback addr %q to fail", addr)
+			}
+		})
+	}
+}
+
+const judgmentUITestHost = "127.0.0.1:8787"
+
+func judgmentUIToken(t *testing.T, handler http.Handler) string {
+	t.Helper()
+	return judgmentUITokenForHost(t, handler, judgmentUITestHost)
+}
+
+func judgmentUITokenForHost(t *testing.T, handler http.Handler, host string) string {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = host
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected ui status 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	const marker = `name="mindline-review-token" content="`
+	start := strings.Index(body, marker)
+	if start < 0 {
+		t.Fatalf("review token marker missing from UI HTML")
+	}
+	start += len(marker)
+	end := strings.Index(body[start:], `"`)
+	if end < 0 {
+		t.Fatalf("review token content missing closing quote")
+	}
+	return body[start : start+end]
+}
+
+func getJudgmentUIState(t *testing.T, handler http.Handler) semanticJudgmentUIState {
+	t.Helper()
+	return getJudgmentUIStateForHost(t, handler, judgmentUITestHost)
+}
+
+func getJudgmentUIStateForHost(t *testing.T, handler http.Handler, host string) semanticJudgmentUIState {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/state", nil)
+	req.Host = host
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected state status 200, got %d", rec.Code)
+	}
+	return decodeJudgmentUIState(t, rec.Body)
+}
+
+func decodeJudgmentUIState(t *testing.T, body io.Reader) semanticJudgmentUIState {
+	t.Helper()
+	var state semanticJudgmentUIState
+	if err := json.NewDecoder(body).Decode(&state); err != nil {
+		t.Fatalf("decode UI state: %v", err)
+	}
+	return state
+}
+
+func TestDocumentsJudgeRejectsDestinationAndProfileFlags(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "judge", t.TempDir(),
+		"--profile", documentsFixture(t, "..", "productbrain", "profiles", "default-governance.json"),
+		"--out", t.TempDir(),
+	}, &stdout, &stderr)
+	if code != ExitUsage {
+		t.Fatalf("expected usage exit for --profile, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "usage: mindline documents judge") {
+		t.Fatalf("expected documents judge usage, got %q", stderr.String())
 	}
 }
 

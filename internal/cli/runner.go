@@ -6,6 +6,8 @@ import (
 	"io"
 	"io/fs"
 	"math"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -28,7 +30,7 @@ const (
 	ExitArtifactWrite = 3
 )
 
-const usage = "usage: mindline process <candidate.json> [--out <dir>]\nusage: mindline slack normalize <slack-export.json> [--out <dir>]\nusage: mindline destination dry-run <sbos-result.json> --adapter tolaria --out <dir>\nusage: mindline pipeline dry-run <pipeline-input.json> --method basb-para-code --destination tolaria --out <dir>\nusage: mindline product-brain propose <run-dir> --profile <profile.json> --out <dir>\nusage: mindline documents decompose <markdown-path-or-dir> --out <dir>\nusage: mindline documents structure <markdown-path-or-dir> --out <dir>\nusage: mindline documents semantics <structure-run-dir-or-markdown-path-or-markdown-dir> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents accept <semantic-run-dir> --answer-key <answer-key.json> --out <dir>\nusage: mindline documents calibrate <semantic-acceptance-dir-or-parent> --out <dir> [--threshold 0.98] [--held-out] [--source-root <dir> --source <relative.md>]\nusage: mindline documents calibrate-next <semantic-calibration-dir-or-parent>\n"
+const usage = "usage: mindline process <candidate.json> [--out <dir>]\nusage: mindline slack normalize <slack-export.json> [--out <dir>]\nusage: mindline destination dry-run <sbos-result.json> --adapter tolaria --out <dir>\nusage: mindline pipeline dry-run <pipeline-input.json> --method basb-para-code --destination tolaria --out <dir>\nusage: mindline product-brain propose <run-dir> --profile <profile.json> --out <dir>\nusage: mindline documents decompose <markdown-path-or-dir> --out <dir>\nusage: mindline documents structure <markdown-path-or-dir> --out <dir>\nusage: mindline documents semantics <structure-run-dir-or-markdown-path-or-markdown-dir> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents accept <semantic-run-dir> --answer-key <answer-key.json> --out <dir>\nusage: mindline documents calibrate <semantic-acceptance-dir-or-parent> --out <dir> [--threshold 0.98] [--held-out] [--source-root <dir> --source <relative.md>]\nusage: mindline documents calibrate-next <semantic-calibration-dir-or-parent>\nusage: mindline documents judge <semantic-run-dir> --out <dir> [--source-root <dir> --source <relative.md>]\nusage: mindline documents judge-next <semantic-judgment-dir-or-parent>\nusage: mindline documents judge-record <semantic-judgment-dir-or-parent> --candidate <candidate-id> --choice accept|reject|unclear|duplicate|wrong-kind [--note <text>] [--reviewer <id>]\nusage: mindline documents judge-serve <semantic-judgment-dir-or-parent> [--addr 127.0.0.1:8787] [--reviewer <id>]\n"
 
 const protectedRootsEnv = "MINDLINE_PROTECTED_ROOTS"
 const defaultTolariaProtectedRoot = "/Users/randyhereman/Young Human Club Dropbox/02. Areas/PKM - Tolaria"
@@ -245,6 +247,18 @@ func (r Runner) runDocuments(args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "calibrate-next" {
 		return r.runDocumentsCalibrateNext(args, stdout, stderr)
 	}
+	if len(args) > 0 && args[0] == "judge" {
+		return r.runDocumentsJudge(args, stdout, stderr)
+	}
+	if len(args) > 0 && args[0] == "judge-next" {
+		return r.runDocumentsJudgeNext(args, stdout, stderr)
+	}
+	if len(args) > 0 && args[0] == "judge-record" {
+		return r.runDocumentsJudgeRecord(args, stdout, stderr)
+	}
+	if len(args) > 0 && args[0] == "judge-serve" {
+		return r.runDocumentsJudgeServe(args, stdout, stderr)
+	}
 	inputPath, outDir, parseError := parseDocumentsArgs(args, "decompose")
 	if parseError != parseErrorNone {
 		fmt.Fprint(stderr, usage)
@@ -264,6 +278,102 @@ func (r Runner) runDocuments(args []string, stdout, stderr io.Writer) int {
 	if err := encoder.Encode(summary); err != nil {
 		fmt.Fprintf(stderr, "write stdout: %v\n", err)
 		return ExitUsage
+	}
+	return ExitOK
+}
+
+func (r Runner) runDocumentsJudge(args []string, stdout, stderr io.Writer) int {
+	inputPath, outDir, options, parseError := parseDocumentsJudgeArgs(args)
+	if parseError != parseErrorNone {
+		fmt.Fprint(stderr, usage)
+		return ExitUsage
+	}
+	summary, err := documents.JudgeSemanticCandidates(inputPath, outDir, options)
+	if err != nil {
+		if documents.IsArtifactWriteError(err) {
+			fmt.Fprintf(stderr, "write semantic judgments: %v\n", err)
+			return ExitArtifactWrite
+		}
+		fmt.Fprintf(stderr, "judge semantic candidates: %v\n", err)
+		return ExitProcess
+	}
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(summary); err != nil {
+		fmt.Fprintf(stderr, "write stdout: %v\n", err)
+		return ExitUsage
+	}
+	return ExitOK
+}
+
+func (r Runner) runDocumentsJudgeNext(args []string, stdout, stderr io.Writer) int {
+	inputPath, parseError := parseDocumentsJudgeNextArgs(args)
+	if parseError != parseErrorNone {
+		fmt.Fprint(stderr, usage)
+		return ExitUsage
+	}
+	page, err := documents.NextSemanticJudgmentPage(inputPath)
+	if err != nil {
+		if documents.IsArtifactWriteError(err) {
+			fmt.Fprintf(stderr, "write semantic judgment cursor: %v\n", err)
+			return ExitArtifactWrite
+		}
+		fmt.Fprintf(stderr, "page semantic judgments: %v\n", err)
+		return ExitProcess
+	}
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(page); err != nil {
+		fmt.Fprintf(stderr, "write stdout: %v\n", err)
+		return ExitUsage
+	}
+	return ExitOK
+}
+
+func (r Runner) runDocumentsJudgeRecord(args []string, stdout, stderr io.Writer) int {
+	inputPath, record, parseError := parseDocumentsJudgeRecordArgs(args)
+	if parseError != parseErrorNone {
+		fmt.Fprint(stderr, usage)
+		return ExitUsage
+	}
+	summary, err := documents.RecordSemanticJudgment(inputPath, record)
+	if err != nil {
+		if documents.IsArtifactWriteError(err) {
+			fmt.Fprintf(stderr, "write semantic judgment: %v\n", err)
+			return ExitArtifactWrite
+		}
+		fmt.Fprintf(stderr, "record semantic judgment: %v\n", err)
+		return ExitProcess
+	}
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(summary); err != nil {
+		fmt.Fprintf(stderr, "write stdout: %v\n", err)
+		return ExitUsage
+	}
+	return ExitOK
+}
+
+func (r Runner) runDocumentsJudgeServe(args []string, stdout, stderr io.Writer) int {
+	inputPath, addr, reviewerID, parseError := parseDocumentsJudgeServeArgs(args)
+	if parseError != parseErrorNone {
+		fmt.Fprint(stderr, usage)
+		return ExitUsage
+	}
+	if err := validateLoopbackAddr(addr); err != nil {
+		fmt.Fprintf(stderr, "invalid --addr: %v\n", err)
+		return ExitUsage
+	}
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		fmt.Fprintf(stderr, "serve semantic judgment UI: %v\n", err)
+		return ExitProcess
+	}
+	defer listener.Close()
+	fmt.Fprintf(stdout, "Mindline review UI: http://%s\n", listener.Addr().String())
+	if err := http.Serve(listener, newSemanticJudgmentUIHandlerWithAllowedHosts(inputPath, reviewerID, []string{addr, listener.Addr().String()})); err != nil {
+		fmt.Fprintf(stderr, "serve semantic judgment UI: %v\n", err)
+		return ExitProcess
 	}
 	return ExitOK
 }
@@ -938,6 +1048,103 @@ func parseDocumentsCalibrateNextArgs(args []string) (inputPath string, err parse
 		return "", parseErrorUsage
 	}
 	return args[1], parseErrorNone
+}
+
+func parseDocumentsJudgeArgs(args []string) (inputPath string, outDir string, options documents.SemanticJudgmentOptions, err parseError) {
+	if len(args) < 4 || args[0] != "judge" || strings.TrimSpace(args[1]) == "" {
+		return "", "", options, parseErrorUsage
+	}
+	inputPath = args[1]
+	for i := 2; i < len(args); {
+		switch args[i] {
+		case "--out":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", options, parseErrorUsage
+			}
+			outDir = args[i+1]
+			i += 2
+		case "--source-root":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", options, parseErrorUsage
+			}
+			options.SourceRoot = args[i+1]
+			i += 2
+		case "--source":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", options, parseErrorUsage
+			}
+			options.SourcePath = args[i+1]
+			i += 2
+		default:
+			return "", "", options, parseErrorUsage
+		}
+	}
+	if outDir == "" {
+		return "", "", options, parseErrorUsage
+	}
+	if (strings.TrimSpace(options.SourceRoot) == "") != (strings.TrimSpace(options.SourcePath) == "") {
+		return "", "", options, parseErrorUsage
+	}
+	return inputPath, outDir, options, parseErrorNone
+}
+
+func parseDocumentsJudgeNextArgs(args []string) (inputPath string, err parseError) {
+	if len(args) != 2 || args[0] != "judge-next" || strings.TrimSpace(args[1]) == "" {
+		return "", parseErrorUsage
+	}
+	return args[1], parseErrorNone
+}
+
+func parseDocumentsJudgeRecordArgs(args []string) (inputPath string, record documents.SemanticJudgmentRecordInput, err parseError) {
+	if len(args) < 6 || args[0] != "judge-record" || strings.TrimSpace(args[1]) == "" {
+		return "", record, parseErrorUsage
+	}
+	inputPath = args[1]
+	for i := 2; i < len(args); {
+		if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+			return "", record, parseErrorUsage
+		}
+		switch args[i] {
+		case "--candidate":
+			record.CandidateID = args[i+1]
+		case "--choice":
+			record.Choice = documents.SemanticJudgmentChoice(args[i+1])
+		case "--note":
+			record.Note = args[i+1]
+		case "--reviewer":
+			record.ReviewerID = args[i+1]
+		default:
+			return "", record, parseErrorUsage
+		}
+		i += 2
+	}
+	if strings.TrimSpace(record.CandidateID) == "" || strings.TrimSpace(string(record.Choice)) == "" {
+		return "", record, parseErrorUsage
+	}
+	return inputPath, record, parseErrorNone
+}
+
+func parseDocumentsJudgeServeArgs(args []string) (inputPath string, addr string, reviewerID string, err parseError) {
+	if len(args) < 2 || args[0] != "judge-serve" || strings.TrimSpace(args[1]) == "" {
+		return "", "", "", parseErrorUsage
+	}
+	inputPath = args[1]
+	addr = "127.0.0.1:8787"
+	for i := 2; i < len(args); {
+		if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+			return "", "", "", parseErrorUsage
+		}
+		switch args[i] {
+		case "--addr":
+			addr = args[i+1]
+		case "--reviewer":
+			reviewerID = args[i+1]
+		default:
+			return "", "", "", parseErrorUsage
+		}
+		i += 2
+	}
+	return inputPath, addr, reviewerID, parseErrorNone
 }
 
 func (r Runner) validateOutDir(outDir string) error {
