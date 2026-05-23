@@ -3,6 +3,7 @@ package documents
 import (
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -127,5 +128,45 @@ func semanticJudgmentReportMarkdown(summary SemanticJudgmentSummary) string {
 	} {
 		b.WriteString(fmt.Sprintf("- %s: %d\n", choice, summary.FailureModeCounts[choice]))
 	}
+	b.WriteString("\n## Grouped judgment analytics\n\n")
+	b.WriteString("These grouped counts are calibration evidence only; they do not prove no-human readiness.\n\n")
+	writeSemanticJudgmentGroupSection(&b, "By candidate kind", summary.JudgmentByCandidateKind)
+	writeSemanticJudgmentGroupSection(&b, "By confidence", summary.JudgmentByConfidence)
+	writeSemanticJudgmentGroupSection(&b, "By review status", summary.JudgmentByReviewStatus)
+	writeSemanticJudgmentGroupSection(&b, "By source document", summary.JudgmentBySourceDocument)
+	writeSemanticJudgmentGroupSection(&b, "By relation presence", summary.JudgmentByRelationPresence)
+	writeSemanticJudgmentGroupSection(&b, "By relation type", summary.JudgmentByRelationType)
 	return b.String()
+}
+
+func writeSemanticJudgmentGroupSection[K ~string](b *strings.Builder, title string, groups map[K]map[SemanticJudgmentChoice]int) {
+	b.WriteString("### " + title + "\n\n")
+	if len(groups) == 0 {
+		b.WriteString("- No judged candidates\n\n")
+		return
+	}
+	keys := make([]string, 0, len(groups))
+	byString := map[string]map[SemanticJudgmentChoice]int{}
+	for key, counts := range groups {
+		stringKey := string(key)
+		keys = append(keys, stringKey)
+		byString[stringKey] = counts
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		b.WriteString("- " + key)
+		for _, choice := range []SemanticJudgmentChoice{
+			SemanticJudgmentChoiceAccept,
+			SemanticJudgmentChoiceReject,
+			SemanticJudgmentChoiceUnclear,
+			SemanticJudgmentChoiceDuplicate,
+			SemanticJudgmentChoiceWrongKind,
+		} {
+			if count := byString[key][choice]; count > 0 {
+				b.WriteString(fmt.Sprintf(" %s=%d", choice, count))
+			}
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
 }

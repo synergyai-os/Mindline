@@ -2425,8 +2425,138 @@ func TestSemanticJudgmentInitializesReviewBundleAndPagesOneCandidate(t *testing.
 	if !strings.Contains(page.PageMarkdown, "Prepare checklist") ||
 		!strings.Contains(page.PageMarkdown, "Adjudication choices") ||
 		!strings.Contains(page.PageMarkdown, "source.md lines 2-4") ||
+		!strings.Contains(page.PageMarkdown, "Relation context") ||
+		!strings.Contains(page.PageMarkdown, string(SemanticRelationshipDerivedFrom)) ||
+		!strings.Contains(page.PageMarkdown, "This is the evidence link") ||
 		!strings.Contains(page.PageMarkdown, "two\nthree\nfour") {
 		t.Fatalf("judgment page is not self-contained:\n%s", page.PageMarkdown)
+	}
+}
+
+func TestSemanticJudgmentIncludesRelationEndpointContext(t *testing.T) {
+	node := validStructureNode()
+	action := validSemanticCandidate(validSemanticObservation(node), node)
+	decision := unexpectedDecisionCandidate()
+	decision.Summary = strings.Repeat("long related decision summary ", 20) + "\nsecond line must collapse"
+	relationID := "rel-action-decision"
+	action.RelationIDs = []string{relationID}
+	semanticRun := writeSemanticAcceptanceRun(t, []SemanticCandidate{action, decision})
+	writeDocumentsTestJSON(t, filepath.Join(semanticRun, "semantic-candidates", SemanticRelationJSONPath(relationID)), SemanticRelation{
+		SchemaVersion:    SemanticRelationSchemaVersion,
+		RelationID:       relationID,
+		RunID:            action.RunID,
+		RelationshipType: SemanticRelationshipContradicts,
+		FromID:           action.CandidateID,
+		FromType:         SemanticRelationEndpointCandidate,
+		ToID:             decision.CandidateID,
+		ToType:           SemanticRelationEndpointCandidate,
+		EvidenceNodes:    []string{"node-demo"},
+		Confidence:       ConfidenceMedium,
+		ReviewStatus:     ReviewStatusNeedsReview,
+		Blockers:         []Blocker{},
+	})
+	out := t.TempDir()
+	summary, err := JudgeSemanticCandidates(semanticRun, out, SemanticJudgmentOptions{})
+	if err != nil {
+		t.Fatalf("judge semantic candidates: %v", err)
+	}
+	var judgedAction SemanticJudgmentCandidate
+	for _, item := range summary.Items {
+		if item.CandidateID == action.CandidateID {
+			judgedAction = item
+			break
+		}
+	}
+	if len(judgedAction.RelationContext) != 1 {
+		t.Fatalf("expected relation context for action candidate: %+v", judgedAction)
+	}
+	relation := judgedAction.RelationContext[0]
+	if relation.RelationshipType != SemanticRelationshipContradicts ||
+		relation.OtherEndpoint.EndpointID != decision.CandidateID ||
+		relation.OtherEndpoint.Role != "to" ||
+		relation.OtherEndpoint.Label != decision.Title ||
+		!strings.Contains(relation.ReviewHint, "conflicts") {
+		t.Fatalf("unexpected relation context: %+v", relation)
+	}
+	if relation.OtherEndpoint.Summary != semanticSummaryText(decision.Summary) ||
+		strings.Contains(relation.OtherEndpoint.Summary, "\n") ||
+		len(relation.OtherEndpoint.Summary) > 160 {
+		t.Fatalf("expected bounded one-line endpoint summary, got %q", relation.OtherEndpoint.Summary)
+	}
+	page, err := NextSemanticJudgmentPage(filepath.Join(out, "semantic-judgment"))
+	if err != nil {
+		t.Fatalf("next semantic judgment page: %v", err)
+	}
+	if !strings.Contains(page.PageMarkdown, decision.Title) ||
+		!strings.Contains(page.PageMarkdown, "Other endpoint role: to") ||
+		!strings.Contains(page.PageMarkdown, "conflicts") {
+		t.Fatalf("expected endpoint label and hint in page:\n%s", page.PageMarkdown)
+	}
+}
+
+func TestSemanticJudgmentRejectsUnsafeRelationContext(t *testing.T) {
+	node := validStructureNode()
+	candidate := validSemanticCandidate(validSemanticObservation(node), node)
+	item := semanticJudgmentCandidates([]SemanticCandidate{candidate}, nil, nil, semanticCalibrationSourceContext{}, nil)[0]
+	item.RelationContext = []SemanticJudgmentRelationContext{{
+		RelationID:       "rel-safe",
+		RelationshipType: SemanticRelationshipSameTopicAs,
+		FromID:           candidate.CandidateID,
+		FromType:         SemanticRelationEndpointCandidate,
+		ToID:             "cand-related",
+		ToType:           SemanticRelationEndpointCandidate,
+		Confidence:       ConfidenceMedium,
+		ReviewStatus:     ReviewStatusReady,
+		OtherEndpoint: SemanticJudgmentEndpointContext{
+			EndpointID:   "cand-related",
+			EndpointType: SemanticRelationEndpointCandidate,
+			Role:         "to",
+			Label:        "related " + unsafeTokenMarker(),
+		},
+		ReviewHint: "unsafe relation context should fail closed",
+	}}
+	if err := ValidateSemanticJudgmentCandidate(item); err == nil || !strings.Contains(err.Error(), "private marker") {
+		t.Fatalf("expected unsafe relation context validation failure, got %v", err)
+	}
+}
+
+func TestSemanticJudgmentToleratesMissingRelationWithoutLooseningAcceptance(t *testing.T) {
+	node := validStructureNode()
+	candidate := validSemanticCandidate(validSemanticObservation(node), node)
+	semanticRun := writeSemanticAcceptanceRun(t, []SemanticCandidate{candidate})
+	if err := os.Remove(filepath.Join(semanticRun, "semantic-candidates", SemanticRelationJSONPath(candidate.RelationIDs[0]))); err != nil {
+		t.Fatalf("remove relation fixture: %v", err)
+	}
+	out := t.TempDir()
+	summary, err := JudgeSemanticCandidates(semanticRun, out, SemanticJudgmentOptions{})
+	if err != nil {
+		t.Fatalf("judge should tolerate missing relation context: %v", err)
+	}
+	if len(summary.Items) != 1 || len(summary.Items[0].RelationIDs) != 1 || len(summary.Items[0].RelationContext) != 0 {
+		t.Fatalf("expected raw relation id without fabricated relation context: %+v", summary.Items)
+	}
+	page, err := NextSemanticJudgmentPage(filepath.Join(out, "semantic-judgment"))
+	if err != nil {
+		t.Fatalf("next semantic judgment page: %v", err)
+	}
+	if !strings.Contains(page.PageMarkdown, "Relation context unavailable for: "+candidate.RelationIDs[0]) {
+		t.Fatalf("expected explicit unavailable relation context:\n%s", page.PageMarkdown)
+	}
+	answerKey := writeAcceptanceAnswerKey(t, SemanticAcceptanceAnswerKey{
+		SchemaVersion:    SemanticAcceptanceAnswerKeySchemaVersion,
+		AnswerKeyID:      "ak-strict-missing-relation",
+		SourceDocumentID: "doc-demo",
+		ExpectedOutcomes: []SemanticExpectedOutcome{{
+			ExpectedOutcomeID:      "exp-action",
+			ExpectedState:          ExpectedOutcomePresent,
+			ExpectedKind:           SemanticCandidateKindAction,
+			RequiredEvidence:       []string{"node-demo"},
+			RelationRequirements:   []SemanticRelationshipType{SemanticRelationshipDerivedFrom},
+			MinimumConfidenceFloor: ConfidenceLow,
+		}},
+	})
+	if _, err := AcceptSemantic(semanticRun, answerKey, t.TempDir()); err == nil || !strings.Contains(err.Error(), "read semantic relation") {
+		t.Fatalf("expected acceptance to remain strict for missing relation, got %v", err)
 	}
 }
 
@@ -2452,6 +2582,14 @@ func TestSemanticJudgmentRecordsChoiceAndUpdatesReport(t *testing.T) {
 	if summary.JudgedCount != 1 || summary.AcceptedCount != 1 || summary.RemainingCount != 1 || summary.PrecisionEstimate != 1 {
 		t.Fatalf("unexpected judgment counts after accept: %+v", summary)
 	}
+	if summary.JudgmentByCandidateKind[SemanticCandidateKindAction][SemanticJudgmentChoiceAccept] != 1 ||
+		summary.JudgmentByConfidence[ConfidenceMedium][SemanticJudgmentChoiceAccept] != 1 ||
+		summary.JudgmentByReviewStatus[ReviewStatusReady][SemanticJudgmentChoiceAccept] != 1 ||
+		summary.JudgmentBySourceDocument["doc-demo"][SemanticJudgmentChoiceAccept] != 1 ||
+		summary.JudgmentByRelationPresence["with_relations"][SemanticJudgmentChoiceAccept] != 1 ||
+		summary.JudgmentByRelationType[SemanticRelationshipDerivedFrom][SemanticJudgmentChoiceAccept] != 1 {
+		t.Fatalf("expected grouped judgment analytics after accept: %+v", summary)
+	}
 	if _, err := RecordSemanticJudgment(filepath.Join(out, "semantic-judgment"), SemanticJudgmentRecordInput{
 		CandidateID: action.CandidateID,
 		Choice:      SemanticJudgmentChoiceReject,
@@ -2463,7 +2601,11 @@ func TestSemanticJudgmentRecordsChoiceAndUpdatesReport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read judgment report: %v", err)
 	}
-	if !strings.Contains(string(report), "Accepted: 1") || !strings.Contains(string(report), "Review burden: 1") {
+	if !strings.Contains(string(report), "Accepted: 1") ||
+		!strings.Contains(string(report), "Review burden: 1") ||
+		!strings.Contains(string(report), "By candidate kind") ||
+		!strings.Contains(string(report), "action_candidate accept=1") ||
+		!strings.Contains(string(report), "derived_from accept=1") {
 		t.Fatalf("report did not update counts:\n%s", string(report))
 	}
 }
@@ -2570,6 +2712,24 @@ func TestSemanticJudgmentRejectsUnsafeInputs(t *testing.T) {
 		RecordedAt:  fixedTestTime(),
 	}); err == nil {
 		t.Fatalf("expected unsupported judgment choice to fail closed")
+	}
+}
+
+func TestSemanticJudgmentSummaryRejectsUnsafeAnalyticsKeys(t *testing.T) {
+	summary := BuildSemanticJudgmentSummary("run-demo", 1, nil, nil)
+	summary.JudgmentBySourceDocument = map[string]map[SemanticJudgmentChoice]int{
+		"doc-" + unsafeTokenMarker(): {SemanticJudgmentChoiceAccept: 1},
+	}
+	if err := ValidateSemanticJudgmentSummary(summary); err == nil || !strings.Contains(err.Error(), "private marker") {
+		t.Fatalf("expected unsafe source analytics key to fail validation, got %v", err)
+	}
+
+	summary = BuildSemanticJudgmentSummary("run-demo", 1, nil, nil)
+	summary.JudgmentByRelationType = map[SemanticRelationshipType]map[SemanticJudgmentChoice]int{
+		SemanticRelationshipType("DEC-49"): {SemanticJudgmentChoiceReject: 1},
+	}
+	if err := ValidateSemanticJudgmentSummary(summary); err == nil || !strings.Contains(err.Error(), "private marker") {
+		t.Fatalf("expected governance relation analytics key to fail validation, got %v", err)
 	}
 }
 
