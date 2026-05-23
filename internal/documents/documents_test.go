@@ -2560,6 +2560,33 @@ func TestSemanticJudgmentToleratesMissingRelationWithoutLooseningAcceptance(t *t
 	}
 }
 
+func TestSemanticJudgmentToleratesUnreadableObservationContext(t *testing.T) {
+	node := validStructureNode()
+	observation := validSemanticObservation(node)
+	candidate := validSemanticCandidate(observation, node)
+	semanticRun := writeSemanticAcceptanceRun(t, []SemanticCandidate{candidate})
+	observationPath := filepath.Join(semanticRun, "semantic-candidates", SemanticObservationJSONPath(observation.ObservationID))
+	if err := os.MkdirAll(filepath.Dir(observationPath), 0o755); err != nil {
+		t.Fatalf("mkdir observation fixture: %v", err)
+	}
+	if err := os.WriteFile(observationPath, []byte("{"), 0o600); err != nil {
+		t.Fatalf("corrupt observation fixture: %v", err)
+	}
+
+	out := t.TempDir()
+	summary, err := JudgeSemanticCandidates(semanticRun, out, SemanticJudgmentOptions{})
+	if err != nil {
+		t.Fatalf("judge should tolerate unreadable observation context: %v", err)
+	}
+	if len(summary.Items) != 1 || len(summary.Items[0].RelationContext) != 1 {
+		t.Fatalf("expected relation context from readable relation: %+v", summary.Items)
+	}
+	endpoint := summary.Items[0].RelationContext[0].OtherEndpoint
+	if !endpoint.Unavailable || endpoint.UnavailableReason != "endpoint context unavailable" {
+		t.Fatalf("expected unavailable observation endpoint context, got %+v", endpoint)
+	}
+}
+
 func TestSemanticJudgmentRecordsChoiceAndUpdatesReport(t *testing.T) {
 	node := validStructureNode()
 	action := validSemanticCandidate(validSemanticObservation(node), node)

@@ -98,14 +98,14 @@ func readSemanticJudgmentObservations(root string, candidates []SemanticCandidat
 				continue
 			}
 			if err != nil {
-				return nil, fmt.Errorf("read semantic observation: %w", err)
+				continue
 			}
 			var observation SemanticObservation
 			if err := json.Unmarshal(data, &observation); err != nil {
-				return nil, fmt.Errorf("decode semantic observation: %w", err)
+				continue
 			}
 			if err := ValidateSemanticObservation(observation); err != nil {
-				return nil, fmt.Errorf("invalid semantic observation: %w", err)
+				continue
 			}
 			observations = append(observations, observation)
 		}
