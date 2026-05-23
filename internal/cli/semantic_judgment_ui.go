@@ -189,9 +189,34 @@ header {
   gap: 16px;
   flex-wrap: wrap;
 }
+.titlebar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
 h1, h2, h3 { margin: 0; letter-spacing: 0; }
 h1 { font-size: 20px; }
 .run { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.mode-switch {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(78px, 1fr));
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fbfbf9;
+}
+.mode-switch button {
+  border: 0;
+  border-radius: 0;
+  min-height: 34px;
+  padding: 6px 12px;
+  background: transparent;
+}
+.mode-switch button.active {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
 .metrics {
   display: grid;
   grid-template-columns: repeat(8, minmax(86px, 1fr));
@@ -281,8 +306,31 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   padding: 42px 24px;
   text-align: center;
 }
+.guide {
+  padding: 22px;
+  display: grid;
+  gap: 18px;
+}
+.guide-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.guide-panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  background: #fbfbf9;
+}
+.guide-panel p { margin: 8px 0 0; color: var(--muted); }
+.guide-list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+.guide-list li { margin: 6px 0; }
 @media (max-width: 920px) {
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .guide-grid { grid-template-columns: 1fr; }
   .workspace { grid-template-columns: 1fr; padding: 12px; }
   header { padding: 14px 12px; }
 }
@@ -292,7 +340,13 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 <main>
   <header>
     <div class="topline">
-      <h1>Mindline Review</h1>
+      <div class="titlebar">
+        <h1>Mindline Review</h1>
+        <div class="mode-switch" aria-label="view mode">
+          <button id="review-mode" class="active" type="button">Review</button>
+          <button id="guide-mode" type="button">Guide</button>
+        </div>
+      </div>
       <div class="run" id="run-context">Loading...</div>
     </div>
     <div class="metrics" id="metrics" aria-live="polite"></div>
@@ -317,6 +371,8 @@ const choices = [
   ["wrong-kind", "Wrong kind", "warn"]
 ];
 let currentCandidateId = "";
+let currentState = null;
+let mode = "review";
 
 function text(value, fallback = "") {
   return value === undefined || value === null || value === "" ? fallback : String(value);
@@ -333,6 +389,7 @@ async function loadState() {
 }
 
 function render(state) {
+  currentState = state;
   const summary = state.summary;
   const page = state.page;
   document.getElementById("run-context").textContent = "Run " + summary.run_id + " · " + summary.source_count + " source(s)";
@@ -351,6 +408,43 @@ function render(state) {
   document.getElementById("progress-bar").style.width = pct + "%";
   document.getElementById("note").value = "";
   document.getElementById("status").textContent = "";
+  renderModeButtons();
+  if (mode === "guide") {
+    renderGuide(summary);
+    return;
+  }
+  renderReview(page, summary);
+}
+
+function renderModeButtons() {
+  document.getElementById("review-mode").classList.toggle("active", mode === "review");
+  document.getElementById("guide-mode").classList.toggle("active", mode === "guide");
+}
+
+function renderGuide(summary) {
+  currentCandidateId = "";
+  document.getElementById("current-candidate").innerHTML =
+    "<div class=\"guide\">" +
+      "<div><h2>How to review</h2><p class=\"muted\">You are evaluating the extraction system, not approving a final knowledge write.</p></div>" +
+      "<div class=\"guide-grid\">" +
+        "<div class=\"guide-panel\"><h3>1. Useful object</h3><p>Ask whether this candidate deserves to exist as an action, issue, risk, requirement, capability, decision, or topic.</p></div>" +
+        "<div class=\"guide-panel\"><h3>2. Type and scope</h3><p>Check whether the label and scope are right. Real content with the wrong label is usually wrong kind.</p></div>" +
+        "<div class=\"guide-panel\"><h3>3. Evidence support</h3><p>Use the shown evidence, blockers, and relations. If the candidate says more than the evidence proves, mark it unclear or reject.</p></div>" +
+        "<div class=\"guide-panel\"><h3>4. Duplicates and resolution</h3><p>If multiple candidates point to the same thing, use duplicate. If something was resolved elsewhere, do not accept a stale issue as-is.</p></div>" +
+      "</div>" +
+      "<div class=\"guide-panel\"><h3>Decision meanings</h3><ul class=\"guide-list\">" +
+        "<li><strong>Accept</strong>: useful, correctly typed, scoped, and evidence-backed.</li>" +
+        "<li><strong>Reject</strong>: should not have been emitted.</li>" +
+        "<li><strong>Unclear</strong>: not enough context, relation meaning, or evidence to judge confidently.</li>" +
+        "<li><strong>Duplicate</strong>: already represented by another candidate.</li>" +
+        "<li><strong>Wrong kind</strong>: real signal, but wrong object type or scope.</li>" +
+      "</ul></div>" +
+      "<p class=\"muted\">" + escapeHtml(summary.judged_count) + " reviewed, " + escapeHtml(summary.remaining_count) + " remaining. Switch back to Review to continue.</p>" +
+    "</div>";
+  document.getElementById("decision-controls").innerHTML = "";
+}
+
+function renderReview(page, summary) {
   if (page.done || !page.item) {
     currentCandidateId = "";
     document.getElementById("current-candidate").innerHTML = "<div class=\"done\"><h2>Review complete</h2><p class=\"muted\">" + escapeHtml(summary.judged_count) + "/" + escapeHtml(summary.candidate_count) + " judged. Precision estimate: " + escapeHtml(summary.precision_estimate) + ".</p></div>";
@@ -410,6 +504,15 @@ async function submitChoice(choice) {
   }
   render(await response.json());
 }
+
+document.getElementById("review-mode").addEventListener("click", () => {
+  mode = "review";
+  if (currentState) render(currentState);
+});
+document.getElementById("guide-mode").addEventListener("click", () => {
+  mode = "guide";
+  if (currentState) render(currentState);
+});
 
 loadState().catch(error => {
   document.getElementById("current-candidate").innerHTML = "<div class=\"done\"><h2>Unable to load review</h2><p class=\"muted\">" + escapeHtml(error.message) + "</p></div>";
