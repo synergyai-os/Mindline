@@ -11,6 +11,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/synergyai-os/Mindline/internal/documents"
 )
 
 func TestDocumentsDecompose(t *testing.T) {
@@ -330,7 +332,7 @@ func TestDocumentsCalibrateAndCalibrateNext(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
 		t.Fatalf("decode calibrate stdout: %v\n%s", err, stdout.String())
 	}
-	if summary.SchemaVersion != "semantic-calibration-summary/v0.1" || summary.ReviewItemCount == 0 {
+	if summary.SchemaVersion != "semantic-calibration-summary/v0.2" || summary.ReviewItemCount == 0 {
 		t.Fatalf("unexpected calibration summary: %+v", summary)
 	}
 	if _, err := os.Stat(filepath.Join(calibrateOut, "semantic-calibration", "calibration-summary.json")); err != nil {
@@ -359,7 +361,7 @@ func TestDocumentsCalibrateAndCalibrateNext(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &page); err != nil {
 		t.Fatalf("decode calibrate-next stdout: %v\n%s", err, stdout.String())
 	}
-	if page.SchemaVersion != "semantic-calibration-page/v0.2" || page.Done || page.Item == nil || page.ReviewContext == nil || page.PageMarkdown == "" || page.Cursor.ProcessedCount != 1 {
+	if page.SchemaVersion != "semantic-calibration-page/v0.3" || page.Done || page.Item == nil || page.ReviewContext == nil || page.PageMarkdown == "" || page.Cursor.ProcessedCount != 1 {
 		t.Fatalf("calibrate-next must return one item page: %+v", page)
 	}
 	if !strings.Contains(page.PageMarkdown, "Adjudication choices") {
@@ -397,7 +399,7 @@ func TestDocumentsJudgeJudgeNextAndJudgeRecord(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
 		t.Fatalf("decode judge stdout: %v\n%s", err, stdout.String())
 	}
-	if summary.SchemaVersion != "semantic-judgment-summary/v0.2" || summary.CandidateCount == 0 || summary.RemainingCount != summary.CandidateCount || summary.EvidenceExcludedCount == 0 {
+	if summary.SchemaVersion != "semantic-judgment-summary/v0.3" || summary.CandidateCount == 0 || summary.RemainingCount != summary.CandidateCount || summary.EvidenceExcludedCount == 0 {
 		t.Fatalf("unexpected judgment summary: %+v", summary)
 	}
 
@@ -425,7 +427,7 @@ func TestDocumentsJudgeJudgeNextAndJudgeRecord(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &page); err != nil {
 		t.Fatalf("decode judge-next stdout: %v\n%s", err, stdout.String())
 	}
-	if page.SchemaVersion != "semantic-judgment-page/v0.2" || page.Done || page.Item == nil || !strings.Contains(page.PageMarkdown, "Adjudication choices") || !strings.Contains(page.PageMarkdown, "Evidence readiness") {
+	if page.SchemaVersion != "semantic-judgment-page/v0.3" || page.Done || page.Item == nil || !strings.Contains(page.PageMarkdown, "Adjudication choices") || !strings.Contains(page.PageMarkdown, "Evidence readiness") || !strings.Contains(page.PageMarkdown, "Failure reason contract") {
 		t.Fatalf("unexpected judgment page: %+v", page)
 	}
 	if page.Item.EvidenceReadiness.Status == "" || len(page.Item.EvidenceReadiness.ReasonCodes) == 0 || page.Item.EvidenceReadiness.EvalCounted {
@@ -460,7 +462,7 @@ func TestDocumentsJudgeJudgeNextAndJudgeRecord(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &updated); err != nil {
 		t.Fatalf("decode judge-record stdout: %v\n%s", err, stdout.String())
 	}
-	if updated.SchemaVersion != "semantic-judgment-summary/v0.2" || updated.JudgedCount != 1 || updated.AcceptedCount != 1 || updated.Precision != 1 {
+	if updated.SchemaVersion != "semantic-judgment-summary/v0.3" || updated.JudgedCount != 1 || updated.AcceptedCount != 1 || updated.Precision != 1 {
 		t.Fatalf("unexpected judgment record summary: %+v", updated)
 	}
 }
@@ -501,9 +503,14 @@ func TestDocumentsJudgeServeStateAndRecord(t *testing.T) {
 	if _, err := html.ReadFrom(rec.Body); err != nil {
 		t.Fatalf("read ui html: %v", err)
 	}
-	for _, want := range []string{"Mindline Review", "Review", "Guide", "How to review", "Decision meanings", "remaining", "current-candidate", "decision-controls", "evidence", "Evidence readiness", "readiness:", "eval counted:", "Relation context", "Other endpoint role", "Relation ids", "Blockers"} {
+	for _, want := range []string{"Mindline Review", "Review", "Guide", "How to review", "Decision meanings", "remaining", "current-candidate", "decision-controls", "failure-reason", "evidence", "Evidence readiness", "readiness:", "eval counted:", "Relation context", "Other endpoint role", "Relation ids", "Blockers"} {
 		if !strings.Contains(html.String(), want) {
 			t.Fatalf("expected UI HTML to contain %q, got %s", want, html.String())
+		}
+	}
+	for _, want := range []string{"ensureCompatibleFailureReason(choice)", "select.value = fallback"} {
+		if !strings.Contains(html.String(), want) {
+			t.Fatalf("expected UI HTML to preselect compatible failure reasons with %q, got %s", want, html.String())
 		}
 	}
 
@@ -528,7 +535,7 @@ func TestDocumentsJudgeServeStateAndRecord(t *testing.T) {
 	}
 	firstCandidateID := state.Page.Item.CandidateID
 
-	req = httptest.NewRequest(http.MethodPost, "/api/judgments", strings.NewReader(`{"candidate_id":"`+firstCandidateID+`","choice":"accept","note":"useful"}`))
+	req = httptest.NewRequest(http.MethodPost, "/api/judgments", strings.NewReader(`{"candidate_id":"`+firstCandidateID+`","choice":"reject","failure_reason":"unsupported_evidence","note":"not supported enough"}`))
 	req.Host = judgmentUITestHost
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Mindline-Review-Token", token)
@@ -538,14 +545,26 @@ func TestDocumentsJudgeServeStateAndRecord(t *testing.T) {
 		t.Fatalf("expected judgment status 200, got %d", rec.Code)
 	}
 	updated := decodeJudgmentUIState(t, rec.Body)
-	if updated.Summary.JudgedCount != 1 || updated.Summary.AcceptedCount != 1 || updated.Summary.RemainingCount != state.Summary.CandidateCount-1 {
+	if updated.Summary.JudgedCount != 1 || updated.Summary.RejectedCount != 1 || updated.Summary.FailureReasonCounts[documents.SemanticFailureUnsupportedEvidence] != 1 || updated.Summary.RemainingCount != state.Summary.CandidateCount-1 {
 		t.Fatalf("expected updated aggregate context after UI judgment: %+v", updated.Summary)
 	}
 	if updated.Page.Item != nil && updated.Page.Item.CandidateID == firstCandidateID {
 		t.Fatalf("expected UI to advance after recording judgment, still on %s", firstCandidateID)
 	}
-	if _, err := os.Stat(filepath.Join(root, "judgments", firstCandidateID+".json")); err != nil {
+	judgmentPath := filepath.Join(root, "judgments", firstCandidateID+".json")
+	if _, err := os.Stat(judgmentPath); err != nil {
 		t.Fatalf("expected UI judgment artifact: %v", err)
+	}
+	var judgment documents.SemanticJudgmentRecord
+	data, err := os.ReadFile(judgmentPath)
+	if err != nil {
+		t.Fatalf("read UI judgment artifact: %v", err)
+	}
+	if err := json.Unmarshal(data, &judgment); err != nil {
+		t.Fatalf("decode UI judgment artifact: %v", err)
+	}
+	if judgment.FailureReason != documents.SemanticFailureUnsupportedEvidence {
+		t.Fatalf("expected UI judgment to persist failure reason, got %+v", judgment)
 	}
 }
 

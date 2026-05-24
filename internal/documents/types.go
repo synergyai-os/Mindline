@@ -16,18 +16,23 @@ const (
 	SemanticAcceptanceExpectedOutcomeSchemaVersion       = "semantic-acceptance-expected-outcome/v0.2"
 	SemanticAcceptanceExpectedOutcomeLegacySchemaVersion = "semantic-acceptance-expected-outcome/v0.1"
 	SemanticAcceptanceItemSchemaVersion                  = "semantic-acceptance-item/v0.1"
-	SemanticCalibrationSummarySchemaVersion              = "semantic-calibration-summary/v0.1"
-	SemanticCalibrationReviewItemSchemaVersion           = "semantic-calibration-review-item/v0.2"
+	SemanticCalibrationSummarySchemaVersion              = "semantic-calibration-summary/v0.2"
+	SemanticCalibrationSummaryLegacySchemaVersion        = "semantic-calibration-summary/v0.1"
+	SemanticCalibrationReviewItemSchemaVersion           = "semantic-calibration-review-item/v0.3"
+	SemanticCalibrationReviewItemPreviousSchemaVersion   = "semantic-calibration-review-item/v0.2"
 	SemanticCalibrationReviewItemLegacySchemaVersion     = "semantic-calibration-review-item/v0.1"
 	SemanticCalibrationCursorSchemaVersion               = "semantic-calibration-cursor/v0.1"
-	SemanticCalibrationPageSchemaVersion                 = "semantic-calibration-page/v0.2"
-	SemanticJudgmentSummarySchemaVersion                 = "semantic-judgment-summary/v0.2"
+	SemanticCalibrationPageSchemaVersion                 = "semantic-calibration-page/v0.3"
+	SemanticJudgmentSummarySchemaVersion                 = "semantic-judgment-summary/v0.3"
+	SemanticJudgmentSummaryPreviousSchemaVersion         = "semantic-judgment-summary/v0.2"
 	SemanticJudgmentSummaryLegacySchemaVersion           = "semantic-judgment-summary/v0.1"
-	SemanticJudgmentCandidateSchemaVersion               = "semantic-judgment-candidate/v0.2"
+	SemanticJudgmentCandidateSchemaVersion               = "semantic-judgment-candidate/v0.3"
+	SemanticJudgmentCandidatePreviousSchemaVersion       = "semantic-judgment-candidate/v0.2"
 	SemanticJudgmentCandidateLegacySchemaVersion         = "semantic-judgment-candidate/v0.1"
 	SemanticJudgmentCursorSchemaVersion                  = "semantic-judgment-cursor/v0.1"
-	SemanticJudgmentRecordSchemaVersion                  = "semantic-judgment-record/v0.1"
-	SemanticJudgmentPageSchemaVersion                    = "semantic-judgment-page/v0.2"
+	SemanticJudgmentRecordSchemaVersion                  = "semantic-judgment-record/v0.2"
+	SemanticJudgmentRecordLegacySchemaVersion            = "semantic-judgment-record/v0.1"
+	SemanticJudgmentPageSchemaVersion                    = "semantic-judgment-page/v0.3"
 	SourceKindMarkdown                                   = "markdown"
 	EvidenceKindLocation                                 = "location"
 )
@@ -384,6 +389,25 @@ const (
 	SemanticAcceptanceReasonUnexpectedCandidate    SemanticAcceptanceReason = "unexpected_candidate"
 )
 
+type SemanticFailureReason string
+
+const (
+	SemanticFailureWrongKind              SemanticFailureReason = "wrong_kind"
+	SemanticFailureUnsupportedEvidence    SemanticFailureReason = "unsupported_evidence"
+	SemanticFailureMissingEvidence        SemanticFailureReason = "missing_evidence"
+	SemanticFailureUnsafeOrPrivate        SemanticFailureReason = "unsafe_or_private"
+	SemanticFailureDuplicate              SemanticFailureReason = "duplicate"
+	SemanticFailureTooBroad               SemanticFailureReason = "too_broad"
+	SemanticFailureTooNarrow              SemanticFailureReason = "too_narrow"
+	SemanticFailureStaleOrContradicted    SemanticFailureReason = "stale_or_contradicted"
+	SemanticFailureAmbiguous              SemanticFailureReason = "ambiguous"
+	SemanticFailureMissingExpectedOutcome SemanticFailureReason = "missing_expected_outcome"
+	SemanticFailureUnexpectedCandidate    SemanticFailureReason = "unexpected_candidate"
+	SemanticFailureRelationError          SemanticFailureReason = "relation_error"
+	SemanticFailureSourceScopeError       SemanticFailureReason = "source_scope_error"
+	SemanticFailureOther                  SemanticFailureReason = "other"
+)
+
 type SemanticAcceptanceAnswerKey struct {
 	SchemaVersion    string                    `json:"schema_version"`
 	AnswerKeyID      string                    `json:"answer_key_id"`
@@ -526,6 +550,7 @@ type SemanticCalibrationSummary struct {
 	BlockedPrivateCount int                                     `json:"blocked_private_count"`
 	ReviewItemCount     int                                     `json:"review_item_count"`
 	FailureClassCounts  map[SemanticCalibrationFailureClass]int `json:"failure_class_counts"`
+	FailureReasonCounts map[SemanticFailureReason]int           `json:"failure_reason_counts"`
 	QualityStatement    string                                  `json:"quality_statement"`
 	CursorPath          string                                  `json:"cursor_path"`
 	ReportPath          string                                  `json:"report_path"`
@@ -538,6 +563,8 @@ type SemanticCalibrationReviewItemSummary struct {
 	ItemPath        string                          `json:"item_path"`
 	PreviewPath     string                          `json:"preview_path"`
 	FailureClass    SemanticCalibrationFailureClass `json:"failure_class"`
+	FailureReason   SemanticFailureReason           `json:"failure_reason,omitempty"`
+	FailureInferred bool                            `json:"failure_reason_inferred,omitempty"`
 	AcceptanceState SemanticAcceptanceState         `json:"acceptance_state"`
 	Reason          SemanticAcceptanceReason        `json:"reason"`
 }
@@ -563,6 +590,8 @@ type SemanticCalibrationReviewItem struct {
 	AcceptanceState   SemanticAcceptanceState                   `json:"acceptance_state"`
 	Reason            SemanticAcceptanceReason                  `json:"reason"`
 	FailureClass      SemanticCalibrationFailureClass           `json:"failure_class"`
+	FailureReason     SemanticFailureReason                     `json:"failure_reason,omitempty"`
+	FailureInferred   bool                                      `json:"failure_reason_inferred,omitempty"`
 	NeedsAdjudication bool                                      `json:"needs_adjudication"`
 	Blockers          []Blocker                                 `json:"blockers"`
 }
@@ -606,6 +635,8 @@ type SemanticCalibrationReviewContext struct {
 	CandidateID         string                                    `json:"candidate_id,omitempty"`
 	ExpectedOutcome     SemanticCalibrationExpectedOutcomeContext `json:"expected_outcome"`
 	FailureClass        SemanticCalibrationFailureClass           `json:"failure_class"`
+	FailureReason       SemanticFailureReason                     `json:"failure_reason,omitempty"`
+	FailureInferred     bool                                      `json:"failure_reason_inferred,omitempty"`
 	AcceptanceState     SemanticAcceptanceState                   `json:"acceptance_state"`
 	Reason              SemanticAcceptanceReason                  `json:"reason"`
 	EvidenceExcerpts    []SemanticCalibrationEvidenceExcerpt      `json:"evidence_excerpts"`
@@ -696,12 +727,14 @@ type SemanticJudgmentSummary struct {
 	ReviewBurdenCount             int                                                         `json:"review_burden_count"`
 	PrecisionEstimate             float64                                                     `json:"precision_estimate"`
 	FailureModeCounts             map[SemanticJudgmentChoice]int                              `json:"failure_mode_counts"`
+	FailureReasonCounts           map[SemanticFailureReason]int                               `json:"failure_reason_counts"`
 	JudgmentByCandidateKind       map[SemanticCandidateKind]map[SemanticJudgmentChoice]int    `json:"judgment_by_candidate_kind,omitempty"`
 	JudgmentByConfidence          map[Confidence]map[SemanticJudgmentChoice]int               `json:"judgment_by_confidence,omitempty"`
 	JudgmentByReviewStatus        map[ReviewStatus]map[SemanticJudgmentChoice]int             `json:"judgment_by_review_status,omitempty"`
 	JudgmentBySourceDocument      map[string]map[SemanticJudgmentChoice]int                   `json:"judgment_by_source_document,omitempty"`
 	JudgmentByRelationPresence    map[string]map[SemanticJudgmentChoice]int                   `json:"judgment_by_relation_presence,omitempty"`
 	JudgmentByRelationType        map[SemanticRelationshipType]map[SemanticJudgmentChoice]int `json:"judgment_by_relation_type,omitempty"`
+	JudgmentByFailureReason       map[SemanticFailureReason]map[SemanticJudgmentChoice]int    `json:"judgment_by_failure_reason,omitempty"`
 	QualityStatement              string                                                      `json:"quality_statement"`
 	CursorPath                    string                                                      `json:"cursor_path"`
 	ReportPath                    string                                                      `json:"report_path"`
@@ -716,6 +749,9 @@ type SemanticJudgmentCandidateSummary struct {
 	ReviewStatus             ReviewStatus                      `json:"review_status"`
 	Confidence               Confidence                        `json:"confidence"`
 	JudgmentChoice           SemanticJudgmentChoice            `json:"judgment_choice,omitempty"`
+	FailureReason            SemanticFailureReason             `json:"failure_reason,omitempty"`
+	SecondaryFailureReasons  []SemanticFailureReason           `json:"secondary_failure_reasons,omitempty"`
+	FailureReasonInferred    bool                              `json:"failure_reason_inferred,omitempty"`
 	CandidatePath            string                            `json:"candidate_path"`
 	PagePath                 string                            `json:"page_path"`
 	JudgmentPath             string                            `json:"judgment_path,omitempty"`
@@ -771,16 +807,19 @@ type SemanticJudgmentEndpointContext struct {
 }
 
 type SemanticJudgmentRecord struct {
-	SchemaVersion    string                 `json:"schema_version"`
-	RunID            string                 `json:"run_id"`
-	CandidateID      string                 `json:"candidate_id"`
-	SourceDocumentID string                 `json:"source_document_id,omitempty"`
-	CandidateKind    SemanticCandidateKind  `json:"candidate_kind"`
-	Confidence       Confidence             `json:"confidence"`
-	Choice           SemanticJudgmentChoice `json:"choice"`
-	Note             string                 `json:"note,omitempty"`
-	ReviewerID       string                 `json:"reviewer_id,omitempty"`
-	RecordedAt       string                 `json:"recorded_at"`
+	SchemaVersion    string                  `json:"schema_version"`
+	RunID            string                  `json:"run_id"`
+	CandidateID      string                  `json:"candidate_id"`
+	SourceDocumentID string                  `json:"source_document_id,omitempty"`
+	CandidateKind    SemanticCandidateKind   `json:"candidate_kind"`
+	Confidence       Confidence              `json:"confidence"`
+	Choice           SemanticJudgmentChoice  `json:"choice"`
+	FailureReason    SemanticFailureReason   `json:"failure_reason,omitempty"`
+	SecondaryReasons []SemanticFailureReason `json:"secondary_failure_reasons,omitempty"`
+	FailureInferred  bool                    `json:"failure_reason_inferred,omitempty"`
+	Note             string                  `json:"note,omitempty"`
+	ReviewerID       string                  `json:"reviewer_id,omitempty"`
+	RecordedAt       string                  `json:"recorded_at"`
 }
 
 type SemanticJudgmentCursor struct {
@@ -802,9 +841,12 @@ type SemanticJudgmentPage struct {
 }
 
 type SemanticJudgmentRecordInput struct {
-	CandidateID string
-	Choice      SemanticJudgmentChoice
-	Note        string
-	ReviewerID  string
-	RecordedAt  time.Time
+	CandidateID      string
+	Choice           SemanticJudgmentChoice
+	FailureReason    SemanticFailureReason
+	SecondaryReasons []SemanticFailureReason
+	FailureInferred  bool
+	Note             string
+	ReviewerID       string
+	RecordedAt       time.Time
 }

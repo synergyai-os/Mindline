@@ -2386,6 +2386,9 @@ func TestSemanticCalibrationFailsClosedBelowThreshold(t *testing.T) {
 	if summary.ScoredCount != 2 || summary.AcceptedCount != 1 || summary.FailureClassCounts[SemanticCalibrationFailureFalsePositive] != 1 {
 		t.Fatalf("unexpected calibration counts: %+v", summary)
 	}
+	if summary.FailureReasonCounts[SemanticFailureUnexpectedCandidate] != 1 {
+		t.Fatalf("expected canonical failure reason count: %+v", summary.FailureReasonCounts)
+	}
 	if summary.MeasuredAccuracy != 0.5 {
 		t.Fatalf("unexpected measured accuracy: %+v", summary)
 	}
@@ -2393,7 +2396,9 @@ func TestSemanticCalibrationFailsClosedBelowThreshold(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read calibration report: %v", err)
 	}
-	if !strings.Contains(string(report), "temporary calibration evidence") {
+	if !strings.Contains(string(report), "temporary calibration evidence") ||
+		!strings.Contains(string(report), "Failure reasons") ||
+		!strings.Contains(string(report), "unexpected_candidate: 1") {
 		t.Fatalf("report must frame human review as temporary calibration evidence:\n%s", string(report))
 	}
 }
@@ -2715,6 +2720,7 @@ func TestSemanticJudgmentRejectsForgedEvidenceReadiness(t *testing.T) {
 		EvalCountedCount:              1,
 		EvidenceReadinessReasonCounts: semanticEvidenceReadinessReasonCountMap(),
 		FailureModeCounts:             map[SemanticJudgmentChoice]int{},
+		FailureReasonCounts:           emptySemanticFailureReasonCounts(),
 		Candidates: []SemanticJudgmentCandidateSummary{{
 			CandidateID:              item.CandidateID,
 			CandidateKind:            item.CandidateKind,
@@ -2795,6 +2801,137 @@ func TestSemanticJudgmentLegacySummaryReadFailsClosed(t *testing.T) {
 		if item.EvidenceReadinessStatus != SemanticEvidenceReadinessFail || item.EvalCounted || !containsSemanticEvidenceReadinessReason(item.EvidenceReadinessReasons, SemanticEvidenceReadinessMissingSourceExcerpt) {
 			t.Fatalf("legacy candidate summary must be fail-closed, got %+v", item)
 		}
+	}
+}
+
+func TestSemanticJudgmentPreviousSummaryReadPreservesReadiness(t *testing.T) {
+	node := validStructureNode()
+	observation := validSemanticObservation(node)
+	candidate := validSemanticCandidate(observation, node)
+	semanticRun := writeSemanticAcceptanceRun(t, []SemanticCandidate{candidate})
+	writeDocumentsTestJSON(t, filepath.Join(semanticRun, "semantic-candidates", SemanticObservationJSONPath(observation.ObservationID)), observation)
+	sourceRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(sourceRoot, "source.md"), []byte("one\ntwo\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	out := t.TempDir()
+	if _, err := JudgeSemanticCandidates(semanticRun, out, SemanticJudgmentOptions{SourceRoot: sourceRoot, SourcePath: "source.md"}); err != nil {
+		t.Fatalf("judge semantic candidates: %v", err)
+	}
+	root := filepath.Join(out, "semantic-judgment")
+	summaryPath := filepath.Join(root, "judgment-summary.json")
+	var summary SemanticJudgmentSummary
+	data, err := os.ReadFile(summaryPath)
+	if err != nil {
+		t.Fatalf("read summary: %v", err)
+	}
+	if err := json.Unmarshal(data, &summary); err != nil {
+		t.Fatalf("decode summary: %v", err)
+	}
+	if summary.EvalCountedCount != 1 || summary.Candidates[0].EvidenceReadinessStatus != SemanticEvidenceReadinessPass {
+		t.Fatalf("expected generated summary to start eval-counted: %+v", summary)
+	}
+	summary.SchemaVersion = SemanticJudgmentSummaryPreviousSchemaVersion
+	summary.FailureReasonCounts = nil
+	summary.JudgmentByFailureReason = nil
+	writeDocumentsTestJSON(t, summaryPath, summary)
+
+	itemPath := filepath.Join(root, summary.Candidates[0].CandidatePath)
+	var item SemanticJudgmentCandidate
+	data, err = os.ReadFile(itemPath)
+	if err != nil {
+		t.Fatalf("read item: %v", err)
+	}
+	if err := json.Unmarshal(data, &item); err != nil {
+		t.Fatalf("decode item: %v", err)
+	}
+	item.SchemaVersion = SemanticJudgmentCandidatePreviousSchemaVersion
+	writeDocumentsTestJSON(t, itemPath, item)
+
+	updated, err := RecordSemanticJudgment(root, SemanticJudgmentRecordInput{
+		CandidateID: summary.Candidates[0].CandidateID,
+		Choice:      SemanticJudgmentChoiceAccept,
+		ReviewerID:  "tester",
+		RecordedAt:  fixedTestTime(),
+	})
+	if err != nil {
+		t.Fatalf("record judgment against previous summary: %v", err)
+	}
+	if updated.SchemaVersion != SemanticJudgmentSummarySchemaVersion ||
+		updated.JudgedCount != 1 ||
+		updated.AcceptedCount != 1 ||
+		updated.EvalCountedCount != 1 ||
+		updated.EvidenceReadyCount != 1 ||
+		updated.EvidenceExcludedCount != 0 ||
+		updated.Candidates[0].EvidenceReadinessStatus != SemanticEvidenceReadinessPass ||
+		!updated.Candidates[0].EvalCounted ||
+		len(updated.Candidates[0].EvidenceReadinessReasons) != 0 {
+		t.Fatalf("previous summary readiness must be preserved after append, got %+v", updated)
+	}
+	if updated.EvidenceReadinessReasonCounts[SemanticEvidenceReadinessMissingSourceExcerpt] != 0 {
+		t.Fatalf("previous summary must not gain missing source excerpt reason after append: %+v", updated.EvidenceReadinessReasonCounts)
+	}
+
+	var persistedItem SemanticJudgmentCandidate
+	data, err = os.ReadFile(itemPath)
+	if err != nil {
+		t.Fatalf("read persisted item: %v", err)
+	}
+	if err := json.Unmarshal(data, &persistedItem); err != nil {
+		t.Fatalf("decode persisted item: %v", err)
+	}
+	if persistedItem.SchemaVersion != SemanticJudgmentCandidateSchemaVersion ||
+		persistedItem.EvidenceReadiness.Status != SemanticEvidenceReadinessPass ||
+		!persistedItem.EvidenceReadiness.EvalCounted ||
+		len(persistedItem.EvidenceReadiness.ReasonCodes) != 0 {
+		t.Fatalf("previous candidate readiness must be preserved after append, got %+v", persistedItem)
+	}
+}
+
+func TestSemanticJudgmentPreviousSummaryReadFailsClosedForMissingReadiness(t *testing.T) {
+	node := validStructureNode()
+	observation := validSemanticObservation(node)
+	candidate := validSemanticCandidate(observation, node)
+	semanticRun := writeSemanticAcceptanceRun(t, []SemanticCandidate{candidate})
+	out := t.TempDir()
+	if _, err := JudgeSemanticCandidates(semanticRun, out, SemanticJudgmentOptions{}); err != nil {
+		t.Fatalf("judge semantic candidates: %v", err)
+	}
+	root := filepath.Join(out, "semantic-judgment")
+	summaryPath := filepath.Join(root, "judgment-summary.json")
+	var summary SemanticJudgmentSummary
+	data, err := os.ReadFile(summaryPath)
+	if err != nil {
+		t.Fatalf("read summary: %v", err)
+	}
+	if err := json.Unmarshal(data, &summary); err != nil {
+		t.Fatalf("decode summary: %v", err)
+	}
+	summary.SchemaVersion = SemanticJudgmentSummaryPreviousSchemaVersion
+	summary.EvidenceReadyCount = 1
+	summary.EvalCountedCount = 1
+	summary.EvidenceExcludedCount = 0
+	summary.EvidenceReadinessReasonCounts = nil
+	summary.FailureReasonCounts = nil
+	summary.JudgmentByFailureReason = nil
+	summary.Candidates[0].EvidenceReadinessStatus = ""
+	summary.Candidates[0].EvalCounted = true
+	summary.Candidates[0].EvidenceReadinessReasons = nil
+	writeDocumentsTestJSON(t, summaryPath, summary)
+
+	loaded, err := ReadSemanticJudgmentSummary(root)
+	if err != nil {
+		t.Fatalf("read previous judgment summary: %v", err)
+	}
+	if loaded.SchemaVersion != SemanticJudgmentSummarySchemaVersion ||
+		loaded.EvidenceReadyCount != 0 ||
+		loaded.EvalCountedCount != 0 ||
+		loaded.EvidenceExcludedCount != 1 ||
+		loaded.Candidates[0].EvidenceReadinessStatus != SemanticEvidenceReadinessFail ||
+		loaded.Candidates[0].EvalCounted ||
+		!containsSemanticEvidenceReadinessReason(loaded.Candidates[0].EvidenceReadinessReasons, SemanticEvidenceReadinessMissingSourceExcerpt) ||
+		loaded.EvidenceReadinessReasonCounts[SemanticEvidenceReadinessMissingSourceExcerpt] != 1 {
+		t.Fatalf("previous summary missing readiness must fail closed, got %+v", loaded)
 	}
 }
 
@@ -2996,16 +3133,120 @@ func TestSemanticJudgmentRecordsChoiceAndUpdatesReport(t *testing.T) {
 	}); err == nil {
 		t.Fatalf("expected duplicate judgment to fail closed")
 	}
+	summary, err = RecordSemanticJudgment(filepath.Join(out, "semantic-judgment"), SemanticJudgmentRecordInput{
+		CandidateID:      decision.CandidateID,
+		Choice:           SemanticJudgmentChoiceReject,
+		FailureReason:    SemanticFailureUnexpectedCandidate,
+		SecondaryReasons: []SemanticFailureReason{SemanticFailureUnsupportedEvidence},
+		ReviewerID:       "tester",
+		RecordedAt:       fixedTestTime(),
+	})
+	if err != nil {
+		t.Fatalf("record rejected semantic judgment: %v", err)
+	}
+	reasonByCandidate := map[string]SemanticFailureReason{}
+	for _, candidate := range summary.Candidates {
+		reasonByCandidate[candidate.CandidateID] = candidate.FailureReason
+	}
+	if summary.FailureReasonCounts[SemanticFailureUnexpectedCandidate] != 1 ||
+		summary.JudgmentByFailureReason[SemanticFailureUnexpectedCandidate][SemanticJudgmentChoiceReject] != 1 ||
+		reasonByCandidate[decision.CandidateID] != SemanticFailureUnexpectedCandidate {
+		t.Fatalf("expected failure reason aggregation after reject: %+v", summary)
+	}
 	report, err := os.ReadFile(filepath.Join(out, "semantic-judgment", "reports", "judgment-report.md"))
 	if err != nil {
 		t.Fatalf("read judgment report: %v", err)
 	}
 	if !strings.Contains(string(report), "Accepted: 1") ||
 		!strings.Contains(string(report), "Review burden: 1") ||
+		!strings.Contains(string(report), "unexpected_candidate: 1") ||
 		!strings.Contains(string(report), "By candidate kind") ||
 		!strings.Contains(string(report), "action_candidate accept=1") ||
 		!strings.Contains(string(report), "derived_from accept=1") {
 		t.Fatalf("report did not update counts:\n%s", string(report))
+	}
+}
+
+func TestSemanticJudgmentFailureReasonContract(t *testing.T) {
+	base := SemanticJudgmentRecord{
+		SchemaVersion:    SemanticJudgmentRecordSchemaVersion,
+		RunID:            "run-demo",
+		CandidateID:      "cand-demo",
+		SourceDocumentID: "doc-demo",
+		CandidateKind:    SemanticCandidateKindAction,
+		Confidence:       ConfidenceMedium,
+		RecordedAt:       fixedTestTime().Format(time.RFC3339),
+	}
+	record := base
+	record.Choice = SemanticJudgmentChoiceReject
+	if err := ValidateSemanticJudgmentRecord(record); err == nil || !strings.Contains(err.Error(), "requires failure reason") {
+		t.Fatalf("expected non-accept without reason to fail, got %v", err)
+	}
+	record = base
+	record.Choice = SemanticJudgmentChoiceAccept
+	record.FailureReason = SemanticFailureUnexpectedCandidate
+	if err := ValidateSemanticJudgmentRecord(record); err == nil || !strings.Contains(err.Error(), "cannot include failure reason") {
+		t.Fatalf("expected accept with reason to fail, got %v", err)
+	}
+	record = base
+	record.Choice = SemanticJudgmentChoiceDuplicate
+	record.FailureReason = SemanticFailureMissingEvidence
+	if err := ValidateSemanticJudgmentRecord(record); err == nil || !strings.Contains(err.Error(), "cannot use failure reason") {
+		t.Fatalf("expected incompatible reason to fail, got %v", err)
+	}
+	record = base
+	record.Choice = SemanticJudgmentChoiceReject
+	record.FailureReason = SemanticFailureUnsupportedEvidence
+	record.SecondaryReasons = []SemanticFailureReason{SemanticFailureMissingEvidence}
+	if err := ValidateSemanticJudgmentRecord(record); err != nil {
+		t.Fatalf("expected valid non-accept reason, got %v", err)
+	}
+}
+
+func TestSemanticFailureReasonMappingsCoverExistingValues(t *testing.T) {
+	acceptanceReasons := []SemanticAcceptanceReason{
+		SemanticAcceptanceReasonCorrect,
+		SemanticAcceptanceReasonWrongKind,
+		SemanticAcceptanceReasonUnsupportedEvidence,
+		SemanticAcceptanceReasonMissingEvidence,
+		SemanticAcceptanceReasonUnsafeOrPrivate,
+		SemanticAcceptanceReasonDuplicate,
+		SemanticAcceptanceReasonTooBroad,
+		SemanticAcceptanceReasonTooNarrow,
+		SemanticAcceptanceReasonStaleOrContradicted,
+		SemanticAcceptanceReasonAmbiguous,
+		SemanticAcceptanceReasonMissingExpectedOutcome,
+		SemanticAcceptanceReasonUnexpectedCandidate,
+	}
+	for _, reason := range acceptanceReasons {
+		mapped, _, ok := semanticFailureReasonForAcceptanceReason(reason)
+		if reason == SemanticAcceptanceReasonCorrect {
+			if ok || mapped != "" {
+				t.Fatalf("correct should not map to failure reason: %s -> %s", reason, mapped)
+			}
+			continue
+		}
+		if !ok || !validSemanticFailureReason(mapped) {
+			t.Fatalf("acceptance reason lacks canonical mapping: %s -> %s ok=%t", reason, mapped, ok)
+		}
+	}
+	for _, class := range semanticCalibrationFailureClasses {
+		mapped, inferred, ok := semanticFailureReasonForCalibrationClass(class)
+		if class == SemanticCalibrationFailureAccepted {
+			if ok || mapped != "" || !inferred {
+				t.Fatalf("accepted class should not map to failure reason: %s -> %s ok=%t inferred=%t", class, mapped, ok, inferred)
+			}
+			continue
+		}
+		if !ok || !inferred || !validSemanticFailureReason(mapped) {
+			t.Fatalf("calibration class lacks inferred canonical mapping: %s -> %s ok=%t inferred=%t", class, mapped, ok, inferred)
+		}
+	}
+	if mapped, inferred, ok := semanticFailureReasonForAcceptanceReason(SemanticAcceptanceReason("new_reason")); !ok || !inferred || mapped != SemanticFailureOther {
+		t.Fatalf("unknown acceptance reason must map to inferred other, got %s inferred=%t ok=%t", mapped, inferred, ok)
+	}
+	if mapped, inferred, ok := semanticFailureReasonForCalibrationClass(SemanticCalibrationFailureClass("new_class")); !ok || !inferred || mapped != SemanticFailureOther {
+		t.Fatalf("unknown calibration class must map to inferred other, got %s inferred=%t ok=%t", mapped, inferred, ok)
 	}
 }
 
@@ -3027,14 +3268,17 @@ func TestSemanticJudgmentSerializesConcurrentRecords(t *testing.T) {
 		go func() {
 			<-start
 			choice := SemanticJudgmentChoiceReject
+			reason := SemanticFailureUnexpectedCandidate
 			if i%2 == 0 {
 				choice = SemanticJudgmentChoiceAccept
+				reason = ""
 			}
 			_, err := RecordSemanticJudgment(root, SemanticJudgmentRecordInput{
-				CandidateID: candidate.CandidateID,
-				Choice:      choice,
-				ReviewerID:  fmt.Sprintf("reviewer-%d", i),
-				RecordedAt:  fixedTestTime(),
+				CandidateID:   candidate.CandidateID,
+				Choice:        choice,
+				FailureReason: reason,
+				ReviewerID:    fmt.Sprintf("reviewer-%d", i),
+				RecordedAt:    fixedTestTime(),
 			})
 			results <- err
 		}()
@@ -3325,9 +3569,9 @@ func TestSemanticCalibrationNextReturnsSelfContainedPageWithExpectedContextAndEx
 		t.Fatalf("next page: %v", err)
 	}
 	if page.SchemaVersion != SemanticCalibrationPageSchemaVersion {
-		t.Fatalf("expected v0.2 page, got %+v", page)
+		t.Fatalf("expected v0.3 page, got %+v", page)
 	}
-	if SemanticCalibrationPageSchemaVersion != "semantic-calibration-page/v0.2" {
+	if SemanticCalibrationPageSchemaVersion != "semantic-calibration-page/v0.3" {
 		t.Fatalf("unexpected page schema constant: %s", SemanticCalibrationPageSchemaVersion)
 	}
 	if page.ReviewContext == nil || page.PageMarkdown == "" {

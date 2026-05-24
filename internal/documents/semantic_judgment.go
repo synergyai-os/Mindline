@@ -220,6 +220,9 @@ func RecordSemanticJudgment(inputDir string, input SemanticJudgmentRecordInput) 
 			CandidateKind:    target.CandidateKind,
 			Confidence:       target.Confidence,
 			Choice:           input.Choice,
+			FailureReason:    input.FailureReason,
+			SecondaryReasons: cloneSemanticFailureReasons(input.SecondaryReasons),
+			FailureInferred:  input.FailureInferred,
 			Note:             strings.TrimSpace(input.Note),
 			ReviewerID:       strings.TrimSpace(input.ReviewerID),
 			RecordedAt:       recordedAt.UTC().Format(time.RFC3339),
@@ -520,6 +523,8 @@ func BuildSemanticJudgmentSummary(runID string, sourceCount int, items []Semanti
 	bySource := map[string]map[SemanticJudgmentChoice]int{}
 	byRelationPresence := map[string]map[SemanticJudgmentChoice]int{}
 	byRelationType := map[SemanticRelationshipType]map[SemanticJudgmentChoice]int{}
+	byFailureReason := map[SemanticFailureReason]map[SemanticJudgmentChoice]int{}
+	reasonCounts := emptySemanticFailureReasonCounts()
 	accepted := 0
 	rejected := 0
 	unclear := 0
@@ -576,6 +581,10 @@ func BuildSemanticJudgmentSummary(runID string, sourceCount int, items []Semanti
 			for _, relationType := range distinctSemanticJudgmentRelationTypes(item.RelationContext) {
 				incrementSemanticJudgmentGroup(byRelationType, relationType, choice)
 			}
+			if judgment.FailureReason != "" {
+				reasonCounts[judgment.FailureReason]++
+				incrementSemanticJudgmentGroup(byFailureReason, judgment.FailureReason, choice)
+			}
 			switch judgment.Choice {
 			case SemanticJudgmentChoiceAccept:
 				accepted++
@@ -599,6 +608,9 @@ func BuildSemanticJudgmentSummary(runID string, sourceCount int, items []Semanti
 			ReviewStatus:             item.ReviewStatus,
 			Confidence:               item.Confidence,
 			JudgmentChoice:           choice,
+			FailureReason:            semanticJudgmentFailureReason(judgment),
+			SecondaryFailureReasons:  semanticJudgmentSecondaryFailureReasons(judgment),
+			FailureReasonInferred:    semanticJudgmentFailureReasonInferred(judgment),
 			CandidatePath:            SemanticJudgmentCandidateJSONPath(item.CandidateID),
 			PagePath:                 SemanticJudgmentPagePath(item.CandidateID),
 			JudgmentPath:             judgmentPath,
@@ -633,12 +645,14 @@ func BuildSemanticJudgmentSummary(runID string, sourceCount int, items []Semanti
 		ReviewBurdenCount:             reviewBurden,
 		PrecisionEstimate:             ratio(accepted, judgedCount),
 		FailureModeCounts:             counts,
+		FailureReasonCounts:           reasonCounts,
 		JudgmentByCandidateKind:       byKind,
 		JudgmentByConfidence:          byConfidence,
 		JudgmentByReviewStatus:        byReviewStatus,
 		JudgmentBySourceDocument:      bySource,
 		JudgmentByRelationPresence:    byRelationPresence,
 		JudgmentByRelationType:        byRelationType,
+		JudgmentByFailureReason:       byFailureReason,
 		QualityStatement:              "Judgments are calibration evidence only; no-human readiness still requires held-out >=98% accuracy.",
 		CursorPath:                    "cursor.json",
 		ReportPath:                    "reports/judgment-report.md",
@@ -656,6 +670,27 @@ func semanticEvidenceReadinessReasonCountMap() map[SemanticEvidenceReadinessReas
 	return out
 }
 
+func semanticJudgmentFailureReason(record *SemanticJudgmentRecord) SemanticFailureReason {
+	if record == nil {
+		return ""
+	}
+	return record.FailureReason
+}
+
+func semanticJudgmentSecondaryFailureReasons(record *SemanticJudgmentRecord) []SemanticFailureReason {
+	if record == nil {
+		return nil
+	}
+	return cloneSemanticFailureReasons(record.SecondaryReasons)
+}
+
+func semanticJudgmentFailureReasonInferred(record *SemanticJudgmentRecord) bool {
+	if record == nil {
+		return false
+	}
+	return record.FailureInferred
+}
+
 func semanticLegacyEvidenceReadiness(item SemanticJudgmentCandidate) SemanticEvidenceReadiness {
 	readiness := semanticEvidenceReadiness(item)
 	if readiness.Status == SemanticEvidenceReadinessPass {
@@ -668,6 +703,12 @@ func semanticLegacyEvidenceReadiness(item SemanticJudgmentCandidate) SemanticEvi
 
 func semanticLegacyJudgmentSummary(summary SemanticJudgmentSummary) SemanticJudgmentSummary {
 	summary.SchemaVersion = SemanticJudgmentSummarySchemaVersion
+	if summary.FailureReasonCounts == nil {
+		summary.FailureReasonCounts = emptySemanticFailureReasonCounts()
+	}
+	if summary.JudgmentByFailureReason == nil {
+		summary.JudgmentByFailureReason = map[SemanticFailureReason]map[SemanticJudgmentChoice]int{}
+	}
 	summary.EvidenceReadyCount = 0
 	summary.EvalCountedCount = 0
 	excluded := len(summary.Candidates)
@@ -683,6 +724,66 @@ func semanticLegacyJudgmentSummary(summary SemanticJudgmentSummary) SemanticJudg
 		summary.Candidates[i].EvidenceReadinessReasons = []SemanticEvidenceReadinessReason{SemanticEvidenceReadinessMissingSourceExcerpt}
 	}
 	return summary
+}
+
+func semanticPreviousJudgmentSummary(summary SemanticJudgmentSummary) SemanticJudgmentSummary {
+	summary.SchemaVersion = SemanticJudgmentSummarySchemaVersion
+	if summary.FailureReasonCounts == nil {
+		summary.FailureReasonCounts = emptySemanticFailureReasonCounts()
+	}
+	if summary.JudgmentByFailureReason == nil {
+		summary.JudgmentByFailureReason = map[SemanticFailureReason]map[SemanticJudgmentChoice]int{}
+	}
+	if summary.EvidenceReadinessReasonCounts == nil {
+		summary.EvidenceReadinessReasonCounts = semanticEvidenceReadinessReasonCountMap()
+	}
+	summary = normalizeSemanticPreviousJudgmentSummaryReadiness(summary)
+	return summary
+}
+
+func normalizeSemanticPreviousJudgmentSummaryReadiness(summary SemanticJudgmentSummary) SemanticJudgmentSummary {
+	summary.EvidenceReadyCount = 0
+	summary.EvalCountedCount = 0
+	summary.EvidenceExcludedCount = 0
+	summary.EvidenceReadinessReasonCounts = semanticEvidenceReadinessReasonCountMap()
+	for i := range summary.Candidates {
+		summary.Candidates[i] = normalizeSemanticPreviousJudgmentCandidateSummaryReadiness(summary.Candidates[i])
+		if summary.Candidates[i].EvidenceReadinessStatus == SemanticEvidenceReadinessPass {
+			summary.EvidenceReadyCount++
+		}
+		if summary.Candidates[i].EvalCounted {
+			summary.EvalCountedCount++
+		} else {
+			summary.EvidenceExcludedCount++
+		}
+		for _, reason := range summary.Candidates[i].EvidenceReadinessReasons {
+			summary.EvidenceReadinessReasonCounts[reason]++
+		}
+	}
+	return summary
+}
+
+func normalizeSemanticPreviousJudgmentCandidateSummaryReadiness(item SemanticJudgmentCandidateSummary) SemanticJudgmentCandidateSummary {
+	if item.EvidenceReadinessStatus == SemanticEvidenceReadinessPass && item.EvalCounted && len(item.EvidenceReadinessReasons) == 0 {
+		return item
+	}
+	if item.EvidenceReadinessStatus == SemanticEvidenceReadinessFail && !item.EvalCounted && len(item.EvidenceReadinessReasons) > 0 {
+		validReasons := true
+		for _, reason := range item.EvidenceReadinessReasons {
+			if !validSemanticEvidenceReadinessReason(reason) {
+				validReasons = false
+				break
+			}
+		}
+		if validReasons {
+			item.EvidenceReadinessReasons = cloneSemanticEvidenceReadinessReasonList(item.EvidenceReadinessReasons)
+			return item
+		}
+	}
+	item.EvidenceReadinessStatus = SemanticEvidenceReadinessFail
+	item.EvalCounted = false
+	item.EvidenceReadinessReasons = []SemanticEvidenceReadinessReason{SemanticEvidenceReadinessMissingSourceExcerpt}
+	return item
 }
 
 func semanticEvidenceReadinessReasons() []SemanticEvidenceReadinessReason {
@@ -765,8 +866,18 @@ func readSemanticJudgmentSummary(root string) (SemanticJudgmentSummary, error) {
 	if err := ValidateSemanticJudgmentSummary(summary); err != nil {
 		return SemanticJudgmentSummary{}, err
 	}
+	normalizedSchema := false
 	if summary.SchemaVersion == SemanticJudgmentSummaryLegacySchemaVersion {
 		summary = semanticLegacyJudgmentSummary(summary)
+		normalizedSchema = true
+	} else if summary.SchemaVersion == SemanticJudgmentSummaryPreviousSchemaVersion {
+		summary = semanticPreviousJudgmentSummary(summary)
+		normalizedSchema = true
+	}
+	if normalizedSchema {
+		if err := ValidateSemanticJudgmentSummary(summary); err != nil {
+			return SemanticJudgmentSummary{}, err
+		}
 	}
 	return summary, nil
 }
@@ -791,11 +902,16 @@ func readSemanticJudgmentBundle(root string, summary SemanticJudgmentSummary) ([
 		if err := readJSONFile(itemPath, &item); err != nil {
 			return nil, nil, fmt.Errorf("read semantic judgment candidate: %w", err)
 		}
-		if item.SchemaVersion != SemanticJudgmentCandidateSchemaVersion && item.SchemaVersion != SemanticJudgmentCandidateLegacySchemaVersion {
+		if item.SchemaVersion != SemanticJudgmentCandidateSchemaVersion &&
+			item.SchemaVersion != SemanticJudgmentCandidatePreviousSchemaVersion &&
+			item.SchemaVersion != SemanticJudgmentCandidateLegacySchemaVersion {
 			return nil, nil, fmt.Errorf("unsupported semantic judgment candidate schema version: %s", item.SchemaVersion)
 		}
 		if item.SchemaVersion == SemanticJudgmentCandidateLegacySchemaVersion || item.EvidenceReadiness.Status == "" {
 			item.EvidenceReadiness = semanticLegacyEvidenceReadiness(item)
+		}
+		if item.SchemaVersion == SemanticJudgmentCandidateLegacySchemaVersion || item.SchemaVersion == SemanticJudgmentCandidatePreviousSchemaVersion {
+			item.SchemaVersion = SemanticJudgmentCandidateSchemaVersion
 		}
 		if err := ValidateSemanticJudgmentCandidate(item); err != nil {
 			return nil, nil, err
@@ -818,6 +934,7 @@ func readSemanticJudgmentBundle(root string, summary SemanticJudgmentSummary) ([
 		if err := readJSONFile(judgmentPath, &judgment); err != nil {
 			return nil, nil, fmt.Errorf("read semantic judgment record: %w", err)
 		}
+		judgment = normalizeSemanticJudgmentRecord(judgment)
 		if err := ValidateSemanticJudgmentRecord(judgment); err != nil {
 			return nil, nil, err
 		}
@@ -886,11 +1003,23 @@ func containedSemanticJudgmentPath(root, relative string) (string, error) {
 }
 
 func ValidateSemanticJudgmentSummary(summary SemanticJudgmentSummary) error {
-	if summary.SchemaVersion != SemanticJudgmentSummarySchemaVersion && summary.SchemaVersion != SemanticJudgmentSummaryLegacySchemaVersion {
+	if summary.SchemaVersion != SemanticJudgmentSummarySchemaVersion &&
+		summary.SchemaVersion != SemanticJudgmentSummaryPreviousSchemaVersion &&
+		summary.SchemaVersion != SemanticJudgmentSummaryLegacySchemaVersion {
 		return fmt.Errorf("unsupported semantic judgment summary schema version: %s", summary.SchemaVersion)
 	}
 	if summary.FailureModeCounts == nil {
 		return fmt.Errorf("missing semantic judgment failure mode counts")
+	}
+	if summary.SchemaVersion == SemanticJudgmentSummarySchemaVersion {
+		if summary.FailureReasonCounts == nil {
+			return fmt.Errorf("missing semantic judgment failure reason counts")
+		}
+		for reason := range summary.FailureReasonCounts {
+			if !validSemanticFailureReason(reason) {
+				return fmt.Errorf("unsupported semantic judgment failure reason count: %s", reason)
+			}
+		}
 	}
 	if summary.SchemaVersion == SemanticJudgmentSummarySchemaVersion {
 		if summary.EvidenceReadinessReasonCounts == nil {
@@ -926,7 +1055,11 @@ func ValidateSemanticJudgmentSummary(summary SemanticJudgmentSummary) error {
 	body += "\n" + semanticJudgmentChoiceGroupBody(summary.JudgmentBySourceDocument)
 	body += "\n" + semanticJudgmentChoiceGroupBody(summary.JudgmentByRelationPresence)
 	body += "\n" + semanticJudgmentChoiceGroupBody(summary.JudgmentByRelationType)
+	body += "\n" + semanticJudgmentChoiceGroupBody(summary.JudgmentByFailureReason)
 	for reason := range summary.EvidenceReadinessReasonCounts {
+		body += "\n" + string(reason)
+	}
+	for reason := range summary.FailureReasonCounts {
 		body += "\n" + string(reason)
 	}
 	if containsUnsafeMarker(body) || containsGovernanceID(body) {
@@ -1075,7 +1208,9 @@ func semanticEvidenceReadinessEqual(left, right SemanticEvidenceReadiness) bool 
 }
 
 func ValidateSemanticJudgmentCandidate(item SemanticJudgmentCandidate) error {
-	if item.SchemaVersion != SemanticJudgmentCandidateSchemaVersion && item.SchemaVersion != SemanticJudgmentCandidateLegacySchemaVersion {
+	if item.SchemaVersion != SemanticJudgmentCandidateSchemaVersion &&
+		item.SchemaVersion != SemanticJudgmentCandidatePreviousSchemaVersion &&
+		item.SchemaVersion != SemanticJudgmentCandidateLegacySchemaVersion {
 		return fmt.Errorf("unsupported semantic judgment candidate schema version: %s", item.SchemaVersion)
 	}
 	if strings.TrimSpace(item.CandidateID) == "" || sanitizeID(item.CandidateID) != item.CandidateID {
@@ -1142,7 +1277,7 @@ func validSemanticEvidenceReadinessReason(reason SemanticEvidenceReadinessReason
 }
 
 func ValidateSemanticJudgmentRecord(record SemanticJudgmentRecord) error {
-	if record.SchemaVersion != SemanticJudgmentRecordSchemaVersion {
+	if record.SchemaVersion != SemanticJudgmentRecordSchemaVersion && record.SchemaVersion != SemanticJudgmentRecordLegacySchemaVersion {
 		return fmt.Errorf("unsupported semantic judgment record schema version: %s", record.SchemaVersion)
 	}
 	if strings.TrimSpace(record.CandidateID) == "" || sanitizeID(record.CandidateID) != record.CandidateID {
@@ -1151,12 +1286,60 @@ func ValidateSemanticJudgmentRecord(record SemanticJudgmentRecord) error {
 	if !validSemanticJudgmentChoice(record.Choice) {
 		return fmt.Errorf("unsupported semantic judgment choice: %s", record.Choice)
 	}
+	if record.SchemaVersion == SemanticJudgmentRecordSchemaVersion {
+		if err := validateSemanticJudgmentRecordFailureReason(record); err != nil {
+			return err
+		}
+	}
 	if strings.TrimSpace(record.RecordedAt) == "" {
 		return fmt.Errorf("missing semantic judgment recorded_at")
 	}
 	body := semanticJudgmentRecordBody(record)
 	if containsUnsafeMarker(body) || containsGovernanceID(body) {
 		return fmt.Errorf("semantic judgment record contains private marker")
+	}
+	return nil
+}
+
+func normalizeSemanticJudgmentRecord(record SemanticJudgmentRecord) SemanticJudgmentRecord {
+	if record.SchemaVersion != SemanticJudgmentRecordLegacySchemaVersion {
+		return record
+	}
+	record.SchemaVersion = SemanticJudgmentRecordSchemaVersion
+	if record.Choice != SemanticJudgmentChoiceAccept && record.FailureReason == "" {
+		if reason, ok := defaultSemanticFailureReasonForChoice(record.Choice); ok {
+			record.FailureReason = reason
+			record.FailureInferred = true
+		}
+	}
+	return record
+}
+
+func validateSemanticJudgmentRecordFailureReason(record SemanticJudgmentRecord) error {
+	if record.Choice == SemanticJudgmentChoiceAccept {
+		if record.FailureReason != "" {
+			return fmt.Errorf("accepted semantic judgment cannot include failure reason")
+		}
+		if len(record.SecondaryReasons) > 0 {
+			return fmt.Errorf("accepted semantic judgment cannot include secondary failure reasons")
+		}
+		return nil
+	}
+	if record.FailureReason == "" {
+		return fmt.Errorf("semantic judgment choice %s requires failure reason", record.Choice)
+	}
+	if !semanticJudgmentChoiceAllowsFailureReason(record.Choice, record.FailureReason) {
+		return fmt.Errorf("semantic judgment choice %s cannot use failure reason %s", record.Choice, record.FailureReason)
+	}
+	seen := map[SemanticFailureReason]bool{record.FailureReason: true}
+	for _, reason := range record.SecondaryReasons {
+		if !validSemanticFailureReason(reason) {
+			return fmt.Errorf("unsupported secondary semantic failure reason: %s", reason)
+		}
+		if seen[reason] {
+			return fmt.Errorf("duplicate semantic failure reason: %s", reason)
+		}
+		seen[reason] = true
 	}
 	return nil
 }
@@ -1214,6 +1397,8 @@ func semanticJudgmentRecordBody(record SemanticJudgmentRecord) string {
 		string(record.CandidateKind),
 		string(record.Confidence),
 		string(record.Choice),
+		string(record.FailureReason),
+		semanticFailureReasonText(record.SecondaryReasons),
 		record.Note,
 		record.ReviewerID,
 		record.RecordedAt,
@@ -1309,6 +1494,12 @@ func semanticJudgmentPageMarkdown(item SemanticJudgmentCandidate, cursor Semanti
 	b.WriteString("- unclear - cannot be judged from available context\n")
 	b.WriteString("- duplicate - repeats another candidate\n")
 	b.WriteString("- wrong-kind - useful content but wrong candidate type or scope\n")
+	b.WriteString("\n## Failure reason contract\n\n")
+	b.WriteString("- accept uses no failure reason\n")
+	b.WriteString("- reject requires one of: unexpected_candidate, unsupported_evidence, missing_evidence, too_broad, too_narrow, stale_or_contradicted, unsafe_or_private, relation_error, source_scope_error, other\n")
+	b.WriteString("- unclear requires one of: ambiguous, missing_evidence, unsupported_evidence, relation_error, source_scope_error, other\n")
+	b.WriteString("- duplicate requires duplicate\n")
+	b.WriteString("- wrong-kind requires wrong_kind\n")
 	return b.String()
 }
 

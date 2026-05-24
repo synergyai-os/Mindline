@@ -24,10 +24,12 @@ type semanticJudgmentUIState struct {
 }
 
 type semanticJudgmentUIPost struct {
-	CandidateID string `json:"candidate_id"`
-	Choice      string `json:"choice"`
-	Note        string `json:"note"`
-	ReviewerID  string `json:"reviewer_id"`
+	CandidateID      string   `json:"candidate_id"`
+	Choice           string   `json:"choice"`
+	FailureReason    string   `json:"failure_reason"`
+	SecondaryReasons []string `json:"secondary_failure_reasons"`
+	Note             string   `json:"note"`
+	ReviewerID       string   `json:"reviewer_id"`
 }
 
 type semanticJudgmentUITemplateData struct {
@@ -95,10 +97,12 @@ func newSemanticJudgmentUIHandlerWithToken(root, reviewerID, reviewToken string,
 			recordReviewer = reviewerID
 		}
 		_, err := documents.RecordSemanticJudgment(root, documents.SemanticJudgmentRecordInput{
-			CandidateID: post.CandidateID,
-			Choice:      documents.SemanticJudgmentChoice(post.Choice),
-			Note:        post.Note,
-			ReviewerID:  recordReviewer,
+			CandidateID:      post.CandidateID,
+			Choice:           documents.SemanticJudgmentChoice(post.Choice),
+			FailureReason:    documents.SemanticFailureReason(post.FailureReason),
+			SecondaryReasons: semanticJudgmentUISecondaryReasons(post.SecondaryReasons),
+			Note:             post.Note,
+			ReviewerID:       recordReviewer,
 		})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -118,6 +122,17 @@ func newSemanticJudgmentUIHandlerWithToken(root, reviewerID, reviewToken string,
 		}
 		mux.ServeHTTP(w, r)
 	})
+}
+
+func semanticJudgmentUISecondaryReasons(values []string) []documents.SemanticFailureReason {
+	out := make([]documents.SemanticFailureReason, 0, len(values))
+	for _, value := range values {
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
+		out = append(out, documents.SemanticFailureReason(value))
+	}
+	return out
 }
 
 func semanticJudgmentHostAllowlist(hosts []string) map[string]bool {
@@ -438,6 +453,17 @@ textarea {
   padding: 10px;
   font: inherit;
 }
+.reason-control { font-weight: 700; font-size: 13px; color: var(--muted); }
+select {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font: inherit;
+  background: #ffffff;
+}
+.reason-hint { margin: -6px 0 0; color: var(--muted); font-size: 13px; }
 .decision-controls { display: grid; gap: 8px; }
 button {
   border: 1px solid var(--line);
@@ -509,6 +535,9 @@ button:disabled { cursor: not-allowed; opacity: .55; }
     <aside>
       <h2>Decision</h2>
       <textarea id="note" placeholder="Optional note"></textarea>
+      <label class="reason-control" for="failure-reason">Failure reason</label>
+      <select id="failure-reason"></select>
+      <p class="reason-hint" id="reason-hint"></p>
       <div class="decision-controls" id="decision-controls"></div>
       <div class="status" id="status"></div>
     </aside>
@@ -522,6 +551,20 @@ const choices = [
   ["duplicate", "Duplicate", ""],
   ["wrong-kind", "Wrong kind", "warn"]
 ];
+const failureReasonsByChoice = {
+  "accept": [],
+  "reject": ["unexpected_candidate", "unsupported_evidence", "missing_evidence", "too_broad", "too_narrow", "stale_or_contradicted", "unsafe_or_private", "relation_error", "source_scope_error", "other"],
+  "unclear": ["ambiguous", "missing_evidence", "unsupported_evidence", "relation_error", "source_scope_error", "other"],
+  "duplicate": ["duplicate"],
+  "wrong-kind": ["wrong_kind"]
+};
+const allFailureReasons = ["unexpected_candidate", "unsupported_evidence", "missing_evidence", "unsafe_or_private", "duplicate", "too_broad", "too_narrow", "stale_or_contradicted", "ambiguous", "missing_expected_outcome", "wrong_kind", "relation_error", "source_scope_error", "other"];
+const defaultReasonByChoice = {
+  "reject": "unexpected_candidate",
+  "unclear": "ambiguous",
+  "duplicate": "duplicate",
+  "wrong-kind": "wrong_kind"
+};
 const reviewToken = "{{.ReviewToken}}";
 let currentCandidateId = "";
 let currentState = null;
@@ -562,6 +605,7 @@ function render(state) {
   document.getElementById("progress-bar").style.width = pct + "%";
   document.getElementById("note").value = "";
   document.getElementById("status").textContent = "";
+  renderFailureReasonOptions();
   renderModeButtons();
   if (mode === "guide") {
     renderGuide(summary);
@@ -596,6 +640,8 @@ function renderGuide(summary) {
       "<p class=\"muted\">" + escapeHtml(summary.judged_count) + " reviewed, " + escapeHtml(summary.remaining_count) + " remaining. Switch back to Review to continue.</p>" +
     "</div>";
   document.getElementById("decision-controls").innerHTML = "";
+  renderFailureReasonOptions();
+  document.getElementById("reason-hint").textContent = "";
 }
 
 function renderReview(page, summary) {
@@ -603,6 +649,8 @@ function renderReview(page, summary) {
     currentCandidateId = "";
     document.getElementById("current-candidate").innerHTML = "<div class=\"done\"><h2>Review complete</h2><p class=\"muted\">" + escapeHtml(summary.judged_count) + "/" + escapeHtml(summary.candidate_count) + " judged. Precision estimate: " + escapeHtml(summary.precision_estimate) + ".</p></div>";
     document.getElementById("decision-controls").innerHTML = "";
+    renderFailureReasonOptions();
+    document.getElementById("reason-hint").textContent = "";
     return;
   }
   const item = page.item;
@@ -649,6 +697,25 @@ function renderReview(page, summary) {
   for (const button of document.querySelectorAll("[data-choice]")) {
     button.addEventListener("click", () => submitChoice(button.dataset.choice));
   }
+  renderFailureReasonOptions();
+}
+
+function renderFailureReasonOptions() {
+  const select = document.getElementById("failure-reason");
+  const hint = document.getElementById("reason-hint");
+  select.disabled = false;
+  select.innerHTML = allFailureReasons.map(reason => "<option value=\"" + escapeHtml(reason) + "\">" + escapeHtml(reason) + "</option>").join("");
+  if (!select.value) select.value = defaultReasonByChoice.reject;
+  hint.textContent = "Used for non-accept decisions. Accept records no failure reason.";
+}
+
+function ensureCompatibleFailureReason(choice) {
+  const select = document.getElementById("failure-reason");
+  if (choice === "accept") return "";
+  const allowed = failureReasonsByChoice[choice] || [];
+  const fallback = defaultReasonByChoice[choice] || allowed[0] || "";
+  if (!allowed.includes(select.value)) select.value = fallback;
+  return select.value;
 }
 
 function renderRelationContext(item) {
@@ -691,12 +758,18 @@ function renderRelationContext(item) {
 
 async function submitChoice(choice) {
   if (!currentCandidateId) return;
+  const allowed = failureReasonsByChoice[choice] || [];
+  let failureReason = ensureCompatibleFailureReason(choice);
+  if (choice !== "accept" && !allowed.includes(failureReason)) {
+    document.getElementById("status").textContent = "Select a compatible reason for " + choice + ": " + allowed.join(", ");
+    return;
+  }
   document.getElementById("status").textContent = "Saving...";
   for (const button of document.querySelectorAll("[data-choice]")) button.disabled = true;
   const response = await fetch("/api/judgments", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Mindline-Review-Token": reviewToken },
-    body: JSON.stringify({ candidate_id: currentCandidateId, choice, note: document.getElementById("note").value })
+    body: JSON.stringify({ candidate_id: currentCandidateId, choice, failure_reason: failureReason, note: document.getElementById("note").value })
   });
   if (!response.ok) {
     document.getElementById("status").textContent = await response.text();
