@@ -359,7 +359,7 @@ h1 { font-size: 20px; }
 }
 .metrics {
   display: grid;
-  grid-template-columns: repeat(8, minmax(86px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(86px, 1fr));
   gap: 8px;
 }
 .metric {
@@ -554,7 +554,8 @@ function render(state) {
     ["Rejected", summary.rejected_count],
     ["Unclear", summary.unclear_count],
     ["Duplicate", summary.duplicate_count],
-    ["Wrong kind", summary.wrong_kind_count]
+    ["Wrong kind", summary.wrong_kind_count],
+    ["Eval counted", summary.eval_counted_count]
   ];
   document.getElementById("metrics").innerHTML = metricRows.map(([label, value]) => "<div class=\"metric\"><span>" + escapeHtml(label) + "</span><strong>" + escapeHtml(value) + "</strong></div>").join("");
   const pct = summary.candidate_count === 0 ? 100 : Math.round((summary.judged_count / summary.candidate_count) * 100);
@@ -606,6 +607,10 @@ function renderReview(page, summary) {
   }
   const item = page.item;
   currentCandidateId = item.candidate_id;
+  const readiness = item.evidence_readiness || {};
+  const readinessReasons = (readiness.reason_codes || []).map(reason => "<span class=\"tag\">" + escapeHtml(reason) + "</span>").join("") || "<span class=\"tag\">No readiness reasons</span>";
+  const readinessTag = readiness.status ? "<span class=\"tag\">readiness: " + escapeHtml(readiness.status) + "</span>" : "<span class=\"tag\">readiness unavailable</span>";
+  const evalTag = "<span class=\"tag\">eval counted: " + escapeHtml(Boolean(readiness.eval_counted)) + "</span>";
   const ranges = (item.evidence_ranges || []).map(range => "<span class=\"tag\">" + escapeHtml(range.structure_node_id) + " lines " + escapeHtml(range.line_start) + "-" + escapeHtml(range.line_end) + "</span>").join("");
   const excerpts = (item.evidence_excerpts || []).map(excerpt => {
     if (excerpt.unavailable) {
@@ -625,12 +630,15 @@ function renderReview(page, summary) {
         "<span class=\"tag\">" + escapeHtml(item.candidate_kind) + "</span>" +
         "<span class=\"tag\">" + escapeHtml(item.confidence) + "</span>" +
         "<span class=\"tag\">" + escapeHtml(item.review_status) + "</span>" +
+        readinessTag +
+        evalTag +
         "<span class=\"tag\">" + escapeHtml(item.candidate_id) + "</span>" +
         sourceTag +
       "</div>" +
     "</div>" +
     "<div class=\"candidate-body\">" +
       "<div><h3>Summary</h3><p class=\"summary\">" + escapeHtml(item.summary || "No summary") + "</p></div>" +
+      "<div><h3>Evidence readiness</h3><div class=\"tags\">" + readinessReasons + "</div></div>" +
       "<div><h3>Evidence</h3><div class=\"tags\">" + rangesHtml + "</div></div>" +
       "<div class=\"evidence-list\">" + excerpts + "</div>" +
       "<div><h3>Relation context</h3>" + relationContext + "</div>" +
