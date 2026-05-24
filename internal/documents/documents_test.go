@@ -2804,6 +2804,137 @@ func TestSemanticJudgmentLegacySummaryReadFailsClosed(t *testing.T) {
 	}
 }
 
+func TestSemanticJudgmentPreviousSummaryReadPreservesReadiness(t *testing.T) {
+	node := validStructureNode()
+	observation := validSemanticObservation(node)
+	candidate := validSemanticCandidate(observation, node)
+	semanticRun := writeSemanticAcceptanceRun(t, []SemanticCandidate{candidate})
+	writeDocumentsTestJSON(t, filepath.Join(semanticRun, "semantic-candidates", SemanticObservationJSONPath(observation.ObservationID)), observation)
+	sourceRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(sourceRoot, "source.md"), []byte("one\ntwo\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	out := t.TempDir()
+	if _, err := JudgeSemanticCandidates(semanticRun, out, SemanticJudgmentOptions{SourceRoot: sourceRoot, SourcePath: "source.md"}); err != nil {
+		t.Fatalf("judge semantic candidates: %v", err)
+	}
+	root := filepath.Join(out, "semantic-judgment")
+	summaryPath := filepath.Join(root, "judgment-summary.json")
+	var summary SemanticJudgmentSummary
+	data, err := os.ReadFile(summaryPath)
+	if err != nil {
+		t.Fatalf("read summary: %v", err)
+	}
+	if err := json.Unmarshal(data, &summary); err != nil {
+		t.Fatalf("decode summary: %v", err)
+	}
+	if summary.EvalCountedCount != 1 || summary.Candidates[0].EvidenceReadinessStatus != SemanticEvidenceReadinessPass {
+		t.Fatalf("expected generated summary to start eval-counted: %+v", summary)
+	}
+	summary.SchemaVersion = SemanticJudgmentSummaryPreviousSchemaVersion
+	summary.FailureReasonCounts = nil
+	summary.JudgmentByFailureReason = nil
+	writeDocumentsTestJSON(t, summaryPath, summary)
+
+	itemPath := filepath.Join(root, summary.Candidates[0].CandidatePath)
+	var item SemanticJudgmentCandidate
+	data, err = os.ReadFile(itemPath)
+	if err != nil {
+		t.Fatalf("read item: %v", err)
+	}
+	if err := json.Unmarshal(data, &item); err != nil {
+		t.Fatalf("decode item: %v", err)
+	}
+	item.SchemaVersion = SemanticJudgmentCandidatePreviousSchemaVersion
+	writeDocumentsTestJSON(t, itemPath, item)
+
+	updated, err := RecordSemanticJudgment(root, SemanticJudgmentRecordInput{
+		CandidateID: summary.Candidates[0].CandidateID,
+		Choice:      SemanticJudgmentChoiceAccept,
+		ReviewerID:  "tester",
+		RecordedAt:  fixedTestTime(),
+	})
+	if err != nil {
+		t.Fatalf("record judgment against previous summary: %v", err)
+	}
+	if updated.SchemaVersion != SemanticJudgmentSummarySchemaVersion ||
+		updated.JudgedCount != 1 ||
+		updated.AcceptedCount != 1 ||
+		updated.EvalCountedCount != 1 ||
+		updated.EvidenceReadyCount != 1 ||
+		updated.EvidenceExcludedCount != 0 ||
+		updated.Candidates[0].EvidenceReadinessStatus != SemanticEvidenceReadinessPass ||
+		!updated.Candidates[0].EvalCounted ||
+		len(updated.Candidates[0].EvidenceReadinessReasons) != 0 {
+		t.Fatalf("previous summary readiness must be preserved after append, got %+v", updated)
+	}
+	if updated.EvidenceReadinessReasonCounts[SemanticEvidenceReadinessMissingSourceExcerpt] != 0 {
+		t.Fatalf("previous summary must not gain missing source excerpt reason after append: %+v", updated.EvidenceReadinessReasonCounts)
+	}
+
+	var persistedItem SemanticJudgmentCandidate
+	data, err = os.ReadFile(itemPath)
+	if err != nil {
+		t.Fatalf("read persisted item: %v", err)
+	}
+	if err := json.Unmarshal(data, &persistedItem); err != nil {
+		t.Fatalf("decode persisted item: %v", err)
+	}
+	if persistedItem.SchemaVersion != SemanticJudgmentCandidateSchemaVersion ||
+		persistedItem.EvidenceReadiness.Status != SemanticEvidenceReadinessPass ||
+		!persistedItem.EvidenceReadiness.EvalCounted ||
+		len(persistedItem.EvidenceReadiness.ReasonCodes) != 0 {
+		t.Fatalf("previous candidate readiness must be preserved after append, got %+v", persistedItem)
+	}
+}
+
+func TestSemanticJudgmentPreviousSummaryReadFailsClosedForMissingReadiness(t *testing.T) {
+	node := validStructureNode()
+	observation := validSemanticObservation(node)
+	candidate := validSemanticCandidate(observation, node)
+	semanticRun := writeSemanticAcceptanceRun(t, []SemanticCandidate{candidate})
+	out := t.TempDir()
+	if _, err := JudgeSemanticCandidates(semanticRun, out, SemanticJudgmentOptions{}); err != nil {
+		t.Fatalf("judge semantic candidates: %v", err)
+	}
+	root := filepath.Join(out, "semantic-judgment")
+	summaryPath := filepath.Join(root, "judgment-summary.json")
+	var summary SemanticJudgmentSummary
+	data, err := os.ReadFile(summaryPath)
+	if err != nil {
+		t.Fatalf("read summary: %v", err)
+	}
+	if err := json.Unmarshal(data, &summary); err != nil {
+		t.Fatalf("decode summary: %v", err)
+	}
+	summary.SchemaVersion = SemanticJudgmentSummaryPreviousSchemaVersion
+	summary.EvidenceReadyCount = 1
+	summary.EvalCountedCount = 1
+	summary.EvidenceExcludedCount = 0
+	summary.EvidenceReadinessReasonCounts = nil
+	summary.FailureReasonCounts = nil
+	summary.JudgmentByFailureReason = nil
+	summary.Candidates[0].EvidenceReadinessStatus = ""
+	summary.Candidates[0].EvalCounted = true
+	summary.Candidates[0].EvidenceReadinessReasons = nil
+	writeDocumentsTestJSON(t, summaryPath, summary)
+
+	loaded, err := ReadSemanticJudgmentSummary(root)
+	if err != nil {
+		t.Fatalf("read previous judgment summary: %v", err)
+	}
+	if loaded.SchemaVersion != SemanticJudgmentSummarySchemaVersion ||
+		loaded.EvidenceReadyCount != 0 ||
+		loaded.EvalCountedCount != 0 ||
+		loaded.EvidenceExcludedCount != 1 ||
+		loaded.Candidates[0].EvidenceReadinessStatus != SemanticEvidenceReadinessFail ||
+		loaded.Candidates[0].EvalCounted ||
+		!containsSemanticEvidenceReadinessReason(loaded.Candidates[0].EvidenceReadinessReasons, SemanticEvidenceReadinessMissingSourceExcerpt) ||
+		loaded.EvidenceReadinessReasonCounts[SemanticEvidenceReadinessMissingSourceExcerpt] != 1 {
+		t.Fatalf("previous summary missing readiness must fail closed, got %+v", loaded)
+	}
+}
+
 func TestSemanticJudgmentReadRejectsSummaryCandidateReadinessDrift(t *testing.T) {
 	node := validStructureNode()
 	observation := validSemanticObservation(node)

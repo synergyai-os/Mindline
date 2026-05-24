@@ -726,6 +726,66 @@ func semanticLegacyJudgmentSummary(summary SemanticJudgmentSummary) SemanticJudg
 	return summary
 }
 
+func semanticPreviousJudgmentSummary(summary SemanticJudgmentSummary) SemanticJudgmentSummary {
+	summary.SchemaVersion = SemanticJudgmentSummarySchemaVersion
+	if summary.FailureReasonCounts == nil {
+		summary.FailureReasonCounts = emptySemanticFailureReasonCounts()
+	}
+	if summary.JudgmentByFailureReason == nil {
+		summary.JudgmentByFailureReason = map[SemanticFailureReason]map[SemanticJudgmentChoice]int{}
+	}
+	if summary.EvidenceReadinessReasonCounts == nil {
+		summary.EvidenceReadinessReasonCounts = semanticEvidenceReadinessReasonCountMap()
+	}
+	summary = normalizeSemanticPreviousJudgmentSummaryReadiness(summary)
+	return summary
+}
+
+func normalizeSemanticPreviousJudgmentSummaryReadiness(summary SemanticJudgmentSummary) SemanticJudgmentSummary {
+	summary.EvidenceReadyCount = 0
+	summary.EvalCountedCount = 0
+	summary.EvidenceExcludedCount = 0
+	summary.EvidenceReadinessReasonCounts = semanticEvidenceReadinessReasonCountMap()
+	for i := range summary.Candidates {
+		summary.Candidates[i] = normalizeSemanticPreviousJudgmentCandidateSummaryReadiness(summary.Candidates[i])
+		if summary.Candidates[i].EvidenceReadinessStatus == SemanticEvidenceReadinessPass {
+			summary.EvidenceReadyCount++
+		}
+		if summary.Candidates[i].EvalCounted {
+			summary.EvalCountedCount++
+		} else {
+			summary.EvidenceExcludedCount++
+		}
+		for _, reason := range summary.Candidates[i].EvidenceReadinessReasons {
+			summary.EvidenceReadinessReasonCounts[reason]++
+		}
+	}
+	return summary
+}
+
+func normalizeSemanticPreviousJudgmentCandidateSummaryReadiness(item SemanticJudgmentCandidateSummary) SemanticJudgmentCandidateSummary {
+	if item.EvidenceReadinessStatus == SemanticEvidenceReadinessPass && item.EvalCounted && len(item.EvidenceReadinessReasons) == 0 {
+		return item
+	}
+	if item.EvidenceReadinessStatus == SemanticEvidenceReadinessFail && !item.EvalCounted && len(item.EvidenceReadinessReasons) > 0 {
+		validReasons := true
+		for _, reason := range item.EvidenceReadinessReasons {
+			if !validSemanticEvidenceReadinessReason(reason) {
+				validReasons = false
+				break
+			}
+		}
+		if validReasons {
+			item.EvidenceReadinessReasons = cloneSemanticEvidenceReadinessReasonList(item.EvidenceReadinessReasons)
+			return item
+		}
+	}
+	item.EvidenceReadinessStatus = SemanticEvidenceReadinessFail
+	item.EvalCounted = false
+	item.EvidenceReadinessReasons = []SemanticEvidenceReadinessReason{SemanticEvidenceReadinessMissingSourceExcerpt}
+	return item
+}
+
 func semanticEvidenceReadinessReasons() []SemanticEvidenceReadinessReason {
 	return []SemanticEvidenceReadinessReason{
 		SemanticEvidenceReadinessBlockedOrSkipped,
@@ -806,8 +866,18 @@ func readSemanticJudgmentSummary(root string) (SemanticJudgmentSummary, error) {
 	if err := ValidateSemanticJudgmentSummary(summary); err != nil {
 		return SemanticJudgmentSummary{}, err
 	}
-	if summary.SchemaVersion == SemanticJudgmentSummaryLegacySchemaVersion || summary.SchemaVersion == SemanticJudgmentSummaryPreviousSchemaVersion {
+	normalizedSchema := false
+	if summary.SchemaVersion == SemanticJudgmentSummaryLegacySchemaVersion {
 		summary = semanticLegacyJudgmentSummary(summary)
+		normalizedSchema = true
+	} else if summary.SchemaVersion == SemanticJudgmentSummaryPreviousSchemaVersion {
+		summary = semanticPreviousJudgmentSummary(summary)
+		normalizedSchema = true
+	}
+	if normalizedSchema {
+		if err := ValidateSemanticJudgmentSummary(summary); err != nil {
+			return SemanticJudgmentSummary{}, err
+		}
 	}
 	return summary, nil
 }
@@ -837,8 +907,10 @@ func readSemanticJudgmentBundle(root string, summary SemanticJudgmentSummary) ([
 			item.SchemaVersion != SemanticJudgmentCandidateLegacySchemaVersion {
 			return nil, nil, fmt.Errorf("unsupported semantic judgment candidate schema version: %s", item.SchemaVersion)
 		}
-		if item.SchemaVersion == SemanticJudgmentCandidateLegacySchemaVersion || item.SchemaVersion == SemanticJudgmentCandidatePreviousSchemaVersion || item.EvidenceReadiness.Status == "" {
+		if item.SchemaVersion == SemanticJudgmentCandidateLegacySchemaVersion || item.EvidenceReadiness.Status == "" {
 			item.EvidenceReadiness = semanticLegacyEvidenceReadiness(item)
+		}
+		if item.SchemaVersion == SemanticJudgmentCandidateLegacySchemaVersion || item.SchemaVersion == SemanticJudgmentCandidatePreviousSchemaVersion {
 			item.SchemaVersion = SemanticJudgmentCandidateSchemaVersion
 		}
 		if err := ValidateSemanticJudgmentCandidate(item); err != nil {
