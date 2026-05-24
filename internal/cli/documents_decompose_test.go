@@ -389,14 +389,15 @@ func TestDocumentsJudgeJudgeNextAndJudgeRecord(t *testing.T) {
 		t.Fatalf("expected judge exit %d, got %d stdout=%s stderr=%s", ExitOK, code, stdout.String(), stderr.String())
 	}
 	var summary struct {
-		SchemaVersion  string `json:"schema_version"`
-		CandidateCount int    `json:"candidate_count"`
-		RemainingCount int    `json:"remaining_count"`
+		SchemaVersion         string `json:"schema_version"`
+		CandidateCount        int    `json:"candidate_count"`
+		RemainingCount        int    `json:"remaining_count"`
+		EvidenceExcludedCount int    `json:"evidence_excluded_count"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
 		t.Fatalf("decode judge stdout: %v\n%s", err, stdout.String())
 	}
-	if summary.SchemaVersion != "semantic-judgment-summary/v0.1" || summary.CandidateCount == 0 || summary.RemainingCount != summary.CandidateCount {
+	if summary.SchemaVersion != "semantic-judgment-summary/v0.2" || summary.CandidateCount == 0 || summary.RemainingCount != summary.CandidateCount || summary.EvidenceExcludedCount == 0 {
 		t.Fatalf("unexpected judgment summary: %+v", summary)
 	}
 
@@ -413,14 +414,29 @@ func TestDocumentsJudgeJudgeNextAndJudgeRecord(t *testing.T) {
 		Done          bool   `json:"done"`
 		PageMarkdown  string `json:"page_markdown"`
 		Item          *struct {
-			CandidateID string `json:"candidate_id"`
+			CandidateID       string `json:"candidate_id"`
+			EvidenceReadiness struct {
+				Status      string   `json:"status"`
+				EvalCounted bool     `json:"eval_counted"`
+				ReasonCodes []string `json:"reason_codes"`
+			} `json:"evidence_readiness"`
 		} `json:"item"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &page); err != nil {
 		t.Fatalf("decode judge-next stdout: %v\n%s", err, stdout.String())
 	}
-	if page.SchemaVersion != "semantic-judgment-page/v0.1" || page.Done || page.Item == nil || !strings.Contains(page.PageMarkdown, "Adjudication choices") {
+	if page.SchemaVersion != "semantic-judgment-page/v0.2" || page.Done || page.Item == nil || !strings.Contains(page.PageMarkdown, "Adjudication choices") || !strings.Contains(page.PageMarkdown, "Evidence readiness") {
 		t.Fatalf("unexpected judgment page: %+v", page)
+	}
+	if page.Item.EvidenceReadiness.Status == "" || len(page.Item.EvidenceReadiness.ReasonCodes) == 0 || page.Item.EvidenceReadiness.EvalCounted {
+		t.Fatalf("expected judge-next item readiness exclusion without source context: %+v", page.Item.EvidenceReadiness)
+	}
+	report, err := os.ReadFile(filepath.Join(judgeOut, "semantic-judgment", "reports", "judgment-report.md"))
+	if err != nil {
+		t.Fatalf("read judgment report: %v", err)
+	}
+	if !strings.Contains(string(report), "Evidence readiness") || !strings.Contains(string(report), "Eval counted") || !strings.Contains(string(report), "missing_source_excerpt") {
+		t.Fatalf("expected readiness section in judgment report:\n%s", string(report))
 	}
 
 	stdout.Reset()
@@ -444,7 +460,7 @@ func TestDocumentsJudgeJudgeNextAndJudgeRecord(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &updated); err != nil {
 		t.Fatalf("decode judge-record stdout: %v\n%s", err, stdout.String())
 	}
-	if updated.SchemaVersion != "semantic-judgment-summary/v0.1" || updated.JudgedCount != 1 || updated.AcceptedCount != 1 || updated.Precision != 1 {
+	if updated.SchemaVersion != "semantic-judgment-summary/v0.2" || updated.JudgedCount != 1 || updated.AcceptedCount != 1 || updated.Precision != 1 {
 		t.Fatalf("unexpected judgment record summary: %+v", updated)
 	}
 }
@@ -485,7 +501,7 @@ func TestDocumentsJudgeServeStateAndRecord(t *testing.T) {
 	if _, err := html.ReadFrom(rec.Body); err != nil {
 		t.Fatalf("read ui html: %v", err)
 	}
-	for _, want := range []string{"Mindline Review", "Review", "Guide", "How to review", "Decision meanings", "remaining", "current-candidate", "decision-controls", "evidence", "Relation context", "Other endpoint role", "Relation ids", "Blockers"} {
+	for _, want := range []string{"Mindline Review", "Review", "Guide", "How to review", "Decision meanings", "remaining", "current-candidate", "decision-controls", "evidence", "Evidence readiness", "readiness:", "eval counted:", "Relation context", "Other endpoint role", "Relation ids", "Blockers"} {
 		if !strings.Contains(html.String(), want) {
 			t.Fatalf("expected UI HTML to contain %q, got %s", want, html.String())
 		}

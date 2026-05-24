@@ -2400,9 +2400,11 @@ func TestSemanticCalibrationFailsClosedBelowThreshold(t *testing.T) {
 
 func TestSemanticJudgmentInitializesReviewBundleAndPagesOneCandidate(t *testing.T) {
 	node := validStructureNode()
-	candidate := validSemanticCandidate(validSemanticObservation(node), node)
+	observation := validSemanticObservation(node)
+	candidate := validSemanticCandidate(observation, node)
 	candidate.EvidenceRanges = []SemanticEvidenceRange{{StructureNodeID: node.NodeID, LineStart: 2, LineEnd: 4}}
 	semanticRun := writeSemanticAcceptanceRun(t, []SemanticCandidate{candidate})
+	writeDocumentsTestJSON(t, filepath.Join(semanticRun, "semantic-candidates", SemanticObservationJSONPath(observation.ObservationID)), observation)
 	sourceRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(sourceRoot, "source.md"), []byte("one\ntwo\nthree\nfour\nfive\n"), 0o644); err != nil {
 		t.Fatalf("write source: %v", err)
@@ -2415,6 +2417,9 @@ func TestSemanticJudgmentInitializesReviewBundleAndPagesOneCandidate(t *testing.
 	if summary.SchemaVersion != SemanticJudgmentSummarySchemaVersion || summary.CandidateCount != 1 || summary.RemainingCount != 1 {
 		t.Fatalf("unexpected judgment summary: %+v", summary)
 	}
+	if summary.EvidenceReadyCount != 1 || summary.EvalCountedCount != 1 || summary.EvidenceExcludedCount != 0 {
+		t.Fatalf("expected fully grounded candidate to be eval-counted: %+v", summary)
+	}
 	page, err := NextSemanticJudgmentPage(filepath.Join(out, "semantic-judgment"))
 	if err != nil {
 		t.Fatalf("next semantic judgment page: %v", err)
@@ -2422,8 +2427,13 @@ func TestSemanticJudgmentInitializesReviewBundleAndPagesOneCandidate(t *testing.
 	if page.SchemaVersion != SemanticJudgmentPageSchemaVersion || page.Done || page.Item == nil {
 		t.Fatalf("expected one judgment page: %+v", page)
 	}
+	if page.Item.EvidenceReadiness.Status != SemanticEvidenceReadinessPass || !page.Item.EvidenceReadiness.EvalCounted {
+		t.Fatalf("expected page item to pass evidence readiness: %+v", page.Item.EvidenceReadiness)
+	}
 	if !strings.Contains(page.PageMarkdown, "Prepare checklist") ||
 		!strings.Contains(page.PageMarkdown, "Adjudication choices") ||
+		!strings.Contains(page.PageMarkdown, "Evidence readiness: pass") ||
+		!strings.Contains(page.PageMarkdown, "Eval counted: true") ||
 		!strings.Contains(page.PageMarkdown, "source.md lines 2-4") ||
 		!strings.Contains(page.PageMarkdown, "Relation context") ||
 		!strings.Contains(page.PageMarkdown, string(SemanticRelationshipDerivedFrom)) ||
@@ -2598,6 +2608,7 @@ func TestSemanticJudgmentRejectsUnsafeRelationContext(t *testing.T) {
 		},
 		ReviewHint: "unsafe relation context should fail closed",
 	}}
+	item.EvidenceReadiness = semanticEvidenceReadiness(item)
 	if err := ValidateSemanticJudgmentCandidate(item); err == nil || !strings.Contains(err.Error(), "private marker") {
 		t.Fatalf("expected unsafe relation context validation failure, got %v", err)
 	}
@@ -2625,6 +2636,9 @@ func TestSemanticJudgmentToleratesMissingRelationWithoutLooseningAcceptance(t *t
 	if !strings.Contains(page.PageMarkdown, "Relation context unavailable for: "+candidate.RelationIDs[0]) {
 		t.Fatalf("expected explicit unavailable relation context:\n%s", page.PageMarkdown)
 	}
+	if summary.EvalCountedCount != 0 || summary.EvidenceExcludedCount != 1 || summary.EvidenceReadinessReasonCounts[SemanticEvidenceReadinessMissingSourceExcerpt] != 1 || summary.EvidenceReadinessReasonCounts[SemanticEvidenceReadinessMissingRelationContext] != 1 {
+		t.Fatalf("expected missing source/relation readiness exclusion: %+v", summary)
+	}
 	answerKey := writeAcceptanceAnswerKey(t, SemanticAcceptanceAnswerKey{
 		SchemaVersion:    SemanticAcceptanceAnswerKeySchemaVersion,
 		AnswerKeyID:      "ak-strict-missing-relation",
@@ -2640,6 +2654,281 @@ func TestSemanticJudgmentToleratesMissingRelationWithoutLooseningAcceptance(t *t
 	})
 	if _, err := AcceptSemantic(semanticRun, answerKey, t.TempDir()); err == nil || !strings.Contains(err.Error(), "read semantic relation") {
 		t.Fatalf("expected acceptance to remain strict for missing relation, got %v", err)
+	}
+}
+
+func TestSemanticJudgmentEvidenceReadinessExcludesUnsafeAndBlockedCandidates(t *testing.T) {
+	node := validStructureNode()
+	unsafeCandidate := validSemanticCandidate(validSemanticObservation(node), node)
+	unsafeCandidate.CandidateID = "cand-unsafe"
+	unsafeCandidate.Title = "Unsafe candidate"
+	unsafeCandidate.Blockers = []Blocker{{Code: "unsafe", Message: "contains " + unsafeTokenMarker()}}
+	blockedCandidate := validSemanticCandidate(validSemanticObservation(node), node)
+	blockedCandidate.CandidateID = "cand-blocked"
+	blockedCandidate.ReviewStatus = ReviewStatusBlocked
+	blockedCandidate.RelationIDs = nil
+
+	items := semanticJudgmentCandidates([]SemanticCandidate{unsafeCandidate, blockedCandidate}, nil, nil, semanticCalibrationSourceContext{}, nil)
+	summary := BuildSemanticJudgmentSummary("run-demo", 1, items, nil)
+
+	if summary.EvalCountedCount != 0 || summary.EvidenceExcludedCount != 2 {
+		t.Fatalf("expected both candidates excluded: %+v", summary)
+	}
+	if summary.EvidenceReadinessReasonCounts[SemanticEvidenceReadinessPrivateOrGovernanceMarker] != 1 ||
+		summary.EvidenceReadinessReasonCounts[SemanticEvidenceReadinessBlockedOrSkipped] != 1 ||
+		summary.EvidenceReadinessReasonCounts[SemanticEvidenceReadinessMissingRelationContext] == 0 {
+		t.Fatalf("expected readiness reason counts for unsafe and blocked candidates: %+v", summary.EvidenceReadinessReasonCounts)
+	}
+	var unsafeItem SemanticJudgmentCandidate
+	for _, item := range items {
+		if item.CandidateID == unsafeCandidate.CandidateID {
+			unsafeItem = item
+			break
+		}
+	}
+	if err := ValidateSemanticJudgmentCandidate(unsafeItem); err == nil || !strings.Contains(err.Error(), "private marker") {
+		t.Fatalf("expected unsafe candidate validation failure, got %v", err)
+	}
+}
+
+func TestSemanticJudgmentRejectsForgedEvidenceReadiness(t *testing.T) {
+	item := SemanticJudgmentCandidate{
+		SchemaVersion:     SemanticJudgmentCandidateSchemaVersion,
+		CandidateID:       "cand-forged",
+		RunID:             "run-forged",
+		SourceDocumentID:  "doc-demo",
+		CandidateKind:     SemanticCandidateKindAction,
+		ReviewStatus:      ReviewStatusReady,
+		Confidence:        ConfidenceMedium,
+		Title:             "Forged readiness",
+		Summary:           "This candidate claims readiness without evidence.",
+		EvidenceReadiness: SemanticEvidenceReadiness{Status: SemanticEvidenceReadinessPass, EvalCounted: true},
+	}
+	if err := ValidateSemanticJudgmentCandidate(item); err == nil || !strings.Contains(err.Error(), "does not match evidence state") {
+		t.Fatalf("expected forged readiness validation failure, got %v", err)
+	}
+	summary := SemanticJudgmentSummary{
+		SchemaVersion:                 SemanticJudgmentSummarySchemaVersion,
+		RunID:                         "run-forged",
+		CandidateCount:                1,
+		EvidenceReadyCount:            1,
+		EvalCountedCount:              1,
+		EvidenceReadinessReasonCounts: semanticEvidenceReadinessReasonCountMap(),
+		FailureModeCounts:             map[SemanticJudgmentChoice]int{},
+		Candidates: []SemanticJudgmentCandidateSummary{{
+			CandidateID:              item.CandidateID,
+			CandidateKind:            item.CandidateKind,
+			ReviewStatus:             item.ReviewStatus,
+			Confidence:               item.Confidence,
+			CandidatePath:            SemanticJudgmentCandidateJSONPath(item.CandidateID),
+			PagePath:                 SemanticJudgmentPagePath(item.CandidateID),
+			SourceDocumentID:         item.SourceDocumentID,
+			EvidenceReadinessStatus:  SemanticEvidenceReadinessPass,
+			EvalCounted:              true,
+			EvidenceReadinessReasons: nil,
+		}},
+		Items: []SemanticJudgmentCandidate{item},
+	}
+	if err := ValidateSemanticJudgmentSummary(summary); err == nil || !strings.Contains(err.Error(), "does not match evidence state") {
+		t.Fatalf("expected summary to reject forged readiness, got %v", err)
+	}
+}
+
+func TestSemanticJudgmentWriterValidatesCandidateArtifactsBeforeWrite(t *testing.T) {
+	node := validStructureNode()
+	observation := validSemanticObservation(node)
+	candidate := validSemanticCandidate(observation, node)
+	item := semanticJudgmentCandidates([]SemanticCandidate{candidate}, []SemanticRelation{validSemanticRelation(candidate, observation, node)}, []SemanticObservation{observation}, semanticCalibrationSourceContext{
+		Label: "source.md",
+		Lines: []string{"one", "two"},
+	}, nil)[0]
+	item.CandidateKind = SemanticCandidateKind("unsupported_kind")
+	summary := BuildSemanticJudgmentSummary("run-demo", 1, []SemanticJudgmentCandidate{item}, nil)
+
+	if err := WriteSemanticJudgment(t.TempDir(), summary); err == nil || !strings.Contains(err.Error(), "unsupported semantic judgment candidate kind") {
+		t.Fatalf("expected candidate artifact validation failure before write, got %v", err)
+	}
+}
+
+func TestSemanticJudgmentLegacySummaryReadFailsClosed(t *testing.T) {
+	node := validStructureNode()
+	observation := validSemanticObservation(node)
+	candidate := validSemanticCandidate(observation, node)
+	semanticRun := writeSemanticAcceptanceRun(t, []SemanticCandidate{candidate})
+	out := t.TempDir()
+	if _, err := JudgeSemanticCandidates(semanticRun, out, SemanticJudgmentOptions{}); err != nil {
+		t.Fatalf("judge semantic candidates: %v", err)
+	}
+	root := filepath.Join(out, "semantic-judgment")
+	summaryPath := filepath.Join(root, "judgment-summary.json")
+	var summary SemanticJudgmentSummary
+	data, err := os.ReadFile(summaryPath)
+	if err != nil {
+		t.Fatalf("read summary: %v", err)
+	}
+	if err := json.Unmarshal(data, &summary); err != nil {
+		t.Fatalf("decode summary: %v", err)
+	}
+	summary.SchemaVersion = SemanticJudgmentSummaryLegacySchemaVersion
+	summary.EvidenceReadyCount = 0
+	summary.EvalCountedCount = 0
+	summary.EvidenceExcludedCount = 0
+	summary.EvidenceReadinessReasonCounts = nil
+	for i := range summary.Candidates {
+		summary.Candidates[i].EvidenceReadinessStatus = ""
+		summary.Candidates[i].EvalCounted = false
+		summary.Candidates[i].EvidenceReadinessReasons = nil
+	}
+	writeDocumentsTestJSON(t, summaryPath, summary)
+
+	loaded, err := ReadSemanticJudgmentSummary(root)
+	if err != nil {
+		t.Fatalf("read legacy judgment summary: %v", err)
+	}
+	if loaded.SchemaVersion != SemanticJudgmentSummarySchemaVersion ||
+		loaded.EvalCountedCount != 0 ||
+		loaded.EvidenceExcludedCount != loaded.CandidateCount ||
+		loaded.EvidenceReadinessReasonCounts[SemanticEvidenceReadinessMissingSourceExcerpt] != loaded.CandidateCount {
+		t.Fatalf("legacy summary must be normalized as fail-closed, got %+v", loaded)
+	}
+	for _, item := range loaded.Candidates {
+		if item.EvidenceReadinessStatus != SemanticEvidenceReadinessFail || item.EvalCounted || !containsSemanticEvidenceReadinessReason(item.EvidenceReadinessReasons, SemanticEvidenceReadinessMissingSourceExcerpt) {
+			t.Fatalf("legacy candidate summary must be fail-closed, got %+v", item)
+		}
+	}
+}
+
+func TestSemanticJudgmentReadRejectsSummaryCandidateReadinessDrift(t *testing.T) {
+	node := validStructureNode()
+	observation := validSemanticObservation(node)
+	candidate := validSemanticCandidate(observation, node)
+	semanticRun := writeSemanticAcceptanceRun(t, []SemanticCandidate{candidate})
+	writeDocumentsTestJSON(t, filepath.Join(semanticRun, "semantic-candidates", SemanticObservationJSONPath(observation.ObservationID)), observation)
+	sourceRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(sourceRoot, "source.md"), []byte("one\ntwo\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	out := t.TempDir()
+	if _, err := JudgeSemanticCandidates(semanticRun, out, SemanticJudgmentOptions{SourceRoot: sourceRoot, SourcePath: "source.md"}); err != nil {
+		t.Fatalf("judge semantic candidates: %v", err)
+	}
+	root := filepath.Join(out, "semantic-judgment")
+	summaryPath := filepath.Join(root, "judgment-summary.json")
+	var summary SemanticJudgmentSummary
+	data, err := os.ReadFile(summaryPath)
+	if err != nil {
+		t.Fatalf("read summary: %v", err)
+	}
+	if err := json.Unmarshal(data, &summary); err != nil {
+		t.Fatalf("decode summary: %v", err)
+	}
+	summary.Candidates[0].EvidenceReadinessStatus = SemanticEvidenceReadinessFail
+	summary.Candidates[0].EvalCounted = false
+	summary.Candidates[0].EvidenceReadinessReasons = []SemanticEvidenceReadinessReason{SemanticEvidenceReadinessMissingSourceExcerpt}
+	summary.EvidenceReadyCount = 0
+	summary.EvalCountedCount = 0
+	summary.EvidenceExcludedCount = 1
+	summary.EvidenceReadinessReasonCounts = semanticEvidenceReadinessReasonCountMap()
+	summary.EvidenceReadinessReasonCounts[SemanticEvidenceReadinessMissingSourceExcerpt] = 1
+	writeDocumentsTestJSON(t, summaryPath, summary)
+
+	if _, err := NextSemanticJudgmentPage(root); err == nil || !strings.Contains(err.Error(), "summary readiness does not match item") {
+		t.Fatalf("expected summary/candidate readiness drift rejection, got %v", err)
+	}
+}
+
+func TestSemanticJudgmentSummaryRejectsReadinessInconsistency(t *testing.T) {
+	node := validStructureNode()
+	observation := validSemanticObservation(node)
+	candidate := validSemanticCandidate(observation, node)
+	item := semanticJudgmentCandidates([]SemanticCandidate{candidate}, []SemanticRelation{validSemanticRelation(candidate, observation, node)}, []SemanticObservation{observation}, semanticCalibrationSourceContext{
+		Label: "source.md",
+		Lines: []string{"one", "two"},
+	}, nil)[0]
+	summary := BuildSemanticJudgmentSummary("run-demo", 1, []SemanticJudgmentCandidate{item}, nil)
+
+	summary.Candidates[0].EvidenceReadinessStatus = SemanticEvidenceReadinessFail
+	summary.Candidates[0].EvalCounted = false
+	summary.Candidates[0].EvidenceReadinessReasons = []SemanticEvidenceReadinessReason{SemanticEvidenceReadinessMissingSourceExcerpt}
+	if err := ValidateSemanticJudgmentSummary(summary); err == nil || !strings.Contains(err.Error(), "candidate summaries") {
+		t.Fatalf("expected aggregate/candidate summary mismatch failure, got %v", err)
+	}
+
+	summary = BuildSemanticJudgmentSummary("run-demo", 1, []SemanticJudgmentCandidate{item}, nil)
+	summary.Candidates[0].EvidenceReadinessStatus = SemanticEvidenceReadinessFail
+	summary.Candidates[0].EvalCounted = false
+	summary.Candidates[0].EvidenceReadinessReasons = []SemanticEvidenceReadinessReason{SemanticEvidenceReadinessMissingSourceExcerpt}
+	summary.EvidenceReadyCount = 0
+	summary.EvalCountedCount = 0
+	summary.EvidenceExcludedCount = 1
+	summary.EvidenceReadinessReasonCounts = semanticEvidenceReadinessReasonCountMap()
+	summary.EvidenceReadinessReasonCounts[SemanticEvidenceReadinessMissingSourceExcerpt] = 1
+	if err := ValidateSemanticJudgmentSummary(summary); err == nil || !strings.Contains(err.Error(), "does not match item") {
+		t.Fatalf("expected item/candidate summary mismatch failure, got %v", err)
+	}
+
+	summary = BuildSemanticJudgmentSummary("run-demo", 1, []SemanticJudgmentCandidate{item}, nil)
+	summary.Items = nil
+	summary.EvidenceReadinessReasonCounts[SemanticEvidenceReadinessReason("WP-21")] = 1
+	if err := ValidateSemanticJudgmentSummary(summary); err == nil || !strings.Contains(err.Error(), "unsupported semantic judgment evidence readiness reason count") {
+		t.Fatalf("expected unsupported readiness reason count failure, got %v", err)
+	}
+
+	summary = BuildSemanticJudgmentSummary("run-demo", 1, []SemanticJudgmentCandidate{item}, nil)
+	summary.Items = nil
+	summary.EvidenceReadinessReasonCounts[SemanticEvidenceReadinessReason("private_content")] = 1
+	if err := ValidateSemanticJudgmentSummary(summary); err == nil || !strings.Contains(err.Error(), "unsupported semantic judgment evidence readiness reason count") {
+		t.Fatalf("expected unsafe readiness reason count failure, got %v", err)
+	}
+
+	summary = BuildSemanticJudgmentSummary("run-demo", 1, []SemanticJudgmentCandidate{item}, nil)
+	summary.Candidates = append(summary.Candidates, SemanticJudgmentCandidateSummary{
+		CandidateID:             "cand-missing-item",
+		CandidateKind:           SemanticCandidateKindAction,
+		ReviewStatus:            ReviewStatusReady,
+		Confidence:              ConfidenceMedium,
+		CandidatePath:           SemanticJudgmentCandidateJSONPath("cand-missing-item"),
+		PagePath:                SemanticJudgmentPagePath("cand-missing-item"),
+		EvidenceReadinessStatus: SemanticEvidenceReadinessPass,
+		EvalCounted:             true,
+	})
+	summary.CandidateCount = 2
+	summary.EvidenceReadyCount = 2
+	summary.EvalCountedCount = 2
+	if err := ValidateSemanticJudgmentSummary(summary); err == nil || !strings.Contains(err.Error(), "has no matching item") {
+		t.Fatalf("expected missing item failure, got %v", err)
+	}
+}
+
+func TestSemanticJudgmentAbsentReadinessFailsClosedInSummary(t *testing.T) {
+	node := validStructureNode()
+	observation := validSemanticObservation(node)
+	candidate := validSemanticCandidate(observation, node)
+	item := semanticJudgmentCandidates([]SemanticCandidate{candidate}, []SemanticRelation{validSemanticRelation(candidate, observation, node)}, []SemanticObservation{observation}, semanticCalibrationSourceContext{
+		Label: "source.md",
+		Lines: []string{"one", "two"},
+	}, nil)[0]
+	item.EvidenceReadiness = SemanticEvidenceReadiness{}
+
+	summary := BuildSemanticJudgmentSummary("run-demo", 1, []SemanticJudgmentCandidate{item}, nil)
+	if summary.EvalCountedCount != 0 || summary.EvidenceExcludedCount != 1 || summary.EvidenceReadinessReasonCounts[SemanticEvidenceReadinessMissingSourceExcerpt] != 1 {
+		t.Fatalf("absent readiness must fail closed, got %+v", summary)
+	}
+}
+
+func TestSemanticJudgmentReadinessRequiresMatchingRelationIDs(t *testing.T) {
+	node := validStructureNode()
+	observation := validSemanticObservation(node)
+	candidate := validSemanticCandidate(observation, node)
+	item := semanticJudgmentCandidates([]SemanticCandidate{candidate}, []SemanticRelation{validSemanticRelation(candidate, observation, node)}, []SemanticObservation{observation}, semanticCalibrationSourceContext{
+		Label: "source.md",
+		Lines: []string{"one", "two"},
+	}, nil)[0]
+	item.RelationIDs = []string{"rel-missing"}
+	item.EvidenceReadiness = semanticEvidenceReadiness(item)
+
+	if item.EvidenceReadiness.EvalCounted || !containsSemanticEvidenceReadinessReason(item.EvidenceReadiness.ReasonCodes, SemanticEvidenceReadinessMissingRelationContext) {
+		t.Fatalf("expected mismatched relation id to fail readiness: %+v", item.EvidenceReadiness)
 	}
 }
 
@@ -4145,6 +4434,15 @@ func keys(values map[string]string) []string {
 		out = append(out, key)
 	}
 	return out
+}
+
+func containsSemanticEvidenceReadinessReason(reasons []SemanticEvidenceReadinessReason, want SemanticEvidenceReadinessReason) bool {
+	for _, reason := range reasons {
+		if reason == want {
+			return true
+		}
+	}
+	return false
 }
 
 func fixturePath(t *testing.T, parts ...string) string {

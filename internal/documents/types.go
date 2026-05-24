@@ -21,11 +21,13 @@ const (
 	SemanticCalibrationReviewItemLegacySchemaVersion     = "semantic-calibration-review-item/v0.1"
 	SemanticCalibrationCursorSchemaVersion               = "semantic-calibration-cursor/v0.1"
 	SemanticCalibrationPageSchemaVersion                 = "semantic-calibration-page/v0.2"
-	SemanticJudgmentSummarySchemaVersion                 = "semantic-judgment-summary/v0.1"
-	SemanticJudgmentCandidateSchemaVersion               = "semantic-judgment-candidate/v0.1"
+	SemanticJudgmentSummarySchemaVersion                 = "semantic-judgment-summary/v0.2"
+	SemanticJudgmentSummaryLegacySchemaVersion           = "semantic-judgment-summary/v0.1"
+	SemanticJudgmentCandidateSchemaVersion               = "semantic-judgment-candidate/v0.2"
+	SemanticJudgmentCandidateLegacySchemaVersion         = "semantic-judgment-candidate/v0.1"
 	SemanticJudgmentCursorSchemaVersion                  = "semantic-judgment-cursor/v0.1"
 	SemanticJudgmentRecordSchemaVersion                  = "semantic-judgment-record/v0.1"
-	SemanticJudgmentPageSchemaVersion                    = "semantic-judgment-page/v0.1"
+	SemanticJudgmentPageSchemaVersion                    = "semantic-judgment-page/v0.2"
 	SourceKindMarkdown                                   = "markdown"
 	EvidenceKindLocation                                 = "location"
 )
@@ -644,66 +646,103 @@ const (
 	SemanticJudgmentChoiceWrongKind SemanticJudgmentChoice = "wrong-kind"
 )
 
+type SemanticEvidenceReadinessStatus string
+
+const (
+	SemanticEvidenceReadinessPass SemanticEvidenceReadinessStatus = "pass"
+	SemanticEvidenceReadinessFail SemanticEvidenceReadinessStatus = "fail"
+)
+
+type SemanticEvidenceReadinessReason string
+
+const (
+	SemanticEvidenceReadinessBlockedOrSkipped          SemanticEvidenceReadinessReason = "blocked_or_skipped"
+	SemanticEvidenceReadinessMissingCandidateContent   SemanticEvidenceReadinessReason = "missing_candidate_content"
+	SemanticEvidenceReadinessMissingEvidenceNodes      SemanticEvidenceReadinessReason = "missing_evidence_nodes"
+	SemanticEvidenceReadinessMissingEvidenceRanges     SemanticEvidenceReadinessReason = "missing_evidence_ranges"
+	SemanticEvidenceReadinessMissingSourceExcerpt      SemanticEvidenceReadinessReason = "missing_source_excerpt"
+	SemanticEvidenceReadinessMissingRelationContext    SemanticEvidenceReadinessReason = "missing_relation_context"
+	SemanticEvidenceReadinessInvalidRelationContext    SemanticEvidenceReadinessReason = "invalid_relation_context"
+	SemanticEvidenceReadinessCandidateBlockers         SemanticEvidenceReadinessReason = "candidate_blockers"
+	SemanticEvidenceReadinessPrivateOrGovernanceMarker SemanticEvidenceReadinessReason = "private_or_governance_marker"
+)
+
+type SemanticEvidenceReadiness struct {
+	Status               SemanticEvidenceReadinessStatus   `json:"status"`
+	EvalCounted          bool                              `json:"eval_counted"`
+	ReasonCodes          []SemanticEvidenceReadinessReason `json:"reason_codes"`
+	SourceExcerptCount   int                               `json:"source_excerpt_count"`
+	RelationContextCount int                               `json:"relation_context_count"`
+}
+
 type SemanticJudgmentSummary struct {
-	SchemaVersion              string                                                      `json:"schema_version"`
-	RunID                      string                                                      `json:"run_id"`
-	SourceCount                int                                                         `json:"source_count"`
-	CandidateCount             int                                                         `json:"candidate_count"`
-	JudgedCount                int                                                         `json:"judged_count"`
-	RemainingCount             int                                                         `json:"remaining_count"`
-	AcceptedCount              int                                                         `json:"accepted_count"`
-	RejectedCount              int                                                         `json:"rejected_count"`
-	UnclearCount               int                                                         `json:"unclear_count"`
-	DuplicateCount             int                                                         `json:"duplicate_count"`
-	WrongKindCount             int                                                         `json:"wrong_kind_count"`
-	BlockedCount               int                                                         `json:"blocked_count"`
-	SkippedCount               int                                                         `json:"skipped_count"`
-	ReviewBurdenCount          int                                                         `json:"review_burden_count"`
-	PrecisionEstimate          float64                                                     `json:"precision_estimate"`
-	FailureModeCounts          map[SemanticJudgmentChoice]int                              `json:"failure_mode_counts"`
-	JudgmentByCandidateKind    map[SemanticCandidateKind]map[SemanticJudgmentChoice]int    `json:"judgment_by_candidate_kind,omitempty"`
-	JudgmentByConfidence       map[Confidence]map[SemanticJudgmentChoice]int               `json:"judgment_by_confidence,omitempty"`
-	JudgmentByReviewStatus     map[ReviewStatus]map[SemanticJudgmentChoice]int             `json:"judgment_by_review_status,omitempty"`
-	JudgmentBySourceDocument   map[string]map[SemanticJudgmentChoice]int                   `json:"judgment_by_source_document,omitempty"`
-	JudgmentByRelationPresence map[string]map[SemanticJudgmentChoice]int                   `json:"judgment_by_relation_presence,omitempty"`
-	JudgmentByRelationType     map[SemanticRelationshipType]map[SemanticJudgmentChoice]int `json:"judgment_by_relation_type,omitempty"`
-	QualityStatement           string                                                      `json:"quality_statement"`
-	CursorPath                 string                                                      `json:"cursor_path"`
-	ReportPath                 string                                                      `json:"report_path"`
-	Candidates                 []SemanticJudgmentCandidateSummary                          `json:"candidates"`
-	Items                      []SemanticJudgmentCandidate                                 `json:"-"`
-	Judgments                  []SemanticJudgmentRecord                                    `json:"-"`
+	SchemaVersion                 string                                                      `json:"schema_version"`
+	RunID                         string                                                      `json:"run_id"`
+	SourceCount                   int                                                         `json:"source_count"`
+	CandidateCount                int                                                         `json:"candidate_count"`
+	JudgedCount                   int                                                         `json:"judged_count"`
+	RemainingCount                int                                                         `json:"remaining_count"`
+	AcceptedCount                 int                                                         `json:"accepted_count"`
+	RejectedCount                 int                                                         `json:"rejected_count"`
+	UnclearCount                  int                                                         `json:"unclear_count"`
+	DuplicateCount                int                                                         `json:"duplicate_count"`
+	WrongKindCount                int                                                         `json:"wrong_kind_count"`
+	BlockedCount                  int                                                         `json:"blocked_count"`
+	SkippedCount                  int                                                         `json:"skipped_count"`
+	EvidenceReadyCount            int                                                         `json:"evidence_ready_count"`
+	EvalCountedCount              int                                                         `json:"eval_counted_count"`
+	EvidenceExcludedCount         int                                                         `json:"evidence_excluded_count"`
+	EvidenceReadinessReasonCounts map[SemanticEvidenceReadinessReason]int                     `json:"evidence_readiness_reason_counts"`
+	ReviewBurdenCount             int                                                         `json:"review_burden_count"`
+	PrecisionEstimate             float64                                                     `json:"precision_estimate"`
+	FailureModeCounts             map[SemanticJudgmentChoice]int                              `json:"failure_mode_counts"`
+	JudgmentByCandidateKind       map[SemanticCandidateKind]map[SemanticJudgmentChoice]int    `json:"judgment_by_candidate_kind,omitempty"`
+	JudgmentByConfidence          map[Confidence]map[SemanticJudgmentChoice]int               `json:"judgment_by_confidence,omitempty"`
+	JudgmentByReviewStatus        map[ReviewStatus]map[SemanticJudgmentChoice]int             `json:"judgment_by_review_status,omitempty"`
+	JudgmentBySourceDocument      map[string]map[SemanticJudgmentChoice]int                   `json:"judgment_by_source_document,omitempty"`
+	JudgmentByRelationPresence    map[string]map[SemanticJudgmentChoice]int                   `json:"judgment_by_relation_presence,omitempty"`
+	JudgmentByRelationType        map[SemanticRelationshipType]map[SemanticJudgmentChoice]int `json:"judgment_by_relation_type,omitempty"`
+	QualityStatement              string                                                      `json:"quality_statement"`
+	CursorPath                    string                                                      `json:"cursor_path"`
+	ReportPath                    string                                                      `json:"report_path"`
+	Candidates                    []SemanticJudgmentCandidateSummary                          `json:"candidates"`
+	Items                         []SemanticJudgmentCandidate                                 `json:"-"`
+	Judgments                     []SemanticJudgmentRecord                                    `json:"-"`
 }
 
 type SemanticJudgmentCandidateSummary struct {
-	CandidateID      string                 `json:"candidate_id"`
-	CandidateKind    SemanticCandidateKind  `json:"candidate_kind"`
-	ReviewStatus     ReviewStatus           `json:"review_status"`
-	Confidence       Confidence             `json:"confidence"`
-	JudgmentChoice   SemanticJudgmentChoice `json:"judgment_choice,omitempty"`
-	CandidatePath    string                 `json:"candidate_path"`
-	PagePath         string                 `json:"page_path"`
-	JudgmentPath     string                 `json:"judgment_path,omitempty"`
-	SourceDocumentID string                 `json:"source_document_id,omitempty"`
+	CandidateID              string                            `json:"candidate_id"`
+	CandidateKind            SemanticCandidateKind             `json:"candidate_kind"`
+	ReviewStatus             ReviewStatus                      `json:"review_status"`
+	Confidence               Confidence                        `json:"confidence"`
+	JudgmentChoice           SemanticJudgmentChoice            `json:"judgment_choice,omitempty"`
+	CandidatePath            string                            `json:"candidate_path"`
+	PagePath                 string                            `json:"page_path"`
+	JudgmentPath             string                            `json:"judgment_path,omitempty"`
+	SourceDocumentID         string                            `json:"source_document_id,omitempty"`
+	EvidenceReadinessStatus  SemanticEvidenceReadinessStatus   `json:"evidence_readiness_status"`
+	EvalCounted              bool                              `json:"eval_counted"`
+	EvidenceReadinessReasons []SemanticEvidenceReadinessReason `json:"evidence_readiness_reasons,omitempty"`
 }
 
 type SemanticJudgmentCandidate struct {
-	SchemaVersion    string                               `json:"schema_version"`
-	CandidateID      string                               `json:"candidate_id"`
-	RunID            string                               `json:"run_id"`
-	SourceDocumentID string                               `json:"source_document_id,omitempty"`
-	CandidateKind    SemanticCandidateKind                `json:"candidate_kind"`
-	ReviewStatus     ReviewStatus                         `json:"review_status"`
-	Confidence       Confidence                           `json:"confidence"`
-	Title            string                               `json:"title"`
-	Summary          string                               `json:"summary"`
-	EvidenceNodes    []string                             `json:"evidence_nodes"`
-	EvidenceRanges   []SemanticEvidenceRange              `json:"evidence_ranges"`
-	EvidenceExcerpts []SemanticCalibrationEvidenceExcerpt `json:"evidence_excerpts"`
-	RelationIDs      []string                             `json:"relation_ids"`
-	RelationContext  []SemanticJudgmentRelationContext    `json:"relation_context,omitempty"`
-	Blockers         []Blocker                            `json:"blockers"`
-	Judgment         *SemanticJudgmentRecord              `json:"judgment,omitempty"`
+	SchemaVersion     string                               `json:"schema_version"`
+	CandidateID       string                               `json:"candidate_id"`
+	RunID             string                               `json:"run_id"`
+	SourceDocumentID  string                               `json:"source_document_id,omitempty"`
+	CandidateKind     SemanticCandidateKind                `json:"candidate_kind"`
+	ReviewStatus      ReviewStatus                         `json:"review_status"`
+	Confidence        Confidence                           `json:"confidence"`
+	Title             string                               `json:"title"`
+	Summary           string                               `json:"summary"`
+	EvidenceNodes     []string                             `json:"evidence_nodes"`
+	EvidenceRanges    []SemanticEvidenceRange              `json:"evidence_ranges"`
+	EvidenceExcerpts  []SemanticCalibrationEvidenceExcerpt `json:"evidence_excerpts"`
+	RelationIDs       []string                             `json:"relation_ids"`
+	RelationContext   []SemanticJudgmentRelationContext    `json:"relation_context,omitempty"`
+	Blockers          []Blocker                            `json:"blockers"`
+	EvidenceReadiness SemanticEvidenceReadiness            `json:"evidence_readiness"`
+	Judgment          *SemanticJudgmentRecord              `json:"judgment,omitempty"`
 }
 
 type SemanticJudgmentRelationContext struct {

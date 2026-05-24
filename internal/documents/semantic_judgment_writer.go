@@ -33,6 +33,11 @@ func writeSemanticJudgmentRoot(root string, summary SemanticJudgmentSummary) err
 	if err := ValidateSemanticJudgmentSummary(summary); err != nil {
 		return err
 	}
+	for _, item := range summary.Items {
+		if err := ValidateSemanticJudgmentCandidate(item); err != nil {
+			return err
+		}
+	}
 	realRoot, err := ensureSemanticJudgmentRoot(root)
 	if err != nil {
 		return err
@@ -117,8 +122,15 @@ func semanticJudgmentReportMarkdown(summary SemanticJudgmentSummary) string {
 	b.WriteString(fmt.Sprintf("- Wrong kind: %d\n", summary.WrongKindCount))
 	b.WriteString(fmt.Sprintf("- Blocked coverage: %d\n", summary.BlockedCount))
 	b.WriteString(fmt.Sprintf("- Skipped coverage: %d\n", summary.SkippedCount))
+	b.WriteString(fmt.Sprintf("- Evidence ready: %d\n", summary.EvidenceReadyCount))
+	b.WriteString(fmt.Sprintf("- Eval counted: %d\n", summary.EvalCountedCount))
+	b.WriteString(fmt.Sprintf("- Evidence excluded: %d\n", summary.EvidenceExcludedCount))
 	b.WriteString(fmt.Sprintf("- Review burden: %d\n", summary.ReviewBurdenCount))
 	b.WriteString(fmt.Sprintf("- Precision estimate: %.2f\n", summary.PrecisionEstimate))
+	b.WriteString("\n## Evidence readiness\n\n")
+	for _, reason := range semanticEvidenceReadinessReasons() {
+		b.WriteString(fmt.Sprintf("- %s: %d\n", reason, summary.EvidenceReadinessReasonCounts[reason]))
+	}
 	b.WriteString("\n## Failure modes\n\n")
 	for _, choice := range []SemanticJudgmentChoice{
 		SemanticJudgmentChoiceReject,
