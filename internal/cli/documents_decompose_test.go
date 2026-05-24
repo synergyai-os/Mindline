@@ -508,6 +508,11 @@ func TestDocumentsJudgeServeStateAndRecord(t *testing.T) {
 			t.Fatalf("expected UI HTML to contain %q, got %s", want, html.String())
 		}
 	}
+	for _, want := range []string{"ensureCompatibleFailureReason(choice)", "select.value = fallback"} {
+		if !strings.Contains(html.String(), want) {
+			t.Fatalf("expected UI HTML to preselect compatible failure reasons with %q, got %s", want, html.String())
+		}
+	}
 
 	state := getJudgmentUIState(t, handler)
 	if state.SchemaVersion != "semantic-judgment-ui-state/v0.1" {

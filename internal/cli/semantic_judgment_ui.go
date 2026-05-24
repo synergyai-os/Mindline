@@ -705,8 +705,17 @@ function renderFailureReasonOptions() {
   const hint = document.getElementById("reason-hint");
   select.disabled = false;
   select.innerHTML = allFailureReasons.map(reason => "<option value=\"" + escapeHtml(reason) + "\">" + escapeHtml(reason) + "</option>").join("");
-  if (!select.value) select.value = "unexpected_candidate";
+  if (!select.value) select.value = defaultReasonByChoice.reject;
   hint.textContent = "Used for non-accept decisions. Accept records no failure reason.";
+}
+
+function ensureCompatibleFailureReason(choice) {
+  const select = document.getElementById("failure-reason");
+  if (choice === "accept") return "";
+  const allowed = failureReasonsByChoice[choice] || [];
+  const fallback = defaultReasonByChoice[choice] || allowed[0] || "";
+  if (!allowed.includes(select.value)) select.value = fallback;
+  return select.value;
 }
 
 function renderRelationContext(item) {
@@ -749,9 +758,8 @@ function renderRelationContext(item) {
 
 async function submitChoice(choice) {
   if (!currentCandidateId) return;
-  const select = document.getElementById("failure-reason");
   const allowed = failureReasonsByChoice[choice] || [];
-  let failureReason = choice === "accept" ? "" : select.value;
+  let failureReason = ensureCompatibleFailureReason(choice);
   if (choice !== "accept" && !allowed.includes(failureReason)) {
     document.getElementById("status").textContent = "Select a compatible reason for " + choice + ": " + allowed.join(", ");
     return;
