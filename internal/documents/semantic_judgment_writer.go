@@ -33,6 +33,11 @@ func writeSemanticJudgmentRoot(root string, summary SemanticJudgmentSummary) err
 	if err := ValidateSemanticJudgmentSummary(summary); err != nil {
 		return err
 	}
+	for _, item := range summary.Items {
+		if err := ValidateSemanticJudgmentCandidate(item); err != nil {
+			return err
+		}
+	}
 	realRoot, err := ensureSemanticJudgmentRoot(root)
 	if err != nil {
 		return err

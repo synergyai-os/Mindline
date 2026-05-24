@@ -666,6 +666,25 @@ func semanticLegacyEvidenceReadiness(item SemanticJudgmentCandidate) SemanticEvi
 	return readiness
 }
 
+func semanticLegacyJudgmentSummary(summary SemanticJudgmentSummary) SemanticJudgmentSummary {
+	summary.SchemaVersion = SemanticJudgmentSummarySchemaVersion
+	summary.EvidenceReadyCount = 0
+	summary.EvalCountedCount = 0
+	excluded := len(summary.Candidates)
+	if excluded == 0 {
+		excluded = summary.CandidateCount
+	}
+	summary.EvidenceExcludedCount = excluded
+	summary.EvidenceReadinessReasonCounts = semanticEvidenceReadinessReasonCountMap()
+	summary.EvidenceReadinessReasonCounts[SemanticEvidenceReadinessMissingSourceExcerpt] = excluded
+	for i := range summary.Candidates {
+		summary.Candidates[i].EvidenceReadinessStatus = SemanticEvidenceReadinessFail
+		summary.Candidates[i].EvalCounted = false
+		summary.Candidates[i].EvidenceReadinessReasons = []SemanticEvidenceReadinessReason{SemanticEvidenceReadinessMissingSourceExcerpt}
+	}
+	return summary
+}
+
 func semanticEvidenceReadinessReasons() []SemanticEvidenceReadinessReason {
 	return []SemanticEvidenceReadinessReason{
 		SemanticEvidenceReadinessBlockedOrSkipped,
@@ -746,6 +765,9 @@ func readSemanticJudgmentSummary(root string) (SemanticJudgmentSummary, error) {
 	if err := ValidateSemanticJudgmentSummary(summary); err != nil {
 		return SemanticJudgmentSummary{}, err
 	}
+	if summary.SchemaVersion == SemanticJudgmentSummaryLegacySchemaVersion {
+		summary = semanticLegacyJudgmentSummary(summary)
+	}
 	return summary, nil
 }
 
@@ -777,6 +799,9 @@ func readSemanticJudgmentBundle(root string, summary SemanticJudgmentSummary) ([
 		}
 		if err := ValidateSemanticJudgmentCandidate(item); err != nil {
 			return nil, nil, err
+		}
+		if item.SchemaVersion == SemanticJudgmentCandidateSchemaVersion && !semanticJudgmentCandidateSummaryReadinessMatchesItem(itemSummary, item) {
+			return nil, nil, fmt.Errorf("semantic judgment candidate summary readiness does not match item: %s", item.CandidateID)
 		}
 		if item.CandidateID != itemSummary.CandidateID {
 			return nil, nil, fmt.Errorf("semantic judgment candidate id mismatch: %s", itemSummary.CandidateID)
