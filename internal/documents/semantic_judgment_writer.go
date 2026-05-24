@@ -140,6 +140,10 @@ func semanticJudgmentReportMarkdown(summary SemanticJudgmentSummary) string {
 	} {
 		b.WriteString(fmt.Sprintf("- %s: %d\n", choice, summary.FailureModeCounts[choice]))
 	}
+	b.WriteString("\n## Failure reasons\n\n")
+	for _, reason := range semanticFailureReasons() {
+		b.WriteString(fmt.Sprintf("- %s: %d\n", reason, summary.FailureReasonCounts[reason]))
+	}
 	b.WriteString("\n## Grouped judgment analytics\n\n")
 	b.WriteString("These grouped counts are calibration evidence only; they do not prove no-human readiness.\n\n")
 	writeSemanticJudgmentGroupSection(&b, "By candidate kind", summary.JudgmentByCandidateKind)
@@ -148,6 +152,7 @@ func semanticJudgmentReportMarkdown(summary SemanticJudgmentSummary) string {
 	writeSemanticJudgmentGroupSection(&b, "By source document", summary.JudgmentBySourceDocument)
 	writeSemanticJudgmentGroupSection(&b, "By relation presence", summary.JudgmentByRelationPresence)
 	writeSemanticJudgmentGroupSection(&b, "By relation type", summary.JudgmentByRelationType)
+	writeSemanticJudgmentGroupSection(&b, "By failure reason", summary.JudgmentByFailureReason)
 	return b.String()
 }
 

@@ -96,13 +96,15 @@ func NextSemanticCalibrationReviewPage(inputDir string) (SemanticCalibrationPage
 	if err := readJSONFile(itemPath, &item); err != nil {
 		return SemanticCalibrationPage{}, fmt.Errorf("read calibration review item: %w", err)
 	}
-	if item.SchemaVersion != SemanticCalibrationReviewItemSchemaVersion && item.SchemaVersion != SemanticCalibrationReviewItemLegacySchemaVersion {
+	if item.SchemaVersion != SemanticCalibrationReviewItemSchemaVersion &&
+		item.SchemaVersion != SemanticCalibrationReviewItemPreviousSchemaVersion &&
+		item.SchemaVersion != SemanticCalibrationReviewItemLegacySchemaVersion {
 		return SemanticCalibrationPage{}, fmt.Errorf("unsupported semantic calibration review item schema version: %s", item.SchemaVersion)
 	}
 	if item.ReviewItemID != itemSummary.ReviewItemID {
 		return SemanticCalibrationPage{}, fmt.Errorf("calibration review item id mismatch: %s", itemSummary.ReviewItemID)
 	}
-	if item.SchemaVersion == SemanticCalibrationReviewItemLegacySchemaVersion {
+	if item.SchemaVersion == SemanticCalibrationReviewItemLegacySchemaVersion || item.SchemaVersion == SemanticCalibrationReviewItemPreviousSchemaVersion {
 		normalizeLegacySemanticCalibrationReviewItem(&item)
 	}
 	if err := ValidateSemanticCalibrationReviewItem(item); err != nil {
@@ -132,8 +134,12 @@ func BuildSemanticCalibrationSummary(acceptance SemanticAcceptanceSummary, items
 	}
 	reviewItems := semanticCalibrationReviewItems(acceptance.RunID, items, expected, source)
 	counts := emptySemanticCalibrationFailureClassCounts()
+	reasonCounts := emptySemanticFailureReasonCounts()
 	for _, item := range reviewItems {
 		counts[item.FailureClass]++
+		if item.FailureReason != "" {
+			reasonCounts[item.FailureReason]++
+		}
 	}
 	scored := 0
 	for class, count := range counts {
@@ -157,6 +163,8 @@ func BuildSemanticCalibrationSummary(acceptance SemanticAcceptanceSummary, items
 			ItemPath:        SemanticCalibrationReviewItemJSONPath(item.ReviewItemID),
 			PreviewPath:     SemanticCalibrationReviewPreviewPath(item.ReviewItemID),
 			FailureClass:    item.FailureClass,
+			FailureReason:   item.FailureReason,
+			FailureInferred: item.FailureInferred,
 			AcceptanceState: item.AcceptanceState,
 			Reason:          item.Reason,
 		})
@@ -180,6 +188,7 @@ func BuildSemanticCalibrationSummary(acceptance SemanticAcceptanceSummary, items
 		BlockedPrivateCount: counts[SemanticCalibrationFailureBlockedPrivate],
 		ReviewItemCount:     len(reviewItems),
 		FailureClassCounts:  counts,
+		FailureReasonCounts: reasonCounts,
 		QualityStatement:    semanticCalibrationQualityStatement(heldOut),
 		CursorPath:          "cursor.json",
 		ReportPath:          "reports/calibration-report.md",
@@ -273,11 +282,21 @@ func writeSemanticCalibration(outDir string, summary SemanticCalibrationSummary)
 }
 
 func ValidateSemanticCalibrationSummary(summary SemanticCalibrationSummary) error {
-	if summary.SchemaVersion != SemanticCalibrationSummarySchemaVersion {
+	if summary.SchemaVersion != SemanticCalibrationSummarySchemaVersion && summary.SchemaVersion != SemanticCalibrationSummaryLegacySchemaVersion {
 		return fmt.Errorf("unsupported semantic calibration summary schema version: %s", summary.SchemaVersion)
 	}
 	if summary.FailureClassCounts == nil {
 		return fmt.Errorf("missing semantic calibration failure class counts")
+	}
+	if summary.SchemaVersion == SemanticCalibrationSummarySchemaVersion {
+		if summary.FailureReasonCounts == nil {
+			return fmt.Errorf("missing semantic calibration failure reason counts")
+		}
+		for reason := range summary.FailureReasonCounts {
+			if !validSemanticFailureReason(reason) {
+				return fmt.Errorf("unsupported semantic calibration failure reason count: %s", reason)
+			}
+		}
 	}
 	body := summary.RunID + "\n" + summary.AnswerKeyID + "\n" + summary.QualityStatement
 	for _, item := range summary.ReviewItems {
@@ -288,6 +307,7 @@ func ValidateSemanticCalibrationSummary(summary SemanticCalibrationSummary) erro
 		body += "\n" + item.SourceDocumentID + "\n" + item.Title + "\n" + item.Summary + "\n" + strings.Join(item.EvidenceNodes, "\n")
 		body += "\n" + strings.Join(item.RelationIDs, "\n")
 		body += "\n" + semanticCalibrationExpectedOutcomeBody(item.ExpectedOutcome)
+		body += "\n" + string(item.FailureReason)
 		for _, excerpt := range item.EvidenceExcerpts {
 			body += "\n" + excerpt.SourceLabel + "\n" + excerpt.StructureNodeID + "\n" + excerpt.Text + "\n" + excerpt.UnavailableReason
 		}
@@ -312,6 +332,7 @@ func semanticCalibrationReviewItems(runID string, items []SemanticAcceptanceItem
 	}
 	for _, item := range items {
 		failureClass := semanticCalibrationFailureClassForItem(item)
+		failureReason, inferred, _ := semanticFailureReasonForCalibrationItem(item.Reason, failureClass)
 		expectedContext := semanticCalibrationExpectedOutcomeContext(expectedByID[item.ExpectedOutcomeID], item.CandidateID)
 		out = append(out, SemanticCalibrationReviewItem{
 			SchemaVersion:     SemanticCalibrationReviewItemSchemaVersion,
@@ -333,6 +354,8 @@ func semanticCalibrationReviewItems(runID string, items []SemanticAcceptanceItem
 			AcceptanceState:   item.AcceptanceState,
 			Reason:            item.Reason,
 			FailureClass:      failureClass,
+			FailureReason:     failureReason,
+			FailureInferred:   inferred,
 			NeedsAdjudication: failureClass != SemanticCalibrationFailureAccepted,
 			Blockers:          cloneBlockerList(item.Blockers),
 		})
@@ -355,6 +378,8 @@ func semanticCalibrationReviewItems(runID string, items []SemanticAcceptanceItem
 			AcceptanceState:   outcome.AcceptanceState,
 			Reason:            outcome.Reason,
 			FailureClass:      SemanticCalibrationFailureFalseNegative,
+			FailureReason:     SemanticFailureMissingExpectedOutcome,
+			FailureInferred:   false,
 			NeedsAdjudication: true,
 			Blockers:          []Blocker{},
 		})
@@ -840,8 +865,18 @@ func validateSemanticCalibrationSummaryPaths(root string, summary SemanticCalibr
 }
 
 func ValidateSemanticCalibrationReviewItem(item SemanticCalibrationReviewItem) error {
-	if item.SchemaVersion != SemanticCalibrationReviewItemSchemaVersion && item.SchemaVersion != SemanticCalibrationReviewItemLegacySchemaVersion {
+	if item.SchemaVersion != SemanticCalibrationReviewItemSchemaVersion &&
+		item.SchemaVersion != SemanticCalibrationReviewItemPreviousSchemaVersion &&
+		item.SchemaVersion != SemanticCalibrationReviewItemLegacySchemaVersion {
 		return fmt.Errorf("unsupported semantic calibration review item schema version: %s", item.SchemaVersion)
+	}
+	if item.SchemaVersion == SemanticCalibrationReviewItemSchemaVersion {
+		if item.FailureReason != "" && !validSemanticFailureReason(item.FailureReason) {
+			return fmt.Errorf("unsupported semantic calibration failure reason: %s", item.FailureReason)
+		}
+		if item.NeedsAdjudication && item.FailureReason == "" {
+			return fmt.Errorf("semantic calibration adjudication item requires failure reason: %s", item.ReviewItemID)
+		}
 	}
 	body := item.RunID + "\n" + item.ReviewItemID + "\n" + item.CandidateID + "\n" + item.ExpectedOutcomeID
 	body += "\n" + item.SourceDocumentID + "\n" + item.Title + "\n" + item.Summary + "\n" + strings.Join(item.EvidenceNodes, "\n")
@@ -873,6 +908,12 @@ func normalizeLegacySemanticCalibrationReviewItem(item *SemanticCalibrationRevie
 	if len(item.EvidenceExcerpts) == 0 {
 		item.EvidenceExcerpts = semanticCalibrationEvidenceExcerpts(semanticCalibrationSourceContext{}, item.EvidenceRanges)
 	}
+	if item.FailureReason == "" {
+		reason, inferred, _ := semanticFailureReasonForCalibrationItem(item.Reason, item.FailureClass)
+		item.FailureReason = reason
+		item.FailureInferred = inferred
+	}
+	item.SchemaVersion = SemanticCalibrationReviewItemSchemaVersion
 }
 
 func resolveSemanticAcceptanceRoot(path string) (string, error) {
@@ -962,6 +1003,8 @@ func semanticCalibrationReviewContext(item SemanticCalibrationReviewItem) *Seman
 		CandidateID:         item.CandidateID,
 		ExpectedOutcome:     item.ExpectedOutcome,
 		FailureClass:        item.FailureClass,
+		FailureReason:       item.FailureReason,
+		FailureInferred:     item.FailureInferred,
 		AcceptanceState:     item.AcceptanceState,
 		Reason:              item.Reason,
 		EvidenceExcerpts:    append([]SemanticCalibrationEvidenceExcerpt(nil), item.EvidenceExcerpts...),
@@ -1008,6 +1051,10 @@ func semanticCalibrationPageMarkdown(item SemanticCalibrationReviewItem) string 
 	b.WriteString("- Confidence: " + string(item.Confidence) + "\n")
 	b.WriteString("- Review status: " + string(item.ReviewStatus) + "\n")
 	b.WriteString("- Failure class: " + string(item.FailureClass) + "\n")
+	if item.FailureReason != "" {
+		b.WriteString("- Failure reason: " + string(item.FailureReason) + "\n")
+		b.WriteString(fmt.Sprintf("- Failure reason inferred: %t\n", item.FailureInferred))
+	}
 	b.WriteString("- Acceptance state: " + string(item.AcceptanceState) + "\n")
 	b.WriteString("- Reason: " + string(item.Reason) + "\n")
 	if item.Summary != "" {
@@ -1127,6 +1174,14 @@ func semanticCalibrationReportMarkdown(summary SemanticCalibrationSummary) strin
 	b.WriteString(fmt.Sprintf("- Needs review: %d\n", summary.NeedsReviewCount))
 	b.WriteString(fmt.Sprintf("- Review burden rate: %.2f\n", summary.ReviewBurdenRate))
 	b.WriteString(fmt.Sprintf("- Blocked/private: %d\n", summary.BlockedPrivateCount))
+	b.WriteString("\n## Failure reasons\n\n")
+	for _, reason := range semanticFailureReasons() {
+		b.WriteString(fmt.Sprintf("- %s: %d\n", reason, summary.FailureReasonCounts[reason]))
+	}
+	b.WriteString("\n## Compatibility rollups\n\n")
+	for _, class := range semanticCalibrationFailureClasses {
+		b.WriteString(fmt.Sprintf("- %s: %d\n", class, summary.FailureClassCounts[class]))
+	}
 	return b.String()
 }
 
