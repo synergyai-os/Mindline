@@ -803,6 +803,8 @@ type SemanticJudgmentCandidate struct {
 
 type SemanticAgentReviewProposal struct {
 	SchemaVersion       string                          `json:"schema_version"`
+	Provider            string                          `json:"provider"`
+	Model               string                          `json:"model"`
 	Choice              SemanticJudgmentChoice          `json:"choice"`
 	FailureReason       SemanticFailureReason           `json:"failure_reason,omitempty"`
 	Confidence          Confidence                      `json:"confidence"`

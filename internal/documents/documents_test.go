@@ -2502,8 +2502,11 @@ func TestSemanticJudgmentAgentReviewTriageDoesNotCreateJudgments(t *testing.T) {
 			FailureReason:       string(SemanticFailureAmbiguous),
 			Confidence:          string(ConfidenceLow),
 			HumanReviewRequired: true,
-			ReviewReasonCodes:   []string{string(SemanticAgentReviewReasonModelUncertain)},
-			Rationale:           "Evidence is not decisive enough.",
+			ReviewReasonCodes: []string{
+				string(SemanticAgentReviewReasonModelUncertain),
+				string(SemanticAgentReviewReasonMachineTriaged),
+			},
+			Rationale: "Evidence is not decisive enough.",
 		},
 		{
 			Choice:              string(SemanticJudgmentChoiceAccept),
@@ -2527,6 +2530,14 @@ func TestSemanticJudgmentAgentReviewTriageDoesNotCreateJudgments(t *testing.T) {
 	}
 	if summary.AgentReviewedCount != 2 || summary.HumanReviewRequiredCount != 1 || summary.MachineTriagedCount != 1 {
 		t.Fatalf("unexpected agent review counts: %+v", summary)
+	}
+	for _, item := range summary.Items {
+		if item.AgentReview == nil || item.AgentReview.Provider != "openai" || item.AgentReview.Model != "test-model" {
+			t.Fatalf("expected provider/model attribution on agent proposal: %+v", item.AgentReview)
+		}
+		if item.AgentReview.HumanReviewRequired && semanticAgentReviewReasonCodeListContains(item.AgentReview.ReviewReasonCodes, SemanticAgentReviewReasonMachineTriaged) {
+			t.Fatalf("human-required proposal must not keep machine-triaged reason: %+v", item.AgentReview)
+		}
 	}
 	if summary.JudgedCount != 0 || summary.AcceptedCount != 0 || summary.RejectedCount != 0 || summary.RemainingCount != 2 {
 		t.Fatalf("agent proposals must not create judgment counts: %+v", summary)
@@ -2640,6 +2651,46 @@ func TestSemanticJudgmentAgentReviewDoesNotSendUnsafeCandidates(t *testing.T) {
 	if items[0].AgentReview == nil || !items[0].AgentReview.HumanReviewRequired || items[0].AgentReview.ReviewReasonCodes[0] != SemanticAgentReviewReasonUnsafeOrPrivate {
 		t.Fatalf("expected local unsafe proposal: %+v", items[0].AgentReview)
 	}
+}
+
+func TestSemanticJudgmentAgentReviewReplacesContradictoryMachineTriagedReason(t *testing.T) {
+	node := validStructureNode()
+	observation := validSemanticObservation(node)
+	item := semanticJudgmentCandidates([]SemanticCandidate{validSemanticCandidate(observation, node)}, nil, []SemanticObservation{observation}, semanticCalibrationSourceContext{}, nil)[0]
+	item.EvidenceReadiness = SemanticEvidenceReadiness{
+		Status:      SemanticEvidenceReadinessPass,
+		EvalCounted: true,
+	}
+	proposal := SemanticAgentReviewProposal{
+		SchemaVersion:       SemanticAgentReviewProposalSchemaVersion,
+		Provider:            "openai",
+		Model:               "test-model",
+		Choice:              SemanticJudgmentChoiceAccept,
+		Confidence:          ConfidenceHigh,
+		HumanReviewRequired: true,
+		ReviewReasonCodes:   []SemanticAgentReviewReasonCode{SemanticAgentReviewReasonMachineTriaged},
+		Rationale:           "Model requested manual review.",
+	}
+
+	proposal = forceSemanticAgentReviewRisk(item, proposal)
+	if semanticAgentReviewReasonCodeListContains(proposal.ReviewReasonCodes, SemanticAgentReviewReasonMachineTriaged) {
+		t.Fatalf("human-required proposal must not keep machine-triaged reason: %+v", proposal)
+	}
+	if len(proposal.ReviewReasonCodes) == 0 {
+		t.Fatalf("human-required proposal must keep a review reason after normalization: %+v", proposal)
+	}
+	if err := ValidateSemanticAgentReviewProposal(proposal); err != nil {
+		t.Fatalf("normalized proposal should validate: %v", err)
+	}
+}
+
+func semanticAgentReviewReasonCodeListContains(reasons []SemanticAgentReviewReasonCode, want SemanticAgentReviewReasonCode) bool {
+	for _, reason := range reasons {
+		if reason == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestSemanticJudgmentIncludesRelationEndpointContext(t *testing.T) {

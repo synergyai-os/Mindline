@@ -121,13 +121,13 @@ func attachSemanticAgentReviews(items []SemanticJudgmentCandidate, options Seman
 		}
 		response, err := reviewer.ReviewSemanticJudgment(LLMSemanticReviewRequest{Candidate: out[i]})
 		if err != nil {
-			proposal = semanticAgentReviewErrorProposal(SemanticAgentReviewReasonModelError, "model review failed safely; human review required")
+			proposal = semanticAgentReviewErrorProposal(SemanticAgentReviewReasonModelError, "model review failed safely; human review required", options)
 			out[i].AgentReview = &proposal
 			continue
 		}
 		proposal, err = semanticAgentReviewProposalFromResponse(response, options)
 		if err != nil {
-			proposal = semanticAgentReviewErrorProposal(SemanticAgentReviewReasonModelError, "model output could not be safely normalized; human review required")
+			proposal = semanticAgentReviewErrorProposal(SemanticAgentReviewReasonModelError, "model output could not be safely normalized; human review required", options)
 			out[i].AgentReview = &proposal
 			continue
 		}
@@ -139,14 +139,16 @@ func attachSemanticAgentReviews(items []SemanticJudgmentCandidate, options Seman
 
 func localSemanticAgentReviewProposal(item SemanticJudgmentCandidate, options SemanticJudgmentOptions) (SemanticAgentReviewProposal, bool, error) {
 	if semanticEvidenceReadinessUnsafe(item) {
-		return semanticAgentReviewErrorProposal(SemanticAgentReviewReasonUnsafeOrPrivate, "candidate blocked before external review because it contains unsafe, private, or governance markers"), true, nil
+		return semanticAgentReviewErrorProposal(SemanticAgentReviewReasonUnsafeOrPrivate, "candidate blocked before external review because it contains unsafe, private, or governance markers", options), true, nil
 	}
 	return SemanticAgentReviewProposal{}, false, nil
 }
 
-func semanticAgentReviewErrorProposal(reason SemanticAgentReviewReasonCode, message string) SemanticAgentReviewProposal {
+func semanticAgentReviewErrorProposal(reason SemanticAgentReviewReasonCode, message string, options SemanticJudgmentOptions) SemanticAgentReviewProposal {
 	return SemanticAgentReviewProposal{
 		SchemaVersion:       SemanticAgentReviewProposalSchemaVersion,
+		Provider:            strings.TrimSpace(options.LLMProvider),
+		Model:               strings.TrimSpace(options.LLMModel),
 		Choice:              SemanticJudgmentChoiceUnclear,
 		FailureReason:       SemanticFailureAmbiguous,
 		Confidence:          ConfidenceLow,
@@ -160,6 +162,8 @@ func semanticAgentReviewErrorProposal(reason SemanticAgentReviewReasonCode, mess
 func semanticAgentReviewProposalFromResponse(response llmSemanticReviewResponse, options SemanticJudgmentOptions) (SemanticAgentReviewProposal, error) {
 	proposal := SemanticAgentReviewProposal{
 		SchemaVersion:       SemanticAgentReviewProposalSchemaVersion,
+		Provider:            strings.TrimSpace(options.LLMProvider),
+		Model:               strings.TrimSpace(options.LLMModel),
 		Choice:              SemanticJudgmentChoice(strings.TrimSpace(response.Choice)),
 		FailureReason:       SemanticFailureReason(strings.TrimSpace(response.FailureReason)),
 		Confidence:          Confidence(strings.TrimSpace(response.Confidence)),
@@ -210,6 +214,11 @@ func forceSemanticAgentReviewRisk(item SemanticJudgmentCandidate, proposal Seman
 	}
 	if !proposal.HumanReviewRequired {
 		reasons[SemanticAgentReviewReasonMachineTriaged] = true
+	} else {
+		delete(reasons, SemanticAgentReviewReasonMachineTriaged)
+		if len(reasons) == 0 {
+			reasons[SemanticAgentReviewReasonModelUncertain] = true
+		}
 	}
 	proposal.ReviewReasonCodes = orderSemanticAgentReviewReasonCodes(reasons)
 	return proposal
@@ -218,6 +227,12 @@ func forceSemanticAgentReviewRisk(item SemanticJudgmentCandidate, proposal Seman
 func ValidateSemanticAgentReviewProposal(proposal SemanticAgentReviewProposal) error {
 	if proposal.SchemaVersion != SemanticAgentReviewProposalSchemaVersion {
 		return fmt.Errorf("unsupported semantic agent review proposal schema version: %s", proposal.SchemaVersion)
+	}
+	if strings.TrimSpace(proposal.Provider) == "" {
+		return fmt.Errorf("missing semantic agent review provider")
+	}
+	if strings.TrimSpace(proposal.Model) == "" {
+		return fmt.Errorf("missing semantic agent review model")
 	}
 	if !validSemanticJudgmentChoice(proposal.Choice) {
 		return fmt.Errorf("unsupported semantic agent review choice: %s", proposal.Choice)
