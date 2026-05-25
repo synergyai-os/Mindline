@@ -72,6 +72,20 @@ func TestValidateSafeEventRejectsUnsafeValues(t *testing.T) {
 	}
 }
 
+func TestValidateSafeEventRejectsNestedValues(t *testing.T) {
+	event := SafeEvent{
+		Event:      "$ai_generation",
+		DistinctID: "mindline-local",
+		TraceID:    "trace-test",
+		Properties: map[string]any{
+			"failure_reason": []string{"/Users/randyhereman/private.md"},
+		},
+	}
+	if err := ValidateSafeEvent(event); err == nil || !strings.Contains(err.Error(), "unsupported PostHog property value") {
+		t.Fatalf("expected nested value rejection, got %v", err)
+	}
+}
+
 func TestPostHogExporterRejectsUnsafeTraceIDBeforeNetwork(t *testing.T) {
 	called := false
 	exporter := NewPostHogExporter(Config{

@@ -322,6 +322,11 @@ func (r Runner) runDocumentsJudge(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "judge semantic candidates: %v\n", err)
 		return ExitProcess
 	}
+	traceSummary := semanticJudgmentTraceSummary(summary, options)
+	if err := r.writeAndExportTrace(outDir, traceSummary); err != nil {
+		fmt.Fprintf(stderr, "trace semantic judgment: %v\n", err)
+		return ExitArtifactWrite
+	}
 	encoder := json.NewEncoder(stdout)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(summary); err != nil {
@@ -493,6 +498,11 @@ func (r Runner) runDocumentsSemantics(args []string, stdout, stderr io.Writer) i
 		}
 		fmt.Fprintf(stderr, "generate semantic candidates: %v\n", err)
 		return ExitProcess
+	}
+	traceSummary := semanticTraceSummary(summary, options)
+	if err := r.writeAndExportTrace(outDir, traceSummary); err != nil {
+		fmt.Fprintf(stderr, "trace semantic candidates: %v\n", err)
+		return ExitArtifactWrite
 	}
 	encoder := json.NewEncoder(stdout)
 	encoder.SetIndent("", "  ")
@@ -1512,6 +1522,166 @@ func (r Runner) runObservability(args []string, stdout, stderr io.Writer) int {
 		Host:         config.PostHogHost,
 		AuthorityIDs: authorityIDs(),
 	})
+}
+
+func (r Runner) writeAndExportTrace(outDir string, summary observability.TraceSummary) error {
+	data, err := json.MarshalIndent(summary, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := r.ensureOutputChildDir(outDir, "trace"); err != nil {
+		return err
+	}
+	target := filepath.Join(outDir, "trace", "trace-summary.json")
+	if err := r.rejectUnsafeOutputFile(outDir, target); err != nil {
+		return err
+	}
+	if err := r.fs.WriteFile(target, append(data, '\n')); err != nil {
+		return err
+	}
+	config, err := observability.ConfigFromValues(r.resolveEnvValues([]string{
+		"MINDLINE_TELEMETRY_ENABLED",
+		"MINDLINE_LLM_TRACE_MODE",
+		"MINDLINE_TELEMETRY_SALT",
+		"POSTHOG_PROJECT_API_KEY",
+		"POSTHOG_API_KEY",
+		"POSTHOG_HOST",
+	}))
+	if err != nil {
+		return err
+	}
+	if !config.Enabled {
+		return nil
+	}
+	exporter := observability.NewPostHogExporter(config, r.postHogTransport)
+	for _, event := range summary.SafeEvents() {
+		if err := exporter.Capture(event); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func semanticTraceSummary(summary documents.SemanticSummary, options documents.SemanticOptions) observability.TraceSummary {
+	provider := ""
+	model := ""
+	if options.Classifier == documents.SemanticClassifierLLM {
+		provider = options.LLMProvider
+		model = options.LLMModel
+	}
+	counts := map[string]int{
+		"source_count":       summary.SourceCount,
+		"observation_count":  summary.ObservationCount,
+		"candidate_count":    summary.CandidateCount,
+		"relation_count":     summary.RelationCount,
+		"needs_review_count": summary.NeedsReviewCount,
+		"blocked_count":      summary.BlockedCount,
+	}
+	labels := map[string]int{}
+	if summary.CandidateCount == 0 {
+		labels["semantic_no_candidates"] = 1
+	}
+	if summary.NeedsReviewCount > 0 {
+		labels["semantic_needs_review"] = 1
+	}
+	status := "ok"
+	if summary.SkippedReason != "" {
+		status = "skipped"
+	}
+	return observability.NewTraceSummary(
+		"semantic_extraction",
+		"documents semantics",
+		summary.RunID,
+		provider,
+		model,
+		status,
+		semanticRecommendation(summary),
+		counts,
+		labels,
+		[]string{"$ai_generation"},
+	)
+}
+
+func semanticJudgmentTraceSummary(summary documents.SemanticJudgmentSummary, options documents.SemanticJudgmentOptions) observability.TraceSummary {
+	provider := ""
+	model := ""
+	if options.Reviewer == documents.SemanticJudgmentReviewerLLM {
+		provider = options.LLMProvider
+		model = options.LLMModel
+	}
+	counts := map[string]int{
+		"source_count":                summary.SourceCount,
+		"candidate_count":             summary.CandidateCount,
+		"judged_count":                summary.JudgedCount,
+		"remaining_count":             summary.RemainingCount,
+		"agent_reviewed_count":        summary.AgentReviewedCount,
+		"human_review_required_count": summary.HumanReviewRequiredCount,
+		"machine_triaged_count":       summary.MachineTriagedCount,
+		"accepted_count":              summary.AcceptedCount,
+		"rejected_count":              summary.RejectedCount,
+		"unclear_count":               summary.UnclearCount,
+		"duplicate_count":             summary.DuplicateCount,
+		"wrong_kind_count":            summary.WrongKindCount,
+		"blocked_count":               summary.BlockedCount,
+		"skipped_count":               summary.SkippedCount,
+		"evidence_ready_count":        summary.EvidenceReadyCount,
+		"eval_counted_count":          summary.EvalCountedCount,
+		"evidence_excluded_count":     summary.EvidenceExcludedCount,
+		"review_burden_count":         summary.ReviewBurdenCount,
+	}
+	labels := map[string]int{}
+	if summary.HumanReviewRequiredCount > 0 {
+		labels["judgment_human_review"] = 1
+	}
+	if summary.FailureReasonCounts[documents.SemanticFailureReason("model_error")] > 0 {
+		labels["judgment_model_errors"] = summary.FailureReasonCounts[documents.SemanticFailureReason("model_error")]
+	}
+	addPrefixedCounts(counts, "failure_reason_count.", summary.FailureReasonCounts)
+	addPrefixedCounts(counts, "evidence_readiness_reason_count.", summary.EvidenceReadinessReasonCounts)
+	return observability.NewTraceSummary(
+		"semantic_judgment",
+		"documents judge",
+		summary.RunID,
+		provider,
+		model,
+		"ok",
+		semanticJudgmentRecommendation(summary),
+		counts,
+		labels,
+		[]string{"$ai_generation", "$ai_feedback"},
+	)
+}
+
+func addPrefixedCounts[K ~string](counts map[string]int, prefix string, source map[K]int) {
+	for key, value := range source {
+		counts[prefix+string(key)] = value
+	}
+}
+
+func semanticRecommendation(summary documents.SemanticSummary) string {
+	switch {
+	case summary.CandidateCount == 0 && summary.SkippedReason != "":
+		return "inspect skipped semantic input before model tuning"
+	case summary.CandidateCount == 0:
+		return "improve extraction recall on this source type"
+	case summary.NeedsReviewCount > 0:
+		return "inspect needs-review candidates and evidence readiness"
+	default:
+		return "compare candidate quality against held-out labels"
+	}
+}
+
+func semanticJudgmentRecommendation(summary documents.SemanticJudgmentSummary) string {
+	switch {
+	case summary.HumanReviewRequiredCount > 0:
+		return "inspect human-review-required agent proposals"
+	case summary.RejectedCount+summary.UnclearCount+summary.DuplicateCount+summary.WrongKindCount > 0:
+		return "inspect failed judgment patterns and failure taxonomy"
+	case summary.RemainingCount > 0:
+		return "finish judgment queue before trusting quality metrics"
+	default:
+		return "compare judgment outcomes against DEC-64 held-out threshold"
+	}
 }
 
 func writeObservabilityEnvelope(stdout io.Writer, envelope ObservabilityTestEnvelope) int {
