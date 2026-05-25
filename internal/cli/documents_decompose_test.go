@@ -503,7 +503,7 @@ func TestDocumentsJudgeServeStateAndRecord(t *testing.T) {
 	if _, err := html.ReadFrom(rec.Body); err != nil {
 		t.Fatalf("read ui html: %v", err)
 	}
-	for _, want := range []string{"Mindline Review", "Review", "Guide", "How to review", "Decision meanings", "remaining", "current-candidate", "decision-controls", "failure-reason", "evidence", "Review task", "Should this candidate count", "Evidence highlights", "Raw details", "Save decision", "details class=\\\"raw-details\\\"", "openRawDetails", "visibleEvidenceLimit", "selectedChoice", "failureReasonsByChoice[selectedChoice]"} {
+	for _, want := range []string{"Mindline Review", "Review", "Guide", "How to review", "Decision meanings", "remaining", "current-candidate", "decision-controls", "failure-reason", "evidence", "Review task", "Should this candidate count", "Evidence highlights", "Raw details", "Save decision", "details class=\\\"raw-details\\\"", "openRawDetails", "visibleEvidenceLimit", "selectedChoice", "isSubmitting", "failureReasonsByChoice[selectedChoice]"} {
 		if !strings.Contains(html.String(), want) {
 			t.Fatalf("expected UI HTML to contain %q, got %s", want, html.String())
 		}
@@ -524,6 +524,10 @@ func TestDocumentsJudgeServeStateAndRecord(t *testing.T) {
 		"hiddenExcerptCount > 0",
 		"const rawExcerpts = allExcerpts.map(excerptHtml).join(\"\")",
 		"const reasons = failureReasonsByChoice[selectedChoice] || failureReasonsByChoice[activeChoice] || []",
+		"button.disabled = isSubmitting",
+		"saveButton.disabled = isSubmitting || !currentCandidateId || !selectedChoice",
+		"if (!currentCandidateId || isSubmitting) return",
+		"} finally {",
 	} {
 		if !strings.Contains(uiHTML, want) {
 			t.Fatalf("expected decision-first UI behavior contract to contain %q", want)

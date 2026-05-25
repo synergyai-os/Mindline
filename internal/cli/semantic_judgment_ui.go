@@ -626,6 +626,7 @@ let currentCandidateId = "";
 let currentState = null;
 let mode = "review";
 let selectedChoice = "";
+let isSubmitting = false;
 
 function text(value, fallback = "") {
   return value === undefined || value === null || value === "" ? fallback : String(value);
@@ -822,9 +823,10 @@ function updateSaveState() {
   const context = document.getElementById("decision-context");
   for (const button of document.querySelectorAll("[data-choice]")) {
     button.classList.toggle("selected", button.dataset.choice === selectedChoice);
+    button.disabled = isSubmitting;
   }
   if (!saveButton) return;
-  saveButton.disabled = !currentCandidateId || !selectedChoice;
+  saveButton.disabled = isSubmitting || !currentCandidateId || !selectedChoice;
   if (context) {
     context.textContent = selectedChoice ? "Selected: " + selectedChoice + ". Confirm the reason if needed, then save." : "Select a judgment, confirm the reason if needed, then save.";
   }
@@ -883,6 +885,7 @@ function renderRelationSummary(item) {
 }
 
 async function submitSelectedChoice() {
+  if (isSubmitting) return;
   if (!selectedChoice) {
     document.getElementById("status").textContent = "Select a decision first.";
     return;
@@ -892,7 +895,7 @@ async function submitSelectedChoice() {
 }
 
 async function submitChoice(choice) {
-  if (!currentCandidateId) return;
+  if (!currentCandidateId || isSubmitting) return;
   const allowed = failureReasonsByChoice[choice] || [];
   let failureReason = ensureCompatibleFailureReason(choice);
   if (choice !== "accept" && !allowed.includes(failureReason)) {
@@ -900,18 +903,25 @@ async function submitChoice(choice) {
     return;
   }
   document.getElementById("status").textContent = "Saving...";
-  for (const button of document.querySelectorAll("[data-choice]")) button.disabled = true;
-  const response = await fetch("/api/judgments", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Mindline-Review-Token": reviewToken },
-    body: JSON.stringify({ candidate_id: currentCandidateId, choice, failure_reason: failureReason, note: document.getElementById("note").value })
-  });
-  if (!response.ok) {
-    document.getElementById("status").textContent = await response.text();
-    for (const button of document.querySelectorAll("[data-choice]")) button.disabled = false;
-    return;
+  isSubmitting = true;
+  updateSaveState();
+  try {
+    const response = await fetch("/api/judgments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Mindline-Review-Token": reviewToken },
+      body: JSON.stringify({ candidate_id: currentCandidateId, choice, failure_reason: failureReason, note: document.getElementById("note").value })
+    });
+    if (!response.ok) {
+      document.getElementById("status").textContent = await response.text();
+      return;
+    }
+    render(await response.json());
+  } catch (error) {
+    document.getElementById("status").textContent = error.message || String(error);
+  } finally {
+    isSubmitting = false;
+    updateSaveState();
   }
-  render(await response.json());
 }
 
 document.getElementById("save-decision").addEventListener("click", submitSelectedChoice);
