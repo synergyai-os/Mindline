@@ -503,14 +503,41 @@ func TestDocumentsJudgeServeStateAndRecord(t *testing.T) {
 	if _, err := html.ReadFrom(rec.Body); err != nil {
 		t.Fatalf("read ui html: %v", err)
 	}
-	for _, want := range []string{"Mindline Review", "Review", "Guide", "How to review", "Decision meanings", "remaining", "current-candidate", "decision-controls", "failure-reason", "evidence", "Evidence readiness", "readiness:", "eval counted:", "Relation context", "Other endpoint role", "Relation ids", "Blockers"} {
+	for _, want := range []string{"Mindline Review", "Review", "Guide", "How to review", "Decision meanings", "remaining", "current-candidate", "decision-controls", "failure-reason", "evidence", "Review task", "Should this candidate count", "Evidence highlights", "Raw details", "Save decision", "details class=\\\"raw-details\\\"", "openRawDetails", "visibleEvidenceLimit", "selectedChoice", "failureReasonsByChoice[selectedChoice]"} {
 		if !strings.Contains(html.String(), want) {
 			t.Fatalf("expected UI HTML to contain %q, got %s", want, html.String())
 		}
 	}
-	for _, want := range []string{"ensureCompatibleFailureReason(choice)", "select.value = fallback"} {
+	for _, want := range []string{"selectDecision(choice)", "submitSelectedChoice()", "renderFailureReasonOptions(selectedChoice)", "ensureCompatibleFailureReason(selectedChoice)"} {
 		if !strings.Contains(html.String(), want) {
 			t.Fatalf("expected UI HTML to preselect compatible failure reasons with %q, got %s", want, html.String())
+		}
+	}
+	if strings.Contains(html.String(), "<details class=\"raw-details\" open") {
+		t.Fatalf("expected raw details to be collapsed by default")
+	}
+	uiHTML := html.String()
+	for _, want := range []string{
+		"const visibleEvidenceLimit = 5",
+		"const visibleExcerpts = allExcerpts.slice(0, visibleEvidenceLimit)",
+		"const hiddenExcerptCount = Math.max(0, allExcerpts.length - visibleEvidenceLimit)",
+		"hiddenExcerptCount > 0",
+		"const rawExcerpts = allExcerpts.map(excerptHtml).join(\"\")",
+		"const reasons = failureReasonsByChoice[selectedChoice] || failureReasonsByChoice[activeChoice] || []",
+	} {
+		if !strings.Contains(uiHTML, want) {
+			t.Fatalf("expected decision-first UI behavior contract to contain %q", want)
+		}
+	}
+	if relationIndex := strings.Index(uiHTML, "\"<div><h3>Relation context</h3>\" + relationContext"); relationIndex == -1 {
+		t.Fatalf("expected raw relation context to be rendered only through the raw-details section")
+	} else {
+		detailsIndex := strings.Index(uiHTML, "<details class=\\\"raw-details\\\"")
+		if detailsIndex == -1 {
+			t.Fatalf("expected raw details section in UI renderer")
+		}
+		if relationIndex < detailsIndex {
+			t.Fatalf("expected relation context renderer to appear after collapsed raw details start")
 		}
 	}
 
