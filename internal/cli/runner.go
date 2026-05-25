@@ -1128,9 +1128,6 @@ func (r Runner) parseDocumentsJudgeArgs(args []string) (inputPath string, outDir
 		if options.LLMModel == "" {
 			return "", "", options, parseErrorNone, "missing OpenAI model"
 		}
-		if options.LLMAPIKey == "" {
-			return "", "", options, parseErrorNone, "missing OpenAI API key"
-		}
 	}
 	return inputPath, outDir, options, parseErrorNone, ""
 }

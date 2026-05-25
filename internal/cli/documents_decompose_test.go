@@ -992,6 +992,31 @@ func TestDocumentsJudgeRejectsLLMFlagsWithoutAgentReviewer(t *testing.T) {
 	}
 }
 
+func TestDocumentsJudgeDefersLLMAPIKeyValidationForAgentReviewer(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("OPENAI_MODEL", "")
+	t.Setenv("MINDLINE_LLM_PROVIDER", "")
+	runner := NewRunner(NewMemoryFS())
+
+	_, _, options, parseErr, configError := runner.parseDocumentsJudgeArgs([]string{
+		"judge", "semantic-run",
+		"--out", "out",
+		"--agent-reviewer", "llm",
+		"--llm-provider", "openai",
+		"--llm-model", "gpt-test",
+	})
+
+	if parseErr != parseErrorNone {
+		t.Fatalf("expected parse success, got %v", parseErr)
+	}
+	if configError != "" {
+		t.Fatalf("expected API key validation to be deferred, got %q", configError)
+	}
+	if options.LLMAPIKey != "" {
+		t.Fatalf("expected no API key in options, got %q", options.LLMAPIKey)
+	}
+}
+
 func TestDocumentsAcceptRejectsDestinationAndProfileFlags(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := NewRunner(NewOSFileSystem()).Run([]string{
