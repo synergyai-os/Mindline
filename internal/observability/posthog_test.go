@@ -1,6 +1,8 @@
 package observability
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -182,10 +184,18 @@ func TestPostHogExporterCapturesMetadataOnlyEvent(t *testing.T) {
 	if captured["api_key"] != "phc-test" || captured["event"] != "$ai_generation" {
 		t.Fatalf("unexpected payload: %+v", captured)
 	}
+	if captured["distinct_id"] != expectedDistinctID("salt") {
+		t.Fatalf("expected salted distinct id, got %+v", captured["distinct_id"])
+	}
 }
 
 type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (fn roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return fn(req)
+}
+
+func expectedDistinctID(salt string) string {
+	sum := sha256.Sum256([]byte("mindline.posthog.distinct_id:" + salt))
+	return "mindline-" + hex.EncodeToString(sum[:])[:16]
 }

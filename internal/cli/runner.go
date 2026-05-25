@@ -323,7 +323,7 @@ func (r Runner) runDocumentsJudge(args []string, stdout, stderr io.Writer) int {
 		return ExitProcess
 	}
 	traceSummary := semanticJudgmentTraceSummary(summary, options)
-	if err := r.writeAndExportTrace(outDir, traceSummary); err != nil {
+	if err := r.writeAndExportTrace(outDir, traceSummary, stderr); err != nil {
 		fmt.Fprintf(stderr, "trace semantic judgment: %v\n", err)
 		return ExitArtifactWrite
 	}
@@ -500,7 +500,7 @@ func (r Runner) runDocumentsSemantics(args []string, stdout, stderr io.Writer) i
 		return ExitProcess
 	}
 	traceSummary := semanticTraceSummary(summary, options)
-	if err := r.writeAndExportTrace(outDir, traceSummary); err != nil {
+	if err := r.writeAndExportTrace(outDir, traceSummary, stderr); err != nil {
 		fmt.Fprintf(stderr, "trace semantic candidates: %v\n", err)
 		return ExitArtifactWrite
 	}
@@ -1494,9 +1494,8 @@ func (r Runner) runObservability(args []string, stdout, stderr io.Writer) int {
 	}
 	exporter := observability.NewPostHogExporter(config, r.postHogTransport)
 	event := observability.SafeEvent{
-		Event:      "$ai_generation",
-		DistinctID: "mindline-local",
-		TraceID:    "trace-posthog-test",
+		Event:   "$ai_generation",
+		TraceID: "trace-posthog-test",
 		Properties: map[string]any{
 			"event_schema":    "mindline.telemetry.test/v0.1",
 			"feature":         "observability.posthog_test",
@@ -1524,7 +1523,7 @@ func (r Runner) runObservability(args []string, stdout, stderr io.Writer) int {
 	})
 }
 
-func (r Runner) writeAndExportTrace(outDir string, summary observability.TraceSummary) error {
+func (r Runner) writeAndExportTrace(outDir string, summary observability.TraceSummary, stderr io.Writer) error {
 	data, err := json.MarshalIndent(summary, "", "  ")
 	if err != nil {
 		return err
@@ -1556,7 +1555,10 @@ func (r Runner) writeAndExportTrace(outDir string, summary observability.TraceSu
 	exporter := observability.NewPostHogExporter(config, r.postHogTransport)
 	for _, event := range summary.SafeEvents() {
 		if err := exporter.Capture(event); err != nil {
-			return err
+			if observability.IsSafeEventValidationError(err) {
+				return err
+			}
+			fmt.Fprintf(stderr, "posthog capture: %v\n", err)
 		}
 	}
 	return nil

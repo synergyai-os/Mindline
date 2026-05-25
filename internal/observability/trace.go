@@ -65,7 +65,6 @@ func (summary TraceSummary) SafeEvents() []SafeEvent {
 	for _, eventName := range summary.PostHogEvents {
 		events = append(events, SafeEvent{
 			Event:      eventName,
-			DistinctID: "mindline-local",
 			TraceID:    summary.TraceID,
 			Properties: cloneProperties(baseProperties),
 		})

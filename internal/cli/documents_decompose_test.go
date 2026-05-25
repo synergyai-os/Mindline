@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/synergyai-os/Mindline/internal/documents"
+	"github.com/synergyai-os/Mindline/internal/observability"
 )
 
 type httpRoundTripper func(*http.Request) (*http.Response, error)
@@ -220,6 +221,65 @@ func TestDocumentsSemanticsExportsMetadataTraceWhenEnabled(t *testing.T) {
 	}
 	if strings.Contains(string(data), "gpt-test") || strings.Contains(string(data), "openai") {
 		t.Fatalf("deterministic semantic trace must not include ambient LLM metadata: %s", string(data))
+	}
+}
+
+func TestDocumentsSemanticsContinuesWhenPostHogExportFails(t *testing.T) {
+	t.Setenv("MINDLINE_TELEMETRY_ENABLED", "true")
+	t.Setenv("MINDLINE_LLM_TRACE_MODE", "metadata")
+	t.Setenv("MINDLINE_TELEMETRY_SALT", "salt")
+	t.Setenv("POSTHOG_PROJECT_API_KEY", "phc-test")
+	t.Setenv("POSTHOG_HOST", "https://eu.i.posthog.com")
+	out := t.TempDir()
+	runner := NewRunnerWithPostHogTransport(NewOSFileSystem(), httpRoundTripper(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 503, Body: io.NopCloser(strings.NewReader("unavailable")), Header: make(http.Header)}, nil
+	}))
+	var stdout, stderr bytes.Buffer
+
+	code := runner.Run([]string{
+		"documents", "semantics", documentsFixture(t, "semantic"),
+		"--out", out,
+	}, &stdout, &stderr)
+
+	if code != ExitOK {
+		t.Fatalf("expected semantic command to ignore PostHog failure, got %d stderr=%s", code, stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(out, "trace", "trace-summary.json")); err != nil {
+		t.Fatalf("expected trace summary artifact despite PostHog failure: %v", err)
+	}
+	if !strings.Contains(stderr.String(), "posthog capture:") {
+		t.Fatalf("expected PostHog warning on stderr, got %q", stderr.String())
+	}
+}
+
+func TestWriteAndExportTraceFailsOnUnsafeTelemetryEvent(t *testing.T) {
+	t.Setenv("MINDLINE_TELEMETRY_ENABLED", "true")
+	t.Setenv("MINDLINE_LLM_TRACE_MODE", "metadata")
+	t.Setenv("MINDLINE_TELEMETRY_SALT", "salt")
+	t.Setenv("POSTHOG_PROJECT_API_KEY", "phc-test")
+	t.Setenv("POSTHOG_HOST", "https://eu.i.posthog.com")
+	out := t.TempDir()
+	called := false
+	runner := NewRunnerWithPostHogTransport(NewOSFileSystem(), httpRoundTripper(func(req *http.Request) (*http.Response, error) {
+		called = true
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("{}")), Header: make(http.Header)}, nil
+	}))
+	summary := observability.NewTraceSummary("semantic", "documents semantics", "run-safe", "sk-test", "", "ok", "review", nil, nil, []string{"$ai_generation"})
+	var stderr bytes.Buffer
+
+	err := runner.writeAndExportTrace(out, summary, &stderr)
+
+	if err == nil || !strings.Contains(err.Error(), "unsafe PostHog property value") {
+		t.Fatalf("expected unsafe telemetry event to fail closed, got %v", err)
+	}
+	if called {
+		t.Fatalf("unsafe telemetry event must fail before network")
+	}
+	if strings.Contains(stderr.String(), "posthog capture:") {
+		t.Fatalf("safety validation failure must not be downgraded to warning: %q", stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(out, "trace", "trace-summary.json")); err != nil {
+		t.Fatalf("expected local trace artifact before export validation failure: %v", err)
 	}
 }
 
@@ -627,6 +687,46 @@ func TestDocumentsJudgeJudgeNextAndJudgeRecord(t *testing.T) {
 	}
 	if updated.SchemaVersion != "semantic-judgment-summary/v0.3" || updated.JudgedCount != 1 || updated.AcceptedCount != 1 || updated.Precision != 1 {
 		t.Fatalf("unexpected judgment record summary: %+v", updated)
+	}
+}
+
+func TestDocumentsJudgeContinuesWhenPostHogExportFails(t *testing.T) {
+	t.Setenv("MINDLINE_TELEMETRY_ENABLED", "false")
+	semanticOut := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "semantics", documentsFixture(t, "semantic"),
+		"--out", semanticOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected semantic generation exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+
+	t.Setenv("MINDLINE_TELEMETRY_ENABLED", "true")
+	t.Setenv("MINDLINE_LLM_TRACE_MODE", "metadata")
+	t.Setenv("MINDLINE_TELEMETRY_SALT", "salt")
+	t.Setenv("POSTHOG_PROJECT_API_KEY", "phc-test")
+	t.Setenv("POSTHOG_HOST", "https://eu.i.posthog.com")
+	runner := NewRunnerWithPostHogTransport(NewOSFileSystem(), httpRoundTripper(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 503, Body: io.NopCloser(strings.NewReader("unavailable")), Header: make(http.Header)}, nil
+	}))
+	judgeOut := t.TempDir()
+	stdout.Reset()
+	stderr.Reset()
+
+	code = runner.Run([]string{
+		"documents", "judge", semanticOut,
+		"--out", judgeOut,
+	}, &stdout, &stderr)
+
+	if code != ExitOK {
+		t.Fatalf("expected judge command to ignore PostHog failure, got %d stderr=%s", code, stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(judgeOut, "trace", "trace-summary.json")); err != nil {
+		t.Fatalf("expected trace summary artifact despite PostHog failure: %v", err)
+	}
+	if !strings.Contains(stderr.String(), "posthog capture:") {
+		t.Fatalf("expected PostHog warning on stderr, got %q", stderr.String())
 	}
 }
 

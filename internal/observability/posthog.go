@@ -3,6 +3,7 @@ package observability
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -122,6 +123,23 @@ type PostHogExporter struct {
 	client *http.Client
 }
 
+type SafeEventValidationError struct {
+	err error
+}
+
+func (err SafeEventValidationError) Error() string {
+	return err.err.Error()
+}
+
+func (err SafeEventValidationError) Unwrap() error {
+	return err.err
+}
+
+func IsSafeEventValidationError(err error) bool {
+	var validationErr SafeEventValidationError
+	return errors.As(err, &validationErr)
+}
+
 func NewPostHogExporter(config Config, transport http.RoundTripper) PostHogExporter {
 	if transport == nil {
 		transport = http.DefaultTransport
@@ -147,15 +165,18 @@ func (exporter PostHogExporter) Capture(event SafeEvent) error {
 	properties["$ai_trace_id"] = event.TraceID
 	properties["trace_mode"] = TraceModeMetadata
 	finalEvent := event
+	if distinctID := pseudonymousDistinctID(exporter.config.TelemetrySalt); distinctID != "" {
+		finalEvent.DistinctID = distinctID
+	}
 	finalEvent.Properties = properties
 	if err := ValidateSafeEvent(finalEvent); err != nil {
-		return err
+		return SafeEventValidationError{err: err}
 	}
 
 	payload := map[string]any{
 		"api_key":     exporter.config.PostHogKey,
-		"event":       event.Event,
-		"distinct_id": event.DistinctID,
+		"event":       finalEvent.Event,
+		"distinct_id": finalEvent.DistinctID,
 		"properties":  properties,
 	}
 	data, err := json.Marshal(payload)
@@ -177,6 +198,14 @@ func (exporter PostHogExporter) Capture(event SafeEvent) error {
 		return fmt.Errorf("PostHog capture status %d: %s", res.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return nil
+}
+
+func pseudonymousDistinctID(telemetrySalt string) string {
+	trimmed := strings.TrimSpace(telemetrySalt)
+	if trimmed == "" {
+		return ""
+	}
+	return "mindline-" + contentHash("mindline.posthog.distinct_id:"+trimmed)
 }
 
 func ValidateSafeEvent(event SafeEvent) error {
