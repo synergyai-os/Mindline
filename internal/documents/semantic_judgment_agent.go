@@ -215,6 +215,12 @@ func forceSemanticAgentReviewRisk(item SemanticJudgmentCandidate, proposal Seman
 		proposal.HumanReviewRequired = true
 		reasons[SemanticAgentReviewReasonModelUncertain] = true
 	}
+	for reason := range reasons {
+		if reason != SemanticAgentReviewReasonMachineTriaged {
+			proposal.HumanReviewRequired = true
+			break
+		}
+	}
 	if !proposal.HumanReviewRequired {
 		reasons[SemanticAgentReviewReasonMachineTriaged] = true
 	} else {
