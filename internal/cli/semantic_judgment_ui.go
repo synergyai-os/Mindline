@@ -651,6 +651,9 @@ function render(state) {
     ["Total", summary.candidate_count],
     ["Judged", summary.judged_count],
     ["Remaining", summary.remaining_count],
+    ["Agent reviewed", summary.agent_reviewed_count || 0],
+    ["Needs human", summary.human_review_required_count || 0],
+    ["Machine triaged", summary.machine_triaged_count || 0],
     ["Accepted", summary.accepted_count],
     ["Rejected", summary.rejected_count],
     ["Unclear", summary.unclear_count],
@@ -708,7 +711,12 @@ function renderGuide(summary) {
 function renderReview(page, summary) {
   if (page.done || !page.item) {
     currentCandidateId = "";
-    document.getElementById("current-candidate").innerHTML = "<div class=\"done\"><h2>Review complete</h2><p class=\"muted\">" + escapeHtml(summary.judged_count) + "/" + escapeHtml(summary.candidate_count) + " judged. Precision estimate: " + escapeHtml(summary.precision_estimate) + ".</p></div>";
+    const machineTriaged = summary.machine_triaged_count || 0;
+    const title = machineTriaged > 0 ? "Human review queue clear" : "Review complete";
+    const message = machineTriaged > 0
+      ? escapeHtml(machineTriaged) + " candidate(s) are machine-triaged proposal-only and remain unjudged/auditable."
+      : escapeHtml(summary.judged_count) + "/" + escapeHtml(summary.candidate_count) + " judged. Precision estimate: " + escapeHtml(summary.precision_estimate) + ".";
+    document.getElementById("current-candidate").innerHTML = "<div class=\"done\"><h2>" + title + "</h2><p class=\"muted\">" + message + "</p></div>";
     document.getElementById("decision-controls").innerHTML = "";
     renderFailureReasonOptions(selectedChoice);
     document.getElementById("reason-hint").textContent = "";
@@ -717,6 +725,21 @@ function renderReview(page, summary) {
   }
   const item = page.item;
   currentCandidateId = item.candidate_id;
+  const agent = item.agent_review_proposal || null;
+  const agentReasons = agent && agent.review_reason_codes ? agent.review_reason_codes.map(reason => "<span class=\"tag\">" + escapeHtml(reason) + "</span>").join("") : "";
+  const agentPanel = agent ? (
+    "<div class=\"agent-review\"><h3>Agent proposal</h3>" +
+      "<p><strong>Proposal only.</strong> This is not a saved judgment, destination approval, or DEC-64 evidence.</p>" +
+      "<div class=\"tags\">" +
+        "<span class=\"tag\">choice: " + escapeHtml(agent.choice) + "</span>" +
+        (agent.failure_reason ? "<span class=\"tag\">reason: " + escapeHtml(agent.failure_reason) + "</span>" : "") +
+        "<span class=\"tag\">confidence: " + escapeHtml(agent.confidence) + "</span>" +
+        "<span class=\"tag\">human review required: " + escapeHtml(Boolean(agent.human_review_required)) + "</span>" +
+      "</div>" +
+      (agentReasons ? "<div class=\"tags\">" + agentReasons + "</div>" : "") +
+      "<p class=\"muted\">" + escapeHtml(agent.rationale || "No rationale") + "</p>" +
+    "</div>"
+  ) : "";
   const readiness = item.evidence_readiness || {};
   const readinessReasons = (readiness.reason_codes || []).map(reason => "<span class=\"tag\">" + escapeHtml(reason) + "</span>").join("") || "<span class=\"tag\">No readiness reasons</span>";
   const readinessTag = readiness.status ? "<span class=\"tag\">readiness: " + escapeHtml(readiness.status) + "</span>" : "<span class=\"tag\">readiness unavailable</span>";
@@ -755,6 +778,7 @@ function renderReview(page, summary) {
     "</div>" +
     "<div class=\"candidate-body\">" +
       "<div class=\"review-task\"><h3>Review task</h3><p><strong>Should this candidate count as a correct semantic extraction?</strong></p><p class=\"muted\">Judge the extraction system, not whether this is ready to write into a destination.</p></div>" +
+      agentPanel +
       "<div><h3>Summary</h3><p class=\"summary\">" + escapeHtml(item.summary || "No summary") + "</p></div>" +
       "<div class=\"summary-grid\">" +
         "<div class=\"summary-box\"><span>Kind</span><strong>" + escapeHtml(item.candidate_kind) + "</strong></div>" +

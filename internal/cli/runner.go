@@ -30,7 +30,7 @@ const (
 	ExitArtifactWrite = 3
 )
 
-const usage = "usage: mindline process <candidate.json> [--out <dir>]\nusage: mindline slack normalize <slack-export.json> [--out <dir>]\nusage: mindline destination dry-run <sbos-result.json> --adapter tolaria --out <dir>\nusage: mindline pipeline dry-run <pipeline-input.json> --method basb-para-code --destination tolaria --out <dir>\nusage: mindline product-brain propose <run-dir> --profile <profile.json> --out <dir>\nusage: mindline documents decompose <markdown-path-or-dir> --out <dir>\nusage: mindline documents structure <markdown-path-or-dir> --out <dir>\nusage: mindline documents semantics <structure-run-dir-or-markdown-path-or-markdown-dir> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents accept <semantic-run-dir> --answer-key <answer-key.json> --out <dir>\nusage: mindline documents calibrate <semantic-acceptance-dir-or-parent> --out <dir> [--threshold 0.98] [--held-out] [--source-root <dir> --source <relative.md>]\nusage: mindline documents calibrate-next <semantic-calibration-dir-or-parent>\nusage: mindline documents judge <semantic-run-dir> --out <dir> [--source-root <dir> --source <relative.md>]\nusage: mindline documents judge-next <semantic-judgment-dir-or-parent>\nusage: mindline documents judge-record <semantic-judgment-dir-or-parent> --candidate <candidate-id> --choice accept|reject|unclear|duplicate|wrong-kind [--reason <failure-reason>] [--secondary-reason <failure-reason>] [--note <text>] [--reviewer <id>]\nusage: mindline documents judge-serve <semantic-judgment-dir-or-parent> [--addr 127.0.0.1:8787] [--reviewer <id>]\n"
+const usage = "usage: mindline process <candidate.json> [--out <dir>]\nusage: mindline slack normalize <slack-export.json> [--out <dir>]\nusage: mindline destination dry-run <sbos-result.json> --adapter tolaria --out <dir>\nusage: mindline pipeline dry-run <pipeline-input.json> --method basb-para-code --destination tolaria --out <dir>\nusage: mindline product-brain propose <run-dir> --profile <profile.json> --out <dir>\nusage: mindline documents decompose <markdown-path-or-dir> --out <dir>\nusage: mindline documents structure <markdown-path-or-dir> --out <dir>\nusage: mindline documents semantics <structure-run-dir-or-markdown-path-or-markdown-dir> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents accept <semantic-run-dir> --answer-key <answer-key.json> --out <dir>\nusage: mindline documents calibrate <semantic-acceptance-dir-or-parent> --out <dir> [--threshold 0.98] [--held-out] [--source-root <dir> --source <relative.md>]\nusage: mindline documents calibrate-next <semantic-calibration-dir-or-parent>\nusage: mindline documents judge <semantic-run-dir> --out <dir> [--source-root <dir> --source <relative.md>] [--agent-reviewer llm --llm-provider openai --llm-model <model>]\nusage: mindline documents judge-next <semantic-judgment-dir-or-parent>\nusage: mindline documents judge-record <semantic-judgment-dir-or-parent> --candidate <candidate-id> --choice accept|reject|unclear|duplicate|wrong-kind [--reason <failure-reason>] [--secondary-reason <failure-reason>] [--note <text>] [--reviewer <id>]\nusage: mindline documents judge-serve <semantic-judgment-dir-or-parent> [--addr 127.0.0.1:8787] [--reviewer <id>]\n"
 
 const protectedRootsEnv = "MINDLINE_PROTECTED_ROOTS"
 const defaultTolariaProtectedRoot = "/Users/randyhereman/Young Human Club Dropbox/02. Areas/PKM - Tolaria"
@@ -283,9 +283,13 @@ func (r Runner) runDocuments(args []string, stdout, stderr io.Writer) int {
 }
 
 func (r Runner) runDocumentsJudge(args []string, stdout, stderr io.Writer) int {
-	inputPath, outDir, options, parseError := parseDocumentsJudgeArgs(args)
+	inputPath, outDir, options, parseError, configError := r.parseDocumentsJudgeArgs(args)
 	if parseError != parseErrorNone {
 		fmt.Fprint(stderr, usage)
+		return ExitUsage
+	}
+	if configError != "" {
+		fmt.Fprintln(stderr, configError)
 		return ExitUsage
 	}
 	summary, err := documents.JudgeSemanticCandidates(inputPath, outDir, options)
@@ -1050,42 +1054,91 @@ func parseDocumentsCalibrateNextArgs(args []string) (inputPath string, err parse
 	return args[1], parseErrorNone
 }
 
-func parseDocumentsJudgeArgs(args []string) (inputPath string, outDir string, options documents.SemanticJudgmentOptions, err parseError) {
+func (r Runner) parseDocumentsJudgeArgs(args []string) (inputPath string, outDir string, options documents.SemanticJudgmentOptions, err parseError, configError string) {
 	if len(args) < 4 || args[0] != "judge" || strings.TrimSpace(args[1]) == "" {
-		return "", "", options, parseErrorUsage
+		return "", "", options, parseErrorUsage, ""
 	}
 	inputPath = args[1]
 	for i := 2; i < len(args); {
 		switch args[i] {
 		case "--out":
 			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
-				return "", "", options, parseErrorUsage
+				return "", "", options, parseErrorUsage, ""
 			}
 			outDir = args[i+1]
 			i += 2
 		case "--source-root":
 			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
-				return "", "", options, parseErrorUsage
+				return "", "", options, parseErrorUsage, ""
 			}
 			options.SourceRoot = args[i+1]
 			i += 2
 		case "--source":
 			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
-				return "", "", options, parseErrorUsage
+				return "", "", options, parseErrorUsage, ""
 			}
 			options.SourcePath = args[i+1]
 			i += 2
+		case "--agent-reviewer":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", options, parseErrorUsage, ""
+			}
+			reviewer := documents.SemanticJudgmentReviewer(strings.TrimSpace(args[i+1]))
+			if reviewer != documents.SemanticJudgmentReviewerLLM {
+				return "", "", options, parseErrorUsage, ""
+			}
+			options.Reviewer = reviewer
+			i += 2
+		case "--llm-provider":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", options, parseErrorUsage, ""
+			}
+			options.LLMProvider = strings.TrimSpace(args[i+1])
+			i += 2
+		case "--llm-model":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", options, parseErrorUsage, ""
+			}
+			options.LLMModel = strings.TrimSpace(args[i+1])
+			i += 2
 		default:
-			return "", "", options, parseErrorUsage
+			return "", "", options, parseErrorUsage, ""
 		}
 	}
 	if outDir == "" {
-		return "", "", options, parseErrorUsage
+		return "", "", options, parseErrorUsage, ""
 	}
 	if (strings.TrimSpace(options.SourceRoot) == "") != (strings.TrimSpace(options.SourcePath) == "") {
-		return "", "", options, parseErrorUsage
+		return "", "", options, parseErrorUsage, ""
 	}
-	return inputPath, outDir, options, parseErrorNone
+	options = r.resolveSemanticJudgmentLLMEnv(options)
+	if options.Reviewer == documents.SemanticJudgmentReviewerLLM {
+		if options.LLMProvider == "" {
+			return "", "", options, parseErrorNone, "missing LLM provider"
+		}
+		if options.LLMProvider != "openai" {
+			return "", "", options, parseErrorNone, fmt.Sprintf("unsupported LLM provider: %s", options.LLMProvider)
+		}
+		if options.LLMModel == "" {
+			return "", "", options, parseErrorNone, "missing OpenAI model"
+		}
+		if options.LLMAPIKey == "" {
+			return "", "", options, parseErrorNone, "missing OpenAI API key"
+		}
+	}
+	return inputPath, outDir, options, parseErrorNone, ""
+}
+
+func (r Runner) resolveSemanticJudgmentLLMEnv(options documents.SemanticJudgmentOptions) documents.SemanticJudgmentOptions {
+	semanticOptions := r.resolveSemanticLLMEnv(documents.SemanticOptions{
+		LLMProvider: options.LLMProvider,
+		LLMModel:    options.LLMModel,
+		LLMAPIKey:   options.LLMAPIKey,
+	})
+	options.LLMProvider = semanticOptions.LLMProvider
+	options.LLMModel = semanticOptions.LLMModel
+	options.LLMAPIKey = semanticOptions.LLMAPIKey
+	return options
 }
 
 func parseDocumentsJudgeNextArgs(args []string) (inputPath string, err parseError) {

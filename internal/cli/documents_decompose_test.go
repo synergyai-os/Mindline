@@ -503,7 +503,7 @@ func TestDocumentsJudgeServeStateAndRecord(t *testing.T) {
 	if _, err := html.ReadFrom(rec.Body); err != nil {
 		t.Fatalf("read ui html: %v", err)
 	}
-	for _, want := range []string{"Mindline Review", "Review", "Guide", "How to review", "Decision meanings", "remaining", "current-candidate", "decision-controls", "failure-reason", "evidence", "Review task", "Should this candidate count", "Evidence highlights", "Raw details", "Save decision", "details class=\\\"raw-details\\\"", "openRawDetails", "visibleEvidenceLimit", "selectedChoice", "isSubmitting", "failureReasonsByChoice[selectedChoice]"} {
+	for _, want := range []string{"Mindline Review", "Review", "Guide", "How to review", "Decision meanings", "remaining", "current-candidate", "decision-controls", "failure-reason", "evidence", "Review task", "Should this candidate count", "Agent proposal", "not a saved judgment", "Evidence highlights", "Raw details", "Save decision", "details class=\\\"raw-details\\\"", "openRawDetails", "visibleEvidenceLimit", "selectedChoice", "isSubmitting", "failureReasonsByChoice[selectedChoice]"} {
 		if !strings.Contains(html.String(), want) {
 			t.Fatalf("expected UI HTML to contain %q, got %s", want, html.String())
 		}
@@ -522,6 +522,8 @@ func TestDocumentsJudgeServeStateAndRecord(t *testing.T) {
 		"const visibleExcerpts = allExcerpts.slice(0, visibleEvidenceLimit)",
 		"const hiddenExcerptCount = Math.max(0, allExcerpts.length - visibleEvidenceLimit)",
 		"hiddenExcerptCount > 0",
+		"Human review queue clear",
+		"machine-triaged proposal-only and remain unjudged/auditable",
 		"const rawExcerpts = allExcerpts.map(excerptHtml).join(\"\")",
 		"const reasons = failureReasonsByChoice[selectedChoice] || failureReasonsByChoice[activeChoice] || []",
 		"button.disabled = isSubmitting",

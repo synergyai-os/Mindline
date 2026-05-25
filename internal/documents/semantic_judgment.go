@@ -20,6 +20,10 @@ func JudgeSemanticCandidates(semanticRunDir, outDir string, options SemanticJudg
 		return SemanticJudgmentSummary{}, err
 	}
 	items := semanticJudgmentCandidates(candidates, relations, observations, source, nil)
+	items, err = attachSemanticAgentReviews(items, options)
+	if err != nil {
+		return SemanticJudgmentSummary{}, err
+	}
 	summary := BuildSemanticJudgmentSummary(semanticSummary.RunID, semanticSummary.SourceCount, items, nil)
 	if err := WriteSemanticJudgment(outDir, summary); err != nil {
 		return SemanticJudgmentSummary{}, err
@@ -143,8 +147,12 @@ func NextSemanticJudgmentPage(inputDir string) (SemanticJudgmentPage, error) {
 	judged := semanticJudgmentsByCandidate(judgments)
 	nextIndex := len(items)
 	var next *SemanticJudgmentCandidate
+	hasAgentReviews := semanticJudgmentHasAgentReviews(items)
 	for i := range items {
 		if judged[items[i].CandidateID] != nil {
+			continue
+		}
+		if hasAgentReviews && !semanticJudgmentCandidateRequiresHuman(items[i]) {
 			continue
 		}
 		nextIndex = i
@@ -158,14 +166,27 @@ func NextSemanticJudgmentPage(inputDir string) (SemanticJudgmentPage, error) {
 		NextIndex:      nextIndex,
 		TotalCount:     len(items),
 		JudgedCount:    len(judgments),
-		RemainingCount: len(items) - len(judgments),
+		RemainingCount: semanticJudgmentRemainingForCursor(items, judgments, hasAgentReviews),
 		Exhausted:      next == nil,
 	}
 	if next == nil {
+		machineTriaged := 0
+		if hasAgentReviews {
+			for _, item := range items {
+				if judged[item.CandidateID] == nil && item.AgentReview != nil && !item.AgentReview.HumanReviewRequired {
+					machineTriaged++
+				}
+			}
+		}
+		message := "No unjudged candidates remain."
+		if machineTriaged > 0 {
+			message = fmt.Sprintf("No human-required candidates remain. %d machine-triaged proposal-only candidate(s) remain unjudged and auditable.", machineTriaged)
+		}
 		return SemanticJudgmentPage{
 			SchemaVersion: SemanticJudgmentPageSchemaVersion,
 			Done:          true,
 			Cursor:        cursor,
+			PageMarkdown:  message,
 		}, nil
 	}
 	return SemanticJudgmentPage{
@@ -535,6 +556,9 @@ func BuildSemanticJudgmentSummary(runID string, sourceCount int, items []Semanti
 	evidenceReady := 0
 	evalCounted := 0
 	evidenceExcluded := 0
+	agentReviewed := 0
+	humanReviewRequired := 0
+	machineTriaged := 0
 	readinessReasonCounts := semanticEvidenceReadinessReasonCountMap()
 	summaries := make([]SemanticJudgmentCandidateSummary, 0, len(items))
 	for _, item := range items {
@@ -555,6 +579,21 @@ func BuildSemanticJudgmentSummary(runID string, sourceCount int, items []Semanti
 			evalCounted++
 		} else {
 			evidenceExcluded++
+		}
+		humanReviewRequiredValue := (*bool)(nil)
+		agentChoice := SemanticJudgmentChoice("")
+		agentConfidence := Confidence("")
+		if item.AgentReview != nil {
+			agentReviewed++
+			agentChoice = item.AgentReview.Choice
+			agentConfidence = item.AgentReview.Confidence
+			required := item.AgentReview.HumanReviewRequired
+			humanReviewRequiredValue = &required
+			if item.AgentReview.HumanReviewRequired {
+				humanReviewRequired++
+			} else {
+				machineTriaged++
+			}
 		}
 		for _, reason := range readiness.ReasonCodes {
 			readinessReasonCounts[reason]++
@@ -607,6 +646,9 @@ func BuildSemanticJudgmentSummary(runID string, sourceCount int, items []Semanti
 			CandidateKind:            item.CandidateKind,
 			ReviewStatus:             item.ReviewStatus,
 			Confidence:               item.Confidence,
+			AgentReviewChoice:        agentChoice,
+			AgentReviewConfidence:    agentConfidence,
+			HumanReviewRequired:      humanReviewRequiredValue,
 			JudgmentChoice:           choice,
 			FailureReason:            semanticJudgmentFailureReason(judgment),
 			SecondaryFailureReasons:  semanticJudgmentSecondaryFailureReasons(judgment),
@@ -631,6 +673,9 @@ func BuildSemanticJudgmentSummary(runID string, sourceCount int, items []Semanti
 		CandidateCount:                len(items),
 		JudgedCount:                   judgedCount,
 		RemainingCount:                remaining,
+		AgentReviewedCount:            agentReviewed,
+		HumanReviewRequiredCount:      humanReviewRequired,
+		MachineTriagedCount:           machineTriaged,
 		AcceptedCount:                 accepted,
 		RejectedCount:                 rejected,
 		UnclearCount:                  unclear,
@@ -724,6 +769,37 @@ func semanticLegacyJudgmentSummary(summary SemanticJudgmentSummary) SemanticJudg
 		summary.Candidates[i].EvidenceReadinessReasons = []SemanticEvidenceReadinessReason{SemanticEvidenceReadinessMissingSourceExcerpt}
 	}
 	return summary
+}
+
+func semanticJudgmentHasAgentReviews(items []SemanticJudgmentCandidate) bool {
+	for _, item := range items {
+		if item.AgentReview != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func semanticJudgmentCandidateRequiresHuman(item SemanticJudgmentCandidate) bool {
+	if item.AgentReview == nil {
+		return true
+	}
+	return item.AgentReview.HumanReviewRequired
+}
+
+func semanticJudgmentRemainingForCursor(items []SemanticJudgmentCandidate, judgments []SemanticJudgmentRecord, hasAgentReviews bool) int {
+	judged := semanticJudgmentsByCandidate(judgments)
+	remaining := 0
+	for _, item := range items {
+		if judged[item.CandidateID] != nil {
+			continue
+		}
+		if hasAgentReviews && !semanticJudgmentCandidateRequiresHuman(item) {
+			continue
+		}
+		remaining++
+	}
+	return remaining
 }
 
 func semanticPreviousJudgmentSummary(summary SemanticJudgmentSummary) SemanticJudgmentSummary {
@@ -1232,6 +1308,11 @@ func ValidateSemanticJudgmentCandidate(item SemanticJudgmentCandidate) error {
 		if err := validateSemanticJudgmentCandidateReadinessMatches(item); err != nil {
 			return err
 		}
+		if item.AgentReview != nil {
+			if err := ValidateSemanticAgentReviewProposal(*item.AgentReview); err != nil {
+				return err
+			}
+		}
 	}
 	body := semanticJudgmentCandidateBody(item)
 	if containsUnsafeMarker(body) || containsGovernanceID(body) {
@@ -1386,6 +1467,13 @@ func semanticJudgmentCandidateBody(item SemanticJudgmentCandidate) string {
 	if item.Judgment != nil {
 		b.WriteString("\n" + semanticJudgmentRecordBody(*item.Judgment))
 	}
+	if item.AgentReview != nil {
+		b.WriteString("\n" + string(item.AgentReview.Choice) + "\n" + string(item.AgentReview.FailureReason))
+		b.WriteString("\n" + string(item.AgentReview.Confidence) + "\n" + item.AgentReview.Rationale)
+		for _, reason := range item.AgentReview.ReviewReasonCodes {
+			b.WriteString("\n" + string(reason))
+		}
+	}
 	return b.String()
 }
 
@@ -1424,6 +1512,20 @@ func semanticJudgmentPageMarkdown(item SemanticJudgmentCandidate, cursor Semanti
 	}
 	b.WriteString(fmt.Sprintf("- Source excerpts: %d\n", item.EvidenceReadiness.SourceExcerptCount))
 	b.WriteString(fmt.Sprintf("- Relation contexts: %d\n", item.EvidenceReadiness.RelationContextCount))
+	if item.AgentReview != nil {
+		b.WriteString("\n## Agent review proposal\n\n")
+		b.WriteString("- Non-final: proposal only; not a saved judgment\n")
+		b.WriteString("- Choice: " + string(item.AgentReview.Choice) + "\n")
+		if item.AgentReview.FailureReason != "" {
+			b.WriteString("- Failure reason: " + string(item.AgentReview.FailureReason) + "\n")
+		}
+		b.WriteString("- Confidence: " + string(item.AgentReview.Confidence) + "\n")
+		b.WriteString(fmt.Sprintf("- Human review required: %t\n", item.AgentReview.HumanReviewRequired))
+		if len(item.AgentReview.ReviewReasonCodes) > 0 {
+			b.WriteString("- Review reasons: " + semanticAgentReviewReasonCodeText(item.AgentReview.ReviewReasonCodes) + "\n")
+		}
+		b.WriteString("- Rationale: " + item.AgentReview.Rationale + "\n")
+	}
 	b.WriteString("\n## Candidate summary\n\n")
 	b.WriteString(fallbackText(item.Summary, "no summary") + "\n")
 	b.WriteString("\n## Evidence ranges\n\n")
@@ -1501,6 +1603,16 @@ func semanticJudgmentPageMarkdown(item SemanticJudgmentCandidate, cursor Semanti
 	b.WriteString("- duplicate requires duplicate\n")
 	b.WriteString("- wrong-kind requires wrong_kind\n")
 	return b.String()
+}
+
+func semanticAgentReviewReasonCodeText(reasons []SemanticAgentReviewReasonCode) string {
+	ordered := append([]SemanticAgentReviewReasonCode(nil), reasons...)
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i] < ordered[j] })
+	parts := make([]string, 0, len(ordered))
+	for _, reason := range ordered {
+		parts = append(parts, string(reason))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func semanticEvidenceReadinessReasonText(reasons []SemanticEvidenceReadinessReason) string {

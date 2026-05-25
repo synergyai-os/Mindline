@@ -33,6 +33,7 @@ const (
 	SemanticJudgmentRecordSchemaVersion                  = "semantic-judgment-record/v0.2"
 	SemanticJudgmentRecordLegacySchemaVersion            = "semantic-judgment-record/v0.1"
 	SemanticJudgmentPageSchemaVersion                    = "semantic-judgment-page/v0.3"
+	SemanticAgentReviewProposalSchemaVersion             = "semantic-agent-review-proposal/v0.1"
 	SourceKindMarkdown                                   = "markdown"
 	EvidenceKindLocation                                 = "location"
 )
@@ -663,9 +664,21 @@ type SemanticCalibrationPage struct {
 }
 
 type SemanticJudgmentOptions struct {
-	SourceRoot string
-	SourcePath string
+	SourceRoot  string
+	SourcePath  string
+	Reviewer    SemanticJudgmentReviewer
+	LLMProvider string
+	LLMModel    string
+	LLMAPIKey   string
+	LLMClient   LLMSemanticReviewer
 }
+
+type SemanticJudgmentReviewer string
+
+const (
+	SemanticJudgmentReviewerNone SemanticJudgmentReviewer = ""
+	SemanticJudgmentReviewerLLM  SemanticJudgmentReviewer = "llm"
+)
 
 type SemanticJudgmentChoice string
 
@@ -713,6 +726,9 @@ type SemanticJudgmentSummary struct {
 	CandidateCount                int                                                         `json:"candidate_count"`
 	JudgedCount                   int                                                         `json:"judged_count"`
 	RemainingCount                int                                                         `json:"remaining_count"`
+	AgentReviewedCount            int                                                         `json:"agent_reviewed_count"`
+	HumanReviewRequiredCount      int                                                         `json:"human_review_required_count"`
+	MachineTriagedCount           int                                                         `json:"machine_triaged_count"`
 	AcceptedCount                 int                                                         `json:"accepted_count"`
 	RejectedCount                 int                                                         `json:"rejected_count"`
 	UnclearCount                  int                                                         `json:"unclear_count"`
@@ -748,6 +764,9 @@ type SemanticJudgmentCandidateSummary struct {
 	CandidateKind            SemanticCandidateKind             `json:"candidate_kind"`
 	ReviewStatus             ReviewStatus                      `json:"review_status"`
 	Confidence               Confidence                        `json:"confidence"`
+	AgentReviewChoice        SemanticJudgmentChoice            `json:"agent_review_choice,omitempty"`
+	AgentReviewConfidence    Confidence                        `json:"agent_review_confidence,omitempty"`
+	HumanReviewRequired      *bool                             `json:"human_review_required,omitempty"`
 	JudgmentChoice           SemanticJudgmentChoice            `json:"judgment_choice,omitempty"`
 	FailureReason            SemanticFailureReason             `json:"failure_reason,omitempty"`
 	SecondaryFailureReasons  []SemanticFailureReason           `json:"secondary_failure_reasons,omitempty"`
@@ -778,8 +797,33 @@ type SemanticJudgmentCandidate struct {
 	RelationContext   []SemanticJudgmentRelationContext    `json:"relation_context,omitempty"`
 	Blockers          []Blocker                            `json:"blockers"`
 	EvidenceReadiness SemanticEvidenceReadiness            `json:"evidence_readiness"`
+	AgentReview       *SemanticAgentReviewProposal         `json:"agent_review_proposal,omitempty"`
 	Judgment          *SemanticJudgmentRecord              `json:"judgment,omitempty"`
 }
+
+type SemanticAgentReviewProposal struct {
+	SchemaVersion       string                          `json:"schema_version"`
+	Choice              SemanticJudgmentChoice          `json:"choice"`
+	FailureReason       SemanticFailureReason           `json:"failure_reason,omitempty"`
+	Confidence          Confidence                      `json:"confidence"`
+	HumanReviewRequired bool                            `json:"human_review_required"`
+	ReviewReasonCodes   []SemanticAgentReviewReasonCode `json:"review_reason_codes"`
+	Rationale           string                          `json:"rationale"`
+	Error               string                          `json:"error,omitempty"`
+}
+
+type SemanticAgentReviewReasonCode string
+
+const (
+	SemanticAgentReviewReasonLowConfidence          SemanticAgentReviewReasonCode = "low_confidence"
+	SemanticAgentReviewReasonEvidenceNotReady       SemanticAgentReviewReasonCode = "evidence_not_ready"
+	SemanticAgentReviewReasonBlockersPresent        SemanticAgentReviewReasonCode = "blockers_present"
+	SemanticAgentReviewReasonUnsafeOrPrivate        SemanticAgentReviewReasonCode = "unsafe_or_private"
+	SemanticAgentReviewReasonInvalidRelationContext SemanticAgentReviewReasonCode = "invalid_relation_context"
+	SemanticAgentReviewReasonModelUncertain         SemanticAgentReviewReasonCode = "model_uncertain"
+	SemanticAgentReviewReasonModelError             SemanticAgentReviewReasonCode = "model_error"
+	SemanticAgentReviewReasonMachineTriaged         SemanticAgentReviewReasonCode = "machine_triaged"
+)
 
 type SemanticJudgmentRelationContext struct {
 	RelationID       string                          `json:"relation_id"`
