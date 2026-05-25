@@ -203,13 +203,6 @@ func ValidateSafeEvent(event SafeEvent) error {
 		if !allowedProperties[key] && !allowedDynamic {
 			return fmt.Errorf("unsafe PostHog property: %s", key)
 		}
-		if !allowedDynamic {
-			for _, marker := range forbiddenPropertyMarkers {
-				if strings.Contains(strings.ToLower(key), marker) {
-					return fmt.Errorf("unsafe PostHog property: %s", key)
-				}
-			}
-		}
 		if err := validateSafePropertyValue(key, value); err != nil {
 			return err
 		}

@@ -86,6 +86,23 @@ func TestValidateSafeEventRejectsNestedValues(t *testing.T) {
 	}
 }
 
+func TestValidateSafeEventAllowsExplicitTelemetryTokenAndSecretKeys(t *testing.T) {
+	event := SafeEvent{
+		Event:      "$ai_generation",
+		DistinctID: "mindline-local",
+		TraceID:    "trace-test",
+		Properties: map[string]any{
+			"input_tokens":    42,
+			"output_tokens":   12,
+			"secret_detected": false,
+		},
+	}
+
+	if err := ValidateSafeEvent(event); err != nil {
+		t.Fatalf("expected explicitly allowlisted telemetry keys to pass, got %v", err)
+	}
+}
+
 func TestPostHogExporterRejectsUnsafeTraceIDBeforeNetwork(t *testing.T) {
 	called := false
 	exporter := NewPostHogExporter(Config{
