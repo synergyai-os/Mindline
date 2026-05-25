@@ -2531,8 +2531,22 @@ func TestSemanticJudgmentAgentReviewTriageDoesNotCreateJudgments(t *testing.T) {
 	if summary.JudgedCount != 0 || summary.AcceptedCount != 0 || summary.RejectedCount != 0 || summary.RemainingCount != 2 {
 		t.Fatalf("agent proposals must not create judgment counts: %+v", summary)
 	}
+	if summary.ReviewBurdenCount != 1 {
+		t.Fatalf("review burden should count unjudged human-required proposal items, got %+v", summary)
+	}
 	if len(summary.Judgments) != 0 {
 		t.Fatalf("agent proposals must not create judgment records: %+v", summary.Judgments)
+	}
+	var cursor SemanticJudgmentCursor
+	cursorData, err := os.ReadFile(filepath.Join(out, "semantic-judgment", "cursor.json"))
+	if err != nil {
+		t.Fatalf("read semantic judgment cursor: %v", err)
+	}
+	if err := json.Unmarshal(cursorData, &cursor); err != nil {
+		t.Fatalf("decode semantic judgment cursor: %v", err)
+	}
+	if cursor.RemainingCount != 1 || cursor.Exhausted {
+		t.Fatalf("cursor should count unjudged human-required items, got %+v", cursor)
 	}
 	page, err := NextSemanticJudgmentPage(filepath.Join(out, "semantic-judgment"))
 	if err != nil {
@@ -2550,7 +2564,7 @@ func TestSemanticJudgmentAgentReviewTriageDoesNotCreateJudgments(t *testing.T) {
 	if !strings.Contains(page.PageMarkdown, "Agent review proposal") || !strings.Contains(page.PageMarkdown, "proposal only") {
 		t.Fatalf("page must show non-final agent proposal:\n%s", page.PageMarkdown)
 	}
-	_, err = RecordSemanticJudgment(filepath.Join(out, "semantic-judgment"), SemanticJudgmentRecordInput{
+	updated, err := RecordSemanticJudgment(filepath.Join(out, "semantic-judgment"), SemanticJudgmentRecordInput{
 		CandidateID:   page.Item.CandidateID,
 		Choice:        SemanticJudgmentChoiceUnclear,
 		FailureReason: SemanticFailureAmbiguous,
@@ -2560,12 +2574,40 @@ func TestSemanticJudgmentAgentReviewTriageDoesNotCreateJudgments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("record semantic judgment: %v", err)
 	}
+	if updated.HumanReviewRequiredCount != 0 || updated.MachineTriagedCount != 1 {
+		t.Fatalf("proposal queue counts should exclude judged human-required items: %+v", updated)
+	}
+	if updated.RemainingCount != 1 || updated.ReviewBurdenCount != 1 {
+		t.Fatalf("summary should keep unjudged audit backlog but exclude machine-triaged items from review burden: %+v", updated)
+	}
+	cursorData, err = os.ReadFile(filepath.Join(out, "semantic-judgment", "cursor.json"))
+	if err != nil {
+		t.Fatalf("read updated semantic judgment cursor: %v", err)
+	}
+	if err := json.Unmarshal(cursorData, &cursor); err != nil {
+		t.Fatalf("decode updated semantic judgment cursor: %v", err)
+	}
+	if cursor.RemainingCount != 0 || !cursor.Exhausted {
+		t.Fatalf("cursor should be exhausted when only machine-triaged items remain, got %+v", cursor)
+	}
 	donePage, err := NextSemanticJudgmentPage(filepath.Join(out, "semantic-judgment"))
 	if err != nil {
 		t.Fatalf("next done semantic judgment page: %v", err)
 	}
 	if !donePage.Done || !strings.Contains(donePage.PageMarkdown, "machine-triaged proposal-only") || !strings.Contains(donePage.PageMarkdown, "remain unjudged") {
 		t.Fatalf("done page must not imply machine-triaged candidates are complete: %+v", donePage)
+	}
+	updated, err = RecordSemanticJudgment(filepath.Join(out, "semantic-judgment"), SemanticJudgmentRecordInput{
+		CandidateID: "cand-machine",
+		Choice:      SemanticJudgmentChoiceAccept,
+		ReviewerID:  "test",
+		RecordedAt:  time.Date(2026, 5, 25, 12, 1, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("record machine-triaged semantic judgment: %v", err)
+	}
+	if updated.HumanReviewRequiredCount != 0 || updated.MachineTriagedCount != 0 {
+		t.Fatalf("proposal queue counts should exclude all judged proposal items: %+v", updated)
 	}
 }
 

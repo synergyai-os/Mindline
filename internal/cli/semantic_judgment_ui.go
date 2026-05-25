@@ -646,11 +646,13 @@ function render(state) {
   currentState = state;
   const summary = state.summary;
   const page = state.page;
+  const queueRemaining = activeReviewRemaining(summary, page);
   document.getElementById("run-context").textContent = "Run " + summary.run_id + " · " + summary.source_count + " source(s)";
   const metricRows = [
     ["Total", summary.candidate_count],
     ["Judged", summary.judged_count],
-    ["Remaining", summary.remaining_count],
+    ["Queue remaining", queueRemaining],
+    ["Unjudged", summary.remaining_count],
     ["Agent reviewed", summary.agent_reviewed_count || 0],
     ["Needs human", summary.human_review_required_count || 0],
     ["Machine triaged", summary.machine_triaged_count || 0],
@@ -671,10 +673,17 @@ function render(state) {
   updateSaveState();
   renderModeButtons();
   if (mode === "guide") {
-    renderGuide(summary);
+    renderGuide(summary, queueRemaining);
     return;
   }
   renderReview(page, summary);
+}
+
+function activeReviewRemaining(summary, page) {
+  if (page && page.cursor && page.cursor.remaining_count !== undefined && page.cursor.remaining_count !== null) {
+    return page.cursor.remaining_count;
+  }
+  return summary.remaining_count;
 }
 
 function renderModeButtons() {
@@ -682,8 +691,14 @@ function renderModeButtons() {
   document.getElementById("guide-mode").classList.toggle("active", mode === "guide");
 }
 
-function renderGuide(summary) {
+function renderGuide(summary, queueRemaining) {
   currentCandidateId = "";
+  const machineTriaged = summary.machine_triaged_count || 0;
+  const guideStatus = queueRemaining > 0
+    ? escapeHtml(summary.judged_count) + " reviewed, " + escapeHtml(queueRemaining) + " queue remaining. Switch back to Review to continue."
+    : machineTriaged > 0
+      ? "Human review queue clear. " + escapeHtml(machineTriaged) + " machine-triaged proposal-only candidate(s) remain unjudged/auditable."
+      : escapeHtml(summary.judged_count) + "/" + escapeHtml(summary.candidate_count) + " judged.";
   document.getElementById("current-candidate").innerHTML =
     "<div class=\"guide\">" +
       "<div><h2>How to review</h2><p class=\"muted\">You are evaluating the extraction system, not approving a final knowledge write.</p></div>" +
@@ -700,7 +715,7 @@ function renderGuide(summary) {
         "<li><strong>Duplicate</strong>: already represented by another candidate.</li>" +
         "<li><strong>Wrong kind</strong>: real signal, but wrong object type or scope.</li>" +
       "</ul></div>" +
-      "<p class=\"muted\">" + escapeHtml(summary.judged_count) + " reviewed, " + escapeHtml(summary.remaining_count) + " remaining. Switch back to Review to continue.</p>" +
+      "<p class=\"muted\">" + guideStatus + "</p>" +
     "</div>";
   document.getElementById("decision-controls").innerHTML = "";
   renderFailureReasonOptions(selectedChoice);

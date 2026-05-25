@@ -580,6 +580,7 @@ func BuildSemanticJudgmentSummary(runID string, sourceCount int, items []Semanti
 		} else {
 			evidenceExcluded++
 		}
+		judgment := judged[item.CandidateID]
 		humanReviewRequiredValue := (*bool)(nil)
 		agentChoice := SemanticJudgmentChoice("")
 		agentConfidence := Confidence("")
@@ -589,16 +590,15 @@ func BuildSemanticJudgmentSummary(runID string, sourceCount int, items []Semanti
 			agentConfidence = item.AgentReview.Confidence
 			required := item.AgentReview.HumanReviewRequired
 			humanReviewRequiredValue = &required
-			if item.AgentReview.HumanReviewRequired {
+			if judgment == nil && item.AgentReview.HumanReviewRequired {
 				humanReviewRequired++
-			} else {
+			} else if judgment == nil {
 				machineTriaged++
 			}
 		}
 		for _, reason := range readiness.ReasonCodes {
 			readinessReasonCounts[reason]++
 		}
-		judgment := judged[item.CandidateID]
 		choice := SemanticJudgmentChoice("")
 		judgmentPath := ""
 		if judgment != nil {
@@ -665,7 +665,11 @@ func BuildSemanticJudgmentSummary(runID string, sourceCount int, items []Semanti
 	sort.SliceStable(summaries, func(i, j int) bool { return summaries[i].CandidateID < summaries[j].CandidateID })
 	judgedCount := len(judgments)
 	remaining := len(items) - judgedCount
-	reviewBurden := remaining + rejected + unclear + duplicate + wrongKind
+	activeRemaining := remaining
+	if semanticJudgmentHasAgentReviews(items) {
+		activeRemaining = semanticJudgmentRemainingForCursor(items, judgments, true)
+	}
+	reviewBurden := activeRemaining + rejected + unclear + duplicate + wrongKind
 	return SemanticJudgmentSummary{
 		SchemaVersion:                 SemanticJudgmentSummarySchemaVersion,
 		RunID:                         runID,

@@ -522,6 +522,7 @@ func TestDocumentsJudgeServeStateAndRecord(t *testing.T) {
 		"const visibleExcerpts = allExcerpts.slice(0, visibleEvidenceLimit)",
 		"const hiddenExcerptCount = Math.max(0, allExcerpts.length - visibleEvidenceLimit)",
 		"hiddenExcerptCount > 0",
+		"page.cursor.remaining_count",
 		"Human review queue clear",
 		"machine-triaged proposal-only and remain unjudged/auditable",
 		"const rawExcerpts = allExcerpts.map(excerptHtml).join(\"\")",

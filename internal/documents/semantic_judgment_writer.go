@@ -64,15 +64,7 @@ func writeSemanticJudgmentRoot(root string, summary SemanticJudgmentSummary) err
 	if err := writeJSON(realRoot, "judgment-summary.json", summary); err != nil {
 		return err
 	}
-	cursor := SemanticJudgmentCursor{
-		SchemaVersion:  SemanticJudgmentCursorSchemaVersion,
-		RunID:          summary.RunID,
-		NextIndex:      semanticJudgmentNextIndex(summary),
-		TotalCount:     summary.CandidateCount,
-		JudgedCount:    summary.JudgedCount,
-		RemainingCount: summary.RemainingCount,
-		Exhausted:      summary.RemainingCount == 0,
-	}
+	cursor := semanticJudgmentCursor(summary)
 	if err := writeJSON(realRoot, "cursor.json", cursor); err != nil {
 		return err
 	}
@@ -100,12 +92,60 @@ func writeSemanticJudgmentRoot(root string, summary SemanticJudgmentSummary) err
 }
 
 func semanticJudgmentNextIndex(summary SemanticJudgmentSummary) int {
+	hasAgentReviews := semanticJudgmentSummaryHasAgentReviews(summary)
 	for i, item := range summary.Candidates {
 		if item.JudgmentPath == "" {
+			if hasAgentReviews && !semanticJudgmentCandidateSummaryRequiresHuman(item) {
+				continue
+			}
 			return i
 		}
 	}
 	return len(summary.Candidates)
+}
+
+func semanticJudgmentCursor(summary SemanticJudgmentSummary) SemanticJudgmentCursor {
+	remaining := semanticJudgmentCursorRemaining(summary)
+	return SemanticJudgmentCursor{
+		SchemaVersion:  SemanticJudgmentCursorSchemaVersion,
+		RunID:          summary.RunID,
+		NextIndex:      semanticJudgmentNextIndex(summary),
+		TotalCount:     summary.CandidateCount,
+		JudgedCount:    summary.JudgedCount,
+		RemainingCount: remaining,
+		Exhausted:      remaining == 0,
+	}
+}
+
+func semanticJudgmentCursorRemaining(summary SemanticJudgmentSummary) int {
+	hasAgentReviews := semanticJudgmentSummaryHasAgentReviews(summary)
+	remaining := 0
+	for _, item := range summary.Candidates {
+		if item.JudgmentPath != "" {
+			continue
+		}
+		if hasAgentReviews && !semanticJudgmentCandidateSummaryRequiresHuman(item) {
+			continue
+		}
+		remaining++
+	}
+	return remaining
+}
+
+func semanticJudgmentSummaryHasAgentReviews(summary SemanticJudgmentSummary) bool {
+	for _, item := range summary.Candidates {
+		if item.HumanReviewRequired != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func semanticJudgmentCandidateSummaryRequiresHuman(item SemanticJudgmentCandidateSummary) bool {
+	if item.HumanReviewRequired == nil {
+		return true
+	}
+	return *item.HumanReviewRequired
 }
 
 func semanticJudgmentReportMarkdown(summary SemanticJudgmentSummary) string {
@@ -114,8 +154,11 @@ func semanticJudgmentReportMarkdown(summary SemanticJudgmentSummary) string {
 	b.WriteString(summary.QualityStatement + "\n\n")
 	b.WriteString(fmt.Sprintf("- Candidates: %d\n", summary.CandidateCount))
 	b.WriteString(fmt.Sprintf("- Judged: %d\n", summary.JudgedCount))
-	b.WriteString(fmt.Sprintf("- Remaining: %d\n", summary.RemainingCount))
+	b.WriteString(fmt.Sprintf("- Remaining unjudged: %d\n", summary.RemainingCount))
 	b.WriteString(fmt.Sprintf("- Agent reviewed: %d\n", summary.AgentReviewedCount))
+	if semanticJudgmentSummaryHasAgentReviews(summary) {
+		b.WriteString(fmt.Sprintf("- Human review remaining: %d\n", semanticJudgmentCursorRemaining(summary)))
+	}
 	b.WriteString(fmt.Sprintf("- Human review required: %d\n", summary.HumanReviewRequiredCount))
 	b.WriteString(fmt.Sprintf("- Machine triaged: %d (proposal-only, not judged)\n", summary.MachineTriagedCount))
 	b.WriteString(fmt.Sprintf("- Accepted: %d\n", summary.AcceptedCount))
