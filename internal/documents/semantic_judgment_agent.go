@@ -105,10 +105,7 @@ func attachSemanticAgentReviews(items []SemanticJudgmentCandidate, options Seman
 	if options.Reviewer != SemanticJudgmentReviewerLLM {
 		return nil, fmt.Errorf("unsupported semantic judgment reviewer: %s", options.Reviewer)
 	}
-	reviewer, err := semanticJudgmentReviewer(options)
-	if err != nil {
-		return nil, err
-	}
+	var reviewer LLMSemanticReviewer
 	out := append([]SemanticJudgmentCandidate(nil), items...)
 	for i := range out {
 		proposal, ok, err := localSemanticAgentReviewProposal(out[i], options)
@@ -118,6 +115,12 @@ func attachSemanticAgentReviews(items []SemanticJudgmentCandidate, options Seman
 		if ok {
 			out[i].AgentReview = &proposal
 			continue
+		}
+		if reviewer == nil {
+			reviewer, err = semanticJudgmentReviewer(options)
+			if err != nil {
+				return nil, err
+			}
 		}
 		response, err := reviewer.ReviewSemanticJudgment(LLMSemanticReviewRequest{Candidate: out[i]})
 		if err != nil {

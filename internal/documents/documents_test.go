@@ -2653,6 +2653,33 @@ func TestSemanticJudgmentAgentReviewDoesNotSendUnsafeCandidates(t *testing.T) {
 	}
 }
 
+func TestSemanticJudgmentAgentReviewDefersReviewerInitForUnsafeCandidates(t *testing.T) {
+	node := validStructureNode()
+	observation := validSemanticObservation(node)
+	candidate := validSemanticCandidate(observation, node)
+	item := semanticJudgmentCandidates([]SemanticCandidate{candidate}, nil, []SemanticObservation{observation}, semanticCalibrationSourceContext{}, nil)[0]
+	item.EvidenceExcerpts = append(item.EvidenceExcerpts, SemanticCalibrationEvidenceExcerpt{
+		SourceLabel:     "source.md",
+		StructureNodeID: node.NodeID,
+		LineStart:       1,
+		LineEnd:         1,
+		Text:            "private_content",
+	})
+	item.EvidenceReadiness = semanticEvidenceReadiness(item)
+
+	items, err := attachSemanticAgentReviews([]SemanticJudgmentCandidate{item}, SemanticJudgmentOptions{
+		Reviewer:    SemanticJudgmentReviewerLLM,
+		LLMProvider: "openai",
+		LLMModel:    "test-model",
+	})
+	if err != nil {
+		t.Fatalf("attach semantic agent reviews should not initialize LLM for local unsafe proposals: %v", err)
+	}
+	if items[0].AgentReview == nil || !items[0].AgentReview.HumanReviewRequired || items[0].AgentReview.ReviewReasonCodes[0] != SemanticAgentReviewReasonUnsafeOrPrivate {
+		t.Fatalf("expected local unsafe proposal: %+v", items[0].AgentReview)
+	}
+}
+
 func TestSemanticJudgmentAgentReviewReplacesContradictoryMachineTriagedReason(t *testing.T) {
 	node := validStructureNode()
 	observation := validSemanticObservation(node)
