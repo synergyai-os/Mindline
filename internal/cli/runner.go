@@ -1633,8 +1633,9 @@ func semanticJudgmentTraceSummary(summary documents.SemanticJudgmentSummary, opt
 	if summary.HumanReviewRequiredCount > 0 {
 		labels["judgment_human_review"] = 1
 	}
-	if summary.FailureReasonCounts[documents.SemanticFailureReason("model_error")] > 0 {
-		labels["judgment_model_errors"] = summary.FailureReasonCounts[documents.SemanticFailureReason("model_error")]
+	modelErrorCount := semanticJudgmentAgentReviewReasonCount(summary, documents.SemanticAgentReviewReasonModelError)
+	if modelErrorCount > 0 {
+		labels["judgment_model_errors"] = modelErrorCount
 	}
 	addPrefixedCounts(counts, "failure_reason_count.", summary.FailureReasonCounts)
 	addPrefixedCounts(counts, "evidence_readiness_reason_count.", summary.EvidenceReadinessReasonCounts)
@@ -1650,6 +1651,21 @@ func semanticJudgmentTraceSummary(summary documents.SemanticJudgmentSummary, opt
 		labels,
 		[]string{"$ai_generation", "$ai_feedback"},
 	)
+}
+
+func semanticJudgmentAgentReviewReasonCount(summary documents.SemanticJudgmentSummary, reason documents.SemanticAgentReviewReasonCode) int {
+	count := 0
+	for _, item := range summary.Items {
+		if item.AgentReview == nil {
+			continue
+		}
+		for _, candidateReason := range item.AgentReview.ReviewReasonCodes {
+			if candidateReason == reason {
+				count++
+			}
+		}
+	}
+	return count
 }
 
 func addPrefixedCounts[K ~string](counts map[string]int, prefix string, source map[K]int) {

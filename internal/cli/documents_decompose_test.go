@@ -703,6 +703,38 @@ func TestDocumentsJudgeExportsMetadataTraceWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestSemanticJudgmentTraceSummaryLabelsAgentModelErrors(t *testing.T) {
+	summary := documents.SemanticJudgmentSummary{
+		RunID:                         "run-model-error",
+		SourceCount:                   1,
+		CandidateCount:                1,
+		AgentReviewedCount:            1,
+		HumanReviewRequiredCount:      1,
+		FailureReasonCounts:           map[documents.SemanticFailureReason]int{},
+		EvidenceReadinessReasonCounts: map[documents.SemanticEvidenceReadinessReason]int{},
+		Items: []documents.SemanticJudgmentCandidate{
+			{
+				CandidateID: "candidate-1",
+				AgentReview: &documents.SemanticAgentReviewProposal{
+					ReviewReasonCodes: []documents.SemanticAgentReviewReasonCode{
+						documents.SemanticAgentReviewReasonModelError,
+					},
+				},
+			},
+		},
+	}
+
+	trace := semanticJudgmentTraceSummary(summary, documents.SemanticJudgmentOptions{
+		Reviewer:    documents.SemanticJudgmentReviewerLLM,
+		LLMProvider: "openai",
+		LLMModel:    "gpt-test",
+	})
+
+	if trace.Labels["judgment_model_errors"] != 1 {
+		t.Fatalf("expected model error label from agent review reason codes, got %+v", trace.Labels)
+	}
+}
+
 func containsUnsafePostHogBody(body string) bool {
 	for _, marker := range []string{`"source_text":`, `"source_excerpt":`, `"prompt":`, `"completion":`} {
 		if strings.Contains(body, marker) {
