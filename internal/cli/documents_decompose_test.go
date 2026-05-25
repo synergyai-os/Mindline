@@ -15,6 +15,12 @@ import (
 	"github.com/synergyai-os/Mindline/internal/documents"
 )
 
+type httpRoundTripper func(*http.Request) (*http.Response, error)
+
+func (fn httpRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	return fn(req)
+}
+
 func TestDocumentsDecompose(t *testing.T) {
 	out := t.TempDir()
 	var stdout, stderr bytes.Buffer
@@ -232,6 +238,84 @@ func TestDocumentsSemanticsRejectsUnsupportedLLMProviderBeforeSourceRead(t *test
 	}
 	if !strings.Contains(stderr.String(), "unsupported LLM provider: gemini") {
 		t.Fatalf("expected unsupported provider before source read, got %q", stderr.String())
+	}
+}
+
+func TestObservabilityPostHogTestDisabledByDefault(t *testing.T) {
+	t.Setenv("MINDLINE_TELEMETRY_ENABLED", "")
+	t.Setenv("MINDLINE_LLM_TRACE_MODE", "")
+	t.Setenv("MINDLINE_TELEMETRY_SALT", "")
+	t.Setenv("POSTHOG_PROJECT_API_KEY", "")
+	t.Setenv("POSTHOG_API_KEY", "")
+	t.Setenv("POSTHOG_HOST", "")
+	var stdout, stderr bytes.Buffer
+
+	code := NewRunner(NewMemoryFS()).Run([]string{"observability", "posthog-test"}, &stdout, &stderr)
+
+	if code != ExitOK {
+		t.Fatalf("expected exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("expected empty stderr, got %q", stderr.String())
+	}
+	var envelope ObservabilityTestEnvelope
+	if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode stdout: %v\n%s", err, stdout.String())
+	}
+	if envelope.State != "telemetry_disabled" || envelope.Network {
+		t.Fatalf("unexpected envelope: %+v", envelope)
+	}
+}
+
+func TestObservabilityPostHogTestRejectsRawModeBeforeNetwork(t *testing.T) {
+	fs := NewMemoryFS()
+	fs.files[".env.local"] = []byte("MINDLINE_TELEMETRY_ENABLED=true\nMINDLINE_LLM_TRACE_MODE=raw\nPOSTHOG_PROJECT_API_KEY=phc-test\nPOSTHOG_HOST=https://eu.i.posthog.com\nMINDLINE_TELEMETRY_SALT=salt\n")
+	var stdout, stderr bytes.Buffer
+
+	code := NewRunner(fs).Run([]string{"observability", "posthog-test"}, &stdout, &stderr)
+
+	if code != ExitUsage {
+		t.Fatalf("expected usage exit, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "unsupported LLM trace mode: raw") {
+		t.Fatalf("expected raw mode rejection, got %q", stderr.String())
+	}
+}
+
+func TestObservabilityPostHogTestSendsMetadataOnlyEvent(t *testing.T) {
+	fs := NewMemoryFS()
+	fs.files[".env.local"] = []byte("MINDLINE_TELEMETRY_ENABLED=true\nMINDLINE_LLM_TRACE_MODE=metadata\nPOSTHOG_PROJECT_API_KEY=phc-test\nPOSTHOG_HOST=https://eu.i.posthog.com\nMINDLINE_TELEMETRY_SALT=salt\n")
+	var capturedBody string
+	runner := NewRunnerWithPostHogTransport(fs, httpRoundTripper(func(req *http.Request) (*http.Response, error) {
+		if req.URL.String() != "https://eu.i.posthog.com/capture/" {
+			t.Fatalf("unexpected PostHog URL: %s", req.URL.String())
+		}
+		body, err := io.ReadAll(req.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		capturedBody = string(body)
+		if strings.Contains(capturedBody, "source_text") || strings.Contains(capturedBody, "source_excerpt") || strings.Contains(capturedBody, "prompt") || strings.Contains(capturedBody, "completion") {
+			t.Fatalf("PostHog body contains unsafe content: %s", capturedBody)
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("{}")), Header: make(http.Header)}, nil
+	}))
+	var stdout, stderr bytes.Buffer
+
+	code := runner.Run([]string{"observability", "posthog-test"}, &stdout, &stderr)
+
+	if code != ExitOK {
+		t.Fatalf("expected exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+	if capturedBody == "" {
+		t.Fatalf("expected PostHog request")
+	}
+	var envelope ObservabilityTestEnvelope
+	if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode stdout: %v\n%s", err, stdout.String())
+	}
+	if envelope.State != "posthog_test_sent" || !envelope.Network {
+		t.Fatalf("unexpected envelope: %+v", envelope)
 	}
 }
 

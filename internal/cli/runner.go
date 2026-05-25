@@ -18,6 +18,7 @@ import (
 	"github.com/synergyai-os/Mindline/internal/destinations"
 	tolariadestination "github.com/synergyai-os/Mindline/internal/destinations/tolaria"
 	"github.com/synergyai-os/Mindline/internal/documents"
+	"github.com/synergyai-os/Mindline/internal/observability"
 	"github.com/synergyai-os/Mindline/internal/pipeline"
 	"github.com/synergyai-os/Mindline/internal/productbrain"
 	"github.com/synergyai-os/Mindline/internal/sbos"
@@ -30,7 +31,7 @@ const (
 	ExitArtifactWrite = 3
 )
 
-const usage = "usage: mindline process <candidate.json> [--out <dir>]\nusage: mindline slack normalize <slack-export.json> [--out <dir>]\nusage: mindline destination dry-run <sbos-result.json> --adapter tolaria --out <dir>\nusage: mindline pipeline dry-run <pipeline-input.json> --method basb-para-code --destination tolaria --out <dir>\nusage: mindline product-brain propose <run-dir> --profile <profile.json> --out <dir>\nusage: mindline documents decompose <markdown-path-or-dir> --out <dir>\nusage: mindline documents structure <markdown-path-or-dir> --out <dir>\nusage: mindline documents semantics <structure-run-dir-or-markdown-path-or-markdown-dir> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents accept <semantic-run-dir> --answer-key <answer-key.json> --out <dir>\nusage: mindline documents calibrate <semantic-acceptance-dir-or-parent> --out <dir> [--threshold 0.98] [--held-out] [--source-root <dir> --source <relative.md>]\nusage: mindline documents calibrate-next <semantic-calibration-dir-or-parent>\nusage: mindline documents judge <semantic-run-dir> --out <dir> [--source-root <dir> --source <relative.md>] [--agent-reviewer llm --llm-provider openai --llm-model <model>]\nusage: mindline documents judge-next <semantic-judgment-dir-or-parent>\nusage: mindline documents judge-record <semantic-judgment-dir-or-parent> --candidate <candidate-id> --choice accept|reject|unclear|duplicate|wrong-kind [--reason <failure-reason>] [--secondary-reason <failure-reason>] [--note <text>] [--reviewer <id>]\nusage: mindline documents judge-serve <semantic-judgment-dir-or-parent> [--addr 127.0.0.1:8787] [--reviewer <id>]\n"
+const usage = "usage: mindline process <candidate.json> [--out <dir>]\nusage: mindline slack normalize <slack-export.json> [--out <dir>]\nusage: mindline destination dry-run <sbos-result.json> --adapter tolaria --out <dir>\nusage: mindline pipeline dry-run <pipeline-input.json> --method basb-para-code --destination tolaria --out <dir>\nusage: mindline product-brain propose <run-dir> --profile <profile.json> --out <dir>\nusage: mindline documents decompose <markdown-path-or-dir> --out <dir>\nusage: mindline documents structure <markdown-path-or-dir> --out <dir>\nusage: mindline documents semantics <structure-run-dir-or-markdown-path-or-markdown-dir> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents accept <semantic-run-dir> --answer-key <answer-key.json> --out <dir>\nusage: mindline documents calibrate <semantic-acceptance-dir-or-parent> --out <dir> [--threshold 0.98] [--held-out] [--source-root <dir> --source <relative.md>]\nusage: mindline documents calibrate-next <semantic-calibration-dir-or-parent>\nusage: mindline documents judge <semantic-run-dir> --out <dir> [--source-root <dir> --source <relative.md>] [--agent-reviewer llm --llm-provider openai --llm-model <model>]\nusage: mindline documents judge-next <semantic-judgment-dir-or-parent>\nusage: mindline documents judge-record <semantic-judgment-dir-or-parent> --candidate <candidate-id> --choice accept|reject|unclear|duplicate|wrong-kind [--reason <failure-reason>] [--secondary-reason <failure-reason>] [--note <text>] [--reviewer <id>]\nusage: mindline documents judge-serve <semantic-judgment-dir-or-parent> [--addr 127.0.0.1:8787] [--reviewer <id>]\nusage: mindline observability posthog-test\n"
 
 const protectedRootsEnv = "MINDLINE_PROTECTED_ROOTS"
 const defaultTolariaProtectedRoot = "/Users/randyhereman/Young Human Club Dropbox/02. Areas/PKM - Tolaria"
@@ -51,8 +52,9 @@ var cliAuthorityIDs = []string{
 }
 
 type Runner struct {
-	fs             FileSystem
-	protectedRoots []string
+	fs               FileSystem
+	protectedRoots   []string
+	postHogTransport http.RoundTripper
 }
 
 type FileSystem interface {
@@ -91,6 +93,16 @@ type SlackNormalizeEnvelope struct {
 	AuthorityIDs   []string                      `json:"authority_ids"`
 }
 
+type ObservabilityTestEnvelope struct {
+	State        string   `json:"state"`
+	Exporter     string   `json:"exporter"`
+	TraceMode    string   `json:"trace_mode"`
+	Event        string   `json:"event"`
+	Network      bool     `json:"network"`
+	Host         string   `json:"host,omitempty"`
+	AuthorityIDs []string `json:"authority_ids"`
+}
+
 type DestinationDryRunSummary struct {
 	DestinationAdapterID string                         `json:"destination_adapter_id"`
 	WriteMode            string                         `json:"write_mode"`
@@ -120,6 +132,12 @@ func NewRunner(fileSystem FileSystem) Runner {
 
 func NewRunnerWithProtectedRoots(fileSystem FileSystem, protectedRoots []string) Runner {
 	return Runner{fs: fileSystem, protectedRoots: append([]string(nil), protectedRoots...)}
+}
+
+func NewRunnerWithPostHogTransport(fileSystem FileSystem, transport http.RoundTripper) Runner {
+	runner := NewRunner(fileSystem)
+	runner.postHogTransport = transport
+	return runner
 }
 
 func configuredProtectedRoots() []string {
@@ -159,6 +177,9 @@ func (r Runner) Run(args []string, stdout, stderr io.Writer) int {
 	}
 	if args[0] == "documents" {
 		return r.runDocuments(args[1:], stdout, stderr)
+	}
+	if args[0] == "observability" {
+		return r.runObservability(args[1:], stdout, stderr)
 	}
 	if args[0] != "process" {
 		fmt.Fprint(stderr, usage)
@@ -929,19 +950,7 @@ func (r Runner) parseDocumentsSemanticsArgs(args []string) (inputPath string, ou
 }
 
 func (r Runner) resolveSemanticLLMEnv(options documents.SemanticOptions) documents.SemanticOptions {
-	values := map[string]string{}
-	if wd, err := r.fs.Getwd(); err == nil {
-		if data, err := r.fs.ReadFile(filepath.Join(wd, ".env.local")); err == nil {
-			for key, value := range parseDotEnv(string(data)) {
-				values[key] = value
-			}
-		}
-	}
-	for _, key := range []string{"MINDLINE_LLM_PROVIDER", "OPENAI_API_KEY", "OPENAI_MODEL"} {
-		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
-			values[key] = value
-		}
-	}
+	values := r.resolveEnvValues([]string{"MINDLINE_LLM_PROVIDER", "OPENAI_API_KEY", "OPENAI_MODEL"})
 	if options.LLMProvider == "" {
 		options.LLMProvider = values["MINDLINE_LLM_PROVIDER"]
 	}
@@ -950,6 +959,23 @@ func (r Runner) resolveSemanticLLMEnv(options documents.SemanticOptions) documen
 	}
 	options.LLMAPIKey = values["OPENAI_API_KEY"]
 	return options
+}
+
+func (r Runner) resolveEnvValues(keys []string) map[string]string {
+	values := map[string]string{}
+	if wd, err := r.fs.Getwd(); err == nil {
+		if data, err := r.fs.ReadFile(filepath.Join(wd, ".env.local")); err == nil {
+			for key, value := range parseDotEnv(string(data)) {
+				values[key] = value
+			}
+		}
+	}
+	for _, key := range keys {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			values[key] = value
+		}
+	}
+	return values
 }
 
 func parseDotEnv(raw string) map[string]string {
@@ -1427,6 +1453,74 @@ func artifactFilename(recordID string, kind sbos.ArtifactKind) string {
 	default:
 		return base + "-artifact.md"
 	}
+}
+
+func (r Runner) runObservability(args []string, stdout, stderr io.Writer) int {
+	if len(args) != 1 || args[0] != "posthog-test" {
+		fmt.Fprint(stderr, usage)
+		return ExitUsage
+	}
+	config, err := observability.ConfigFromValues(r.resolveEnvValues([]string{
+		"MINDLINE_TELEMETRY_ENABLED",
+		"MINDLINE_LLM_TRACE_MODE",
+		"MINDLINE_TELEMETRY_SALT",
+		"POSTHOG_PROJECT_API_KEY",
+		"POSTHOG_API_KEY",
+		"POSTHOG_HOST",
+	}))
+	if err != nil {
+		fmt.Fprintf(stderr, "observability config: %v\n", err)
+		return ExitUsage
+	}
+	if !config.Enabled {
+		return writeObservabilityEnvelope(stdout, ObservabilityTestEnvelope{
+			State:        "telemetry_disabled",
+			Exporter:     "posthog",
+			TraceMode:    config.TraceMode,
+			Event:        "$ai_generation",
+			Network:      false,
+			AuthorityIDs: authorityIDs(),
+		})
+	}
+	exporter := observability.NewPostHogExporter(config, r.postHogTransport)
+	event := observability.SafeEvent{
+		Event:      "$ai_generation",
+		DistinctID: "mindline-local",
+		TraceID:    "trace-posthog-test",
+		Properties: map[string]any{
+			"event_schema":    "mindline.telemetry.test/v0.1",
+			"feature":         "observability.posthog_test",
+			"provider":        "none",
+			"model":           "none",
+			"command":         "observability posthog-test",
+			"status":          "ok",
+			"input_redacted":  true,
+			"output_redacted": true,
+			"source_redacted": true,
+		},
+	}
+	if err := exporter.Capture(event); err != nil {
+		fmt.Fprintf(stderr, "posthog capture: %v\n", err)
+		return ExitProcess
+	}
+	return writeObservabilityEnvelope(stdout, ObservabilityTestEnvelope{
+		State:        "posthog_test_sent",
+		Exporter:     "posthog",
+		TraceMode:    config.TraceMode,
+		Event:        "$ai_generation",
+		Network:      true,
+		Host:         config.PostHogHost,
+		AuthorityIDs: authorityIDs(),
+	})
+}
+
+func writeObservabilityEnvelope(stdout io.Writer, envelope ObservabilityTestEnvelope) int {
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(envelope); err != nil {
+		return ExitProcess
+	}
+	return ExitOK
 }
 
 func sanitizeFilenameBase(value string) string {
