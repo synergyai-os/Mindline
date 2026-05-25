@@ -972,6 +972,26 @@ func TestDocumentsJudgeRejectsDestinationAndProfileFlags(t *testing.T) {
 	}
 }
 
+func TestDocumentsJudgeRejectsLLMFlagsWithoutAgentReviewer(t *testing.T) {
+	fs := NewMemoryFS()
+	runner := NewRunner(fs)
+	var stdout, stderr bytes.Buffer
+
+	code := runner.Run([]string{
+		"documents", "judge", "semantic-run",
+		"--out", "out",
+		"--llm-provider", "openai",
+		"--llm-model", "gpt-test",
+	}, &stdout, &stderr)
+
+	if code != ExitUsage {
+		t.Fatalf("expected usage exit, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "LLM flags require --agent-reviewer llm") {
+		t.Fatalf("expected LLM flag validation before source read, got %q", stderr.String())
+	}
+}
+
 func TestDocumentsAcceptRejectsDestinationAndProfileFlags(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := NewRunner(NewOSFileSystem()).Run([]string{

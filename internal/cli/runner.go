@@ -1059,6 +1059,7 @@ func (r Runner) parseDocumentsJudgeArgs(args []string) (inputPath string, outDir
 		return "", "", options, parseErrorUsage, ""
 	}
 	inputPath = args[1]
+	llmFlagSet := false
 	for i := 2; i < len(args); {
 		switch args[i] {
 		case "--out":
@@ -1094,12 +1095,14 @@ func (r Runner) parseDocumentsJudgeArgs(args []string) (inputPath string, outDir
 				return "", "", options, parseErrorUsage, ""
 			}
 			options.LLMProvider = strings.TrimSpace(args[i+1])
+			llmFlagSet = true
 			i += 2
 		case "--llm-model":
 			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
 				return "", "", options, parseErrorUsage, ""
 			}
 			options.LLMModel = strings.TrimSpace(args[i+1])
+			llmFlagSet = true
 			i += 2
 		default:
 			return "", "", options, parseErrorUsage, ""
@@ -1110,6 +1113,9 @@ func (r Runner) parseDocumentsJudgeArgs(args []string) (inputPath string, outDir
 	}
 	if (strings.TrimSpace(options.SourceRoot) == "") != (strings.TrimSpace(options.SourcePath) == "") {
 		return "", "", options, parseErrorUsage, ""
+	}
+	if llmFlagSet && options.Reviewer != documents.SemanticJudgmentReviewerLLM {
+		return "", "", options, parseErrorNone, "LLM flags require --agent-reviewer llm"
 	}
 	options = r.resolveSemanticJudgmentLLMEnv(options)
 	if options.Reviewer == documents.SemanticJudgmentReviewerLLM {
