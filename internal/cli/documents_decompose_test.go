@@ -503,7 +503,7 @@ func TestDocumentsJudgeServeStateAndRecord(t *testing.T) {
 	if _, err := html.ReadFrom(rec.Body); err != nil {
 		t.Fatalf("read ui html: %v", err)
 	}
-	for _, want := range []string{"Mindline Review", "Review", "Guide", "How to review", "Decision meanings", "remaining", "current-candidate", "decision-controls", "failure-reason", "evidence", "Review task", "Should this candidate count", "Evidence highlights", "Raw details", "Save decision", "details class=\\\"raw-details\\\"", "openRawDetails", "visibleEvidenceLimit", "selectedChoice", "isSubmitting", "failureReasonsByChoice[selectedChoice]"} {
+	for _, want := range []string{"Mindline Review", "Review", "Guide", "How to review", "Decision meanings", "remaining", "current-candidate", "decision-controls", "failure-reason", "evidence", "Review task", "Should this candidate count", "Agent proposal", "not a saved judgment", "Evidence highlights", "Raw details", "Save decision", "details class=\\\"raw-details\\\"", "openRawDetails", "visibleEvidenceLimit", "selectedChoice", "isSubmitting", "failureReasonsByChoice[selectedChoice]"} {
 		if !strings.Contains(html.String(), want) {
 			t.Fatalf("expected UI HTML to contain %q, got %s", want, html.String())
 		}
@@ -522,6 +522,9 @@ func TestDocumentsJudgeServeStateAndRecord(t *testing.T) {
 		"const visibleExcerpts = allExcerpts.slice(0, visibleEvidenceLimit)",
 		"const hiddenExcerptCount = Math.max(0, allExcerpts.length - visibleEvidenceLimit)",
 		"hiddenExcerptCount > 0",
+		"page.cursor.remaining_count",
+		"Human review queue clear",
+		"machine-triaged proposal-only and remain unjudged/auditable",
 		"const rawExcerpts = allExcerpts.map(excerptHtml).join(\"\")",
 		"const reasons = failureReasonsByChoice[selectedChoice] || failureReasonsByChoice[activeChoice] || []",
 		"button.disabled = isSubmitting",
@@ -966,6 +969,51 @@ func TestDocumentsJudgeRejectsDestinationAndProfileFlags(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "usage: mindline documents judge") {
 		t.Fatalf("expected documents judge usage, got %q", stderr.String())
+	}
+}
+
+func TestDocumentsJudgeRejectsLLMFlagsWithoutAgentReviewer(t *testing.T) {
+	fs := NewMemoryFS()
+	runner := NewRunner(fs)
+	var stdout, stderr bytes.Buffer
+
+	code := runner.Run([]string{
+		"documents", "judge", "semantic-run",
+		"--out", "out",
+		"--llm-provider", "openai",
+		"--llm-model", "gpt-test",
+	}, &stdout, &stderr)
+
+	if code != ExitUsage {
+		t.Fatalf("expected usage exit, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "LLM flags require --agent-reviewer llm") {
+		t.Fatalf("expected LLM flag validation before source read, got %q", stderr.String())
+	}
+}
+
+func TestDocumentsJudgeDefersLLMAPIKeyValidationForAgentReviewer(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("OPENAI_MODEL", "")
+	t.Setenv("MINDLINE_LLM_PROVIDER", "")
+	runner := NewRunner(NewMemoryFS())
+
+	_, _, options, parseErr, configError := runner.parseDocumentsJudgeArgs([]string{
+		"judge", "semantic-run",
+		"--out", "out",
+		"--agent-reviewer", "llm",
+		"--llm-provider", "openai",
+		"--llm-model", "gpt-test",
+	})
+
+	if parseErr != parseErrorNone {
+		t.Fatalf("expected parse success, got %v", parseErr)
+	}
+	if configError != "" {
+		t.Fatalf("expected API key validation to be deferred, got %q", configError)
+	}
+	if options.LLMAPIKey != "" {
+		t.Fatalf("expected no API key in options, got %q", options.LLMAPIKey)
 	}
 }
 

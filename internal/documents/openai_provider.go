@@ -83,6 +83,55 @@ func (provider OpenAIProvider) Classify(request LLMSemanticRequest) (llmSemantic
 	return semanticResponse, nil
 }
 
+func (provider OpenAIProvider) ReviewSemanticJudgment(request LLMSemanticReviewRequest) (llmSemanticReviewResponse, error) {
+	if provider.apiKey == "" {
+		return llmSemanticReviewResponse{}, fmt.Errorf("missing OpenAI API key")
+	}
+	if provider.model == "" {
+		return llmSemanticReviewResponse{}, fmt.Errorf("missing OpenAI model")
+	}
+	body := map[string]any{
+		"model": provider.model,
+		"input": BuildLLMSemanticReviewPrompt(request),
+		"text": map[string]any{
+			"format": map[string]any{"type": "text"},
+		},
+		"store":             false,
+		"max_output_tokens": 2048,
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return llmSemanticReviewResponse{}, err
+	}
+	httpRequest, err := http.NewRequest(http.MethodPost, openAIResponsesURL, bytes.NewReader(data))
+	if err != nil {
+		return llmSemanticReviewResponse{}, err
+	}
+	httpRequest.Header.Set("Authorization", "Bearer "+provider.apiKey)
+	httpRequest.Header.Set("Content-Type", "application/json")
+	httpResponse, err := provider.client.Do(httpRequest)
+	if err != nil {
+		return llmSemanticReviewResponse{}, err
+	}
+	defer httpResponse.Body.Close()
+	responseBody, err := io.ReadAll(httpResponse.Body)
+	if err != nil {
+		return llmSemanticReviewResponse{}, err
+	}
+	if httpResponse.StatusCode < 200 || httpResponse.StatusCode >= 300 {
+		return llmSemanticReviewResponse{}, fmt.Errorf("OpenAI response status %d", httpResponse.StatusCode)
+	}
+	text, err := extractOpenAIOutputText(responseBody)
+	if err != nil {
+		return llmSemanticReviewResponse{}, err
+	}
+	var semanticResponse llmSemanticReviewResponse
+	if err := json.Unmarshal([]byte(text), &semanticResponse); err != nil {
+		return llmSemanticReviewResponse{}, fmt.Errorf("parse OpenAI semantic review response: %w", err)
+	}
+	return semanticResponse, nil
+}
+
 func extractOpenAIOutputText(data []byte) (string, error) {
 	var response struct {
 		Output []struct {

@@ -41,6 +41,27 @@ func (provider *fakeLLMSemanticProvider) Classify(request LLMSemanticRequest) (l
 	}}}, nil
 }
 
+type fakeLLMSemanticReviewer struct {
+	responses []llmSemanticReviewResponse
+	requests  []LLMSemanticReviewRequest
+}
+
+func (reviewer *fakeLLMSemanticReviewer) ReviewSemanticJudgment(request LLMSemanticReviewRequest) (llmSemanticReviewResponse, error) {
+	reviewer.requests = append(reviewer.requests, request)
+	if len(reviewer.responses) == 0 {
+		return llmSemanticReviewResponse{
+			Choice:              string(SemanticJudgmentChoiceAccept),
+			Confidence:          string(ConfidenceHigh),
+			HumanReviewRequired: false,
+			ReviewReasonCodes:   []string{string(SemanticAgentReviewReasonMachineTriaged)},
+			Rationale:           "Evidence supports the candidate.",
+		}, nil
+	}
+	response := reviewer.responses[0]
+	reviewer.responses = reviewer.responses[1:]
+	return response, nil
+}
+
 func TestGoldenMarkdownDecomposition(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -2446,6 +2467,288 @@ func TestSemanticJudgmentInitializesReviewBundleAndPagesOneCandidate(t *testing.
 		!strings.Contains(page.PageMarkdown, "two\nthree\nfour") {
 		t.Fatalf("judgment page is not self-contained:\n%s", page.PageMarkdown)
 	}
+}
+
+func TestSemanticJudgmentAgentReviewTriageDoesNotCreateJudgments(t *testing.T) {
+	node := validStructureNode()
+	observation := validSemanticObservation(node)
+	machineCandidate := validSemanticCandidate(observation, node)
+	machineCandidate.CandidateID = "cand-machine"
+	machineCandidate.RelationIDs = []string{"rel-machine"}
+	machineCandidate.Title = "Prepare checklist"
+	machineCandidate.Summary = "Prepare the checklist from the cited evidence."
+	machineCandidate.EvidenceRanges = []SemanticEvidenceRange{{StructureNodeID: node.NodeID, LineStart: 2, LineEnd: 4}}
+	humanCandidate := validSemanticCandidate(observation, node)
+	humanCandidate.CandidateID = "cand-human"
+	humanCandidate.RelationIDs = []string{"rel-human"}
+	humanCandidate.Title = "Maybe prepare checklist"
+	humanCandidate.Summary = "Maybe prepare the checklist from partial evidence."
+	humanCandidate.EvidenceRanges = []SemanticEvidenceRange{{StructureNodeID: node.NodeID, LineStart: 2, LineEnd: 4}}
+	semanticRun := writeSemanticAcceptanceRun(t, []SemanticCandidate{machineCandidate, humanCandidate})
+	writeDocumentsTestJSON(t, filepath.Join(semanticRun, "semantic-candidates", SemanticObservationJSONPath(observation.ObservationID)), observation)
+	machineRelation := validSemanticRelation(machineCandidate, observation, node)
+	machineRelation.RelationID = "rel-machine"
+	humanRelation := validSemanticRelation(humanCandidate, observation, node)
+	humanRelation.RelationID = "rel-human"
+	writeDocumentsTestJSON(t, filepath.Join(semanticRun, "semantic-candidates", SemanticRelationJSONPath(machineRelation.RelationID)), machineRelation)
+	writeDocumentsTestJSON(t, filepath.Join(semanticRun, "semantic-candidates", SemanticRelationJSONPath(humanRelation.RelationID)), humanRelation)
+	sourceRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(sourceRoot, "source.md"), []byte("one\ntwo\nthree\nfour\nfive\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	reviewer := &fakeLLMSemanticReviewer{responses: []llmSemanticReviewResponse{
+		{
+			Choice:              string(SemanticJudgmentChoiceUnclear),
+			FailureReason:       string(SemanticFailureAmbiguous),
+			Confidence:          string(ConfidenceLow),
+			HumanReviewRequired: true,
+			ReviewReasonCodes: []string{
+				string(SemanticAgentReviewReasonModelUncertain),
+				string(SemanticAgentReviewReasonMachineTriaged),
+			},
+			Rationale: "Evidence is not decisive enough.",
+		},
+		{
+			Choice:              string(SemanticJudgmentChoiceAccept),
+			Confidence:          string(ConfidenceHigh),
+			HumanReviewRequired: false,
+			ReviewReasonCodes:   []string{string(SemanticAgentReviewReasonMachineTriaged)},
+			Rationale:           "Evidence supports the candidate.",
+		},
+	}}
+	out := t.TempDir()
+	summary, err := JudgeSemanticCandidates(semanticRun, out, SemanticJudgmentOptions{
+		SourceRoot:  sourceRoot,
+		SourcePath:  "source.md",
+		Reviewer:    SemanticJudgmentReviewerLLM,
+		LLMProvider: "openai",
+		LLMModel:    "test-model",
+		LLMClient:   reviewer,
+	})
+	if err != nil {
+		t.Fatalf("judge semantic candidates: %v", err)
+	}
+	if summary.AgentReviewedCount != 2 || summary.HumanReviewRequiredCount != 1 || summary.MachineTriagedCount != 1 {
+		t.Fatalf("unexpected agent review counts: %+v", summary)
+	}
+	for _, item := range summary.Items {
+		if item.AgentReview == nil || item.AgentReview.Provider != "openai" || item.AgentReview.Model != "test-model" {
+			t.Fatalf("expected provider/model attribution on agent proposal: %+v", item.AgentReview)
+		}
+		if item.AgentReview.HumanReviewRequired && semanticAgentReviewReasonCodeListContains(item.AgentReview.ReviewReasonCodes, SemanticAgentReviewReasonMachineTriaged) {
+			t.Fatalf("human-required proposal must not keep machine-triaged reason: %+v", item.AgentReview)
+		}
+	}
+	if summary.JudgedCount != 0 || summary.AcceptedCount != 0 || summary.RejectedCount != 0 || summary.RemainingCount != 2 {
+		t.Fatalf("agent proposals must not create judgment counts: %+v", summary)
+	}
+	if summary.ReviewBurdenCount != 1 {
+		t.Fatalf("review burden should count unjudged human-required proposal items, got %+v", summary)
+	}
+	if len(summary.Judgments) != 0 {
+		t.Fatalf("agent proposals must not create judgment records: %+v", summary.Judgments)
+	}
+	var cursor SemanticJudgmentCursor
+	cursorData, err := os.ReadFile(filepath.Join(out, "semantic-judgment", "cursor.json"))
+	if err != nil {
+		t.Fatalf("read semantic judgment cursor: %v", err)
+	}
+	if err := json.Unmarshal(cursorData, &cursor); err != nil {
+		t.Fatalf("decode semantic judgment cursor: %v", err)
+	}
+	if cursor.RemainingCount != 1 || cursor.Exhausted {
+		t.Fatalf("cursor should count unjudged human-required items, got %+v", cursor)
+	}
+	page, err := NextSemanticJudgmentPage(filepath.Join(out, "semantic-judgment"))
+	if err != nil {
+		t.Fatalf("next semantic judgment page: %v", err)
+	}
+	if page.Done || page.Item == nil || page.Item.CandidateID != "cand-human" {
+		t.Fatalf("expected human-required candidate to be served first: %+v", page)
+	}
+	if page.Cursor.RemainingCount != 1 {
+		t.Fatalf("cursor should count human-required remaining items, got %+v", page.Cursor)
+	}
+	if page.Item.AgentReview == nil || !page.Item.AgentReview.HumanReviewRequired {
+		t.Fatalf("expected human-required agent proposal: %+v", page.Item.AgentReview)
+	}
+	if !strings.Contains(page.PageMarkdown, "Agent review proposal") || !strings.Contains(page.PageMarkdown, "proposal only") {
+		t.Fatalf("page must show non-final agent proposal:\n%s", page.PageMarkdown)
+	}
+	updated, err := RecordSemanticJudgment(filepath.Join(out, "semantic-judgment"), SemanticJudgmentRecordInput{
+		CandidateID:   page.Item.CandidateID,
+		Choice:        SemanticJudgmentChoiceUnclear,
+		FailureReason: SemanticFailureAmbiguous,
+		ReviewerID:    "test",
+		RecordedAt:    time.Date(2026, 5, 25, 12, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("record semantic judgment: %v", err)
+	}
+	if updated.HumanReviewRequiredCount != 0 || updated.MachineTriagedCount != 1 {
+		t.Fatalf("proposal queue counts should exclude judged human-required items: %+v", updated)
+	}
+	if updated.RemainingCount != 1 || updated.ReviewBurdenCount != 1 {
+		t.Fatalf("summary should keep unjudged audit backlog but exclude machine-triaged items from review burden: %+v", updated)
+	}
+	cursorData, err = os.ReadFile(filepath.Join(out, "semantic-judgment", "cursor.json"))
+	if err != nil {
+		t.Fatalf("read updated semantic judgment cursor: %v", err)
+	}
+	if err := json.Unmarshal(cursorData, &cursor); err != nil {
+		t.Fatalf("decode updated semantic judgment cursor: %v", err)
+	}
+	if cursor.RemainingCount != 0 || !cursor.Exhausted {
+		t.Fatalf("cursor should be exhausted when only machine-triaged items remain, got %+v", cursor)
+	}
+	donePage, err := NextSemanticJudgmentPage(filepath.Join(out, "semantic-judgment"))
+	if err != nil {
+		t.Fatalf("next done semantic judgment page: %v", err)
+	}
+	if !donePage.Done || !strings.Contains(donePage.PageMarkdown, "machine-triaged proposal-only") || !strings.Contains(donePage.PageMarkdown, "remain unjudged") {
+		t.Fatalf("done page must not imply machine-triaged candidates are complete: %+v", donePage)
+	}
+	updated, err = RecordSemanticJudgment(filepath.Join(out, "semantic-judgment"), SemanticJudgmentRecordInput{
+		CandidateID: "cand-machine",
+		Choice:      SemanticJudgmentChoiceAccept,
+		ReviewerID:  "test",
+		RecordedAt:  time.Date(2026, 5, 25, 12, 1, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("record machine-triaged semantic judgment: %v", err)
+	}
+	if updated.HumanReviewRequiredCount != 0 || updated.MachineTriagedCount != 0 {
+		t.Fatalf("proposal queue counts should exclude all judged proposal items: %+v", updated)
+	}
+}
+
+func TestSemanticJudgmentAgentReviewDoesNotSendUnsafeCandidates(t *testing.T) {
+	node := validStructureNode()
+	observation := validSemanticObservation(node)
+	candidate := validSemanticCandidate(observation, node)
+	item := semanticJudgmentCandidates([]SemanticCandidate{candidate}, nil, []SemanticObservation{observation}, semanticCalibrationSourceContext{}, nil)[0]
+	item.EvidenceExcerpts = append(item.EvidenceExcerpts, SemanticCalibrationEvidenceExcerpt{
+		SourceLabel:     "source.md",
+		StructureNodeID: node.NodeID,
+		LineStart:       1,
+		LineEnd:         1,
+		Text:            "private_content",
+	})
+	item.EvidenceReadiness = semanticEvidenceReadiness(item)
+	reviewer := &fakeLLMSemanticReviewer{}
+	items, err := attachSemanticAgentReviews([]SemanticJudgmentCandidate{item}, SemanticJudgmentOptions{
+		Reviewer:    SemanticJudgmentReviewerLLM,
+		LLMProvider: "openai",
+		LLMModel:    "test-model",
+		LLMClient:   reviewer,
+	})
+	if err != nil {
+		t.Fatalf("attach semantic agent reviews: %v", err)
+	}
+	if len(reviewer.requests) != 0 {
+		t.Fatalf("unsafe candidate must not be sent to LLM: %+v", reviewer.requests)
+	}
+	if items[0].AgentReview == nil || !items[0].AgentReview.HumanReviewRequired || items[0].AgentReview.ReviewReasonCodes[0] != SemanticAgentReviewReasonUnsafeOrPrivate {
+		t.Fatalf("expected local unsafe proposal: %+v", items[0].AgentReview)
+	}
+}
+
+func TestSemanticJudgmentAgentReviewDefersReviewerInitForUnsafeCandidates(t *testing.T) {
+	node := validStructureNode()
+	observation := validSemanticObservation(node)
+	candidate := validSemanticCandidate(observation, node)
+	item := semanticJudgmentCandidates([]SemanticCandidate{candidate}, nil, []SemanticObservation{observation}, semanticCalibrationSourceContext{}, nil)[0]
+	item.EvidenceExcerpts = append(item.EvidenceExcerpts, SemanticCalibrationEvidenceExcerpt{
+		SourceLabel:     "source.md",
+		StructureNodeID: node.NodeID,
+		LineStart:       1,
+		LineEnd:         1,
+		Text:            "private_content",
+	})
+	item.EvidenceReadiness = semanticEvidenceReadiness(item)
+
+	items, err := attachSemanticAgentReviews([]SemanticJudgmentCandidate{item}, SemanticJudgmentOptions{
+		Reviewer:    SemanticJudgmentReviewerLLM,
+		LLMProvider: "openai",
+		LLMModel:    "test-model",
+	})
+	if err != nil {
+		t.Fatalf("attach semantic agent reviews should not initialize LLM for local unsafe proposals: %v", err)
+	}
+	if items[0].AgentReview == nil || !items[0].AgentReview.HumanReviewRequired || items[0].AgentReview.ReviewReasonCodes[0] != SemanticAgentReviewReasonUnsafeOrPrivate {
+		t.Fatalf("expected local unsafe proposal: %+v", items[0].AgentReview)
+	}
+}
+
+func TestSemanticJudgmentAgentReviewReplacesContradictoryMachineTriagedReason(t *testing.T) {
+	node := validStructureNode()
+	observation := validSemanticObservation(node)
+	item := semanticJudgmentCandidates([]SemanticCandidate{validSemanticCandidate(observation, node)}, nil, []SemanticObservation{observation}, semanticCalibrationSourceContext{}, nil)[0]
+	item.EvidenceReadiness = SemanticEvidenceReadiness{
+		Status:      SemanticEvidenceReadinessPass,
+		EvalCounted: true,
+	}
+	proposal := SemanticAgentReviewProposal{
+		SchemaVersion:       SemanticAgentReviewProposalSchemaVersion,
+		Provider:            "openai",
+		Model:               "test-model",
+		Choice:              SemanticJudgmentChoiceAccept,
+		Confidence:          ConfidenceHigh,
+		HumanReviewRequired: true,
+		ReviewReasonCodes:   []SemanticAgentReviewReasonCode{SemanticAgentReviewReasonMachineTriaged},
+		Rationale:           "Model requested manual review.",
+	}
+
+	proposal = forceSemanticAgentReviewRisk(item, proposal)
+	if semanticAgentReviewReasonCodeListContains(proposal.ReviewReasonCodes, SemanticAgentReviewReasonMachineTriaged) {
+		t.Fatalf("human-required proposal must not keep machine-triaged reason: %+v", proposal)
+	}
+	if len(proposal.ReviewReasonCodes) == 0 {
+		t.Fatalf("human-required proposal must keep a review reason after normalization: %+v", proposal)
+	}
+	if err := ValidateSemanticAgentReviewProposal(proposal); err != nil {
+		t.Fatalf("normalized proposal should validate: %v", err)
+	}
+}
+
+func TestSemanticJudgmentAgentReviewRequiresHumanForRiskReasonCodes(t *testing.T) {
+	node := validStructureNode()
+	observation := validSemanticObservation(node)
+	item := semanticJudgmentCandidates([]SemanticCandidate{validSemanticCandidate(observation, node)}, nil, []SemanticObservation{observation}, semanticCalibrationSourceContext{}, nil)[0]
+	item.EvidenceReadiness = SemanticEvidenceReadiness{
+		Status:      SemanticEvidenceReadinessPass,
+		EvalCounted: true,
+	}
+	proposal := SemanticAgentReviewProposal{
+		SchemaVersion:       SemanticAgentReviewProposalSchemaVersion,
+		Provider:            "openai",
+		Model:               "test-model",
+		Choice:              SemanticJudgmentChoiceAccept,
+		Confidence:          ConfidenceHigh,
+		HumanReviewRequired: false,
+		ReviewReasonCodes:   []SemanticAgentReviewReasonCode{SemanticAgentReviewReasonUnsafeOrPrivate},
+		Rationale:           "Model flagged a safety issue.",
+	}
+
+	proposal = forceSemanticAgentReviewRisk(item, proposal)
+	if !proposal.HumanReviewRequired {
+		t.Fatalf("risk reason code must force human review: %+v", proposal)
+	}
+	if semanticAgentReviewReasonCodeListContains(proposal.ReviewReasonCodes, SemanticAgentReviewReasonMachineTriaged) {
+		t.Fatalf("human-required risk proposal must not be machine-triaged: %+v", proposal)
+	}
+	if !semanticAgentReviewReasonCodeListContains(proposal.ReviewReasonCodes, SemanticAgentReviewReasonUnsafeOrPrivate) {
+		t.Fatalf("risk reason code should be preserved: %+v", proposal)
+	}
+}
+
+func semanticAgentReviewReasonCodeListContains(reasons []SemanticAgentReviewReasonCode, want SemanticAgentReviewReasonCode) bool {
+	for _, reason := range reasons {
+		if reason == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestSemanticJudgmentIncludesRelationEndpointContext(t *testing.T) {

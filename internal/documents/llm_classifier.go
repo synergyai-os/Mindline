@@ -105,6 +105,10 @@ func buildLLMSemanticObservationsAndArtifacts(runID string, nodes []StructureNod
 		if confidence != ConfidenceLow && confidence != ConfidenceMedium && confidence != ConfidenceHigh {
 			return nil, nil, nil, fmt.Errorf("unsupported LLM confidence: %s", item.Confidence)
 		}
+		reviewStatus := ReviewStatusReady
+		if confidence == ConfidenceLow {
+			reviewStatus = ReviewStatusNeedsReview
+		}
 		if strings.TrimSpace(item.Title) == "" || strings.TrimSpace(item.Summary) == "" {
 			return nil, nil, nil, fmt.Errorf("LLM candidate missing title or summary")
 		}
@@ -129,7 +133,7 @@ func buildLLMSemanticObservationsAndArtifacts(runID string, nodes []StructureNod
 				RunID:            runID,
 				SourceDocumentID: node.SourceDocumentID,
 				ObservationKind:  observationKindForCandidateKind(kind),
-				ReviewStatus:     ReviewStatusReady,
+				ReviewStatus:     reviewStatus,
 				Confidence:       confidence,
 				Title:            semanticSummaryText(item.Title),
 				Summary:          semanticSummaryText(item.Summary),
@@ -149,7 +153,7 @@ func buildLLMSemanticObservationsAndArtifacts(runID string, nodes []StructureNod
 		if len(candidateObservations) == 0 {
 			return nil, nil, nil, fmt.Errorf("LLM candidate missing usable evidence nodes")
 		}
-		candidate := newSemanticCandidate(runID, candidateObservations[0].SourceDocumentID, kind, ReviewStatusReady, confidence, item.Title, item.Summary, candidateObservations)
+		candidate := newSemanticCandidate(runID, candidateObservations[0].SourceDocumentID, kind, reviewStatus, confidence, item.Title, item.Summary, candidateObservations)
 		candidate.CandidateID = SemanticCandidateID(runID, kind, candidate.SourceDocumentID, item.Title+"\x00"+discriminator, candidate.EvidenceNodes)
 		candidate.EvidenceExcerpts = llmEvidenceExcerpts(candidate.EvidenceNodes, textByNodeID)
 		for _, observation := range candidateObservations {
