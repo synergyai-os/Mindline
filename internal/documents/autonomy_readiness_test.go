@@ -3,6 +3,7 @@ package documents
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -217,6 +218,60 @@ func TestAutonomyReadinessCountsSecondaryMissingExpectedOutcomeAsFalseNegative(t
 	}
 	if report.Counts.FalseNegativeCount != 1 || report.Counts.EvalCountedFalseNegativeCount != 1 {
 		t.Fatalf("expected secondary missing outcome to count as false negative, got %+v", report.Counts)
+	}
+}
+
+func TestAutonomyReadinessDoesNotDoubleCountSecondaryMissingOutcomeAsFalsePositive(t *testing.T) {
+	var items []SemanticJudgmentCandidate
+	var judgments []SemanticJudgmentRecord
+	for i := 0; i < 49; i++ {
+		candidateID := "candidate-accepted-" + strconv.Itoa(i)
+		items = append(items, SemanticJudgmentCandidate{
+			CandidateID: candidateID,
+			EvidenceReadiness: SemanticEvidenceReadiness{
+				Status:      SemanticEvidenceReadinessPass,
+				EvalCounted: true,
+			},
+		})
+		judgments = append(judgments, SemanticJudgmentRecord{
+			SchemaVersion: SemanticJudgmentRecordSchemaVersion,
+			RunID:         "run-demo",
+			CandidateID:   candidateID,
+			Choice:        SemanticJudgmentChoiceAccept,
+			ReviewerID:    "test",
+			RecordedAt:    time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC).Format(time.RFC3339),
+		})
+	}
+	missed := SemanticJudgmentCandidate{
+		CandidateID: "candidate-secondary-missing",
+		EvidenceReadiness: SemanticEvidenceReadiness{
+			Status:      SemanticEvidenceReadinessPass,
+			EvalCounted: true,
+		},
+	}
+	items = append(items, missed)
+	judgments = append(judgments, SemanticJudgmentRecord{
+		SchemaVersion:    SemanticJudgmentRecordSchemaVersion,
+		RunID:            "run-demo",
+		CandidateID:      missed.CandidateID,
+		Choice:           SemanticJudgmentChoiceReject,
+		FailureReason:    SemanticFailureUnexpectedCandidate,
+		SecondaryReasons: []SemanticFailureReason{SemanticFailureMissingExpectedOutcome},
+		ReviewerID:       "test",
+		RecordedAt:       time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC).Format(time.RFC3339),
+	})
+
+	counts := autonomyEvalCountedOutcomeCounts(items, judgments)
+	if counts.accepted != 49 || counts.falsePositive != 0 || counts.falseNegative != 1 {
+		t.Fatalf("expected secondary missing outcome to occupy one eval error bucket, got %+v", counts)
+	}
+	reportCounts := AutonomyReadinessCounts{
+		EvalCountedAcceptedCount:      counts.accepted,
+		EvalCountedFalsePositiveCount: counts.falsePositive,
+		EvalCountedFalseNegativeCount: counts.falseNegative,
+	}
+	if got := autonomyAccuracy(reportCounts); got != 0.98 {
+		t.Fatalf("expected single-bucket denominator accuracy 0.98, got %f", got)
 	}
 }
 

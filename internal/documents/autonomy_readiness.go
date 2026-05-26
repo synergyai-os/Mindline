@@ -567,14 +567,15 @@ func autonomyEvalCountedOutcomeCounts(items []SemanticJudgmentCandidate, judgmen
 		if !evalCounted[judgment.CandidateID] {
 			continue
 		}
+		if autonomyHasFailureReason(judgment.FailureReason, judgment.SecondaryReasons, SemanticFailureMissingExpectedOutcome) {
+			counts.falseNegative++
+			continue
+		}
 		switch judgment.Choice {
 		case SemanticJudgmentChoiceAccept:
 			counts.accepted++
 		case SemanticJudgmentChoiceReject, SemanticJudgmentChoiceDuplicate, SemanticJudgmentChoiceWrongKind:
 			counts.falsePositive++
-		}
-		if autonomyHasFailureReason(judgment.FailureReason, judgment.SecondaryReasons, SemanticFailureMissingExpectedOutcome) {
-			counts.falseNegative++
 		}
 	}
 	return counts
