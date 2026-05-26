@@ -79,6 +79,116 @@ func TestCorpusPressureBuildsReadableReportAndReplay(t *testing.T) {
 	}
 }
 
+func TestCorpusPressureDirectoryCorpusIDUsesCanonicalPath(t *testing.T) {
+	input := t.TempDir()
+	if err := os.WriteFile(filepath.Join(input, "source.md"), []byte("# Source\n- capability: keep corpus identity stable across path spellings\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	summaryA, _, err := BuildCorpusPressure(input, t.TempDir(), CorpusPressureOptions{})
+	if err != nil {
+		t.Fatalf("build corpus pressure A: %v", err)
+	}
+	summaryB, _, err := BuildCorpusPressure(input+string(os.PathSeparator)+".", t.TempDir(), CorpusPressureOptions{})
+	if err != nil {
+		t.Fatalf("build corpus pressure B: %v", err)
+	}
+
+	if summaryA.CorpusID != summaryB.CorpusID {
+		t.Fatalf("equivalent directory paths must produce the same corpus id: %s != %s", summaryA.CorpusID, summaryB.CorpusID)
+	}
+	if summaryA.ReplayFingerprint != summaryB.ReplayFingerprint {
+		t.Fatalf("equivalent directory paths must produce the same replay fingerprint: %s != %s", summaryA.ReplayFingerprint, summaryB.ReplayFingerprint)
+	}
+}
+
+func TestCorpusPressureDirectorySourceIdentityUsesCanonicalPath(t *testing.T) {
+	input, err := os.MkdirTemp("/tmp", "corpus-pressure-alias-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(input)
+	realInput, err := filepath.EvalSymlinks(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Clean(realInput) == filepath.Clean(input) {
+		t.Skip("platform temp path has no alias to canonicalize")
+	}
+	if err := os.WriteFile(filepath.Join(input, "source.md"), []byte("# Source\n- capability: keep source identity stable across path aliases\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	summaryAlias, _, err := BuildCorpusPressure(input, t.TempDir(), CorpusPressureOptions{})
+	if err != nil {
+		t.Fatalf("build corpus pressure through alias path: %v", err)
+	}
+	summaryCanonical, _, err := BuildCorpusPressure(realInput, t.TempDir(), CorpusPressureOptions{})
+	if err != nil {
+		t.Fatalf("build corpus pressure through canonical path: %v", err)
+	}
+
+	if summaryAlias.CorpusID != summaryCanonical.CorpusID {
+		t.Fatalf("alias and canonical paths must produce same corpus id: %s != %s", summaryAlias.CorpusID, summaryCanonical.CorpusID)
+	}
+	if summaryAlias.CorpusFingerprint != summaryCanonical.CorpusFingerprint {
+		t.Fatalf("alias and canonical paths must produce same corpus fingerprint: %s != %s", summaryAlias.CorpusFingerprint, summaryCanonical.CorpusFingerprint)
+	}
+	if summaryAlias.ReplayFingerprint != summaryCanonical.ReplayFingerprint {
+		t.Fatalf("alias and canonical paths must produce same replay fingerprint: %s != %s", summaryAlias.ReplayFingerprint, summaryCanonical.ReplayFingerprint)
+	}
+	if len(summaryAlias.Sources) != 1 || len(summaryCanonical.Sources) != 1 {
+		t.Fatalf("expected one source each: alias=%+v canonical=%+v", summaryAlias.Sources, summaryCanonical.Sources)
+	}
+	if summaryAlias.Sources[0].SourceID != summaryCanonical.Sources[0].SourceID || summaryAlias.Sources[0].SourceLabel != summaryCanonical.Sources[0].SourceLabel {
+		t.Fatalf("alias and canonical paths must produce same source identity: alias=%+v canonical=%+v", summaryAlias.Sources[0], summaryCanonical.Sources[0])
+	}
+}
+
+func TestCorpusPressureLLMClassifierCountsHostedInferenceGuardrail(t *testing.T) {
+	input := t.TempDir()
+	if err := os.WriteFile(filepath.Join(input, "source.md"), []byte("# Source\n- capability: count hosted inference calls when LLM classification runs\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := t.TempDir()
+	provider := &fakeLLMSemanticProvider{}
+
+	summary, _, err := BuildCorpusPressure(input, out, CorpusPressureOptions{
+		SemanticOptions: SemanticOptions{
+			Classifier:  SemanticClassifierLLM,
+			LLMProvider: "openai",
+			LLMModel:    "fake-model",
+			LLMAPIKey:   "fake-key",
+			LLMClient:   provider,
+		},
+	})
+	if err != nil {
+		t.Fatalf("build corpus pressure with LLM classifier: %v", err)
+	}
+
+	if provider.calls == 0 {
+		t.Fatalf("test expected hosted provider to be called")
+	}
+	if summary.Guardrails.HostedInferenceCalls != provider.calls {
+		t.Fatalf("summary must count hosted inference calls: got %+v calls=%d", summary.Guardrails, provider.calls)
+	}
+	var persisted CorpusPressureSummary
+	readCorpusPressureJSON(t, filepath.Join(out, CorpusPressureDirName, "pressure-summary.json"), &persisted)
+	if persisted.Guardrails.HostedInferenceCalls != provider.calls {
+		t.Fatalf("persisted summary must count hosted inference calls: got %+v calls=%d", persisted.Guardrails, provider.calls)
+	}
+	var evalInput CorpusPressureEvalInput
+	readCorpusPressureJSON(t, filepath.Join(out, CorpusPressureDirName, "eval-input.json"), &evalInput)
+	if evalInput.Guardrails.HostedInferenceCalls != provider.calls {
+		t.Fatalf("eval input must count hosted inference calls: got %+v calls=%d", evalInput.Guardrails, provider.calls)
+	}
+	var trace CorpusPressureTraceSummary
+	readCorpusPressureJSON(t, filepath.Join(out, CorpusPressureDirName, "trace-summary.json"), &trace)
+	if trace.Guardrails.HostedInferenceCalls != provider.calls {
+		t.Fatalf("trace summary must count hosted inference calls: got %+v calls=%d", trace.Guardrails, provider.calls)
+	}
+}
+
 func TestCorpusPressureLoopStopsHonestlyWhenUnchanged(t *testing.T) {
 	input := t.TempDir()
 	if err := os.WriteFile(filepath.Join(input, "blocked.md"), []byte("# Secret\nAPI key sk-test-secret-token should stay blocked\n"), 0o644); err != nil {

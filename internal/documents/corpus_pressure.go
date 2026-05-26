@@ -167,6 +167,18 @@ type corpusPressureSourceInput struct {
 	RunDir     string
 }
 
+type corpusPressureCountingLLMProvider struct {
+	inner LLMSemanticProvider
+	calls *int
+}
+
+func (provider corpusPressureCountingLLMProvider) Classify(request LLMSemanticRequest) (llmSemanticResponse, error) {
+	if provider.calls != nil {
+		(*provider.calls)++
+	}
+	return provider.inner.Classify(request)
+}
+
 func BuildCorpusPressure(inputPath, outDir string, options CorpusPressureOptions) (CorpusPressureSummary, CorpusGraphSummary, error) {
 	if strings.TrimSpace(outDir) == "" {
 		return CorpusPressureSummary{}, CorpusGraphSummary{}, fmt.Errorf("missing required --out")
@@ -193,6 +205,17 @@ func BuildCorpusPressure(inputPath, outDir string, options CorpusPressureOptions
 	sources, corpusID, err := loadCorpusPressureSources(inputPath, skipPaths...)
 	if err != nil {
 		return CorpusPressureSummary{}, CorpusGraphSummary{}, err
+	}
+	guardrails := CorpusPressureGuardrailCounters{}
+	if options.SemanticOptions.Classifier == SemanticClassifierLLM {
+		provider, err := semanticLLMProvider(options.SemanticOptions)
+		if err != nil {
+			return CorpusPressureSummary{}, CorpusGraphSummary{}, err
+		}
+		options.SemanticOptions.LLMClient = corpusPressureCountingLLMProvider{
+			inner: provider,
+			calls: &guardrails.HostedInferenceCalls,
+		}
 	}
 	sources = assignCorpusPressureSourceRunDirs(root, sources)
 	results := make([]CorpusPressureSourceResult, 0, len(sources))
@@ -233,7 +256,7 @@ func BuildCorpusPressure(inputPath, outDir string, options CorpusPressureOptions
 	summary := buildCorpusPressureSummary(corpusID, results, graphSummary, graphManifestPath, graphErr)
 	summary.CommandConfigFingerprint = options.CommandConfigFingerprint
 	summary.CorpusFingerprint = corpusPressureSourceFingerprint(results)
-	summary.Guardrails = CorpusPressureGuardrailCounters{}
+	summary.Guardrails = guardrails
 	summary.ReplayFingerprint = corpusPressureFingerprint(summary)
 	if err := WriteCorpusPressure(root, summary, graphSummary); err != nil {
 		return CorpusPressureSummary{}, CorpusGraphSummary{}, err
@@ -259,6 +282,7 @@ func loadCorpusPressureSources(inputPath string, skipPaths ...string) ([]corpusP
 	if err != nil {
 		return nil, "", err
 	}
+	canonicalInput := canonicalCorpusInputPath(absInput)
 	paths, err := markdownPaths(inputPath)
 	if err != nil {
 		return nil, "", err
@@ -274,7 +298,7 @@ func loadCorpusPressureSources(inputPath string, skipPaths ...string) ([]corpusP
 		if err != nil {
 			return nil, "", err
 		}
-		rel, err := filepath.Rel(absInput, safePath)
+		rel, err := filepath.Rel(canonicalInput, safePath)
 		if err != nil {
 			return nil, "", err
 		}
@@ -296,7 +320,15 @@ func loadCorpusPressureSources(inputPath string, skipPaths ...string) ([]corpusP
 	if len(out) == 0 {
 		return nil, "", fmt.Errorf("corpus pressure requires markdown sources")
 	}
-	return out, "corpus-" + shortHash(filepath.ToSlash(inputPath)), nil
+	return out, "corpus-" + shortHash(filepath.ToSlash(canonicalInput)), nil
+}
+
+func canonicalCorpusInputPath(absInput string) string {
+	realInput, err := filepath.EvalSymlinks(absInput)
+	if err != nil {
+		return filepath.Clean(absInput)
+	}
+	return filepath.Clean(realInput)
 }
 
 func loadCorpusPressureManifest(path string) ([]corpusPressureSourceInput, string, error) {
