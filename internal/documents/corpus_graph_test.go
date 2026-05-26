@@ -118,6 +118,42 @@ func TestCorpusGraphContradictionMarkersMustTargetPair(t *testing.T) {
 	}
 }
 
+func TestCorpusGraphMarkerMatchRequiresNonEmptyTitles(t *testing.T) {
+	marked := CorpusGraphAtom{
+		AtomID:  "atom-marked",
+		Title:   "Disable feature Y",
+		Summary: "contradicts: Enable feature Y; Feature Y is disabled.",
+	}
+	emptyTitle := CorpusGraphAtom{
+		AtomID:  "atom-empty",
+		Summary: "Unrelated partial semantic candidate.",
+	}
+	relations := relationsForAtomPair("corpus-fixture", marked, emptyTitle)
+	for _, relation := range relations {
+		if relation.RelationType == CorpusRelationContradicts {
+			t.Fatalf("marker target should not match an empty title: %+v", relation)
+		}
+	}
+}
+
+func TestCorpusGraphSupersedesMarkerRequiresNonEmptyTargetTitle(t *testing.T) {
+	marked := CorpusGraphAtom{
+		AtomID:  "atom-marked",
+		Title:   "Use new checklist",
+		Summary: "supersedes: Use legacy checklist; Use the new checklist.",
+	}
+	emptyTitle := CorpusGraphAtom{
+		AtomID:  "atom-empty",
+		Summary: "Unrelated partial semantic candidate.",
+	}
+	relations := relationsForAtomPair("corpus-fixture", marked, emptyTitle)
+	for _, relation := range relations {
+		if relation.RelationType == CorpusRelationSupersedes {
+			t.Fatalf("supersedes marker target should not match an empty title: %+v", relation)
+		}
+	}
+}
+
 func TestCorpusGraphDuplicateClusterCountUsesConnectedComponents(t *testing.T) {
 	atoms := []CorpusGraphAtom{
 		{AtomID: "atom-a", ReviewStatus: ReviewStatusReady},
@@ -131,6 +167,29 @@ func TestCorpusGraphDuplicateClusterCountUsesConnectedComponents(t *testing.T) {
 	summary := buildCorpusGraphSummary(CorpusGraphManifest{CorpusID: "corpus-fixture"}, 1, 0, atoms, relations, nil, nil)
 	if summary.DuplicateClusterCount != 1 {
 		t.Fatalf("duplicate cluster count = %d, want 1 connected component", summary.DuplicateClusterCount)
+	}
+}
+
+func TestCorpusGraphRelationMetricsDoNotCollapseRepeatedTitles(t *testing.T) {
+	atoms := []CorpusGraphAtom{
+		{AtomID: "atom-a", Title: "Shared title"},
+		{AtomID: "atom-b", Title: "Shared title"},
+		{AtomID: "atom-c", Title: "Shared title"},
+	}
+	relations := []CorpusGraphRelation{
+		readyTestRelation("rel-ab", CorpusRelationPossibleDuplicate, "atom-a", "atom-b"),
+		readyTestRelation("rel-ac", CorpusRelationPossibleDuplicate, "atom-a", "atom-c"),
+	}
+	metrics := evaluateCorpusRelations(relations, CorpusGraphAnswerKey{
+		SchemaVersion: CorpusGraphAnswerKeySchemaVersion,
+		Relations: []CorpusGraphAnswerRelation{{
+			RelationType: CorpusRelationPossibleDuplicate,
+			FromTitle:    "Shared title",
+			ToTitle:      "Shared title",
+		}},
+	}, atoms)
+	if metrics.TruePositiveCount != 1 || metrics.FalsePositiveCount != 1 || metrics.FalseNegativeCount != 0 {
+		t.Fatalf("repeated title metrics should consume one expected atom-pair match once, got %+v", metrics)
 	}
 }
 
@@ -284,6 +343,20 @@ func corpusCandidate(runID, seed string, kind SemanticCandidateKind, title, summ
 		ObservationIDs:    []string{"obs-" + sanitizeID(seed+"-"+runID)},
 		RelationIDs:       []string{"rel-" + sanitizeID(seed+"-"+runID)},
 		DestinationStatus: SemanticDestinationUnresolved,
+	}
+}
+
+func readyTestRelation(relationID string, relationType CorpusRelationType, fromAtomID, toAtomID string) CorpusGraphRelation {
+	return CorpusGraphRelation{
+		RelationID:   relationID,
+		RelationType: relationType,
+		FromAtomID:   fromAtomID,
+		ToAtomID:     toAtomID,
+		ReviewStatus: ReviewStatusReady,
+		Evidence: []CorpusGraphRelationEvidence{
+			{AtomID: fromAtomID, SourceID: "source", SourceLabel: "source.md", SourceDocumentID: "doc", LineStart: 1, LineEnd: 1, Excerpt: "from", ContentHash: "hash-from"},
+			{AtomID: toAtomID, SourceID: "source", SourceLabel: "source.md", SourceDocumentID: "doc", LineStart: 2, LineEnd: 2, Excerpt: "to", ContentHash: "hash-to"},
+		},
 	}
 }
 

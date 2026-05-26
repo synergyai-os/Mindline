@@ -490,9 +490,9 @@ func relationsForAtomPair(corpusID string, a, b CorpusGraphAtom) []CorpusGraphRe
 	if markerMatch(a, b, "contradicts") {
 		out = append(out, corpusRelation(corpusID, CorpusRelationContradicts, a, b, ConfidenceHigh, ReviewStatusReady, "seeded_contradiction_marker"))
 	}
-	if target := markerTarget(a, "supersedes"); target != "" && (target == normalizeGraphText(b.Title) || strings.HasPrefix(target, normalizeGraphText(b.Title))) {
+	if target := markerTarget(a, "supersedes"); markerTargetMatchesTitle(target, normalizeGraphText(b.Title)) {
 		out = append(out, corpusRelation(corpusID, CorpusRelationSupersedes, a, b, ConfidenceHigh, ReviewStatusReady, "seeded_supersession_marker"))
-	} else if target := markerTarget(b, "supersedes"); target != "" && (target == normalizeGraphText(a.Title) || strings.HasPrefix(target, normalizeGraphText(a.Title))) {
+	} else if target := markerTarget(b, "supersedes"); markerTargetMatchesTitle(target, normalizeGraphText(a.Title)) {
 		out = append(out, corpusRelation(corpusID, CorpusRelationSupersedes, b, a, ConfidenceHigh, ReviewStatusReady, "seeded_supersession_marker"))
 	}
 	if len(out) == 0 && sharedTopicScore(titleA+" "+summaryA, titleB+" "+summaryB) >= 2 {
@@ -535,7 +535,11 @@ func markerMatch(a, b CorpusGraphAtom, prefix string) bool {
 	targetB := markerTarget(b, prefix)
 	titleA := normalizeGraphText(a.Title)
 	titleB := normalizeGraphText(b.Title)
-	return (targetA != "" && (targetA == titleB || strings.HasPrefix(targetA, titleB))) || (targetB != "" && (targetB == titleA || strings.HasPrefix(targetB, titleA)))
+	return markerTargetMatchesTitle(targetA, titleB) || markerTargetMatchesTitle(targetB, titleA)
+}
+
+func markerTargetMatchesTitle(target, title string) bool {
+	return target != "" && title != "" && (target == title || strings.HasPrefix(target, title))
 }
 
 func markerTarget(atom CorpusGraphAtom, prefix string) string {
@@ -659,30 +663,32 @@ func evaluateCorpusRelations(relations []CorpusGraphRelation, answerKey CorpusGr
 	for _, atom := range atoms {
 		atomTitles[atom.AtomID] = normalizeGraphText(atom.Title)
 	}
-	expected := map[string]bool{}
+	expected := []corpusExpectedRelation{}
 	for _, relation := range answerKey.Relations {
-		expected[answerKeyRelationKey(relation.RelationType, normalizeGraphText(relation.FromTitle), normalizeGraphText(relation.ToTitle))] = true
+		expected = append(expected, corpusExpectedRelation{
+			RelationType: relation.RelationType,
+			FromTitle:    normalizeGraphText(relation.FromTitle),
+			ToTitle:      normalizeGraphText(relation.ToTitle),
+		})
 	}
-	seen := map[string]bool{}
 	m := CorpusRelationMetrics{}
 	for _, relation := range relations {
 		if relation.ReviewStatus != ReviewStatusReady || !relationHasEvidence(relation) {
 			continue
 		}
-		key := answerKeyRelationKey(relation.RelationType, atomTitles[relation.FromAtomID], atomTitles[relation.ToAtomID])
 		if !answerKeyTypePresent(answerKey, relation.RelationType) {
 			continue
 		}
 		m.EvalCountedRelationCount++
-		seen[key] = true
-		if expected[key] {
+		if match := matchingExpectedRelationIndex(relation, expected, atomTitles); match >= 0 {
+			expected[match].Matched = true
 			m.TruePositiveCount++
 		} else {
 			m.FalsePositiveCount++
 		}
 	}
-	for key := range expected {
-		if !seen[key] {
+	for _, relation := range expected {
+		if !relation.Matched {
 			m.FalseNegativeCount++
 		}
 	}
@@ -693,6 +699,32 @@ func evaluateCorpusRelations(relations []CorpusGraphRelation, answerKey CorpusGr
 		m.Recall = float64(m.TruePositiveCount) / float64(m.TruePositiveCount+m.FalseNegativeCount)
 	}
 	return m
+}
+
+type corpusExpectedRelation struct {
+	RelationType CorpusRelationType
+	FromTitle    string
+	ToTitle      string
+	Matched      bool
+}
+
+func matchingExpectedRelationIndex(relation CorpusGraphRelation, expected []corpusExpectedRelation, atomTitles map[string]string) int {
+	for i, candidate := range expected {
+		if candidate.Matched || !relationMatchesExpected(relation, candidate, atomTitles) {
+			continue
+		}
+		return i
+	}
+	return -1
+}
+
+func relationMatchesExpected(relation CorpusGraphRelation, expected corpusExpectedRelation, atomTitles map[string]string) bool {
+	if relation.RelationType != expected.RelationType {
+		return false
+	}
+	fromTitle := atomTitles[relation.FromAtomID]
+	toTitle := atomTitles[relation.ToAtomID]
+	return answerKeyRelationKey(relation.RelationType, fromTitle, toTitle) == answerKeyRelationKey(expected.RelationType, expected.FromTitle, expected.ToTitle)
 }
 
 func answerKeyTypePresent(answerKey CorpusGraphAnswerKey, relationType CorpusRelationType) bool {
