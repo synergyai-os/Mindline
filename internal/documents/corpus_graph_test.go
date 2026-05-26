@@ -99,6 +99,41 @@ func TestCorpusGraphSupersedesMetricsAreDirectional(t *testing.T) {
 	}
 }
 
+func TestCorpusGraphContradictionMarkersMustTargetPair(t *testing.T) {
+	atomA := CorpusGraphAtom{
+		AtomID:  "atom-a",
+		Title:   "Disable feature Y",
+		Summary: "contradicts: Enable feature Y; Feature Y is disabled.",
+	}
+	atomB := CorpusGraphAtom{
+		AtomID:  "atom-b",
+		Title:   "Disable feature Z",
+		Summary: "contradicts: Enable feature Z; Feature Z is disabled.",
+	}
+	relations := relationsForAtomPair("corpus-fixture", atomA, atomB)
+	for _, relation := range relations {
+		if relation.RelationType == CorpusRelationContradicts {
+			t.Fatalf("untargeted contradiction markers should not relate different pairs: %+v", relation)
+		}
+	}
+}
+
+func TestCorpusGraphDuplicateClusterCountUsesConnectedComponents(t *testing.T) {
+	atoms := []CorpusGraphAtom{
+		{AtomID: "atom-a", ReviewStatus: ReviewStatusReady},
+		{AtomID: "atom-b", ReviewStatus: ReviewStatusReady},
+		{AtomID: "atom-c", ReviewStatus: ReviewStatusReady},
+	}
+	relations := []CorpusGraphRelation{
+		{RelationID: "rel-ab", RelationType: CorpusRelationPossibleDuplicate, FromAtomID: "atom-a", ToAtomID: "atom-b", ReviewStatus: ReviewStatusReady},
+		{RelationID: "rel-bc", RelationType: CorpusRelationPossibleDuplicate, FromAtomID: "atom-b", ToAtomID: "atom-c", ReviewStatus: ReviewStatusReady},
+	}
+	summary := buildCorpusGraphSummary(CorpusGraphManifest{CorpusID: "corpus-fixture"}, 1, 0, atoms, relations, nil, nil)
+	if summary.DuplicateClusterCount != 1 {
+		t.Fatalf("duplicate cluster count = %d, want 1 connected component", summary.DuplicateClusterCount)
+	}
+}
+
 func TestCorpusGraphWritesArtifacts(t *testing.T) {
 	root := writeCorpusGraphFixture(t, "run-a")
 	summary, atoms, relations, reviews, err := BuildCorpusGraph(filepath.Join(root, "manifest.json"))

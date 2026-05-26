@@ -487,7 +487,7 @@ func relationsForAtomPair(corpusID string, a, b CorpusGraphAtom) []CorpusGraphRe
 	if titleA != "" && titleA == titleB {
 		out = append(out, corpusRelation(corpusID, CorpusRelationPossibleDuplicate, a, b, ConfidenceHigh, ReviewStatusReady, "same_normalized_title"))
 	}
-	if markerMatch(a, b, "contradicts") || containsOpposingMarkers(a, b, "contradicts") {
+	if markerMatch(a, b, "contradicts") {
 		out = append(out, corpusRelation(corpusID, CorpusRelationContradicts, a, b, ConfidenceHigh, ReviewStatusReady, "seeded_contradiction_marker"))
 	}
 	if target := markerTarget(a, "supersedes"); target != "" && (target == normalizeGraphText(b.Title) || strings.HasPrefix(target, normalizeGraphText(b.Title))) {
@@ -538,10 +538,6 @@ func markerMatch(a, b CorpusGraphAtom, prefix string) bool {
 	return (targetA != "" && (targetA == titleB || strings.HasPrefix(targetA, titleB))) || (targetB != "" && (targetB == titleA || strings.HasPrefix(targetB, titleA)))
 }
 
-func containsOpposingMarkers(a, b CorpusGraphAtom, prefix string) bool {
-	return strings.Contains(normalizeGraphText(a.Summary), prefix) && strings.Contains(normalizeGraphText(b.Summary), prefix)
-}
-
 func markerTarget(atom CorpusGraphAtom, prefix string) string {
 	text := normalizeGraphText(atom.Summary)
 	idx := strings.Index(text, prefix)
@@ -588,7 +584,6 @@ func buildCorpusGraphSummary(manifest CorpusGraphManifest, semanticRunCount, ski
 		AtomCount: len(atoms), RelationCount: len(relations), RelationTypeCounts: map[CorpusRelationType]int{}, RelationStatusCounts: map[ReviewStatus]int{},
 		Blockers: append([]string(nil), blockers...),
 	}
-	clusters := map[string]bool{}
 	for _, atom := range atoms {
 		if atom.ReviewStatus != ReviewStatusBlocked && len(atom.Blockers) == 0 {
 			summary.EvidenceReadyAtomCount++
@@ -608,13 +603,9 @@ func buildCorpusGraphSummary(manifest CorpusGraphManifest, semanticRunCount, ski
 		} else if relationHasEvidence(relation) {
 			summary.EvidenceReadyRelationCount++
 		}
-		if relation.RelationType == CorpusRelationPossibleDuplicate {
-			a, b := orderedPair(relation.FromAtomID, relation.ToAtomID)
-			clusters[a+"\x00"+b] = true
-		}
 		summary.Relations = append(summary.Relations, CorpusGraphSummaryRelation{RelationID: relation.RelationID, RelationType: relation.RelationType, ReviewStatus: relation.ReviewStatus, RelationPath: CorpusRelationJSONPath(relation.RelationID), ReviewPath: CorpusReviewJSONPath(relation.RelationID)})
 	}
-	summary.DuplicateClusterCount = len(clusters)
+	summary.DuplicateClusterCount = duplicateClusterCount(relations)
 	if len(relations) > 0 {
 		summary.ReviewBurdenRatio = float64(summary.ReviewBurdenCount) / float64(len(relations))
 	}
@@ -628,6 +619,39 @@ func buildCorpusGraphSummary(manifest CorpusGraphManifest, semanticRunCount, ski
 	sort.Slice(summary.Atoms, func(i, j int) bool { return summary.Atoms[i].AtomID < summary.Atoms[j].AtomID })
 	sort.Slice(summary.Relations, func(i, j int) bool { return summary.Relations[i].RelationID < summary.Relations[j].RelationID })
 	return summary
+}
+
+func duplicateClusterCount(relations []CorpusGraphRelation) int {
+	parent := map[string]string{}
+	var find func(string) string
+	find = func(atomID string) string {
+		if parent[atomID] == "" {
+			parent[atomID] = atomID
+			return atomID
+		}
+		if parent[atomID] != atomID {
+			parent[atomID] = find(parent[atomID])
+		}
+		return parent[atomID]
+	}
+	union := func(a, b string) {
+		rootA := find(a)
+		rootB := find(b)
+		if rootA != rootB {
+			parent[rootB] = rootA
+		}
+	}
+	for _, relation := range relations {
+		if relation.RelationType != CorpusRelationPossibleDuplicate {
+			continue
+		}
+		union(relation.FromAtomID, relation.ToAtomID)
+	}
+	clusters := map[string]bool{}
+	for atomID := range parent {
+		clusters[find(atomID)] = true
+	}
+	return len(clusters)
 }
 
 func evaluateCorpusRelations(relations []CorpusGraphRelation, answerKey CorpusGraphAnswerKey, atoms []CorpusGraphAtom) CorpusRelationMetrics {
