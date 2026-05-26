@@ -12,6 +12,7 @@ import (
 )
 
 const postHogTimeout = 10 * time.Second
+const propEvalHumanReviewRequired = "eval_counted_human_review_required_count"
 
 var allowedProperties = map[string]bool{
 	"event_schema":                       true,
@@ -59,14 +60,17 @@ var allowedProperties = map[string]bool{
 	"eval_counted_accepted_count":        true,
 	"eval_counted_false_positive_count":  true,
 	"eval_counted_false_negative_count":  true,
+	"eval_counted_remaining_count":       true,
 	"evidence_ready_count":               true,
 	"eval_counted_count":                 true,
 	"evidence_excluded_count":            true,
 	"review_burden_count":                true,
+	propEvalHumanReviewRequired:          true,
 	"semantic_no_candidates":             true,
 	"semantic_needs_review":              true,
 	"judgment_human_review":              true,
 	"judgment_model_errors":              true,
+	"eval_counted_model_error_count":     true,
 	"trace_id":                           true,
 	"$ai_trace_id":                       true,
 	"$ai_provider":                       true,

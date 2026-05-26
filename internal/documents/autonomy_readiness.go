@@ -69,16 +69,19 @@ type AutonomyReadinessCounts struct {
 	EvalCountedAcceptedCount      int `json:"eval_counted_accepted_count"`
 	EvalCountedFalsePositiveCount int `json:"eval_counted_false_positive_count"`
 	EvalCountedFalseNegativeCount int `json:"eval_counted_false_negative_count"`
+	EvalCountedRemainingCount     int `json:"eval_counted_remaining_count"`
 	BlockedCount                  int `json:"blocked_count"`
 	SkippedCount                  int `json:"skipped_count"`
 	EvalCountedCount              int `json:"eval_counted_count"`
 	EvidenceReadyCount            int `json:"evidence_ready_count"`
 	EvidenceExcludedCount         int `json:"evidence_excluded_count"`
 	HumanReviewRequiredCount      int `json:"human_review_required_count"`
+	EvalCountedHumanReviewCount   int `json:"eval_counted_human_review_required_count"`
 	MachineTriagedCount           int `json:"machine_triaged_count"`
 	AgentReviewedCount            int `json:"agent_reviewed_count"`
 	ReviewBurdenCount             int `json:"review_burden_count"`
 	ModelErrorCount               int `json:"model_error_count"`
+	EvalCountedModelErrorCount    int `json:"eval_counted_model_error_count"`
 }
 
 type AutonomyReadinessSafetyCounters struct {
@@ -197,16 +200,19 @@ func autonomyCounts(summary SemanticJudgmentSummary, items []SemanticJudgmentCan
 		EvalCountedAcceptedCount:      evalCounts.accepted,
 		EvalCountedFalsePositiveCount: evalCounts.falsePositive,
 		EvalCountedFalseNegativeCount: evalCounts.falseNegative,
+		EvalCountedRemainingCount:     autonomyEvalCountedRemainingCount(summary),
 		BlockedCount:                  summary.BlockedCount,
 		SkippedCount:                  summary.SkippedCount,
 		EvalCountedCount:              summary.EvalCountedCount,
 		EvidenceReadyCount:            summary.EvidenceReadyCount,
 		EvidenceExcludedCount:         summary.EvidenceExcludedCount,
 		HumanReviewRequiredCount:      summary.HumanReviewRequiredCount,
+		EvalCountedHumanReviewCount:   autonomyEvalCountedHumanReviewRequiredCount(summary),
 		MachineTriagedCount:           summary.MachineTriagedCount,
 		AgentReviewedCount:            summary.AgentReviewedCount,
 		ReviewBurdenCount:             summary.ReviewBurdenCount,
 		ModelErrorCount:               autonomyModelErrorCount(items),
+		EvalCountedModelErrorCount:    autonomyEvalCountedModelErrorCount(items),
 	}
 }
 
@@ -250,13 +256,13 @@ func autonomyBlockers(report AutonomyReadinessReport, summary SemanticJudgmentSu
 	if nonAcceptCount(summary) > taxonomyCount(summary) {
 		blockers = append(blockers, "failure_taxonomy_incomplete")
 	}
-	if report.Counts.RemainingCount > 0 {
+	if report.Counts.EvalCountedRemainingCount > 0 {
 		blockers = append(blockers, "remaining_judgments")
 	}
-	if report.Counts.HumanReviewRequiredCount > 0 {
+	if report.Counts.EvalCountedHumanReviewCount > 0 {
 		blockers = append(blockers, "human_review_required")
 	}
-	if report.Counts.ModelErrorCount > 0 {
+	if report.Counts.EvalCountedModelErrorCount > 0 {
 		blockers = append(blockers, "model_errors")
 	}
 	if report.SafetyCounters.DestinationWrites != 0 ||
@@ -328,15 +334,15 @@ func autonomyImprovementTargets(report AutonomyReadinessReport, summary Semantic
 	}
 	add("evidence_readiness", report.Counts.EvidenceExcludedCount, "Make excluded candidates evidence-ready or remove them from counted evaluation.")
 	add("taxonomy_coverage", nonAcceptCount(summary)-taxonomyCount(summary), "Add stable failure reasons for every non-accept judgment.")
-	add("human_review_required", report.Counts.HumanReviewRequiredCount, "Reduce the candidate set that requires human review.")
-	add("model_errors", report.Counts.ModelErrorCount, "Fix model-error paths before trusting agent review.")
+	add("human_review_required", report.Counts.EvalCountedHumanReviewCount, "Reduce the eval-counted candidate set that requires human review.")
+	add("model_errors", report.Counts.EvalCountedModelErrorCount, "Fix model-error paths before trusting eval-counted agent review.")
 	add("review_burden", report.Counts.ReviewBurdenCount, "Lower the remaining review burden through better confidence and evidence gates.")
 	add("wrong_kind", report.Counts.WrongKindCount, "Tighten candidate-kind classification.")
 	add("duplicate", report.Counts.DuplicateCount, "Improve deduplication before readiness claims.")
 	add("unclear", report.Counts.UnclearCount, "Improve evidence/context packaging for ambiguous candidates.")
 	add("false_positive", report.Counts.FalsePositiveCount, "Reduce incorrect extracted candidates before readiness claims.")
 	add("false_negative", report.Counts.FalseNegativeCount, "Recover expected outcomes that the extractor missed.")
-	add("remaining_judgments", report.Counts.RemainingCount, "Finish the judgment queue or exclude unjudged items from the held-out suite.")
+	add("remaining_judgments", report.Counts.EvalCountedRemainingCount, "Finish the eval-counted judgment queue or exclude unjudged items from the held-out suite.")
 	sort.SliceStable(targets, func(i, j int) bool {
 		if targets[i].Count == targets[j].Count {
 			return targets[i].Code < targets[j].Code
@@ -468,7 +474,40 @@ func autonomyFalsePositiveCount(summary SemanticJudgmentSummary) int {
 }
 
 func autonomyFalseNegativeCount(summary SemanticJudgmentSummary) int {
+	if len(summary.Candidates) > 0 {
+		count := 0
+		for _, candidate := range summary.Candidates {
+			if autonomyHasFailureReason(candidate.FailureReason, candidate.SecondaryFailureReasons, SemanticFailureMissingExpectedOutcome) {
+				count++
+			}
+		}
+		return count
+	}
 	return summary.FailureReasonCounts[SemanticFailureMissingExpectedOutcome]
+}
+
+func autonomyEvalCountedRemainingCount(summary SemanticJudgmentSummary) int {
+	if len(summary.Candidates) == 0 {
+		return summary.RemainingCount
+	}
+	count := 0
+	for _, candidate := range summary.Candidates {
+		if candidate.EvalCounted && candidate.JudgmentChoice == "" {
+			count++
+		}
+	}
+	return count
+}
+
+func autonomyEvalCountedHumanReviewRequiredCount(summary SemanticJudgmentSummary) int {
+	count := 0
+	for _, candidate := range summary.Candidates {
+		if !candidate.EvalCounted || candidate.JudgmentChoice != "" || candidate.HumanReviewRequired == nil || !*candidate.HumanReviewRequired {
+			continue
+		}
+		count++
+	}
+	return count
 }
 
 type autonomyEvalOutcomeCounts struct {
@@ -493,17 +532,49 @@ func autonomyEvalCountedOutcomeCounts(items []SemanticJudgmentCandidate, judgmen
 		case SemanticJudgmentChoiceReject, SemanticJudgmentChoiceDuplicate, SemanticJudgmentChoiceWrongKind:
 			counts.falsePositive++
 		}
-		if judgment.FailureReason == SemanticFailureMissingExpectedOutcome {
+		if autonomyHasFailureReason(judgment.FailureReason, judgment.SecondaryReasons, SemanticFailureMissingExpectedOutcome) {
 			counts.falseNegative++
 		}
 	}
 	return counts
 }
 
+func autonomyHasFailureReason(primary SemanticFailureReason, secondary []SemanticFailureReason, target SemanticFailureReason) bool {
+	if primary == target {
+		return true
+	}
+	for _, reason := range secondary {
+		if reason == target {
+			return true
+		}
+	}
+	return false
+}
+
 func autonomyModelErrorCount(items []SemanticJudgmentCandidate) int {
 	count := 0
 	for _, item := range items {
 		if item.AgentReview == nil {
+			continue
+		}
+		for _, reason := range item.AgentReview.ReviewReasonCodes {
+			if reason == SemanticAgentReviewReasonModelError {
+				count++
+				break
+			}
+		}
+	}
+	return count
+}
+
+func autonomyEvalCountedModelErrorCount(items []SemanticJudgmentCandidate) int {
+	count := 0
+	for _, item := range items {
+		readiness := item.EvidenceReadiness
+		if readiness.Status == "" {
+			readiness = semanticLegacyEvidenceReadiness(item)
+		}
+		if !readiness.EvalCounted || item.AgentReview == nil {
 			continue
 		}
 		for _, reason := range item.AgentReview.ReviewReasonCodes {

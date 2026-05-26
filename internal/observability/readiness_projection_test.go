@@ -16,16 +16,20 @@ func TestAutonomyReadinessSafeEventsUseAllowlistedMetadataOnlyFields(t *testing.
 		HeldOut:         true,
 		ThresholdStatus: documents.AutonomyReadinessNotEligible,
 		Counts: documents.AutonomyReadinessCounts{
-			CandidateCount:           2,
-			JudgedCount:              2,
-			RejectedCount:            1,
-			EvalCountedCount:         2,
-			EvidenceReadyCount:       2,
-			HumanReviewRequiredCount: 1,
-			ModelErrorCount:          1,
-			FalsePositiveCount:       1,
-			FalseNegativeCount:       0,
-			EvalCountedAcceptedCount: 1,
+			CandidateCount:              2,
+			JudgedCount:                 2,
+			RemainingCount:              1,
+			RejectedCount:               1,
+			EvalCountedCount:            2,
+			EvidenceReadyCount:          2,
+			HumanReviewRequiredCount:    1,
+			EvalCountedHumanReviewCount: 0,
+			ModelErrorCount:             1,
+			EvalCountedModelErrorCount:  0,
+			FalsePositiveCount:          1,
+			FalseNegativeCount:          0,
+			EvalCountedAcceptedCount:    1,
+			EvalCountedRemainingCount:   0,
 		},
 		KRs: map[string]documents.AutonomyReadinessKR{
 			"KEY-3": {Passed: false},
@@ -62,7 +66,13 @@ func TestAutonomyReadinessSafeEventsUseAllowlistedMetadataOnlyFields(t *testing.
 		event.Properties["model"] != "gpt-5.2" ||
 		event.Properties["metadata_only"] != true ||
 		event.Properties["false_positive_count"] != 1 ||
-		event.Properties["eval_counted_accepted_count"] != 1 {
+		event.Properties["eval_counted_accepted_count"] != 1 ||
+		event.Properties["remaining_count"] != 1 ||
+		event.Properties["eval_counted_remaining_count"] != 0 ||
+		event.Properties["human_review_required_count"] != 1 ||
+		event.Properties["eval_counted_human_review_required_count"] != 0 ||
+		event.Properties["judgment_model_errors"] != 1 ||
+		event.Properties["eval_counted_model_error_count"] != 0 {
 		t.Fatalf("missing expected metadata fields: %+v", event.Properties)
 	}
 	for key, value := range event.Properties {

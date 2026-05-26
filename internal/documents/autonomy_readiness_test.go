@@ -84,6 +84,25 @@ func TestAutonomyReadinessMapsMissingExpectedOutcomeToFalseNegative(t *testing.T
 	}
 }
 
+func TestAutonomyReadinessCountsSecondaryMissingExpectedOutcomeAsFalseNegative(t *testing.T) {
+	out := t.TempDir()
+	summary := autonomyReadinessTestSummary(t, SemanticJudgmentChoiceReject, SemanticFailureUnexpectedCandidate)
+	judgment := summary.Judgments[0]
+	judgment.SecondaryReasons = []SemanticFailureReason{SemanticFailureMissingExpectedOutcome}
+	summary = BuildSemanticJudgmentSummary("run-demo", 1, summary.Items, []SemanticJudgmentRecord{judgment})
+	if err := WriteSemanticJudgmentRoot(filepath.Join(out, "semantic-judgment"), summary); err != nil {
+		t.Fatalf("write judgment: %v", err)
+	}
+
+	report, err := BuildAutonomyReadinessReport(out, AutonomyReadinessOptions{Threshold: 0.98, HeldOut: true})
+	if err != nil {
+		t.Fatalf("build report: %v", err)
+	}
+	if report.Counts.FalseNegativeCount != 1 || report.Counts.EvalCountedFalseNegativeCount != 1 {
+		t.Fatalf("expected secondary missing outcome to count as false negative, got %+v", report.Counts)
+	}
+}
+
 func TestAutonomyReadinessAccuracyUsesTrueFalsePositiveFalseNegativeDenominator(t *testing.T) {
 	counts := AutonomyReadinessCounts{
 		EvalCountedAcceptedCount:      98,
@@ -116,6 +135,44 @@ func TestAutonomyReadinessAccuracyIgnoresEvidenceExcludedJudgments(t *testing.T)
 	}
 	if report.Counts.FalsePositiveCount != 1 || report.Counts.EvalCountedFalsePositiveCount != 0 || report.Accuracy != 0 {
 		t.Fatalf("expected excluded judgment to stay out of DEC-64 denominator, got %+v accuracy=%f", report.Counts, report.Accuracy)
+	}
+}
+
+func TestAutonomyReadinessEligibilityIgnoresExcludedRemainingReviewAndModelBlockers(t *testing.T) {
+	out := t.TempDir()
+	summary := autonomyReadinessTestSummary(t, SemanticJudgmentChoiceAccept, "")
+	accepted := summary.Items[0]
+	excluded := accepted
+	excluded.CandidateID = "candidate-excluded"
+	excluded.RelationContext = nil
+	excluded.AgentReview = &SemanticAgentReviewProposal{
+		SchemaVersion:       SemanticAgentReviewProposalSchemaVersion,
+		Provider:            "openai",
+		Model:               "gpt-5.2",
+		Choice:              SemanticJudgmentChoiceUnclear,
+		FailureReason:       SemanticFailureOther,
+		Confidence:          ConfidenceLow,
+		HumanReviewRequired: true,
+		ReviewReasonCodes:   []SemanticAgentReviewReasonCode{SemanticAgentReviewReasonModelError},
+		Rationale:           "model call failed",
+	}
+	excluded.EvidenceReadiness = semanticEvidenceReadiness(excluded)
+	summary = BuildSemanticJudgmentSummary("run-demo", 1, []SemanticJudgmentCandidate{accepted, excluded}, []SemanticJudgmentRecord{summary.Judgments[0]})
+	if err := WriteSemanticJudgmentRoot(filepath.Join(out, "semantic-judgment"), summary); err != nil {
+		t.Fatalf("write judgment: %v", err)
+	}
+
+	report, err := BuildAutonomyReadinessReport(out, AutonomyReadinessOptions{Threshold: 0.98, HeldOut: true})
+	if err != nil {
+		t.Fatalf("build report: %v", err)
+	}
+	if report.ThresholdStatus != AutonomyReadinessEligible {
+		t.Fatalf("expected excluded unjudged review/model item not to block eligibility, got blockers=%+v counts=%+v", report.Blockers, report.Counts)
+	}
+	for _, blocker := range []string{"remaining_judgments", "human_review_required", "model_errors"} {
+		if containsString(report.Blockers, blocker) {
+			t.Fatalf("expected blocker %q to ignore evidence-excluded candidates, got %+v", blocker, report.Blockers)
+		}
 	}
 }
 
