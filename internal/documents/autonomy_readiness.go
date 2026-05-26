@@ -3,8 +3,10 @@ package documents
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"math"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -154,6 +156,7 @@ func BuildAutonomyReadinessReport(inputDir string, options AutonomyReadinessOpti
 	}
 	trace := readAutonomyReadinessTrace(root)
 	counts := autonomyCounts(summary, items, judgments)
+	safetyCounters := autonomySafetyCounters(root)
 	report := AutonomyReadinessReport{
 		SchemaVersion:    AutonomyReadinessReportSchemaVersion,
 		EvaluatorVersion: AutonomyReadinessEvaluatorVersion,
@@ -163,7 +166,7 @@ func BuildAutonomyReadinessReport(inputDir string, options AutonomyReadinessOpti
 		Threshold:        options.Threshold,
 		Accuracy:         autonomyAccuracy(counts),
 		Counts:           counts,
-		SafetyCounters:   AutonomyReadinessSafetyCounters{},
+		SafetyCounters:   safetyCounters,
 		Slices:           autonomySlices(summary, items, trace),
 		Projection: AutonomyReadinessProjectionReport{
 			Status: AutonomyReadinessProjectionDisabled,
@@ -623,6 +626,159 @@ func autonomyEvalCountedModelErrorCount(items []SemanticJudgmentCandidate) int {
 		}
 	}
 	return count
+}
+
+func autonomySafetyCounters(root string) AutonomyReadinessSafetyCounters {
+	artifactRoot := filepath.Dir(root)
+	var counters AutonomyReadinessSafetyCounters
+	_ = filepath.WalkDir(artifactRoot, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if entry.IsDir() {
+			if entry.Name() == AutonomyReadinessDirName {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if entry.Type()&os.ModeSymlink != 0 || filepath.Ext(path) != ".json" {
+			return nil
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		var value any
+		if err := json.Unmarshal(body, &value); err != nil {
+			return nil
+		}
+		counters = addSafetyCounters(counters, autonomySafetyCountersFromArtifact(value))
+		return nil
+	})
+	return counters
+}
+
+func addSafetyCounters(left, right AutonomyReadinessSafetyCounters) AutonomyReadinessSafetyCounters {
+	return AutonomyReadinessSafetyCounters{
+		DestinationWrites:         left.DestinationWrites + right.DestinationWrites,
+		AutoAccepts:               left.AutoAccepts + right.AutoAccepts,
+		NoHumanClaims:             left.NoHumanClaims + right.NoHumanClaims,
+		CommittedPrivateArtifacts: left.CommittedPrivateArtifacts + right.CommittedPrivateArtifacts,
+	}
+}
+
+func autonomySafetyCountersFromArtifact(value any) AutonomyReadinessSafetyCounters {
+	counters := AutonomyReadinessSafetyCounters{
+		DestinationWrites: autonomyDestinationWriteCount(value),
+		AutoAccepts:       autonomyAutoAcceptCount(value),
+		NoHumanClaims:     autonomyNoHumanClaimCount(value),
+	}
+	if autonomyHasPrivateSafetyMarker(value) {
+		counters.CommittedPrivateArtifacts = 1
+	}
+	return counters
+}
+
+func autonomyDestinationWriteCount(value any) int {
+	object, ok := value.(map[string]any)
+	if !ok {
+		return 0
+	}
+	if stringField(object, "schema_version") != "destination-operation/v0.1" {
+		return 0
+	}
+	switch stringField(object, "operation_type") {
+	case "create_note", "attention_preview", "background_record":
+		return 1
+	default:
+		return 0
+	}
+}
+
+func autonomyAutoAcceptCount(value any) int {
+	return countJSONValue(value, func(key string, value any) int {
+		switch key {
+		case "auto_accept", "auto_accepted":
+			if boolField(value) {
+				return 1
+			}
+		case "auto_accept_count", "auto_accepted_count", "auto_accepts":
+			return nonNegativeIntField(value)
+		}
+		return 0
+	})
+}
+
+func autonomyNoHumanClaimCount(value any) int {
+	return countJSONValue(value, func(key string, value any) int {
+		if key == "no_human_eligible" && boolField(value) {
+			return 1
+		}
+		return 0
+	})
+}
+
+func autonomyHasPrivateSafetyMarker(value any) bool {
+	switch typed := value.(type) {
+	case map[string]any:
+		if safety, ok := typed["safety"].(map[string]any); ok {
+			if boolField(safety["private_provenance"]) ||
+				boolField(safety["redaction_required"]) ||
+				boolField(safety["secret_like"]) {
+				return true
+			}
+		}
+		for _, child := range typed {
+			if autonomyHasPrivateSafetyMarker(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if autonomyHasPrivateSafetyMarker(child) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func countJSONValue(value any, match func(string, any) int) int {
+	switch typed := value.(type) {
+	case map[string]any:
+		count := 0
+		for key, child := range typed {
+			count += match(key, child)
+			count += countJSONValue(child, match)
+		}
+		return count
+	case []any:
+		count := 0
+		for _, child := range typed {
+			count += countJSONValue(child, match)
+		}
+		return count
+	default:
+		return 0
+	}
+}
+
+func stringField(object map[string]any, key string) string {
+	value, _ := object[key].(string)
+	return strings.TrimSpace(value)
+}
+
+func boolField(value any) bool {
+	typed, _ := value.(bool)
+	return typed
+}
+
+func nonNegativeIntField(value any) int {
+	number, ok := value.(float64)
+	if !ok || number <= 0 {
+		return 0
+	}
+	return int(math.Floor(number))
 }
 
 func incrementChoice(out map[string]map[string]int, key, choice string) {

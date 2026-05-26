@@ -35,6 +35,59 @@ func TestAutonomyReadinessEligibleOnlyWithHeldOutThresholdEvidenceAndSafety(t *t
 	}
 }
 
+func TestAutonomyReadinessSafetyCountersComeFromArtifactsBeforeEligibility(t *testing.T) {
+	out := t.TempDir()
+	summary := autonomyReadinessTestSummary(t, SemanticJudgmentChoiceAccept, "")
+	if err := WriteSemanticJudgmentRoot(filepath.Join(out, "semantic-judgment"), summary); err != nil {
+		t.Fatalf("write judgment: %v", err)
+	}
+	writeTestArtifact(t, out, "destinations/candidate-1/operations/001-create-note.json", `{
+  "schema_version": "destination-operation/v0.1",
+  "operation_id": "op-1",
+  "destination_adapter_id": "tolaria",
+  "source_candidate_id": "candidate-1",
+  "source_record_id": "record-1",
+  "idempotency_key": "key-1",
+  "operation_type": "create_note",
+  "write_mode": "dry_run",
+  "visibility_lane": "publish",
+  "planned_locator": "30-resources/source.md",
+  "title": "Processed source",
+  "body": "body",
+  "metadata": {"state": "dry_run_published"},
+  "authority_ids": ["DEC-64"]
+}`)
+	writeTestArtifact(t, out, "semantic-calibration/calibration-summary.json", `{
+  "schema_version": "semantic-calibration-summary/v0.2",
+  "no_human_eligible": true
+}`)
+	writeTestArtifact(t, out, "review/auto-accept-summary.json", `{
+  "schema_version": "semantic-auto-accept-summary/v0.1",
+  "auto_accept_count": 1
+}`)
+	writeTestArtifact(t, out, "results/private-result.json", `{
+  "schema_version": "pipeline-result/v0.1",
+  "safety": {"private_provenance": true, "redaction_required": false, "secret_like": false}
+}`)
+
+	report, err := BuildAutonomyReadinessReport(out, AutonomyReadinessOptions{Threshold: 0.98, HeldOut: true})
+	if err != nil {
+		t.Fatalf("build report: %v", err)
+	}
+	if report.SafetyCounters.DestinationWrites != 1 ||
+		report.SafetyCounters.AutoAccepts != 1 ||
+		report.SafetyCounters.NoHumanClaims != 1 ||
+		report.SafetyCounters.CommittedPrivateArtifacts != 1 {
+		t.Fatalf("expected safety counters from artifacts, got %+v", report.SafetyCounters)
+	}
+	if report.ThresholdStatus != AutonomyReadinessNotEligible || !containsString(report.Blockers, "safety_counter_nonzero") {
+		t.Fatalf("expected safety blocker before eligibility, got status=%s blockers=%+v", report.ThresholdStatus, report.Blockers)
+	}
+	if report.KRs["KEY-6"].Passed {
+		t.Fatalf("expected KEY-6 to fail when safety counters are nonzero: %+v", report.KRs["KEY-6"])
+	}
+}
+
 func TestAutonomyReadinessIncludesRequiredSlicesAndImprovementTargets(t *testing.T) {
 	out := t.TempDir()
 	summary := autonomyReadinessTestSummary(t, SemanticJudgmentChoiceReject, SemanticFailureUnexpectedCandidate)
@@ -333,6 +386,17 @@ func autonomyReadinessTestSummary(t *testing.T, choice SemanticJudgmentChoice, r
 		RecordedAt:       time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC).Format(time.RFC3339),
 	}
 	return BuildSemanticJudgmentSummary("run-demo", 1, []SemanticJudgmentCandidate{item}, []SemanticJudgmentRecord{record})
+}
+
+func writeTestArtifact(t *testing.T, root, path, body string) {
+	t.Helper()
+	target := filepath.Join(root, filepath.FromSlash(path))
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatalf("mkdir artifact: %v", err)
+	}
+	if err := os.WriteFile(target, []byte(body+"\n"), 0o644); err != nil {
+		t.Fatalf("write artifact: %v", err)
+	}
 }
 
 func containsString(values []string, needle string) bool {
