@@ -152,7 +152,7 @@ func BuildAutonomyReadinessReport(inputDir string, options AutonomyReadinessOpti
 	if options.Threshold == 0 {
 		options.Threshold = AutonomyReadinessDefaultThreshold
 	}
-	if options.Threshold <= 0 || options.Threshold > 1 {
+	if math.IsNaN(options.Threshold) || math.IsInf(options.Threshold, 0) || options.Threshold <= 0 || options.Threshold > 1 {
 		return AutonomyReadinessReport{}, fmt.Errorf("threshold must be >0 and <=1")
 	}
 	trace := readAutonomyReadinessTrace(root)

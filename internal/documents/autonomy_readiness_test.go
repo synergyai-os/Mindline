@@ -1,6 +1,7 @@
 package documents
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -33,6 +34,20 @@ func TestAutonomyReadinessEligibleOnlyWithHeldOutThresholdEvidenceAndSafety(t *t
 	}
 	if report.ThresholdStatus != AutonomyReadinessNotEligible || !containsString(report.Blockers, "not_held_out") {
 		t.Fatalf("expected not-held-out blocker, got %+v", report.Blockers)
+	}
+}
+
+func TestAutonomyReadinessRejectsInvalidThresholds(t *testing.T) {
+	out := t.TempDir()
+	summary := autonomyReadinessTestSummary(t, SemanticJudgmentChoiceAccept, "")
+	if err := WriteSemanticJudgmentRoot(filepath.Join(out, "semantic-judgment"), summary); err != nil {
+		t.Fatalf("write judgment: %v", err)
+	}
+	for _, threshold := range []float64{math.NaN(), math.Inf(1), math.Inf(-1), -0.1, 1.1} {
+		_, err := BuildAutonomyReadinessReport(out, AutonomyReadinessOptions{Threshold: threshold, HeldOut: true})
+		if err == nil || !strings.Contains(err.Error(), "threshold must be >0 and <=1") {
+			t.Fatalf("expected invalid threshold %v to fail, got %v", threshold, err)
+		}
 	}
 }
 
