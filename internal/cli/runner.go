@@ -1648,6 +1648,12 @@ func (r Runner) projectAutonomyReadiness(report documents.AutonomyReadinessRepor
 		"POSTHOG_API_KEY",
 		"POSTHOG_HOST",
 	})
+	if !telemetryEnabled(values["MINDLINE_TELEMETRY_ENABLED"]) {
+		return documents.WithAutonomyReadinessProjection(report, documents.AutonomyReadinessProjectionReport{
+			Status:        documents.AutonomyReadinessProjectionDisabled,
+			SchemaVersion: observability.AutonomyReadinessProjectionSchemaVersion,
+		}), ExitOK
+	}
 	config, err := observability.ConfigFromValues(values)
 	if err != nil {
 		status := documents.AutonomyReadinessProjectionFailed
@@ -1691,6 +1697,15 @@ func (r Runner) projectAutonomyReadiness(report documents.AutonomyReadinessRepor
 		Status:        documents.AutonomyReadinessProjectionSent,
 		SchemaVersion: observability.AutonomyReadinessProjectionSchemaVersion,
 	}), ExitOK
+}
+
+func telemetryEnabled(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func semanticTraceSummary(summary documents.SemanticSummary, options documents.SemanticOptions) observability.TraceSummary {

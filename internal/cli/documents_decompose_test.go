@@ -361,6 +361,60 @@ func TestDocumentsReadinessReportRejectsUnsupportedTraceModeBeforeNetwork(t *tes
 	}
 }
 
+func TestDocumentsReadinessReportIgnoresUnsupportedTraceModeWhenTelemetryDisabled(t *testing.T) {
+	t.Setenv("MINDLINE_TELEMETRY_ENABLED", "false")
+	t.Setenv("MINDLINE_LLM_TRACE_MODE", "metadata")
+	judgeOut := t.TempDir()
+	reportOut := t.TempDir()
+	called := false
+	runner := NewRunnerWithPostHogTransport(NewOSFileSystem(), httpRoundTripper(func(req *http.Request) (*http.Response, error) {
+		called = true
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("{}")), Header: make(http.Header)}, nil
+	}))
+	var stdout, stderr bytes.Buffer
+	semanticOut := t.TempDir()
+	code := runner.Run([]string{
+		"documents", "semantics", documentsFixture(t, "semantic"),
+		"--out", semanticOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("semantics failed: code=%d stderr=%s", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = runner.Run([]string{
+		"documents", "judge", semanticOut,
+		"--out", judgeOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("judge failed: code=%d stderr=%s", code, stderr.String())
+	}
+	t.Setenv("MINDLINE_LLM_TRACE_MODE", "raw")
+	stdout.Reset()
+	stderr.Reset()
+
+	code = runner.Run([]string{
+		"documents", "readiness-report", judgeOut,
+		"--out", reportOut,
+	}, &stdout, &stderr)
+
+	if code != ExitOK {
+		t.Fatalf("disabled readiness projection should ignore stale unsafe trace mode, got %d stderr=%s", code, stderr.String())
+	}
+	if called {
+		t.Fatalf("disabled readiness projection must not call PostHog")
+	}
+	if stderr.String() != "" {
+		t.Fatalf("expected disabled readiness projection to stay quiet, got %q", stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(reportOut, "autonomy-readiness", "readiness-report.json")); err != nil {
+		t.Fatalf("expected local readiness report when projection is disabled: %v", err)
+	}
+	if !strings.Contains(stdout.String(), `"status": "disabled"`) {
+		t.Fatalf("expected disabled projection status in stdout: %s", stdout.String())
+	}
+}
+
 func TestWriteAndExportTraceFailsOnUnsafeTelemetryEvent(t *testing.T) {
 	t.Setenv("MINDLINE_TELEMETRY_ENABLED", "true")
 	t.Setenv("MINDLINE_LLM_TRACE_MODE", "metadata")
