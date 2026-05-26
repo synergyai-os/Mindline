@@ -73,6 +73,10 @@ func BuildCorpusPressureLoop(inputPath, outDir string, options CorpusPressureLoo
 		return CorpusPressureLoopSummary{}, err
 	}
 	configFingerprint := corpusPressureLoopConfigFingerprint(options)
+	options.PressureOptions.skipPaths = append(options.PressureOptions.skipPaths,
+		filepath.Join(root, "iterations"),
+		filepath.Join(root, CorpusPressureLoopDirName),
+	)
 	options.PressureOptions.CommandConfigFingerprint = configFingerprint
 	loopSummary := CorpusPressureLoopSummary{
 		SchemaVersion:            CorpusPressureLoopSummarySchemaVersion,

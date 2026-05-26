@@ -33,6 +33,7 @@ type CorpusPressureManifestSource struct {
 type CorpusPressureOptions struct {
 	SemanticOptions          SemanticOptions
 	CommandConfigFingerprint string
+	skipPaths                []string
 }
 
 type CorpusPressureSourceState string
@@ -175,10 +176,6 @@ func BuildCorpusPressure(inputPath, outDir string, options CorpusPressureOptions
 	if strings.TrimSpace(options.CommandConfigFingerprint) == "" {
 		options.CommandConfigFingerprint = corpusPressureCommandConfigFingerprint(options.SemanticOptions)
 	}
-	sources, corpusID, err := loadCorpusPressureSources(inputPath)
-	if err != nil {
-		return CorpusPressureSummary{}, CorpusGraphSummary{}, err
-	}
 	root, err := filepath.Abs(outDir)
 	if err != nil {
 		return CorpusPressureSummary{}, CorpusGraphSummary{}, err
@@ -187,6 +184,12 @@ func BuildCorpusPressure(inputPath, outDir string, options CorpusPressureOptions
 		return CorpusPressureSummary{}, CorpusGraphSummary{}, err
 	}
 	if err := os.MkdirAll(root, 0o755); err != nil {
+		return CorpusPressureSummary{}, CorpusGraphSummary{}, err
+	}
+	skipPaths := append([]string{}, options.skipPaths...)
+	skipPaths = append(skipPaths, corpusPressureOutputSkipPaths(inputPath, root)...)
+	sources, corpusID, err := loadCorpusPressureSources(inputPath, skipPaths...)
+	if err != nil {
 		return CorpusPressureSummary{}, CorpusGraphSummary{}, err
 	}
 	results := make([]CorpusPressureSourceResult, 0, len(sources))
@@ -238,7 +241,7 @@ func BuildCorpusPressure(inputPath, outDir string, options CorpusPressureOptions
 	return summary, graphSummary, nil
 }
 
-func loadCorpusPressureSources(inputPath string) ([]corpusPressureSourceInput, string, error) {
+func loadCorpusPressureSources(inputPath string, skipPaths ...string) ([]corpusPressureSourceInput, string, error) {
 	if strings.TrimSpace(inputPath) == "" {
 		return nil, "", fmt.Errorf("missing input path")
 	}
@@ -261,7 +264,7 @@ func loadCorpusPressureSources(inputPath string) ([]corpusPressureSourceInput, s
 	seen := map[string]int{}
 	out := make([]corpusPressureSourceInput, 0, len(paths))
 	for _, path := range paths {
-		if shouldSkipCorpusPressurePath(inputPath, path) {
+		if shouldSkipCorpusPressurePath(inputPath, path, skipPaths...) {
 			continue
 		}
 		safePath, err := containedDiscoveredSourcePath(absInput, path)
@@ -376,10 +379,26 @@ func containedDiscoveredSourcePath(root, path string) (string, error) {
 	return realPath, nil
 }
 
-func shouldSkipCorpusPressurePath(root, path string) bool {
+func shouldSkipCorpusPressurePath(root, path string, skipPaths ...string) bool {
 	rel, err := filepath.Rel(root, path)
 	if err != nil {
 		return true
+	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return true
+	}
+	for _, skipPath := range skipPaths {
+		if strings.TrimSpace(skipPath) == "" {
+			continue
+		}
+		absSkipPath, err := filepath.Abs(skipPath)
+		if err != nil {
+			return true
+		}
+		if isInside(absSkipPath, absPath) {
+			return true
+		}
 	}
 	parts := strings.Split(filepath.ToSlash(rel), "/")
 	for _, part := range parts {
@@ -389,6 +408,28 @@ func shouldSkipCorpusPressurePath(root, path string) bool {
 		}
 	}
 	return false
+}
+
+func corpusPressureOutputSkipPaths(inputPath, outRoot string) []string {
+	info, err := os.Stat(inputPath)
+	if err != nil || !info.IsDir() {
+		return nil
+	}
+	absInput, err := filepath.Abs(inputPath)
+	if err != nil {
+		return nil
+	}
+	if !isInside(absInput, outRoot) {
+		return nil
+	}
+	rel, err := filepath.Rel(absInput, outRoot)
+	if err != nil {
+		return nil
+	}
+	if rel == "." {
+		return []string{filepath.Join(outRoot, "sources")}
+	}
+	return []string{outRoot}
 }
 
 func runCorpusPressureSource(root string, source corpusPressureSourceInput, options SemanticOptions) (CorpusPressureSourceResult, *CorpusGraphManifestSource) {

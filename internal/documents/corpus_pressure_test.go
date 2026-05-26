@@ -109,6 +109,71 @@ func TestCorpusPressureLoopStopsHonestlyWhenUnchanged(t *testing.T) {
 	}
 }
 
+func TestCorpusPressureLoopIgnoresNestedOutputSources(t *testing.T) {
+	input := t.TempDir()
+	if err := os.WriteFile(filepath.Join(input, "blocked.md"), []byte("# Secret\nAPI key sk-test-secret-token should stay blocked\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(input, "out")
+	summary, err := BuildCorpusPressureLoop(input, out, CorpusPressureLoopOptions{MaxRuns: 3, BuildFingerprint: "test-build"})
+	if err != nil {
+		t.Fatalf("build corpus pressure loop: %v", err)
+	}
+	if summary.StopReason != "same_binary_same_inputs" {
+		t.Fatalf("nested loop output should not be rediscovered as corpus input: %+v", summary)
+	}
+	if summary.RunCount != 2 {
+		t.Fatalf("expected baseline plus stable replay, got %d", summary.RunCount)
+	}
+	if summary.Iterations[0].SourceCounters.Total != 1 || summary.Iterations[1].SourceCounters.Total != 1 {
+		t.Fatalf("generated nested outputs must not inflate source counts: %+v", summary.Iterations)
+	}
+	if summary.Iterations[1].SourceDeltas.Blocked != 0 || summary.Iterations[1].SourceDeltas.Processed != 0 || summary.Iterations[1].SourceDeltas.Skipped != 0 || summary.Iterations[1].SourceDeltas.Excluded != 0 {
+		t.Fatalf("expected zero source-state deltas for nested output replay: %+v", summary.Iterations[1].SourceDeltas)
+	}
+}
+
+func TestCorpusPressureLoopInPlaceOutputKeepsInputSources(t *testing.T) {
+	input := t.TempDir()
+	if err := os.WriteFile(filepath.Join(input, "blocked.md"), []byte("# Secret\nAPI key sk-test-secret-token should stay blocked\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := BuildCorpusPressureLoop(input, input, CorpusPressureLoopOptions{MaxRuns: 3, BuildFingerprint: "test-build"})
+	if err != nil {
+		t.Fatalf("build corpus pressure loop in place: %v", err)
+	}
+	if summary.StopReason != "same_binary_same_inputs" {
+		t.Fatalf("in-place loop output should not hide inputs or rediscover generated output: %+v", summary)
+	}
+	if summary.RunCount != 2 {
+		t.Fatalf("expected baseline plus stable replay, got %d", summary.RunCount)
+	}
+	if summary.Iterations[0].SourceCounters.Total != 1 || summary.Iterations[1].SourceCounters.Total != 1 {
+		t.Fatalf("in-place loop output must preserve source counts: %+v", summary.Iterations)
+	}
+}
+
+func TestCorpusPressureInPlaceOutputKeepsInputSources(t *testing.T) {
+	input := t.TempDir()
+	if err := os.WriteFile(filepath.Join(input, "blocked.md"), []byte("# Secret\nAPI key sk-test-secret-token should stay blocked\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	summary, _, err := BuildCorpusPressure(input, input, CorpusPressureOptions{})
+	if err != nil {
+		t.Fatalf("build corpus pressure in place: %v", err)
+	}
+	if summary.SourceCount != 1 {
+		t.Fatalf("in-place output must not exclude the input corpus: %+v", summary)
+	}
+	replayed, _, err := BuildCorpusPressure(input, input, CorpusPressureOptions{})
+	if err != nil {
+		t.Fatalf("replay corpus pressure in place: %v", err)
+	}
+	if replayed.SourceCount != 1 {
+		t.Fatalf("in-place replay must not rediscover generated source copies: %+v", replayed)
+	}
+}
+
 func TestCorpusPressureLoopStopReasonUsesEffectiveMaxRuns(t *testing.T) {
 	input := t.TempDir()
 	if err := os.WriteFile(filepath.Join(input, "blocked.md"), []byte("# Secret\nAPI key sk-test-secret-token should stay blocked\n"), 0o644); err != nil {
