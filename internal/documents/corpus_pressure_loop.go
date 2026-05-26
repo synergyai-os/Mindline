@@ -58,13 +58,7 @@ func BuildCorpusPressureLoop(inputPath, outDir string, options CorpusPressureLoo
 	if strings.TrimSpace(outDir) == "" {
 		return CorpusPressureLoopSummary{}, fmt.Errorf("missing required --out")
 	}
-	maxRuns := options.MaxRuns
-	if maxRuns <= 0 {
-		maxRuns = DefaultCorpusPressureLoopMaxRuns
-	}
-	if maxRuns > DefaultCorpusPressureLoopMaxRuns {
-		maxRuns = DefaultCorpusPressureLoopMaxRuns
-	}
+	maxRuns := normalizeCorpusPressureLoopMaxRuns(options.MaxRuns)
 	if strings.TrimSpace(options.BuildFingerprint) == "" {
 		options.BuildFingerprint = "build-unknown"
 	}
@@ -192,13 +186,25 @@ func corpusPressureCounterDeltas(previous, current CorpusPressureSourceCounters)
 }
 
 func corpusPressureLoopConfigFingerprint(options CorpusPressureLoopOptions) string {
+	semanticOptions := normalizeCorpusPressureSemanticOptions(options.PressureOptions.SemanticOptions)
 	parts := []string{
-		fmt.Sprintf("max:%d", options.MaxRuns),
-		"classifier:" + string(options.PressureOptions.SemanticOptions.Classifier),
-		"provider:" + options.PressureOptions.SemanticOptions.LLMProvider,
-		"model:" + options.PressureOptions.SemanticOptions.LLMModel,
+		fmt.Sprintf("max:%d", normalizeCorpusPressureLoopMaxRuns(options.MaxRuns)),
+		"classifier:" + string(semanticOptions.Classifier),
+	}
+	if semanticOptions.Classifier == SemanticClassifierLLM {
+		parts = append(parts, "provider:"+semanticOptions.LLMProvider, "model:"+semanticOptions.LLMModel)
 	}
 	sort.Strings(parts)
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\n")))
 	return "config-" + hex.EncodeToString(sum[:])[:16]
+}
+
+func normalizeCorpusPressureLoopMaxRuns(maxRuns int) int {
+	if maxRuns <= 0 {
+		return DefaultCorpusPressureLoopMaxRuns
+	}
+	if maxRuns > DefaultCorpusPressureLoopMaxRuns {
+		return DefaultCorpusPressureLoopMaxRuns
+	}
+	return maxRuns
 }

@@ -126,6 +126,60 @@ func TestCorpusPressureLoopStopReasonUsesEffectiveMaxRuns(t *testing.T) {
 	}
 }
 
+func TestCorpusPressureDeterministicFingerprintIgnoresUnusedLLMSettings(t *testing.T) {
+	base := SemanticOptions{
+		Classifier:        SemanticClassifierDeterministic,
+		LLMProvider:       "openai",
+		LLMModel:          "gpt-a",
+		ReferenceFallback: true,
+	}
+	changedLLM := SemanticOptions{
+		Classifier:        SemanticClassifierDeterministic,
+		LLMProvider:       "other-provider",
+		LLMModel:          "gpt-b",
+		ReferenceFallback: true,
+	}
+	if corpusPressureCommandConfigFingerprint(base) != corpusPressureCommandConfigFingerprint(changedLLM) {
+		t.Fatalf("deterministic pressure fingerprints must ignore unused LLM settings")
+	}
+
+	llmA := base
+	llmA.Classifier = SemanticClassifierLLM
+	llmB := changedLLM
+	llmB.Classifier = SemanticClassifierLLM
+	if corpusPressureCommandConfigFingerprint(llmA) == corpusPressureCommandConfigFingerprint(llmB) {
+		t.Fatalf("LLM pressure fingerprints must include provider and model")
+	}
+}
+
+func TestCorpusPressureLoopFingerprintUsesEffectiveConfig(t *testing.T) {
+	base := CorpusPressureLoopOptions{
+		MaxRuns: 0,
+		PressureOptions: CorpusPressureOptions{SemanticOptions: SemanticOptions{
+			Classifier:  SemanticClassifierDeterministic,
+			LLMProvider: "openai",
+			LLMModel:    "gpt-a",
+		}},
+	}
+	sameEffective := CorpusPressureLoopOptions{
+		MaxRuns: 20,
+		PressureOptions: CorpusPressureOptions{SemanticOptions: SemanticOptions{
+			Classifier:  SemanticClassifierDeterministic,
+			LLMProvider: "other-provider",
+			LLMModel:    "gpt-b",
+		}},
+	}
+	if corpusPressureLoopConfigFingerprint(base) != corpusPressureLoopConfigFingerprint(sameEffective) {
+		t.Fatalf("loop fingerprints must normalize max-runs and ignore unused deterministic LLM settings")
+	}
+
+	capped := base
+	capped.MaxRuns = 100
+	if corpusPressureLoopConfigFingerprint(base) != corpusPressureLoopConfigFingerprint(capped) {
+		t.Fatalf("loop fingerprints must hash the capped effective max-runs value")
+	}
+}
+
 func TestCorpusPressureRaisedKRsDoNotCountSkippedAsProcessed(t *testing.T) {
 	summary := CorpusPressureSummary{
 		SourceCount:               10,

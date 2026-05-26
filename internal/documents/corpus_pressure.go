@@ -594,15 +594,29 @@ func corpusPressureFingerprint(summary CorpusPressureSummary) string {
 }
 
 func corpusPressureCommandConfigFingerprint(options SemanticOptions) string {
+	options = normalizeCorpusPressureSemanticOptions(options)
 	parts := []string{
 		"classifier:" + string(options.Classifier),
-		"provider:" + options.LLMProvider,
-		"model:" + options.LLMModel,
 		fmt.Sprintf("reference_fallback:%t", options.ReferenceFallback),
+	}
+	if options.Classifier == SemanticClassifierLLM {
+		parts = append(parts, "provider:"+options.LLMProvider, "model:"+options.LLMModel)
 	}
 	sort.Strings(parts)
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\n")))
 	return "config-" + hex.EncodeToString(sum[:])[:16]
+}
+
+func normalizeCorpusPressureSemanticOptions(options SemanticOptions) SemanticOptions {
+	if options.Classifier == "" {
+		options.Classifier = SemanticClassifierDeterministic
+	}
+	options.ReferenceFallback = true
+	if options.Classifier != SemanticClassifierLLM {
+		options.LLMProvider = ""
+		options.LLMModel = ""
+	}
+	return options
 }
 
 func corpusPressureSourceFingerprint(sources []CorpusPressureSourceResult) string {
