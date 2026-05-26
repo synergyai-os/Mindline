@@ -307,7 +307,7 @@ func TestAutonomyReadinessDoesNotDoubleCountSecondaryMissingOutcomeAsFalsePositi
 	}
 }
 
-func TestAutonomyReadinessUnclearEvalJudgmentsPreventEligibility(t *testing.T) {
+func TestAutonomyReadinessUnclearEvalJudgmentsDoNotAffectAccuracy(t *testing.T) {
 	out := t.TempDir()
 	node := validStructureNode()
 	observation := validSemanticObservation(node)
@@ -368,11 +368,11 @@ func TestAutonomyReadinessUnclearEvalJudgmentsPreventEligibility(t *testing.T) {
 	if report.Counts.EvalCountedUnclearCount != 2 {
 		t.Fatalf("expected eval-counted unclear judgments to count, got %+v", report.Counts)
 	}
-	if report.Accuracy != 0.98 {
-		t.Fatalf("expected unclear judgments in denominator to lower accuracy to 0.98, got %f", report.Accuracy)
+	if report.Accuracy != 1 {
+		t.Fatalf("expected unclear judgments to stay out of DEC-64 accuracy denominator, got %f", report.Accuracy)
 	}
-	if report.ThresholdStatus != AutonomyReadinessNotEligible || !containsString(report.Blockers, "below_threshold") {
-		t.Fatalf("expected unclear judgments to prevent eligibility, got status=%s blockers=%+v", report.ThresholdStatus, report.Blockers)
+	if report.ThresholdStatus != AutonomyReadinessEligible || containsString(report.Blockers, "below_threshold") {
+		t.Fatalf("expected unclear judgments not to trigger below-threshold eligibility blocker, got status=%s blockers=%+v", report.ThresholdStatus, report.Blockers)
 	}
 }
 

@@ -405,7 +405,7 @@ func autonomyBelowThresholdGapCount(report AutonomyReadinessReport) int {
 }
 
 func autonomyAccuracyDenominator(counts AutonomyReadinessCounts) int {
-	return counts.EvalCountedAcceptedCount + counts.EvalCountedFalsePositiveCount + counts.EvalCountedFalseNegativeCount + counts.EvalCountedUnclearCount
+	return counts.EvalCountedAcceptedCount + counts.EvalCountedFalsePositiveCount + counts.EvalCountedFalseNegativeCount
 }
 
 func autonomySourceTypeSlice(summaries []SemanticJudgmentCandidateSummary, items []SemanticJudgmentCandidate) map[string]map[string]int {
