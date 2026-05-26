@@ -60,6 +60,7 @@ var allowedProperties = map[string]bool{
 	"eval_counted_accepted_count":        true,
 	"eval_counted_false_positive_count":  true,
 	"eval_counted_false_negative_count":  true,
+	"eval_counted_unclear_count":         true,
 	"eval_counted_remaining_count":       true,
 	"evidence_ready_count":               true,
 	"eval_counted_count":                 true,

@@ -72,6 +72,7 @@ type AutonomyReadinessCounts struct {
 	EvalCountedAcceptedCount      int `json:"eval_counted_accepted_count"`
 	EvalCountedFalsePositiveCount int `json:"eval_counted_false_positive_count"`
 	EvalCountedFalseNegativeCount int `json:"eval_counted_false_negative_count"`
+	EvalCountedUnclearCount       int `json:"eval_counted_unclear_count"`
 	EvalCountedRemainingCount     int `json:"eval_counted_remaining_count"`
 	BlockedCount                  int `json:"blocked_count"`
 	SkippedCount                  int `json:"skipped_count"`
@@ -156,7 +157,10 @@ func BuildAutonomyReadinessReport(inputDir string, options AutonomyReadinessOpti
 	}
 	trace := readAutonomyReadinessTrace(root)
 	counts := autonomyCounts(summary, items, judgments)
-	safetyCounters := autonomySafetyCounters(root)
+	safetyCounters, err := autonomySafetyCounters(root)
+	if err != nil {
+		return AutonomyReadinessReport{}, err
+	}
 	report := AutonomyReadinessReport{
 		SchemaVersion:    AutonomyReadinessReportSchemaVersion,
 		EvaluatorVersion: AutonomyReadinessEvaluatorVersion,
@@ -204,6 +208,7 @@ func autonomyCounts(summary SemanticJudgmentSummary, items []SemanticJudgmentCan
 		EvalCountedAcceptedCount:      evalCounts.accepted,
 		EvalCountedFalsePositiveCount: evalCounts.falsePositive,
 		EvalCountedFalseNegativeCount: evalCounts.falseNegative,
+		EvalCountedUnclearCount:       evalCounts.unclear,
 		EvalCountedRemainingCount:     autonomyEvalCountedRemainingCount(summary),
 		BlockedCount:                  summary.BlockedCount,
 		SkippedCount:                  summary.SkippedCount,
@@ -400,7 +405,7 @@ func autonomyBelowThresholdGapCount(report AutonomyReadinessReport) int {
 }
 
 func autonomyAccuracyDenominator(counts AutonomyReadinessCounts) int {
-	return counts.EvalCountedAcceptedCount + counts.EvalCountedFalsePositiveCount + counts.EvalCountedFalseNegativeCount
+	return counts.EvalCountedAcceptedCount + counts.EvalCountedFalsePositiveCount + counts.EvalCountedFalseNegativeCount + counts.EvalCountedUnclearCount
 }
 
 func autonomySourceTypeSlice(summaries []SemanticJudgmentCandidateSummary, items []SemanticJudgmentCandidate) map[string]map[string]int {
@@ -511,6 +516,19 @@ func taxonomyCount(summary SemanticJudgmentSummary) int {
 }
 
 func autonomyFalsePositiveCount(summary SemanticJudgmentSummary) int {
+	if len(summary.Candidates) > 0 {
+		count := 0
+		for _, candidate := range summary.Candidates {
+			if autonomyHasFailureReason(candidate.FailureReason, candidate.SecondaryFailureReasons, SemanticFailureMissingExpectedOutcome) {
+				continue
+			}
+			switch candidate.JudgmentChoice {
+			case SemanticJudgmentChoiceReject, SemanticJudgmentChoiceDuplicate, SemanticJudgmentChoiceWrongKind:
+				count++
+			}
+		}
+		return count
+	}
 	return summary.RejectedCount + summary.DuplicateCount + summary.WrongKindCount
 }
 
@@ -555,6 +573,7 @@ type autonomyEvalOutcomeCounts struct {
 	accepted      int
 	falsePositive int
 	falseNegative int
+	unclear       int
 }
 
 func autonomyEvalCountedOutcomeCounts(items []SemanticJudgmentCandidate, judgments []SemanticJudgmentRecord) autonomyEvalOutcomeCounts {
@@ -574,6 +593,8 @@ func autonomyEvalCountedOutcomeCounts(items []SemanticJudgmentCandidate, judgmen
 		switch judgment.Choice {
 		case SemanticJudgmentChoiceAccept:
 			counts.accepted++
+		case SemanticJudgmentChoiceUnclear:
+			counts.unclear++
 		case SemanticJudgmentChoiceReject, SemanticJudgmentChoiceDuplicate, SemanticJudgmentChoiceWrongKind:
 			counts.falsePositive++
 		}
@@ -629,12 +650,12 @@ func autonomyEvalCountedModelErrorCount(items []SemanticJudgmentCandidate) int {
 	return count
 }
 
-func autonomySafetyCounters(root string) AutonomyReadinessSafetyCounters {
+func autonomySafetyCounters(root string) (AutonomyReadinessSafetyCounters, error) {
 	artifactRoot := filepath.Dir(root)
 	var counters AutonomyReadinessSafetyCounters
-	_ = filepath.WalkDir(artifactRoot, func(path string, entry os.DirEntry, err error) error {
+	err := filepath.WalkDir(artifactRoot, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
-			return nil
+			return fmt.Errorf("scan safety artifact %s: %w", path, err)
 		}
 		if entry.IsDir() {
 			if entry.Name() == AutonomyReadinessDirName {
@@ -647,16 +668,16 @@ func autonomySafetyCounters(root string) AutonomyReadinessSafetyCounters {
 		}
 		body, err := os.ReadFile(path)
 		if err != nil {
-			return nil
+			return fmt.Errorf("scan safety artifact %s: %w", path, err)
 		}
 		var value any
 		if err := json.Unmarshal(body, &value); err != nil {
-			return nil
+			return fmt.Errorf("scan safety artifact %s: %w", path, err)
 		}
 		counters = addSafetyCounters(counters, autonomySafetyCountersFromArtifact(value))
 		return nil
 	})
-	return counters
+	return counters, err
 }
 
 func addSafetyCounters(left, right AutonomyReadinessSafetyCounters) AutonomyReadinessSafetyCounters {

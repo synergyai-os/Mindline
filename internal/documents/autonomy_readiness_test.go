@@ -89,6 +89,20 @@ func TestAutonomyReadinessSafetyCountersComeFromArtifactsBeforeEligibility(t *te
 	}
 }
 
+func TestAutonomyReadinessFailsWhenSafetyArtifactScanIsIncomplete(t *testing.T) {
+	out := t.TempDir()
+	summary := autonomyReadinessTestSummary(t, SemanticJudgmentChoiceAccept, "")
+	if err := WriteSemanticJudgmentRoot(filepath.Join(out, "semantic-judgment"), summary); err != nil {
+		t.Fatalf("write judgment: %v", err)
+	}
+	writeTestArtifact(t, out, "results/malformed.json", `{"schema_version":"destination-operation/v0.1","operation_type":"create_note"`)
+
+	_, err := BuildAutonomyReadinessReport(out, AutonomyReadinessOptions{Threshold: 0.98, HeldOut: true})
+	if err == nil || !strings.Contains(err.Error(), "scan safety artifact") {
+		t.Fatalf("expected safety scan failure, got %v", err)
+	}
+}
+
 func TestAutonomyReadinessIncludesRequiredSlicesAndImprovementTargets(t *testing.T) {
 	out := t.TempDir()
 	summary := autonomyReadinessTestSummary(t, SemanticJudgmentChoiceReject, SemanticFailureUnexpectedCandidate)
@@ -219,6 +233,9 @@ func TestAutonomyReadinessCountsSecondaryMissingExpectedOutcomeAsFalseNegative(t
 	if report.Counts.FalseNegativeCount != 1 || report.Counts.EvalCountedFalseNegativeCount != 1 {
 		t.Fatalf("expected secondary missing outcome to count as false negative, got %+v", report.Counts)
 	}
+	if report.Counts.FalsePositiveCount != 0 {
+		t.Fatalf("expected secondary missing outcome not to double-count as aggregate false positive, got %+v", report.Counts)
+	}
 }
 
 func TestAutonomyReadinessDoesNotDoubleCountSecondaryMissingOutcomeAsFalsePositive(t *testing.T) {
@@ -272,6 +289,75 @@ func TestAutonomyReadinessDoesNotDoubleCountSecondaryMissingOutcomeAsFalsePositi
 	}
 	if got := autonomyAccuracy(reportCounts); got != 0.98 {
 		t.Fatalf("expected single-bucket denominator accuracy 0.98, got %f", got)
+	}
+}
+
+func TestAutonomyReadinessUnclearEvalJudgmentsPreventEligibility(t *testing.T) {
+	out := t.TempDir()
+	node := validStructureNode()
+	observation := validSemanticObservation(node)
+	var candidates []SemanticCandidate
+	var relations []SemanticRelation
+	for i := 0; i < 100; i++ {
+		candidateID := "candidate-" + strconv.Itoa(i)
+		relationID := "relation-" + strconv.Itoa(i)
+		candidate := validSemanticCandidate(observation, node)
+		candidate.CandidateID = candidateID
+		candidate.RelationIDs = []string{relationID}
+		relation := validSemanticRelation(candidate, observation, node)
+		relation.RelationID = relationID
+		candidates = append(candidates, candidate)
+		relations = append(relations, relation)
+	}
+	items := semanticJudgmentCandidates(candidates, relations, []SemanticObservation{observation}, semanticCalibrationSourceContext{
+		Label: "meeting-transcript-1.md",
+		Lines: []string{"one", "two"},
+	}, nil)
+	var judgments []SemanticJudgmentRecord
+	for i := 0; i < 98; i++ {
+		judgments = append(judgments, SemanticJudgmentRecord{
+			SchemaVersion:    SemanticJudgmentRecordSchemaVersion,
+			RunID:            "run-demo",
+			CandidateID:      items[i].CandidateID,
+			SourceDocumentID: items[i].SourceDocumentID,
+			CandidateKind:    items[i].CandidateKind,
+			Confidence:       items[i].Confidence,
+			Choice:           SemanticJudgmentChoiceAccept,
+			ReviewerID:       "test",
+			RecordedAt:       time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC).Format(time.RFC3339),
+		})
+	}
+	for i := 98; i < 100; i++ {
+		judgments = append(judgments, SemanticJudgmentRecord{
+			SchemaVersion:    SemanticJudgmentRecordSchemaVersion,
+			RunID:            "run-demo",
+			CandidateID:      items[i].CandidateID,
+			SourceDocumentID: items[i].SourceDocumentID,
+			CandidateKind:    items[i].CandidateKind,
+			Confidence:       items[i].Confidence,
+			Choice:           SemanticJudgmentChoiceUnclear,
+			FailureReason:    SemanticFailureOther,
+			ReviewerID:       "test",
+			RecordedAt:       time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC).Format(time.RFC3339),
+		})
+	}
+	summary := BuildSemanticJudgmentSummary("run-demo", 1, items, judgments)
+	if err := WriteSemanticJudgmentRoot(filepath.Join(out, "semantic-judgment"), summary); err != nil {
+		t.Fatalf("write judgment: %v", err)
+	}
+
+	report, err := BuildAutonomyReadinessReport(out, AutonomyReadinessOptions{Threshold: 0.99, HeldOut: true})
+	if err != nil {
+		t.Fatalf("build report: %v", err)
+	}
+	if report.Counts.EvalCountedUnclearCount != 2 {
+		t.Fatalf("expected eval-counted unclear judgments to count, got %+v", report.Counts)
+	}
+	if report.Accuracy != 0.98 {
+		t.Fatalf("expected unclear judgments in denominator to lower accuracy to 0.98, got %f", report.Accuracy)
+	}
+	if report.ThresholdStatus != AutonomyReadinessNotEligible || !containsString(report.Blockers, "below_threshold") {
+		t.Fatalf("expected unclear judgments to prevent eligibility, got status=%s blockers=%+v", report.ThresholdStatus, report.Blockers)
 	}
 }
 

@@ -69,6 +69,7 @@ func autonomyReadinessMarkdown(report AutonomyReadinessReport) string {
 	b.WriteString(fmt.Sprintf("- Eval-counted accepted: %d\n", report.Counts.EvalCountedAcceptedCount))
 	b.WriteString(fmt.Sprintf("- Eval-counted false positives: %d\n", report.Counts.EvalCountedFalsePositiveCount))
 	b.WriteString(fmt.Sprintf("- Eval-counted false negatives: %d\n", report.Counts.EvalCountedFalseNegativeCount))
+	b.WriteString(fmt.Sprintf("- Eval-counted unclear: %d\n", report.Counts.EvalCountedUnclearCount))
 	b.WriteString(fmt.Sprintf("- Evidence-ready: %d\n", report.Counts.EvidenceReadyCount))
 	b.WriteString(fmt.Sprintf("- Human review required: %d\n", report.Counts.HumanReviewRequiredCount))
 	b.WriteString(fmt.Sprintf("- Model errors: %d\n", report.Counts.ModelErrorCount))

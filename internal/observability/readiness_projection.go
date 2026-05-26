@@ -40,6 +40,7 @@ func AutonomyReadinessSafeEvents(report documents.AutonomyReadinessReport, telem
 		"eval_counted_accepted_count":        report.Counts.EvalCountedAcceptedCount,
 		"eval_counted_false_positive_count":  report.Counts.EvalCountedFalsePositiveCount,
 		"eval_counted_false_negative_count":  report.Counts.EvalCountedFalseNegativeCount,
+		"eval_counted_unclear_count":         report.Counts.EvalCountedUnclearCount,
 		"eval_counted_remaining_count":       report.Counts.EvalCountedRemainingCount,
 		"evidence_ready_count":               report.Counts.EvidenceReadyCount,
 		"eval_counted_count":                 report.Counts.EvalCountedCount,
