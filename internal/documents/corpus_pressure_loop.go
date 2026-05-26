@@ -116,7 +116,7 @@ func BuildCorpusPressureLoop(inputPath, outDir string, options CorpusPressureLoo
 		previous = &loopSummary.Iterations[len(loopSummary.Iterations)-1]
 	}
 	if loopSummary.StopReason == "" {
-		loopSummary.StopReason = "stopped_after_20"
+		loopSummary.StopReason = fmt.Sprintf("stopped_after_%d", maxRuns)
 	}
 	if err := WriteCorpusPressureLoop(root, loopSummary); err != nil {
 		return loopSummary, err

@@ -109,6 +109,23 @@ func TestCorpusPressureLoopStopsHonestlyWhenUnchanged(t *testing.T) {
 	}
 }
 
+func TestCorpusPressureLoopStopReasonUsesEffectiveMaxRuns(t *testing.T) {
+	input := t.TempDir()
+	if err := os.WriteFile(filepath.Join(input, "blocked.md"), []byte("# Secret\nAPI key sk-test-secret-token should stay blocked\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := BuildCorpusPressureLoop(input, t.TempDir(), CorpusPressureLoopOptions{MaxRuns: 1, BuildFingerprint: "test-build"})
+	if err != nil {
+		t.Fatalf("build corpus pressure loop: %v", err)
+	}
+	if summary.RunCount != 1 {
+		t.Fatalf("expected one configured run, got %d", summary.RunCount)
+	}
+	if summary.StopReason != "stopped_after_1" {
+		t.Fatalf("stop reason should reflect configured max runs, got %+v", summary)
+	}
+}
+
 func TestCorpusPressureRaisedKRsDoNotCountSkippedAsProcessed(t *testing.T) {
 	summary := CorpusPressureSummary{
 		SourceCount:               10,
