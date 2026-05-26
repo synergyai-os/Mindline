@@ -156,6 +156,9 @@ func corpusPressureTraceStages(summary CorpusPressureSummary) []CorpusPressureTr
 		{Name: "corpus_graph", Status: "pass", Count: summary.GraphAtomCount},
 		{Name: "pressure_readiness", Status: "pass"},
 	}
+	if corpusPressureGraphFailed(summary) {
+		stages[2].Status = "failed"
+	}
 	if !summary.ReadyForFiftyFilePressure {
 		stages[len(stages)-1].Status = "needs_improvement"
 	}
@@ -163,6 +166,15 @@ func corpusPressureTraceStages(summary CorpusPressureSummary) []CorpusPressureTr
 		stages[len(stages)-1].Status = "blocked"
 	}
 	return stages
+}
+
+func corpusPressureGraphFailed(summary CorpusPressureSummary) bool {
+	for _, blocker := range summary.Blockers {
+		if strings.HasPrefix(blocker, "corpus graph failed:") {
+			return true
+		}
+	}
+	return false
 }
 
 func corpusPressureSourceCounters(summary CorpusPressureSummary) CorpusPressureSourceCounters {

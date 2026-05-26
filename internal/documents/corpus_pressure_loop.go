@@ -147,11 +147,7 @@ func corpusPressureLoopKRPassed(summary CorpusPressureSummary) bool {
 	return summary.SourceCount > 0 &&
 		summary.ProcessedSourceCount+summary.SkippedSourceCount+summary.ExcludedSourceCount+summary.BlockedSourceCount == summary.SourceCount &&
 		summary.EligibleSourceCount > 0 &&
-		summary.ProcessedSourceRatio >= 0.95 &&
-		summary.BlockedSourceCount == 0 &&
-		summary.UnexplainedExclusionCount == 0 &&
-		summary.GraphAtomCount > 0 &&
-		summary.EvidenceReadyAtomRatio >= 0.90
+		summary.ReadyForFiftyFilePressure
 }
 
 func corpusPressureLoopNoChange(previous, current CorpusPressureLoopIteration) bool {

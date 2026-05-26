@@ -180,6 +180,60 @@ func TestCorpusPressureLoopFingerprintUsesEffectiveConfig(t *testing.T) {
 	}
 }
 
+func TestCorpusPressureLoopKRRequiresFullPressureReadiness(t *testing.T) {
+	summary := CorpusPressureSummary{
+		SourceCount:               10,
+		EligibleSourceCount:       10,
+		ProcessedSourceCount:      10,
+		SkippedSourceCount:        0,
+		BlockedSourceCount:        0,
+		UnexplainedExclusionCount: 0,
+		ProcessedSourceRatio:      1,
+		GraphAtomCount:            10,
+		EvidenceReadyAtomCount:    10,
+		EvidenceReadyAtomRatio:    1,
+		GraphReplayFingerprint:    "graph-ready",
+		ReviewBurdenRatio:         0.21,
+		ReadyForFiftyFilePressure: false,
+	}
+	if corpusPressureLoopKRPassed(summary) {
+		t.Fatalf("loop KRs must not pass when pressure readiness fails review burden threshold")
+	}
+	summary.ReviewBurdenRatio = 0.20
+	if corpusPressureLoopKRPassed(summary) {
+		t.Fatalf("loop KRs must not pass when persisted pressure readiness is false")
+	}
+	summary.ReadyForFiftyFilePressure = true
+	if !corpusPressureLoopKRPassed(summary) {
+		t.Fatalf("loop KRs should pass when pressure readiness and source accounting pass")
+	}
+	summary.GraphReplayFingerprint = ""
+	summary.ReadyForFiftyFilePressure = false
+	if corpusPressureLoopKRPassed(summary) {
+		t.Fatalf("loop KRs must not pass without graph replay proof")
+	}
+}
+
+func TestCorpusPressureTraceMarksGraphFailure(t *testing.T) {
+	stages := corpusPressureTraceStages(CorpusPressureSummary{
+		SourceCount:               1,
+		SemanticCandidateCount:    1,
+		GraphAtomCount:            1,
+		Blockers:                  []string{"corpus graph failed: write corpus graph"},
+		ReadyForFiftyFilePressure: false,
+	})
+
+	for _, stage := range stages {
+		if stage.Name == "corpus_graph" {
+			if stage.Status != "failed" {
+				t.Fatalf("corpus_graph stage should fail when graph build/write fails: %+v", stage)
+			}
+			return
+		}
+	}
+	t.Fatalf("missing corpus_graph stage: %+v", stages)
+}
+
 func TestCorpusPressureRaisedKRsDoNotCountSkippedAsProcessed(t *testing.T) {
 	summary := CorpusPressureSummary{
 		SourceCount:               10,
@@ -192,6 +246,7 @@ func TestCorpusPressureRaisedKRsDoNotCountSkippedAsProcessed(t *testing.T) {
 		GraphAtomCount:            10,
 		EvidenceReadyAtomCount:    10,
 		EvidenceReadyAtomRatio:    1,
+		GraphReplayFingerprint:    "graph-ready",
 	}
 	if corpusPressureLoopKRPassed(summary) {
 		t.Fatalf("skipped sources must not count as processed or improvement")
@@ -200,6 +255,7 @@ func TestCorpusPressureRaisedKRsDoNotCountSkippedAsProcessed(t *testing.T) {
 	summary.SkippedSourceCount = 0
 	summary.EligibleSourceCount = 10
 	summary.ProcessedSourceRatio = 1
+	summary.ReadyForFiftyFilePressure = true
 	if !corpusPressureLoopKRPassed(summary) {
 		t.Fatalf("expected raised KRs to pass when all counted sources are processed and evidence-ready")
 	}
@@ -217,11 +273,14 @@ func TestCorpusPressureClosedExclusionsLeaveEligibleRatioHonest(t *testing.T) {
 		GraphAtomCount:            9,
 		EvidenceReadyAtomCount:    9,
 		EvidenceReadyAtomRatio:    1,
+		GraphReplayFingerprint:    "graph-ready",
+		ReadyForFiftyFilePressure: true,
 	}
 	if !corpusPressureLoopKRPassed(summary) {
 		t.Fatalf("closed exclusions should stay visible without lowering eligible processed ratio")
 	}
 	summary.UnexplainedExclusionCount = 1
+	summary.ReadyForFiftyFilePressure = false
 	if corpusPressureLoopKRPassed(summary) {
 		t.Fatalf("unexplained exclusions must block raised KRs")
 	}
