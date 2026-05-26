@@ -18,6 +18,7 @@ import (
 	"github.com/synergyai-os/Mindline/internal/destinations"
 	tolariadestination "github.com/synergyai-os/Mindline/internal/destinations/tolaria"
 	"github.com/synergyai-os/Mindline/internal/documents"
+	"github.com/synergyai-os/Mindline/internal/observability"
 	"github.com/synergyai-os/Mindline/internal/pipeline"
 	"github.com/synergyai-os/Mindline/internal/productbrain"
 	"github.com/synergyai-os/Mindline/internal/sbos"
@@ -30,7 +31,7 @@ const (
 	ExitArtifactWrite = 3
 )
 
-const usage = "usage: mindline process <candidate.json> [--out <dir>]\nusage: mindline slack normalize <slack-export.json> [--out <dir>]\nusage: mindline destination dry-run <sbos-result.json> --adapter tolaria --out <dir>\nusage: mindline pipeline dry-run <pipeline-input.json> --method basb-para-code --destination tolaria --out <dir>\nusage: mindline product-brain propose <run-dir> --profile <profile.json> --out <dir>\nusage: mindline documents decompose <markdown-path-or-dir> --out <dir>\nusage: mindline documents structure <markdown-path-or-dir> --out <dir>\nusage: mindline documents semantics <structure-run-dir-or-markdown-path-or-markdown-dir> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents accept <semantic-run-dir> --answer-key <answer-key.json> --out <dir>\nusage: mindline documents calibrate <semantic-acceptance-dir-or-parent> --out <dir> [--threshold 0.98] [--held-out] [--source-root <dir> --source <relative.md>]\nusage: mindline documents calibrate-next <semantic-calibration-dir-or-parent>\nusage: mindline documents judge <semantic-run-dir> --out <dir> [--source-root <dir> --source <relative.md>] [--agent-reviewer llm --llm-provider openai --llm-model <model>]\nusage: mindline documents judge-next <semantic-judgment-dir-or-parent>\nusage: mindline documents judge-record <semantic-judgment-dir-or-parent> --candidate <candidate-id> --choice accept|reject|unclear|duplicate|wrong-kind [--reason <failure-reason>] [--secondary-reason <failure-reason>] [--note <text>] [--reviewer <id>]\nusage: mindline documents judge-serve <semantic-judgment-dir-or-parent> [--addr 127.0.0.1:8787] [--reviewer <id>]\n"
+const usage = "usage: mindline process <candidate.json> [--out <dir>]\nusage: mindline slack normalize <slack-export.json> [--out <dir>]\nusage: mindline destination dry-run <sbos-result.json> --adapter tolaria --out <dir>\nusage: mindline pipeline dry-run <pipeline-input.json> --method basb-para-code --destination tolaria --out <dir>\nusage: mindline product-brain propose <run-dir> --profile <profile.json> --out <dir>\nusage: mindline documents decompose <markdown-path-or-dir> --out <dir>\nusage: mindline documents structure <markdown-path-or-dir> --out <dir>\nusage: mindline documents semantics <structure-run-dir-or-markdown-path-or-markdown-dir> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents accept <semantic-run-dir> --answer-key <answer-key.json> --out <dir>\nusage: mindline documents calibrate <semantic-acceptance-dir-or-parent> --out <dir> [--threshold 0.98] [--held-out] [--source-root <dir> --source <relative.md>]\nusage: mindline documents calibrate-next <semantic-calibration-dir-or-parent>\nusage: mindline documents judge <semantic-run-dir> --out <dir> [--source-root <dir> --source <relative.md>] [--agent-reviewer llm --llm-provider openai --llm-model <model>]\nusage: mindline documents judge-next <semantic-judgment-dir-or-parent>\nusage: mindline documents judge-record <semantic-judgment-dir-or-parent> --candidate <candidate-id> --choice accept|reject|unclear|duplicate|wrong-kind [--reason <failure-reason>] [--secondary-reason <failure-reason>] [--note <text>] [--reviewer <id>]\nusage: mindline documents judge-serve <semantic-judgment-dir-or-parent> [--addr 127.0.0.1:8787] [--reviewer <id>]\nusage: mindline observability posthog-test\n"
 
 const protectedRootsEnv = "MINDLINE_PROTECTED_ROOTS"
 const defaultTolariaProtectedRoot = "/Users/randyhereman/Young Human Club Dropbox/02. Areas/PKM - Tolaria"
@@ -51,8 +52,9 @@ var cliAuthorityIDs = []string{
 }
 
 type Runner struct {
-	fs             FileSystem
-	protectedRoots []string
+	fs               FileSystem
+	protectedRoots   []string
+	postHogTransport http.RoundTripper
 }
 
 type FileSystem interface {
@@ -91,6 +93,16 @@ type SlackNormalizeEnvelope struct {
 	AuthorityIDs   []string                      `json:"authority_ids"`
 }
 
+type ObservabilityTestEnvelope struct {
+	State        string   `json:"state"`
+	Exporter     string   `json:"exporter"`
+	TraceMode    string   `json:"trace_mode"`
+	Event        string   `json:"event"`
+	Network      bool     `json:"network"`
+	Host         string   `json:"host,omitempty"`
+	AuthorityIDs []string `json:"authority_ids"`
+}
+
 type DestinationDryRunSummary struct {
 	DestinationAdapterID string                         `json:"destination_adapter_id"`
 	WriteMode            string                         `json:"write_mode"`
@@ -120,6 +132,12 @@ func NewRunner(fileSystem FileSystem) Runner {
 
 func NewRunnerWithProtectedRoots(fileSystem FileSystem, protectedRoots []string) Runner {
 	return Runner{fs: fileSystem, protectedRoots: append([]string(nil), protectedRoots...)}
+}
+
+func NewRunnerWithPostHogTransport(fileSystem FileSystem, transport http.RoundTripper) Runner {
+	runner := NewRunner(fileSystem)
+	runner.postHogTransport = transport
+	return runner
 }
 
 func configuredProtectedRoots() []string {
@@ -159,6 +177,9 @@ func (r Runner) Run(args []string, stdout, stderr io.Writer) int {
 	}
 	if args[0] == "documents" {
 		return r.runDocuments(args[1:], stdout, stderr)
+	}
+	if args[0] == "observability" {
+		return r.runObservability(args[1:], stdout, stderr)
 	}
 	if args[0] != "process" {
 		fmt.Fprint(stderr, usage)
@@ -300,6 +321,11 @@ func (r Runner) runDocumentsJudge(args []string, stdout, stderr io.Writer) int {
 		}
 		fmt.Fprintf(stderr, "judge semantic candidates: %v\n", err)
 		return ExitProcess
+	}
+	traceSummary := semanticJudgmentTraceSummary(summary, options)
+	if err := r.writeAndExportTrace(outDir, traceSummary, stderr); err != nil {
+		fmt.Fprintf(stderr, "trace semantic judgment: %v\n", err)
+		return ExitArtifactWrite
 	}
 	encoder := json.NewEncoder(stdout)
 	encoder.SetIndent("", "  ")
@@ -472,6 +498,11 @@ func (r Runner) runDocumentsSemantics(args []string, stdout, stderr io.Writer) i
 		}
 		fmt.Fprintf(stderr, "generate semantic candidates: %v\n", err)
 		return ExitProcess
+	}
+	traceSummary := semanticTraceSummary(summary, options)
+	if err := r.writeAndExportTrace(outDir, traceSummary, stderr); err != nil {
+		fmt.Fprintf(stderr, "trace semantic candidates: %v\n", err)
+		return ExitArtifactWrite
 	}
 	encoder := json.NewEncoder(stdout)
 	encoder.SetIndent("", "  ")
@@ -929,19 +960,7 @@ func (r Runner) parseDocumentsSemanticsArgs(args []string) (inputPath string, ou
 }
 
 func (r Runner) resolveSemanticLLMEnv(options documents.SemanticOptions) documents.SemanticOptions {
-	values := map[string]string{}
-	if wd, err := r.fs.Getwd(); err == nil {
-		if data, err := r.fs.ReadFile(filepath.Join(wd, ".env.local")); err == nil {
-			for key, value := range parseDotEnv(string(data)) {
-				values[key] = value
-			}
-		}
-	}
-	for _, key := range []string{"MINDLINE_LLM_PROVIDER", "OPENAI_API_KEY", "OPENAI_MODEL"} {
-		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
-			values[key] = value
-		}
-	}
+	values := r.resolveEnvValues([]string{"MINDLINE_LLM_PROVIDER", "OPENAI_API_KEY", "OPENAI_MODEL"})
 	if options.LLMProvider == "" {
 		options.LLMProvider = values["MINDLINE_LLM_PROVIDER"]
 	}
@@ -950,6 +969,23 @@ func (r Runner) resolveSemanticLLMEnv(options documents.SemanticOptions) documen
 	}
 	options.LLMAPIKey = values["OPENAI_API_KEY"]
 	return options
+}
+
+func (r Runner) resolveEnvValues(keys []string) map[string]string {
+	values := map[string]string{}
+	if wd, err := r.fs.Getwd(); err == nil {
+		if data, err := r.fs.ReadFile(filepath.Join(wd, ".env.local")); err == nil {
+			for key, value := range parseDotEnv(string(data)) {
+				values[key] = value
+			}
+		}
+	}
+	for _, key := range keys {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			values[key] = value
+		}
+	}
+	return values
 }
 
 func parseDotEnv(raw string) map[string]string {
@@ -1427,6 +1463,252 @@ func artifactFilename(recordID string, kind sbos.ArtifactKind) string {
 	default:
 		return base + "-artifact.md"
 	}
+}
+
+func (r Runner) runObservability(args []string, stdout, stderr io.Writer) int {
+	if len(args) != 1 || args[0] != "posthog-test" {
+		fmt.Fprint(stderr, usage)
+		return ExitUsage
+	}
+	config, err := observability.ConfigFromValues(r.resolveEnvValues([]string{
+		"MINDLINE_TELEMETRY_ENABLED",
+		"MINDLINE_LLM_TRACE_MODE",
+		"MINDLINE_TELEMETRY_SALT",
+		"POSTHOG_PROJECT_API_KEY",
+		"POSTHOG_API_KEY",
+		"POSTHOG_HOST",
+	}))
+	if err != nil {
+		fmt.Fprintf(stderr, "observability config: %v\n", err)
+		return ExitUsage
+	}
+	if !config.Enabled {
+		return writeObservabilityEnvelope(stdout, ObservabilityTestEnvelope{
+			State:        "telemetry_disabled",
+			Exporter:     "posthog",
+			TraceMode:    config.TraceMode,
+			Event:        "$ai_generation",
+			Network:      false,
+			AuthorityIDs: authorityIDs(),
+		})
+	}
+	exporter := observability.NewPostHogExporter(config, r.postHogTransport)
+	event := observability.SafeEvent{
+		Event:   "$ai_generation",
+		TraceID: "trace-posthog-test",
+		Properties: map[string]any{
+			"event_schema":    "mindline.telemetry.test/v0.1",
+			"feature":         "observability.posthog_test",
+			"provider":        "none",
+			"model":           "none",
+			"command":         "observability posthog-test",
+			"status":          "ok",
+			"input_redacted":  true,
+			"output_redacted": true,
+			"source_redacted": true,
+		},
+	}
+	if err := exporter.Capture(event); err != nil {
+		fmt.Fprintf(stderr, "posthog capture: %v\n", err)
+		return ExitProcess
+	}
+	return writeObservabilityEnvelope(stdout, ObservabilityTestEnvelope{
+		State:        "posthog_test_sent",
+		Exporter:     "posthog",
+		TraceMode:    config.TraceMode,
+		Event:        "$ai_generation",
+		Network:      true,
+		Host:         config.PostHogHost,
+		AuthorityIDs: authorityIDs(),
+	})
+}
+
+func (r Runner) writeAndExportTrace(outDir string, summary observability.TraceSummary, stderr io.Writer) error {
+	data, err := json.MarshalIndent(summary, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := r.ensureOutputChildDir(outDir, "trace"); err != nil {
+		return err
+	}
+	target := filepath.Join(outDir, "trace", "trace-summary.json")
+	if err := r.rejectUnsafeOutputFile(outDir, target); err != nil {
+		return err
+	}
+	if err := r.fs.WriteFile(target, append(data, '\n')); err != nil {
+		return err
+	}
+	config, err := observability.ConfigFromValues(r.resolveEnvValues([]string{
+		"MINDLINE_TELEMETRY_ENABLED",
+		"MINDLINE_LLM_TRACE_MODE",
+		"MINDLINE_TELEMETRY_SALT",
+		"POSTHOG_PROJECT_API_KEY",
+		"POSTHOG_API_KEY",
+		"POSTHOG_HOST",
+	}))
+	if err != nil {
+		return err
+	}
+	if !config.Enabled {
+		return nil
+	}
+	exporter := observability.NewPostHogExporter(config, r.postHogTransport)
+	for _, event := range summary.SafeEvents() {
+		if err := exporter.Capture(event); err != nil {
+			if observability.IsSafeEventValidationError(err) {
+				return err
+			}
+			fmt.Fprintf(stderr, "posthog capture: %v\n", err)
+		}
+	}
+	return nil
+}
+
+func semanticTraceSummary(summary documents.SemanticSummary, options documents.SemanticOptions) observability.TraceSummary {
+	provider := ""
+	model := ""
+	if options.Classifier == documents.SemanticClassifierLLM {
+		provider = options.LLMProvider
+		model = options.LLMModel
+	}
+	counts := map[string]int{
+		"source_count":       summary.SourceCount,
+		"observation_count":  summary.ObservationCount,
+		"candidate_count":    summary.CandidateCount,
+		"relation_count":     summary.RelationCount,
+		"needs_review_count": summary.NeedsReviewCount,
+		"blocked_count":      summary.BlockedCount,
+	}
+	labels := map[string]int{}
+	if summary.CandidateCount == 0 {
+		labels["semantic_no_candidates"] = 1
+	}
+	if summary.NeedsReviewCount > 0 {
+		labels["semantic_needs_review"] = 1
+	}
+	status := "ok"
+	if summary.SkippedReason != "" {
+		status = "skipped"
+	}
+	return observability.NewTraceSummary(
+		"semantic_extraction",
+		"documents semantics",
+		summary.RunID,
+		provider,
+		model,
+		status,
+		semanticRecommendation(summary),
+		counts,
+		labels,
+		[]string{"$ai_generation"},
+	)
+}
+
+func semanticJudgmentTraceSummary(summary documents.SemanticJudgmentSummary, options documents.SemanticJudgmentOptions) observability.TraceSummary {
+	provider := ""
+	model := ""
+	if options.Reviewer == documents.SemanticJudgmentReviewerLLM {
+		provider = options.LLMProvider
+		model = options.LLMModel
+	}
+	counts := map[string]int{
+		"source_count":                summary.SourceCount,
+		"candidate_count":             summary.CandidateCount,
+		"judged_count":                summary.JudgedCount,
+		"remaining_count":             summary.RemainingCount,
+		"agent_reviewed_count":        summary.AgentReviewedCount,
+		"human_review_required_count": summary.HumanReviewRequiredCount,
+		"machine_triaged_count":       summary.MachineTriagedCount,
+		"accepted_count":              summary.AcceptedCount,
+		"rejected_count":              summary.RejectedCount,
+		"unclear_count":               summary.UnclearCount,
+		"duplicate_count":             summary.DuplicateCount,
+		"wrong_kind_count":            summary.WrongKindCount,
+		"blocked_count":               summary.BlockedCount,
+		"skipped_count":               summary.SkippedCount,
+		"evidence_ready_count":        summary.EvidenceReadyCount,
+		"eval_counted_count":          summary.EvalCountedCount,
+		"evidence_excluded_count":     summary.EvidenceExcludedCount,
+		"review_burden_count":         summary.ReviewBurdenCount,
+	}
+	labels := map[string]int{}
+	if summary.HumanReviewRequiredCount > 0 {
+		labels["judgment_human_review"] = 1
+	}
+	modelErrorCount := semanticJudgmentAgentReviewReasonCount(summary, documents.SemanticAgentReviewReasonModelError)
+	if modelErrorCount > 0 {
+		labels["judgment_model_errors"] = modelErrorCount
+	}
+	addPrefixedCounts(counts, "failure_reason_count.", summary.FailureReasonCounts)
+	addPrefixedCounts(counts, "evidence_readiness_reason_count.", summary.EvidenceReadinessReasonCounts)
+	return observability.NewTraceSummary(
+		"semantic_judgment",
+		"documents judge",
+		summary.RunID,
+		provider,
+		model,
+		"ok",
+		semanticJudgmentRecommendation(summary),
+		counts,
+		labels,
+		[]string{"$ai_generation", "$ai_feedback"},
+	)
+}
+
+func semanticJudgmentAgentReviewReasonCount(summary documents.SemanticJudgmentSummary, reason documents.SemanticAgentReviewReasonCode) int {
+	count := 0
+	for _, item := range summary.Items {
+		if item.AgentReview == nil {
+			continue
+		}
+		for _, candidateReason := range item.AgentReview.ReviewReasonCodes {
+			if candidateReason == reason {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+func addPrefixedCounts[K ~string](counts map[string]int, prefix string, source map[K]int) {
+	for key, value := range source {
+		counts[prefix+string(key)] = value
+	}
+}
+
+func semanticRecommendation(summary documents.SemanticSummary) string {
+	switch {
+	case summary.CandidateCount == 0 && summary.SkippedReason != "":
+		return "inspect skipped semantic input before model tuning"
+	case summary.CandidateCount == 0:
+		return "improve extraction recall on this source type"
+	case summary.NeedsReviewCount > 0:
+		return "inspect needs-review candidates and evidence readiness"
+	default:
+		return "compare candidate quality against held-out labels"
+	}
+}
+
+func semanticJudgmentRecommendation(summary documents.SemanticJudgmentSummary) string {
+	switch {
+	case summary.HumanReviewRequiredCount > 0:
+		return "inspect human-review-required agent proposals"
+	case summary.RejectedCount+summary.UnclearCount+summary.DuplicateCount+summary.WrongKindCount > 0:
+		return "inspect failed judgment patterns and failure taxonomy"
+	case summary.RemainingCount > 0:
+		return "finish judgment queue before trusting quality metrics"
+	default:
+		return "compare judgment outcomes against DEC-64 held-out threshold"
+	}
+}
+
+func writeObservabilityEnvelope(stdout io.Writer, envelope ObservabilityTestEnvelope) int {
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(envelope); err != nil {
+		return ExitProcess
+	}
+	return ExitOK
 }
 
 func sanitizeFilenameBase(value string) string {

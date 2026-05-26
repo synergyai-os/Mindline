@@ -13,7 +13,14 @@ import (
 	"testing"
 
 	"github.com/synergyai-os/Mindline/internal/documents"
+	"github.com/synergyai-os/Mindline/internal/observability"
 )
+
+type httpRoundTripper func(*http.Request) (*http.Response, error)
+
+func (fn httpRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	return fn(req)
+}
 
 func TestDocumentsDecompose(t *testing.T) {
 	out := t.TempDir()
@@ -155,6 +162,9 @@ func TestDocumentsSemantics(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(out, "semantic-candidates", "semantic-summary.json")); err != nil {
 		t.Fatalf("expected semantic summary artifact: %v", err)
 	}
+	if _, err := os.Stat(filepath.Join(out, "trace", "trace-summary.json")); err != nil {
+		t.Fatalf("expected semantic trace summary artifact: %v", err)
+	}
 	for _, item := range summary.Candidates {
 		if _, err := os.Stat(filepath.Join(out, "semantic-candidates", item.CandidatePath)); err != nil {
 			t.Fatalf("expected candidate artifact %s: %v", item.CandidatePath, err)
@@ -162,6 +172,138 @@ func TestDocumentsSemantics(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(out, "semantic-candidates", item.PreviewPath)); err != nil {
 			t.Fatalf("expected candidate preview %s: %v", item.PreviewPath, err)
 		}
+	}
+}
+
+func TestDocumentsSemanticsExportsMetadataTraceWhenEnabled(t *testing.T) {
+	t.Setenv("MINDLINE_TELEMETRY_ENABLED", "true")
+	t.Setenv("MINDLINE_LLM_TRACE_MODE", "metadata")
+	t.Setenv("MINDLINE_TELEMETRY_SALT", "salt")
+	t.Setenv("POSTHOG_PROJECT_API_KEY", "phc-test")
+	t.Setenv("POSTHOG_HOST", "https://eu.i.posthog.com")
+	t.Setenv("MINDLINE_LLM_PROVIDER", "openai")
+	t.Setenv("OPENAI_MODEL", "gpt-test")
+	out := t.TempDir()
+	var capturedBodies []string
+	runner := NewRunnerWithPostHogTransport(NewOSFileSystem(), httpRoundTripper(func(req *http.Request) (*http.Response, error) {
+		body, err := io.ReadAll(req.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		capturedBodies = append(capturedBodies, string(body))
+		if containsUnsafePostHogBody(string(body)) {
+			t.Fatalf("PostHog body contains unsafe content: %s", string(body))
+		}
+		if strings.Contains(string(body), "gpt-test") || strings.Contains(string(body), "$ai_model") || strings.Contains(string(body), "$ai_provider") {
+			t.Fatalf("deterministic semantic run must not export ambient LLM metadata: %s", string(body))
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("{}")), Header: make(http.Header)}, nil
+	}))
+	var stdout, stderr bytes.Buffer
+
+	code := runner.Run([]string{
+		"documents", "semantics", documentsFixture(t, "semantic"),
+		"--out", out,
+	}, &stdout, &stderr)
+
+	if code != ExitOK {
+		t.Fatalf("expected exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+	if len(capturedBodies) != 1 {
+		t.Fatalf("expected one PostHog event, got %d", len(capturedBodies))
+	}
+	if _, err := os.Stat(filepath.Join(out, "trace", "trace-summary.json")); err != nil {
+		t.Fatalf("expected trace summary artifact: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(out, "trace", "trace-summary.json"))
+	if err != nil {
+		t.Fatalf("read trace summary: %v", err)
+	}
+	if strings.Contains(string(data), "gpt-test") || strings.Contains(string(data), "openai") {
+		t.Fatalf("deterministic semantic trace must not include ambient LLM metadata: %s", string(data))
+	}
+}
+
+func TestDocumentsSemanticsContinuesWhenPostHogExportFails(t *testing.T) {
+	t.Setenv("MINDLINE_TELEMETRY_ENABLED", "true")
+	t.Setenv("MINDLINE_LLM_TRACE_MODE", "metadata")
+	t.Setenv("MINDLINE_TELEMETRY_SALT", "salt")
+	t.Setenv("POSTHOG_PROJECT_API_KEY", "phc-test")
+	t.Setenv("POSTHOG_HOST", "https://eu.i.posthog.com")
+	out := t.TempDir()
+	runner := NewRunnerWithPostHogTransport(NewOSFileSystem(), httpRoundTripper(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 503, Body: io.NopCloser(strings.NewReader("unavailable")), Header: make(http.Header)}, nil
+	}))
+	var stdout, stderr bytes.Buffer
+
+	code := runner.Run([]string{
+		"documents", "semantics", documentsFixture(t, "semantic"),
+		"--out", out,
+	}, &stdout, &stderr)
+
+	if code != ExitOK {
+		t.Fatalf("expected semantic command to ignore PostHog failure, got %d stderr=%s", code, stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(out, "trace", "trace-summary.json")); err != nil {
+		t.Fatalf("expected trace summary artifact despite PostHog failure: %v", err)
+	}
+	if !strings.Contains(stderr.String(), "posthog capture:") {
+		t.Fatalf("expected PostHog warning on stderr, got %q", stderr.String())
+	}
+}
+
+func TestWriteAndExportTraceFailsOnUnsafeTelemetryEvent(t *testing.T) {
+	t.Setenv("MINDLINE_TELEMETRY_ENABLED", "true")
+	t.Setenv("MINDLINE_LLM_TRACE_MODE", "metadata")
+	t.Setenv("MINDLINE_TELEMETRY_SALT", "salt")
+	t.Setenv("POSTHOG_PROJECT_API_KEY", "phc-test")
+	t.Setenv("POSTHOG_HOST", "https://eu.i.posthog.com")
+	out := t.TempDir()
+	called := false
+	runner := NewRunnerWithPostHogTransport(NewOSFileSystem(), httpRoundTripper(func(req *http.Request) (*http.Response, error) {
+		called = true
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("{}")), Header: make(http.Header)}, nil
+	}))
+	summary := observability.NewTraceSummary("semantic", "documents semantics", "run-safe", "sk-test", "", "ok", "review", nil, nil, []string{"$ai_generation"})
+	var stderr bytes.Buffer
+
+	err := runner.writeAndExportTrace(out, summary, &stderr)
+
+	if err == nil || !strings.Contains(err.Error(), "unsafe PostHog property value") {
+		t.Fatalf("expected unsafe telemetry event to fail closed, got %v", err)
+	}
+	if called {
+		t.Fatalf("unsafe telemetry event must fail before network")
+	}
+	if strings.Contains(stderr.String(), "posthog capture:") {
+		t.Fatalf("safety validation failure must not be downgraded to warning: %q", stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(out, "trace", "trace-summary.json")); err != nil {
+		t.Fatalf("expected local trace artifact before export validation failure: %v", err)
+	}
+}
+
+func TestDocumentsSemanticsRejectsSymlinkedTraceOutput(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink permissions vary on windows")
+	}
+	out := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(out, "trace")); err != nil {
+		t.Fatalf("symlink trace dir: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "semantics", documentsFixture(t, "semantic"),
+		"--out", out,
+	}, &stdout, &stderr)
+
+	if code != ExitArtifactWrite {
+		t.Fatalf("expected artifact write exit for symlinked trace dir, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "escaped output directory") {
+		t.Fatalf("expected containment error, got %q", stderr.String())
 	}
 }
 
@@ -232,6 +374,84 @@ func TestDocumentsSemanticsRejectsUnsupportedLLMProviderBeforeSourceRead(t *test
 	}
 	if !strings.Contains(stderr.String(), "unsupported LLM provider: gemini") {
 		t.Fatalf("expected unsupported provider before source read, got %q", stderr.String())
+	}
+}
+
+func TestObservabilityPostHogTestDisabledByDefault(t *testing.T) {
+	t.Setenv("MINDLINE_TELEMETRY_ENABLED", "")
+	t.Setenv("MINDLINE_LLM_TRACE_MODE", "")
+	t.Setenv("MINDLINE_TELEMETRY_SALT", "")
+	t.Setenv("POSTHOG_PROJECT_API_KEY", "")
+	t.Setenv("POSTHOG_API_KEY", "")
+	t.Setenv("POSTHOG_HOST", "")
+	var stdout, stderr bytes.Buffer
+
+	code := NewRunner(NewMemoryFS()).Run([]string{"observability", "posthog-test"}, &stdout, &stderr)
+
+	if code != ExitOK {
+		t.Fatalf("expected exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("expected empty stderr, got %q", stderr.String())
+	}
+	var envelope ObservabilityTestEnvelope
+	if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode stdout: %v\n%s", err, stdout.String())
+	}
+	if envelope.State != "telemetry_disabled" || envelope.Network {
+		t.Fatalf("unexpected envelope: %+v", envelope)
+	}
+}
+
+func TestObservabilityPostHogTestRejectsRawModeBeforeNetwork(t *testing.T) {
+	fs := NewMemoryFS()
+	fs.files[".env.local"] = []byte("MINDLINE_TELEMETRY_ENABLED=true\nMINDLINE_LLM_TRACE_MODE=raw\nPOSTHOG_PROJECT_API_KEY=phc-test\nPOSTHOG_HOST=https://eu.i.posthog.com\nMINDLINE_TELEMETRY_SALT=salt\n")
+	var stdout, stderr bytes.Buffer
+
+	code := NewRunner(fs).Run([]string{"observability", "posthog-test"}, &stdout, &stderr)
+
+	if code != ExitUsage {
+		t.Fatalf("expected usage exit, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "unsupported LLM trace mode: raw") {
+		t.Fatalf("expected raw mode rejection, got %q", stderr.String())
+	}
+}
+
+func TestObservabilityPostHogTestSendsMetadataOnlyEvent(t *testing.T) {
+	fs := NewMemoryFS()
+	fs.files[".env.local"] = []byte("MINDLINE_TELEMETRY_ENABLED=true\nMINDLINE_LLM_TRACE_MODE=metadata\nPOSTHOG_PROJECT_API_KEY=phc-test\nPOSTHOG_HOST=https://eu.i.posthog.com\nMINDLINE_TELEMETRY_SALT=salt\n")
+	var capturedBody string
+	runner := NewRunnerWithPostHogTransport(fs, httpRoundTripper(func(req *http.Request) (*http.Response, error) {
+		if req.URL.String() != "https://eu.i.posthog.com/capture/" {
+			t.Fatalf("unexpected PostHog URL: %s", req.URL.String())
+		}
+		body, err := io.ReadAll(req.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		capturedBody = string(body)
+		if containsUnsafePostHogBody(capturedBody) {
+			t.Fatalf("PostHog body contains unsafe content: %s", capturedBody)
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("{}")), Header: make(http.Header)}, nil
+	}))
+	var stdout, stderr bytes.Buffer
+
+	code := runner.Run([]string{"observability", "posthog-test"}, &stdout, &stderr)
+
+	if code != ExitOK {
+		t.Fatalf("expected exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+	if capturedBody == "" {
+		t.Fatalf("expected PostHog request")
+	}
+	var envelope ObservabilityTestEnvelope
+	if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode stdout: %v\n%s", err, stdout.String())
+	}
+	if envelope.State != "posthog_test_sent" || !envelope.Network {
+		t.Fatalf("unexpected envelope: %+v", envelope)
 	}
 }
 
@@ -402,6 +622,9 @@ func TestDocumentsJudgeJudgeNextAndJudgeRecord(t *testing.T) {
 	if summary.SchemaVersion != "semantic-judgment-summary/v0.3" || summary.CandidateCount == 0 || summary.RemainingCount != summary.CandidateCount || summary.EvidenceExcludedCount == 0 {
 		t.Fatalf("unexpected judgment summary: %+v", summary)
 	}
+	if _, err := os.Stat(filepath.Join(judgeOut, "trace", "trace-summary.json")); err != nil {
+		t.Fatalf("expected judgment trace summary artifact: %v", err)
+	}
 
 	stdout.Reset()
 	stderr.Reset()
@@ -465,6 +688,160 @@ func TestDocumentsJudgeJudgeNextAndJudgeRecord(t *testing.T) {
 	if updated.SchemaVersion != "semantic-judgment-summary/v0.3" || updated.JudgedCount != 1 || updated.AcceptedCount != 1 || updated.Precision != 1 {
 		t.Fatalf("unexpected judgment record summary: %+v", updated)
 	}
+}
+
+func TestDocumentsJudgeContinuesWhenPostHogExportFails(t *testing.T) {
+	t.Setenv("MINDLINE_TELEMETRY_ENABLED", "false")
+	semanticOut := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "semantics", documentsFixture(t, "semantic"),
+		"--out", semanticOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected semantic generation exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+
+	t.Setenv("MINDLINE_TELEMETRY_ENABLED", "true")
+	t.Setenv("MINDLINE_LLM_TRACE_MODE", "metadata")
+	t.Setenv("MINDLINE_TELEMETRY_SALT", "salt")
+	t.Setenv("POSTHOG_PROJECT_API_KEY", "phc-test")
+	t.Setenv("POSTHOG_HOST", "https://eu.i.posthog.com")
+	runner := NewRunnerWithPostHogTransport(NewOSFileSystem(), httpRoundTripper(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 503, Body: io.NopCloser(strings.NewReader("unavailable")), Header: make(http.Header)}, nil
+	}))
+	judgeOut := t.TempDir()
+	stdout.Reset()
+	stderr.Reset()
+
+	code = runner.Run([]string{
+		"documents", "judge", semanticOut,
+		"--out", judgeOut,
+	}, &stdout, &stderr)
+
+	if code != ExitOK {
+		t.Fatalf("expected judge command to ignore PostHog failure, got %d stderr=%s", code, stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(judgeOut, "trace", "trace-summary.json")); err != nil {
+		t.Fatalf("expected trace summary artifact despite PostHog failure: %v", err)
+	}
+	if !strings.Contains(stderr.String(), "posthog capture:") {
+		t.Fatalf("expected PostHog warning on stderr, got %q", stderr.String())
+	}
+}
+
+func TestDocumentsJudgeExportsMetadataTraceWhenEnabled(t *testing.T) {
+	t.Setenv("MINDLINE_TELEMETRY_ENABLED", "false")
+	t.Setenv("MINDLINE_LLM_PROVIDER", "openai")
+	t.Setenv("OPENAI_MODEL", "gpt-test")
+	semanticOut := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "semantics", documentsFixture(t, "semantic"),
+		"--out", semanticOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected semantic generation exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+
+	t.Setenv("MINDLINE_TELEMETRY_ENABLED", "true")
+	t.Setenv("MINDLINE_LLM_TRACE_MODE", "metadata")
+	t.Setenv("MINDLINE_TELEMETRY_SALT", "salt")
+	t.Setenv("POSTHOG_PROJECT_API_KEY", "phc-test")
+	t.Setenv("POSTHOG_HOST", "https://eu.i.posthog.com")
+	var capturedBodies []string
+	runner := NewRunnerWithPostHogTransport(NewOSFileSystem(), httpRoundTripper(func(req *http.Request) (*http.Response, error) {
+		body, err := io.ReadAll(req.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		capturedBodies = append(capturedBodies, string(body))
+		if containsUnsafePostHogBody(string(body)) {
+			t.Fatalf("PostHog body contains unsafe content: %s", string(body))
+		}
+		if strings.Contains(string(body), "gpt-test") || strings.Contains(string(body), "$ai_model") || strings.Contains(string(body), "$ai_provider") {
+			t.Fatalf("non-agent judgment run must not export ambient LLM metadata: %s", string(body))
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("{}")), Header: make(http.Header)}, nil
+	}))
+	judgeOut := t.TempDir()
+	stdout.Reset()
+	stderr.Reset()
+
+	code = runner.Run([]string{
+		"documents", "judge", semanticOut,
+		"--out", judgeOut,
+	}, &stdout, &stderr)
+
+	if code != ExitOK {
+		t.Fatalf("expected judge exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+	if len(capturedBodies) != 2 {
+		t.Fatalf("expected generation and feedback PostHog events, got %d", len(capturedBodies))
+	}
+	if _, err := os.Stat(filepath.Join(judgeOut, "trace", "trace-summary.json")); err != nil {
+		t.Fatalf("expected trace summary artifact: %v", err)
+	}
+	var trace struct {
+		Counts map[string]int `json:"counts"`
+	}
+	data, err := os.ReadFile(filepath.Join(judgeOut, "trace", "trace-summary.json"))
+	if err != nil {
+		t.Fatalf("read trace summary: %v", err)
+	}
+	if strings.Contains(string(data), "gpt-test") || strings.Contains(string(data), "openai") {
+		t.Fatalf("non-agent judgment trace must not include ambient LLM metadata: %s", string(data))
+	}
+	if err := json.Unmarshal(data, &trace); err != nil {
+		t.Fatalf("decode trace summary: %v", err)
+	}
+	if _, ok := trace.Counts["failure_reason_count.unexpected_candidate"]; !ok {
+		t.Fatalf("expected failure taxonomy counts in trace: %+v", trace.Counts)
+	}
+	if _, ok := trace.Counts["evidence_readiness_reason_count.missing_source_excerpt"]; !ok {
+		t.Fatalf("expected evidence readiness taxonomy counts in trace: %+v", trace.Counts)
+	}
+}
+
+func TestSemanticJudgmentTraceSummaryLabelsAgentModelErrors(t *testing.T) {
+	summary := documents.SemanticJudgmentSummary{
+		RunID:                         "run-model-error",
+		SourceCount:                   1,
+		CandidateCount:                1,
+		AgentReviewedCount:            1,
+		HumanReviewRequiredCount:      1,
+		FailureReasonCounts:           map[documents.SemanticFailureReason]int{},
+		EvidenceReadinessReasonCounts: map[documents.SemanticEvidenceReadinessReason]int{},
+		Items: []documents.SemanticJudgmentCandidate{
+			{
+				CandidateID: "candidate-1",
+				AgentReview: &documents.SemanticAgentReviewProposal{
+					ReviewReasonCodes: []documents.SemanticAgentReviewReasonCode{
+						documents.SemanticAgentReviewReasonModelError,
+					},
+				},
+			},
+		},
+	}
+
+	trace := semanticJudgmentTraceSummary(summary, documents.SemanticJudgmentOptions{
+		Reviewer:    documents.SemanticJudgmentReviewerLLM,
+		LLMProvider: "openai",
+		LLMModel:    "gpt-test",
+	})
+
+	if trace.Labels["judgment_model_errors"] != 1 {
+		t.Fatalf("expected model error label from agent review reason codes, got %+v", trace.Labels)
+	}
+}
+
+func containsUnsafePostHogBody(body string) bool {
+	for _, marker := range []string{`"source_text":`, `"source_excerpt":`, `"prompt":`, `"completion":`} {
+		if strings.Contains(body, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestDocumentsJudgeServeStateAndRecord(t *testing.T) {
