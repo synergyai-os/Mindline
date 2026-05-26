@@ -30,7 +30,8 @@ func BuildLLMSemanticReviewPrompt(request LLMSemanticReviewRequest) string {
 	b.WriteString("You are reviewing one Mindline semantic candidate for extraction correctness.\n")
 	b.WriteString("Return JSON only with this shape: {\"choice\":\"accept|reject|unclear|duplicate|wrong-kind\",\"failure_reason\":\"...\",\"confidence\":\"low|medium|high\",\"human_review_required\":true|false,\"review_reason_codes\":[\"...\"],\"rationale\":\"...\"}.\n")
 	b.WriteString("This is not a destination approval. Judge only whether the extraction should count as correct. Use human_review_required=false only when evidence is clear, the choice is high confidence, and no safety/risk issue exists.\n")
-	b.WriteString("Use a failure_reason compatible with the choice. Accept uses no failure_reason. Keep rationale under 30 words and do not copy long source excerpts.\n")
+	b.WriteString("Use a failure_reason compatible with the choice. Accept uses no failure_reason. Duplicate must use duplicate. Wrong-kind must use wrong_kind. Unclear should usually use ambiguous, missing_evidence, unsupported_evidence, relation_error, source_scope_error, or other. Reject should usually use unexpected_candidate, unsupported_evidence, missing_evidence, too_broad, too_narrow, stale_or_contradicted, unsafe_or_private, relation_error, source_scope_error, or other.\n")
+	b.WriteString("Use only these review_reason_codes when needed: low_confidence, evidence_not_ready, blockers_present, unsafe_or_private, invalid_relation_context, model_uncertain, machine_triaged. Keep rationale under 30 words and do not copy long source excerpts.\n")
 	b.WriteString("Candidate:\n")
 	b.WriteString("- id: " + item.CandidateID + "\n")
 	b.WriteString("- kind: " + string(item.CandidateKind) + "\n")
@@ -174,8 +175,13 @@ func semanticAgentReviewProposalFromResponse(response llmSemanticReviewResponse,
 		Rationale:           trimSemanticText(strings.Join(strings.Fields(response.Rationale), " "), 240),
 	}
 	for _, reason := range response.ReviewReasonCodes {
-		proposal.ReviewReasonCodes = append(proposal.ReviewReasonCodes, SemanticAgentReviewReasonCode(strings.TrimSpace(reason)))
+		normalized := SemanticAgentReviewReasonCode(strings.TrimSpace(reason))
+		if !validSemanticAgentReviewReasonCode(normalized) || normalized == SemanticAgentReviewReasonModelError {
+			normalized = SemanticAgentReviewReasonModelUncertain
+		}
+		proposal.ReviewReasonCodes = append(proposal.ReviewReasonCodes, normalized)
 	}
+	proposal = normalizeSemanticAgentReviewFailureReason(proposal)
 	if proposal.Confidence == "" {
 		proposal.Confidence = ConfidenceLow
 		proposal.HumanReviewRequired = true
@@ -184,6 +190,20 @@ func semanticAgentReviewProposalFromResponse(response llmSemanticReviewResponse,
 		return SemanticAgentReviewProposal{}, err
 	}
 	return proposal, nil
+}
+
+func normalizeSemanticAgentReviewFailureReason(proposal SemanticAgentReviewProposal) SemanticAgentReviewProposal {
+	if proposal.Choice == SemanticJudgmentChoiceAccept {
+		proposal.FailureReason = ""
+		return proposal
+	}
+	if semanticJudgmentChoiceAllowsFailureReason(proposal.Choice, proposal.FailureReason) {
+		return proposal
+	}
+	if fallback, ok := defaultSemanticFailureReasonForChoice(proposal.Choice); ok {
+		proposal.FailureReason = fallback
+	}
+	return proposal
 }
 
 func forceSemanticAgentReviewRisk(item SemanticJudgmentCandidate, proposal SemanticAgentReviewProposal) SemanticAgentReviewProposal {

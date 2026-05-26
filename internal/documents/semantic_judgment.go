@@ -24,7 +24,7 @@ func JudgeSemanticCandidates(semanticRunDir, outDir string, options SemanticJudg
 	if err != nil {
 		return SemanticJudgmentSummary{}, err
 	}
-	summary := BuildSemanticJudgmentSummary(semanticSummary.RunID, semanticSummary.SourceCount, items, nil)
+	summary := BuildSemanticJudgmentSummaryWithSkippedReason(semanticSummary.RunID, semanticSummary.SourceCount, items, nil, semanticSummary.SkippedReason)
 	if err := WriteSemanticJudgment(outDir, summary); err != nil {
 		return SemanticJudgmentSummary{}, err
 	}
@@ -256,7 +256,7 @@ func RecordSemanticJudgment(inputDir string, input SemanticJudgmentRecordInput) 
 		for i := range items {
 			items[i].Judgment = judgedByCandidate[items[i].CandidateID]
 		}
-		updated = BuildSemanticJudgmentSummary(summary.RunID, summary.SourceCount, items, judgments)
+		updated = BuildSemanticJudgmentSummaryWithSkippedReason(summary.RunID, summary.SourceCount, items, judgments, summary.SkippedReason)
 		if err := writeSemanticJudgmentRoot(root, updated); err != nil {
 			return ArtifactWriteError{Err: err}
 		}
@@ -531,6 +531,10 @@ func semanticJudgmentRelationHint(relationship SemanticRelationshipType) string 
 }
 
 func BuildSemanticJudgmentSummary(runID string, sourceCount int, items []SemanticJudgmentCandidate, judgments []SemanticJudgmentRecord) SemanticJudgmentSummary {
+	return BuildSemanticJudgmentSummaryWithSkippedReason(runID, sourceCount, items, judgments, "")
+}
+
+func BuildSemanticJudgmentSummaryWithSkippedReason(runID string, sourceCount int, items []SemanticJudgmentCandidate, judgments []SemanticJudgmentRecord, skippedReason string) SemanticJudgmentSummary {
 	judged := semanticJudgmentsByCandidate(judgments)
 	counts := map[SemanticJudgmentChoice]int{
 		SemanticJudgmentChoiceReject:    0,
@@ -703,6 +707,7 @@ func BuildSemanticJudgmentSummary(runID string, sourceCount int, items []Semanti
 		JudgmentByRelationType:        byRelationType,
 		JudgmentByFailureReason:       byFailureReason,
 		QualityStatement:              "Judgments are calibration evidence only; no-human readiness still requires held-out >=98% accuracy.",
+		SkippedReason:                 strings.TrimSpace(skippedReason),
 		CursorPath:                    "cursor.json",
 		ReportPath:                    "reports/judgment-report.md",
 		Candidates:                    summaries,
@@ -1119,7 +1124,7 @@ func ValidateSemanticJudgmentSummary(summary SemanticJudgmentSummary) error {
 			return err
 		}
 	}
-	body := summary.RunID + "\n" + summary.QualityStatement
+	body := summary.RunID + "\n" + summary.QualityStatement + "\n" + summary.SkippedReason
 	for _, item := range summary.Candidates {
 		body += "\n" + item.CandidateID + "\n" + item.CandidatePath + "\n" + item.PagePath + "\n" + item.JudgmentPath + "\n" + item.SourceDocumentID
 	}

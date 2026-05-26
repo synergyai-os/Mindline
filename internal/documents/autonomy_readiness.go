@@ -211,7 +211,7 @@ func autonomyCounts(summary SemanticJudgmentSummary, items []SemanticJudgmentCan
 }
 
 func autonomyAccuracy(counts AutonomyReadinessCounts) float64 {
-	denominator := counts.EvalCountedAcceptedCount + counts.EvalCountedFalsePositiveCount + counts.EvalCountedFalseNegativeCount
+	denominator := autonomyAccuracyDenominator(counts)
 	if denominator == 0 {
 		return 0
 	}
@@ -239,7 +239,9 @@ func autonomyBlockers(report AutonomyReadinessReport, summary SemanticJudgmentSu
 	if !report.HeldOut {
 		blockers = append(blockers, "not_held_out")
 	}
-	if report.Accuracy < report.Threshold {
+	if autonomyAccuracyDenominator(report.Counts) == 0 {
+		blockers = append(blockers, "no_judged_eval_outcomes")
+	} else if report.Accuracy < report.Threshold {
 		blockers = append(blockers, "below_threshold")
 	}
 	if report.Counts.EvalCountedCount != report.Counts.EvidenceReadyCount {
@@ -315,10 +317,13 @@ func autonomyImprovementTargets(report AutonomyReadinessReport, summary Semantic
 	if !report.HeldOut {
 		add("not_held_out", 1, "Promote reviewed examples into a declared held-out suite before making autonomy claims.")
 	}
-	if report.Accuracy < report.Threshold {
+	denominator := autonomyAccuracyDenominator(report.Counts)
+	if denominator == 0 && summary.SkippedReason == "" {
+		add("no_judged_eval_outcomes", 1, "Create authoritative judgments for eval-counted candidates before readiness can be assessed.")
+	} else if denominator > 0 && report.Accuracy < report.Threshold {
 		add("below_threshold", int((report.Threshold-report.Accuracy)*10000), "Improve extraction and judgment quality before DEC-64 eligibility.")
 	}
-	if report.Counts.CandidateCount == 0 {
+	if report.Counts.CandidateCount == 0 && summary.SkippedReason == "" {
 		add("no_candidates", 1, "Fix extraction/classification coverage for sources that produce no semantic candidates.")
 	}
 	add("evidence_readiness", report.Counts.EvidenceExcludedCount, "Make excluded candidates evidence-ready or remove them from counted evaluation.")
@@ -341,7 +346,14 @@ func autonomyImprovementTargets(report AutonomyReadinessReport, summary Semantic
 	if len(targets) > 5 {
 		targets = targets[:5]
 	}
+	if targets == nil {
+		return []AutonomyReadinessImprovement{}
+	}
 	return targets
+}
+
+func autonomyAccuracyDenominator(counts AutonomyReadinessCounts) int {
+	return counts.EvalCountedAcceptedCount + counts.EvalCountedFalsePositiveCount + counts.EvalCountedFalseNegativeCount
 }
 
 func autonomySourceTypeSlice(summaries []SemanticJudgmentCandidateSummary, items []SemanticJudgmentCandidate) map[string]map[string]int {

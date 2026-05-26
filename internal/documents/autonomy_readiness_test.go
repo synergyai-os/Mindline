@@ -141,6 +141,30 @@ func TestAutonomyReadinessReportsNoCandidateRunsAsSpecificImprovementTarget(t *t
 	}
 }
 
+func TestAutonomyReadinessDoesNotTreatSkippedNoCandidateRunsAsExtractionFailure(t *testing.T) {
+	out := t.TempDir()
+	summary := BuildSemanticJudgmentSummaryWithSkippedReason("run-skipped", 1, nil, nil, "all structure nodes are blocked or empty; no semantic candidates expected")
+	if err := WriteSemanticJudgmentRoot(filepath.Join(out, "semantic-judgment"), summary); err != nil {
+		t.Fatalf("write judgment: %v", err)
+	}
+
+	report, err := BuildAutonomyReadinessReport(out, AutonomyReadinessOptions{Threshold: 0.98, HeldOut: true})
+	if err != nil {
+		t.Fatalf("build report: %v", err)
+	}
+	if !containsString(report.Blockers, "no_judged_eval_outcomes") || containsString(report.Blockers, "below_threshold") {
+		t.Fatalf("expected skipped empty run to block on missing eval evidence, not below threshold: %+v", report.Blockers)
+	}
+	for _, target := range report.Improvement {
+		if target.Code == "no_candidates" || target.Code == "below_threshold" || target.Code == "no_judged_eval_outcomes" {
+			t.Fatalf("expected skipped empty run not to emit extraction-quality target, got %+v", report.Improvement)
+		}
+	}
+	if report.Improvement == nil {
+		t.Fatalf("expected empty improvement list to serialize as []")
+	}
+}
+
 func TestWriteAutonomyReadinessReportRejectsUnexpectedFiles(t *testing.T) {
 	out := t.TempDir()
 	root := filepath.Join(out, AutonomyReadinessDirName)

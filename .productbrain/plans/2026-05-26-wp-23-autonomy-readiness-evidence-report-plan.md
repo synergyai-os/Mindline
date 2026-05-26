@@ -66,8 +66,20 @@ Deliver the local canonical eval control plane that makes DEC-64 measurable. The
    - Run readiness report.
    - Verify report remains `not_eligible` unless held-out DEC-64 proof truly exists.
    - Verify top improvement targets are actionable and privacy-safe.
+   - Run a bounded improvement loop, capped at 20 but stopped earlier when the remaining blocker is ground-truth authority rather than a local implementation defect.
+   - Retain only general system fixes that improve the aggregate loop; revert prompt or classifier changes that do not improve the aggregate.
+   - Compare baseline and final metrics: completion rate, candidate-producing source files, evidence-ready/eval-counted counts, human-review-required count, review burden, model errors, machine-triaged proposal-only count, skipped non-source artifacts, and blocker vocabulary.
 
-11. **Review and close**
+11. **PR #20 revision loop evidence**
+   - Baseline LLM-backed full corpus: 8 files attempted, 69 candidates, 69 evidence-ready/eval-counted, 25 human-review-required, 25 review burden, 25 model errors, 44 machine-triaged, 6 candidate-producing files.
+   - Iteration 1 retained: make LLM reviewer output obey the closed failure/reason taxonomy instead of converting incompatible but useful model output into `model_error`.
+   - Iteration 2 retained: preserve semantic skipped reasons through judgment/readiness and avoid treating intentionally skipped non-source artifacts as extraction failures.
+   - Iteration 3 retained: readiness uses `no_judged_eval_outcomes` when the denominator is zero because no authoritative judgments exist; empty improvement lists serialize as `[]`.
+   - Iteration 4 reverted: a classifier prompt tightening around linked-content inference did not improve aggregate review burden, so it is not retained.
+   - Final retained: LLM candidates with invented evidence-node IDs are dropped at the provider boundary instead of crashing the source run.
+   - Final full corpus: all 8 markdown files complete, 71 candidates, 71 evidence-ready/eval-counted, 10 human-review-required, 10 review burden, 0 model errors, 61 machine-triaged proposal-only, 6 candidate-producing source-like files, 2 intentionally skipped review artifacts.
+
+12. **Review and close**
    - Run `go test ./...`.
    - Run `git diff --check`.
    - Run `pb audit WP-23`.

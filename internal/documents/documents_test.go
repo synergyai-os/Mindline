@@ -393,7 +393,7 @@ func TestSemanticWriterRedactsUnsafeEndpointAndEvidenceFields(t *testing.T) {
 	assertGeneratedTreeExcludes(t, filepath.Join(out, "semantic-candidates"), "private_content", "secret", unsafeTokenMarker(), "DEC-49", "WP-13")
 }
 
-func TestLLMClassifierRejectsInventedEvidenceNode(t *testing.T) {
+func TestLLMClassifierDropsCandidatesWithOnlyInventedEvidenceNodes(t *testing.T) {
 	nodes := []StructureNode{{
 		NodeID:           "node-real",
 		SourceDocumentID: "doc-test",
@@ -410,10 +410,13 @@ func TestLLMClassifierRejectsInventedEvidenceNode(t *testing.T) {
 		EvidenceNodes: []string{"node-fake"},
 	}}}
 
-	_, _, err := buildLLMSemanticArtifacts("run-test", nodes, response)
+	candidates, relations, err := buildLLMSemanticArtifacts("run-test", nodes, response)
 
-	if err == nil || !strings.Contains(err.Error(), "unknown evidence node: node-fake") {
-		t.Fatalf("expected unknown evidence node rejection, got %v", err)
+	if err != nil {
+		t.Fatalf("expected invented evidence node to be dropped, got %v", err)
+	}
+	if len(candidates) != 0 || len(relations) != 0 {
+		t.Fatalf("expected unsupported candidate to be dropped, got candidates=%+v relations=%+v", candidates, relations)
 	}
 }
 
@@ -2619,6 +2622,26 @@ func TestSemanticJudgmentAgentReviewTriageDoesNotCreateJudgments(t *testing.T) {
 	}
 	if updated.HumanReviewRequiredCount != 0 || updated.MachineTriagedCount != 0 {
 		t.Fatalf("proposal queue counts should exclude all judged proposal items: %+v", updated)
+	}
+}
+
+func TestSemanticJudgmentAgentReviewNormalizesIncompatibleFailureReason(t *testing.T) {
+	proposal, err := semanticAgentReviewProposalFromResponse(llmSemanticReviewResponse{
+		Choice:              string(SemanticJudgmentChoiceReject),
+		FailureReason:       "overstated-FAQ-document",
+		Confidence:          string(ConfidenceHigh),
+		HumanReviewRequired: false,
+		ReviewReasonCodes:   []string{"made_up_reason"},
+		Rationale:           "Evidence shows the candidate is overstated.",
+	}, SemanticJudgmentOptions{LLMProvider: "openai", LLMModel: "test-model"})
+	if err != nil {
+		t.Fatalf("expected incompatible model output to be normalized, got %v", err)
+	}
+	if proposal.FailureReason != SemanticFailureUnexpectedCandidate {
+		t.Fatalf("expected safe default failure reason, got %+v", proposal)
+	}
+	if proposal.ReviewReasonCodes[0] != SemanticAgentReviewReasonModelUncertain {
+		t.Fatalf("expected unknown reason code normalized, got %+v", proposal.ReviewReasonCodes)
 	}
 }
 

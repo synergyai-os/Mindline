@@ -30,6 +30,8 @@ Mindline writes a canonical local autonomy-readiness report from semantic, judgm
 
 After this ships, Codex can autonomously run the approved corpus, read the local report, identify the highest-leverage failure slices, propose the next experiment, and rerun the loop. Randy remains the authority for held-out labels, privacy/product tradeoffs, destination writes, and any no-human readiness claim.
 
+PR #20 revision requirement: this PR must prove the report is not merely descriptive. It must run a bounded autonomous improvement loop on every `temp/*.md` file, make only general system fixes that are not tuned to the temp corpus, rerun after each fix, and stop early only when either the pre-DEC-64 KR is achieved or the remaining blocker is no longer addressable without ground-truth labels.
+
 ## Scope
 
 Implement:
@@ -114,6 +116,7 @@ Aggressive but honest delivery KRs:
 5. `KEY-7`: 100% of eval-counted candidates are evidence-ready.
 6. Every failed report lists top improvement targets with local artifact references and closed-vocabulary recommendation codes, including `no_candidates` when a run extracts nothing countable.
 7. 0 hosted telemetry events contain forbidden private fields or unsafe values.
+8. Pre-DEC-64 self-improvement loop over all `temp/*.md` must show concrete movement: all markdown files complete end to end without crash; direct source-like files produce evidence-ready candidates; intentionally skipped non-source/review artifacts are reported as skipped, not as extraction failures; model errors reach 0; review burden materially decreases from the initial LLM-backed baseline; `threshold_status` remains `not_eligible` unless authoritative held-out judgments exist.
 
 ## Anti-Goals
 
@@ -126,6 +129,7 @@ Aggressive but honest delivery KRs:
 - No PostHog-as-canonical eval store.
 - No hosted LLM-as-judge over private traces.
 - No committed private temp artifacts.
+- No temp-corpus-specific shortcuts, filename allowlists, candidate title patches, or prompt tweaks retained without measured aggregate gain.
 
 ## Verification
 
@@ -141,6 +145,10 @@ Required before PR:
 - Test that unsafe projection fails before network.
 - CLI tests for disabled default and enabled metadata export.
 - Real `temp/*.md` smoke through semantics, judgment, and readiness report.
+- Bounded self-improvement evidence:
+  - Baseline: `/private/tmp/mindline-loop-baseline` produced 69 candidates, 69 evidence-ready/eval-counted, 25 human-review-required, 25 review burden, 25 model errors, and 6 candidate-producing source-like files.
+  - Final accepted loop: `/private/tmp/mindline-loop-final2` completed all 8 markdown files, produced 71 candidates, 71 evidence-ready/eval-counted, 10 human-review-required, 10 review burden, 0 model errors, 61 machine-triaged proposal-only candidates, 6 candidate-producing source-like files, and 2 intentionally skipped review-artifact files with empty improvement targets.
+  - Stop reason: after five attempted loops, the remaining blocker is `no_judged_eval_outcomes` / `remaining_judgments`, not a local report crash or schema error. Machine triage is deliberately proposal-only and cannot satisfy DEC-64.
 - `go test ./...`
 - `git diff --check`
 - `pb audit WP-23`

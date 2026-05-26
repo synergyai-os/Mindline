@@ -153,6 +153,9 @@ func semanticJudgmentReportMarkdown(summary SemanticJudgmentSummary) string {
 	b.WriteString("# Semantic Judgment Quality Report\n\n")
 	b.WriteString(summary.QualityStatement + "\n\n")
 	b.WriteString(fmt.Sprintf("- Candidates: %d\n", summary.CandidateCount))
+	if summary.SkippedReason != "" {
+		b.WriteString(fmt.Sprintf("- Skipped reason: %s\n", summary.SkippedReason))
+	}
 	b.WriteString(fmt.Sprintf("- Judged: %d\n", summary.JudgedCount))
 	b.WriteString(fmt.Sprintf("- Remaining unjudged: %d\n", summary.RemainingCount))
 	b.WriteString(fmt.Sprintf("- Agent reviewed: %d\n", summary.AgentReviewedCount))
