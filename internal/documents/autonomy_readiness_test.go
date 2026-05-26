@@ -348,6 +348,38 @@ func TestAutonomyReadinessEligibilityIgnoresExcludedRemainingReviewAndModelBlock
 	}
 }
 
+func TestAutonomyReadinessJudgedEvalHumanReviewRequiredBlocksEligibility(t *testing.T) {
+	out := t.TempDir()
+	summary := autonomyReadinessTestSummary(t, SemanticJudgmentChoiceAccept, "")
+	item := summary.Items[0]
+	item.AgentReview = &SemanticAgentReviewProposal{
+		SchemaVersion:       SemanticAgentReviewProposalSchemaVersion,
+		Provider:            "openai",
+		Model:               "gpt-5.2",
+		Choice:              SemanticJudgmentChoiceUnclear,
+		FailureReason:       SemanticFailureOther,
+		Confidence:          ConfidenceLow,
+		HumanReviewRequired: true,
+		ReviewReasonCodes:   []SemanticAgentReviewReasonCode{SemanticAgentReviewReasonLowConfidence},
+		Rationale:           "needs human judgment",
+	}
+	summary = BuildSemanticJudgmentSummary("run-demo", 1, []SemanticJudgmentCandidate{item}, summary.Judgments)
+	if err := WriteSemanticJudgmentRoot(filepath.Join(out, "semantic-judgment"), summary); err != nil {
+		t.Fatalf("write judgment: %v", err)
+	}
+
+	report, err := BuildAutonomyReadinessReport(out, AutonomyReadinessOptions{Threshold: 0.98, HeldOut: true})
+	if err != nil {
+		t.Fatalf("build report: %v", err)
+	}
+	if report.Counts.EvalCountedHumanReviewCount != 1 {
+		t.Fatalf("expected judged eval-counted human review requirement to count, got %+v", report.Counts)
+	}
+	if report.ThresholdStatus != AutonomyReadinessNotEligible || !containsString(report.Blockers, "human_review_required") {
+		t.Fatalf("expected judged human-review requirement to block eligibility, got status=%s blockers=%+v", report.ThresholdStatus, report.Blockers)
+	}
+}
+
 func TestAutonomyReadinessReportsNoCandidateRunsAsSpecificImprovementTarget(t *testing.T) {
 	out := t.TempDir()
 	summary := BuildSemanticJudgmentSummary("run-empty", 1, nil, nil)

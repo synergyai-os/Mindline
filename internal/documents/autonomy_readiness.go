@@ -543,7 +543,7 @@ func autonomyEvalCountedRemainingCount(summary SemanticJudgmentSummary) int {
 func autonomyEvalCountedHumanReviewRequiredCount(summary SemanticJudgmentSummary) int {
 	count := 0
 	for _, candidate := range summary.Candidates {
-		if !candidate.EvalCounted || candidate.JudgmentChoice != "" || candidate.HumanReviewRequired == nil || !*candidate.HumanReviewRequired {
+		if !candidate.EvalCounted || candidate.HumanReviewRequired == nil || !*candidate.HumanReviewRequired {
 			continue
 		}
 		count++
