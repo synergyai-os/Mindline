@@ -124,6 +124,76 @@ func TestDocumentsStructureDoesNotReadProductBrainProfile(t *testing.T) {
 	}
 }
 
+func TestDocumentsCorpusGraphCLI(t *testing.T) {
+	root := t.TempDir()
+	semanticOut := filepath.Join(root, "semantic")
+	candidate := documents.SemanticCandidate{
+		SchemaVersion:     documents.SemanticCandidateSchemaVersion,
+		CandidateID:       "cand-cli",
+		RunID:             "run-cli",
+		SourceDocumentID:  "doc-cli",
+		CandidateKind:     documents.SemanticCandidateKindAction,
+		ReviewStatus:      documents.ReviewStatusReady,
+		Confidence:        documents.ConfidenceHigh,
+		Title:             "Review corpus graph",
+		Summary:           "Review corpus graph output.",
+		EvidenceNodes:     []string{"node-cli"},
+		EvidenceRanges:    []documents.SemanticEvidenceRange{{StructureNodeID: "node-cli", LineStart: 1, LineEnd: 1}},
+		EvidenceExcerpts:  []documents.SemanticEvidenceExcerpt{{StructureNodeID: "node-cli", Text: "Review corpus graph output."}},
+		ObservationIDs:    []string{"obs-cli"},
+		RelationIDs:       []string{"rel-cli"},
+		DestinationStatus: documents.SemanticDestinationUnresolved,
+	}
+	if err := documents.WriteSemantic(semanticOut, "run-cli", 1, nil, []documents.SemanticCandidate{candidate}, nil); err != nil {
+		t.Fatalf("write semantic: %v", err)
+	}
+	manifest := documents.CorpusGraphManifest{
+		SchemaVersion: documents.CorpusGraphManifestSchemaVersion,
+		CorpusID:      "corpus-cli",
+		Sources: []documents.CorpusGraphManifestSource{{
+			SourceID:       "source-cli",
+			SourceKind:     documents.SourceKindMarkdown,
+			Path:           "source.md",
+			SemanticRunDir: "semantic/semantic-candidates",
+		}},
+	}
+	writeCLITestJSON(t, filepath.Join(root, "manifest.json"), manifest)
+	if err := os.WriteFile(filepath.Join(root, "source.md"), []byte("# Source\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "corpus-graph", filepath.Join(root, "manifest.json"),
+		"--out", out,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+	var summary documents.CorpusGraphSummary
+	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
+		t.Fatalf("decode stdout: %v", err)
+	}
+	if summary.SchemaVersion != documents.CorpusGraphSummarySchemaVersion || summary.AtomCount != 1 {
+		t.Fatalf("unexpected graph summary: %+v", summary)
+	}
+	if _, err := os.Stat(filepath.Join(out, "corpus-graph", "graph-summary.json")); err != nil {
+		t.Fatalf("missing graph summary: %v", err)
+	}
+}
+
+func writeCLITestJSON(t *testing.T, path string, value any) {
+	t.Helper()
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = append(data, '\n')
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDocumentsSemantics(t *testing.T) {
 	out := t.TempDir()
 	var stdout, stderr bytes.Buffer
