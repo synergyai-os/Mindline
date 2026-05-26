@@ -16,6 +16,7 @@ const (
 	CorpusPressureSummarySchemaVersion   = "corpus-pressure-summary/v0.1"
 	CorpusPressureEvalInputSchemaVersion = "corpus-pressure-eval-input/v0.1"
 	CorpusPressureTraceSchemaVersion     = "corpus-pressure-trace-summary/v0.1"
+	corpusPressureGeneratedSourceMarker  = ".corpus-pressure-source"
 )
 
 type CorpusPressureManifest struct {
@@ -163,6 +164,7 @@ type corpusPressureSourceInput struct {
 	SourceKind string
 	Path       string
 	Label      string
+	RunDir     string
 }
 
 func BuildCorpusPressure(inputPath, outDir string, options CorpusPressureOptions) (CorpusPressureSummary, CorpusGraphSummary, error) {
@@ -192,6 +194,7 @@ func BuildCorpusPressure(inputPath, outDir string, options CorpusPressureOptions
 	if err != nil {
 		return CorpusPressureSummary{}, CorpusGraphSummary{}, err
 	}
+	sources = assignCorpusPressureSourceRunDirs(root, sources)
 	results := make([]CorpusPressureSourceResult, 0, len(sources))
 	graphSources := make([]CorpusGraphManifestSource, 0, len(sources))
 	for _, source := range sources {
@@ -388,6 +391,9 @@ func shouldSkipCorpusPressurePath(root, path string, skipPaths ...string) bool {
 	if err != nil {
 		return true
 	}
+	if corpusPressureGeneratedSourceCopy(path) {
+		return true
+	}
 	for _, skipPath := range skipPaths {
 		if strings.TrimSpace(skipPath) == "" {
 			continue
@@ -427,21 +433,115 @@ func corpusPressureOutputSkipPaths(inputPath, outRoot string) []string {
 		return nil
 	}
 	if rel == "." {
-		return []string{filepath.Join(outRoot, "sources")}
+		return nil
 	}
 	return []string{outRoot}
 }
 
+func corpusPressureGeneratedSourceCopy(path string) bool {
+	if filepath.Base(path) != "source.md" {
+		return false
+	}
+	sourceRoot := filepath.Dir(path)
+	info, err := os.Stat(filepath.Join(sourceRoot, corpusPressureGeneratedSourceMarker))
+	return err == nil && !info.IsDir()
+}
+
+func assignCorpusPressureSourceRunDirs(root string, sources []corpusPressureSourceInput) []corpusPressureSourceInput {
+	inputPaths := map[string]bool{}
+	for _, source := range sources {
+		if path, ok := canonicalExistingPath(source.Path); ok {
+			inputPaths[path] = true
+		}
+	}
+	usedRunDirs := map[string]bool{}
+	for i := range sources {
+		baseID := sources[i].SourceID
+		for attempt := 0; ; attempt++ {
+			runID := corpusPressureRunDirID(baseID, attempt)
+			runDir := filepath.ToSlash(filepath.Join("sources", runID))
+			if usedRunDirs[runDir] {
+				continue
+			}
+			localSourcePath := filepath.Join(root, filepath.FromSlash(runDir), "source.md")
+			if corpusPressureSourceRunDirCollides(localSourcePath, inputPaths) {
+				continue
+			}
+			sources[i].RunDir = runDir
+			usedRunDirs[runDir] = true
+			break
+		}
+	}
+	return sources
+}
+
+func corpusPressureRunDirID(baseID string, attempt int) string {
+	if attempt == 0 {
+		return baseID
+	}
+	if attempt == 1 {
+		return baseID + "-pressure"
+	}
+	return fmt.Sprintf("%s-pressure-%d", baseID, attempt)
+}
+
+func corpusPressureSourceRunDirCollides(localSourcePath string, inputPaths map[string]bool) bool {
+	if path, ok := canonicalExistingPath(localSourcePath); ok {
+		if inputPaths[path] {
+			return true
+		}
+	}
+	sourceRoot := filepath.Dir(localSourcePath)
+	sourceRootInfo, err := os.Stat(sourceRoot)
+	if err == nil {
+		if !sourceRootInfo.IsDir() {
+			return true
+		}
+		markerInfo, markerErr := os.Stat(filepath.Join(sourceRoot, corpusPressureGeneratedSourceMarker))
+		if markerErr != nil || markerInfo.IsDir() {
+			return true
+		}
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return true
+	}
+	info, err := os.Stat(localSourcePath)
+	if os.IsNotExist(err) {
+		return false
+	}
+	if err != nil {
+		return true
+	}
+	return !info.IsDir() && !corpusPressureGeneratedSourceCopy(localSourcePath)
+}
+
+func canonicalExistingPath(path string) (string, bool) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return "", false
+	}
+	realPath, err := filepath.EvalSymlinks(absPath)
+	if err != nil {
+		return filepath.Clean(absPath), false
+	}
+	return filepath.Clean(realPath), true
+}
+
 func runCorpusPressureSource(root string, source corpusPressureSourceInput, options SemanticOptions) (CorpusPressureSourceResult, *CorpusGraphManifestSource) {
-	sourceRoot := filepath.Join(root, "sources", source.SourceID)
+	runDir := source.RunDir
+	if runDir == "" {
+		runDir = filepath.ToSlash(filepath.Join("sources", source.SourceID))
+	}
+	sourceRoot := filepath.Join(root, filepath.FromSlash(runDir))
 	localSourcePath := filepath.Join(sourceRoot, "source.md")
+	relSourcePath := filepath.ToSlash(filepath.Join(runDir, "source.md"))
 	result := CorpusPressureSourceResult{
 		SourceID:    source.SourceID,
 		SourceKind:  source.SourceKind,
 		SourceLabel: source.Label,
 		State:       CorpusPressureSourceBlocked,
 		ReasonCode:  CorpusPressureReasonSemanticError,
-		SourcePath:  filepath.ToSlash(filepath.Join("sources", source.SourceID, "source.md")),
+		SourcePath:  relSourcePath,
 	}
 	if err := rejectSymlinkAncestors(sourceRoot); err != nil {
 		result.Message = err.Error()
@@ -473,6 +573,10 @@ func runCorpusPressureSource(root string, source corpusPressureSourceInput, opti
 		result.Message = err.Error()
 		return result, nil
 	}
+	if err := os.WriteFile(filepath.Join(sourceRoot, corpusPressureGeneratedSourceMarker), []byte("generated by corpus-pressure\n"), 0o644); err != nil {
+		result.Message = err.Error()
+		return result, nil
+	}
 	result.SourceContentHash = "sha256:" + contentHash(string(data))
 	summary, err := SemanticPathWithOptions(localSourcePath, sourceRoot, options)
 	if err != nil {
@@ -485,7 +589,7 @@ func runCorpusPressureSource(root string, source corpusPressureSourceInput, opti
 	result.SemanticRunID = summary.RunID
 	result.CandidateCount = summary.CandidateCount
 	result.CandidateKindCounts = cloneSemanticCandidateKindCounts(summary.CandidateKindCounts)
-	result.SemanticRunDir = filepath.ToSlash(filepath.Join("sources", source.SourceID))
+	result.SemanticRunDir = runDir
 	if summary.SkippedReason != "" {
 		if strings.Contains(summary.SkippedReason, "all structure nodes are blocked") {
 			result.State = CorpusPressureSourceExcluded
@@ -512,8 +616,8 @@ func runCorpusPressureSource(root string, source corpusPressureSourceInput, opti
 	return result, &CorpusGraphManifestSource{
 		SourceID:       source.SourceID,
 		SourceKind:     source.SourceKind,
-		Path:           filepath.ToSlash(filepath.Join("sources", source.SourceID, "source.md")),
-		SemanticRunDir: filepath.ToSlash(filepath.Join("sources", source.SourceID)),
+		Path:           relSourcePath,
+		SemanticRunDir: runDir,
 	}
 }
 

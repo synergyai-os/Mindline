@@ -174,6 +174,122 @@ func TestCorpusPressureInPlaceOutputKeepsInputSources(t *testing.T) {
 	}
 }
 
+func TestCorpusPressureInPlaceOutputKeepsRealSourcesDirectory(t *testing.T) {
+	input := t.TempDir()
+	sourceDir := filepath.Join(input, "sources")
+	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceDir, "real.md"), []byte("# Real source\n- capability: preserve corpus inputs stored under sources\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	summary, _, err := BuildCorpusPressure(input, input, CorpusPressureOptions{})
+	if err != nil {
+		t.Fatalf("build corpus pressure in place with real sources dir: %v", err)
+	}
+	if summary.SourceCount != 1 {
+		t.Fatalf("in-place output must not skip real input documents under sources/: %+v", summary)
+	}
+}
+
+func TestCorpusPressureInPlaceOutputKeepsRealSourceMarkdownWithAnalysisSiblings(t *testing.T) {
+	input := t.TempDir()
+	sourceDir := filepath.Join(input, "sources", "real")
+	if err := os.MkdirAll(filepath.Join(sourceDir, "semantic-candidates"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceDir, "source.md"), []byte("# Real source\n- capability: preserve source.md layouts under sources\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	summary, _, err := BuildCorpusPressure(input, input, CorpusPressureOptions{})
+	if err != nil {
+		t.Fatalf("build corpus pressure in place with real source.md layout: %v", err)
+	}
+	if summary.SourceCount != 1 {
+		t.Fatalf("in-place output must not skip real source.md documents with analysis siblings: %+v", summary)
+	}
+}
+
+func TestCorpusPressureInPlaceOutputDoesNotOverwriteRealSourcePathCollision(t *testing.T) {
+	input := t.TempDir()
+	topLevelSource := []byte("# Top level\n- capability: process top-level source without overwriting nested source\n")
+	if err := os.WriteFile(filepath.Join(input, "foo.md"), topLevelSource, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	realSourceDir := filepath.Join(input, "sources", "foo")
+	if err := os.MkdirAll(realSourceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	realSource := []byte("# Real nested source\n- capability: preserve legitimate sources/foo/source.md input\n")
+	realSourcePath := filepath.Join(realSourceDir, "source.md")
+	if err := os.WriteFile(realSourcePath, realSource, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	realInput, err := filepath.EvalSymlinks(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary, _, err := BuildCorpusPressure(realInput, realInput, CorpusPressureOptions{})
+	if err != nil {
+		t.Fatalf("build corpus pressure in place with colliding real source path: %v", err)
+	}
+	if summary.SourceCount != 2 {
+		t.Fatalf("in-place output must keep both colliding input sources: %+v", summary)
+	}
+	data, err := os.ReadFile(realSourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != string(realSource) {
+		t.Fatalf("in-place output overwrote real source path: got %q want %q", string(data), string(realSource))
+	}
+	if _, err := os.Stat(filepath.Join(realSourceDir, corpusPressureGeneratedSourceMarker)); err == nil {
+		t.Fatalf("in-place output marked real source directory as generated")
+	} else if !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+}
+
+func TestCorpusPressureInPlaceOutputDoesNotWriteIntoRealSourceDirectoryCollision(t *testing.T) {
+	input := t.TempDir()
+	if err := os.WriteFile(filepath.Join(input, "foo.md"), []byte("# Top level\n- capability: process top-level source outside real source directory\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	realSourceDir := filepath.Join(input, "sources", "foo")
+	if err := os.MkdirAll(realSourceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(realSourceDir, "notes.md"), []byte("# Nested source\n- capability: preserve real source directory\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	realInput, err := filepath.EvalSymlinks(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary, _, err := BuildCorpusPressure(realInput, realInput, CorpusPressureOptions{})
+	if err != nil {
+		t.Fatalf("build corpus pressure in place with real source directory collision: %v", err)
+	}
+	if summary.SourceCount != 2 {
+		t.Fatalf("in-place output must keep both input sources: %+v", summary)
+	}
+	if _, err := os.Stat(filepath.Join(realSourceDir, "source.md")); err == nil {
+		t.Fatalf("in-place output wrote generated source into real source directory")
+	} else if !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(realSourceDir, corpusPressureGeneratedSourceMarker)); err == nil {
+		t.Fatalf("in-place output marked real source directory as generated")
+	} else if !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(input, "sources", "foo-pressure", "source.md")); err != nil {
+		t.Fatalf("generated source should be disambiguated into foo-pressure: %v", err)
+	}
+}
+
 func TestCorpusPressureLoopStopReasonUsesEffectiveMaxRuns(t *testing.T) {
 	input := t.TempDir()
 	if err := os.WriteFile(filepath.Join(input, "blocked.md"), []byte("# Secret\nAPI key sk-test-secret-token should stay blocked\n"), 0o644); err != nil {
@@ -458,6 +574,27 @@ func TestCorpusPressureDoesNotPromoteReviewRequiredCandidatesWithEvidence(t *tes
 	readCorpusPressureJSON(t, filepath.Join(semanticRoot, SemanticCandidateJSONPath(candidate.CandidateID)), &loaded)
 	if loaded.ReviewStatus != ReviewStatusNeedsReview || loaded.Confidence != ConfidenceLow || len(loaded.Blockers) != 1 {
 		t.Fatalf("review-required candidate should not be rewritten as ready: %+v", loaded)
+	}
+}
+
+func TestCorpusPressureEvalInputPropagatesGuardrails(t *testing.T) {
+	summary := CorpusPressureSummary{
+		CorpusID: "corpus-test",
+		Guardrails: CorpusPressureGuardrailCounters{
+			HostedInferenceCalls:   2,
+			HostedTelemetryExports: 1,
+			DestinationWrites:      3,
+		},
+	}
+
+	evalInput := corpusPressureEvalInput(summary)
+
+	if evalInput.Guardrails != summary.Guardrails {
+		t.Fatalf("eval input must preserve guardrail counters: %+v", evalInput.Guardrails)
+	}
+	trace := CorpusPressureTraceSummaryFor(summary, CorpusPressureSourceCounters{})
+	if trace.Guardrails != summary.Guardrails {
+		t.Fatalf("trace summary must preserve guardrail counters: %+v", trace.Guardrails)
 	}
 }
 

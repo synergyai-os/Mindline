@@ -121,7 +121,7 @@ func corpusPressureEvalInput(summary CorpusPressureSummary) CorpusPressureEvalIn
 		EvidenceReadyAtomRatio:    summary.EvidenceReadyAtomRatio,
 		ReviewBurdenRatio:         summary.ReviewBurdenRatio,
 		ReadyForFiftyFilePressure: summary.ReadyForFiftyFilePressure,
-		Guardrails:                CorpusPressureGuardrailCounters{},
+		Guardrails:                summary.Guardrails,
 		NextImprovementTargets:    append([]string{}, summary.NextImprovementTargets...),
 	}
 }
@@ -139,7 +139,7 @@ func CorpusPressureTraceSummaryFor(summary CorpusPressureSummary, deltas CorpusP
 		CorpusFingerprint:        summary.CorpusFingerprint,
 		PressureFingerprint:      summary.ReplayFingerprint,
 		GraphReplayFingerprint:   summary.GraphReplayFingerprint,
-		Guardrails:               CorpusPressureGuardrailCounters{},
+		Guardrails:               summary.Guardrails,
 		ArtifactPaths: map[string]string{
 			"pressure_summary": filepath.ToSlash(filepath.Join(CorpusPressureDirName, "pressure-summary.json")),
 			"pressure_report":  filepath.ToSlash(filepath.Join(CorpusPressureDirName, "pressure-report.md")),
