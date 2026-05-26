@@ -1676,7 +1676,7 @@ func (r Runner) projectAutonomyReadiness(report documents.AutonomyReadinessRepor
 		}), ExitOK
 	}
 	exporter := observability.NewPostHogExporter(config, r.postHogTransport)
-	for _, event := range observability.AutonomyReadinessSafeEvents(report) {
+	for _, event := range observability.AutonomyReadinessSafeEvents(report, config.TelemetrySalt) {
 		if err := exporter.Capture(event); err != nil {
 			if observability.IsSafeEventValidationError(err) {
 				return documents.WithAutonomyReadinessProjection(report, documents.AutonomyReadinessProjectionReport{

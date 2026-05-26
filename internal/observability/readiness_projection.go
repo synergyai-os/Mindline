@@ -1,6 +1,7 @@
 package observability
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/synergyai-os/Mindline/internal/documents"
@@ -8,7 +9,7 @@ import (
 
 const AutonomyReadinessProjectionSchemaVersion = "mindline-autonomy-readiness-projection/v0.1"
 
-func AutonomyReadinessSafeEvents(report documents.AutonomyReadinessReport) []SafeEvent {
+func AutonomyReadinessSafeEvents(report documents.AutonomyReadinessReport, telemetrySalt string) []SafeEvent {
 	props := map[string]any{
 		"event_schema":                       AutonomyReadinessProjectionSchemaVersion,
 		"feature":                            "mindline.autonomy_readiness",
@@ -25,7 +26,7 @@ func AutonomyReadinessSafeEvents(report documents.AutonomyReadinessReport) []Saf
 		"threshold":                          report.Threshold,
 		"accuracy":                           report.Accuracy,
 		"held_out":                           report.HeldOut,
-		"run_id":                             safeRunID(report.SuiteID),
+		"run_id":                             safeRunID(report.SuiteID, telemetrySalt),
 		"candidate_count":                    report.Counts.CandidateCount,
 		"judged_count":                       report.Counts.JudgedCount,
 		"remaining_count":                    report.Counts.RemainingCount,
@@ -76,20 +77,30 @@ func AutonomyReadinessSafeEvents(report documents.AutonomyReadinessReport) []Saf
 	addSafeCounts(props, "evidence_readiness_reason_count.", report.Slices.ByEvidenceReadinessReason)
 	return []SafeEvent{{
 		Event:      "$ai_feedback",
-		TraceID:    "trace-" + contentHash("autonomy_readiness:"+report.SuiteID),
+		TraceID:    safeTraceID(report.SuiteID, telemetrySalt),
 		Properties: props,
 	}}
 }
 
-func safeRunID(suiteID string) string {
-	return "run-" + contentHash("autonomy_readiness:"+strings.TrimSpace(suiteID))
+func safeRunID(suiteID, telemetrySalt string) string {
+	return "run-" + contentHash("autonomy_readiness.run:"+strings.TrimSpace(telemetrySalt)+":"+strings.TrimSpace(suiteID))
+}
+
+func safeTraceID(suiteID, telemetrySalt string) string {
+	return "trace-" + contentHash("autonomy_readiness.trace:"+strings.TrimSpace(telemetrySalt)+":"+strings.TrimSpace(suiteID))
 }
 
 func firstProviderModel(counts map[string]int) (string, string) {
+	values := make([]string, 0, len(counts))
 	for value := range counts {
-		if value == "" || value == "deterministic_or_unknown" || !strings.Contains(value, "/") {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" || trimmed == "deterministic_or_unknown" || !strings.Contains(trimmed, "/") {
 			continue
 		}
+		values = append(values, trimmed)
+	}
+	sort.Strings(values)
+	for _, value := range values {
 		provider, model, _ := strings.Cut(value, "/")
 		if strings.TrimSpace(provider) == "" || strings.TrimSpace(model) == "" {
 			continue
