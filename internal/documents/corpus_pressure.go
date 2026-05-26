@@ -589,6 +589,9 @@ func corpusPressureReady(summary CorpusPressureSummary) bool {
 }
 
 func corpusPressureTargets(summary CorpusPressureSummary) []string {
+	if summary.ReadyForFiftyFilePressure {
+		return nil
+	}
 	targets := []string{}
 	if summary.ProcessedSourceRatio < 0.95 {
 		targets = append(targets, "extraction_coverage")
@@ -708,7 +711,7 @@ func promoteCorpusPressureEvidenceReadiness(sourceRoot string, summary SemanticS
 		if err := json.Unmarshal(data, &candidate); err != nil {
 			return summary
 		}
-		if candidate.ReviewStatus == ReviewStatusNeedsReview && len(candidate.EvidenceNodes) > 0 && len(candidate.EvidenceRanges) > 0 {
+		if candidate.ReviewStatus == ReviewStatusNeedsReview && len(candidate.EvidenceNodes) > 0 && len(candidate.EvidenceRanges) > 0 && !hasBlockerCode(candidate.Blockers, "semantic_review_required") {
 			candidate.ReviewStatus = ReviewStatusReady
 			candidate.Confidence = ConfidenceMedium
 			candidate.Blockers = []Blocker{}
@@ -733,7 +736,7 @@ func promoteCorpusPressureEvidenceReadiness(sourceRoot string, summary SemanticS
 			if err := json.Unmarshal(data, &relation); err != nil {
 				continue
 			}
-			if relation.ReviewStatus == ReviewStatusNeedsReview && len(relation.EvidenceNodes) > 0 {
+			if relation.ReviewStatus == ReviewStatusNeedsReview && len(relation.EvidenceNodes) > 0 && !hasBlockerCode(relation.Blockers, "semantic_review_required") {
 				relation.ReviewStatus = ReviewStatusReady
 				relation.Confidence = ConfidenceMedium
 				relation.Blockers = []Blocker{}
@@ -772,6 +775,15 @@ func promoteCorpusPressureEvidenceReadiness(sourceRoot string, summary SemanticS
 	promoted := BuildSemanticSummary(summary.RunID, summary.SourceCount, observations, candidates, relations)
 	_ = writeJSON(root, "semantic-summary.json", promoted)
 	return promoted
+}
+
+func hasBlockerCode(blockers []Blocker, code string) bool {
+	for _, blocker := range blockers {
+		if blocker.Code == code {
+			return true
+		}
+	}
+	return false
 }
 
 func candidatesByID(candidates []SemanticCandidate) map[string]SemanticCandidate {

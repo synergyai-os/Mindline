@@ -377,6 +377,28 @@ func TestCorpusPressureSummaryDoesNotEmitTargetsWhenReady(t *testing.T) {
 	}
 }
 
+func TestCorpusPressureTargetsSuppressRelationCoverageWhenReady(t *testing.T) {
+	summary := CorpusPressureSummary{
+		SourceCount:               1,
+		EligibleSourceCount:       1,
+		ProcessedSourceCount:      1,
+		ProcessedSourceRatio:      1,
+		GraphAtomCount:            1,
+		GraphRelationCount:        0,
+		EvidenceReadyAtomCount:    1,
+		EvidenceReadyAtomRatio:    1,
+		GraphReplayFingerprint:    "graph-ready",
+		ReviewBurdenRatio:         0,
+		ReadyForFiftyFilePressure: true,
+	}
+
+	targets := corpusPressureTargets(summary)
+
+	if len(targets) != 0 {
+		t.Fatalf("ready pressure summary must not emit relation coverage target: %+v", targets)
+	}
+}
+
 func TestCorpusPressureSummaryTreatsGraphFailureAsNotReady(t *testing.T) {
 	source := CorpusPressureSourceResult{
 		SourceID:       "ready-source",
@@ -400,6 +422,42 @@ func TestCorpusPressureSummaryTreatsGraphFailureAsNotReady(t *testing.T) {
 	}
 	if len(summary.NextImprovementTargets) == 0 {
 		t.Fatalf("graph failure should leave an improvement target: %+v", summary)
+	}
+}
+
+func TestCorpusPressureDoesNotPromoteReviewRequiredCandidatesWithEvidence(t *testing.T) {
+	sourceRoot := t.TempDir()
+	semanticRoot := filepath.Join(sourceRoot, "semantic-candidates")
+	if err := os.MkdirAll(semanticRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	candidate := SemanticCandidate{
+		SchemaVersion:  SemanticCandidateSchemaVersion,
+		CandidateID:    "candidate-review-required",
+		RunID:          "run-test",
+		CandidateKind:  SemanticCandidateKindDecision,
+		ReviewStatus:   ReviewStatusNeedsReview,
+		Confidence:     ConfidenceLow,
+		Title:          "Ambiguous decision",
+		Summary:        "Needs human review",
+		EvidenceNodes:  []string{"node-1"},
+		EvidenceRanges: []SemanticEvidenceRange{{StructureNodeID: "node-1", LineStart: 1, LineEnd: 2}},
+		Blockers:       []Blocker{{Code: "semantic_review_required", Message: "Candidate requires review because evidence is weak, contradicted, or ambiguous."}},
+	}
+	if err := writeJSON(semanticRoot, SemanticCandidateJSONPath(candidate.CandidateID), candidate); err != nil {
+		t.Fatalf("write candidate: %v", err)
+	}
+	summary := BuildSemanticSummary("run-test", 1, nil, []SemanticCandidate{candidate}, nil)
+
+	promoted := promoteCorpusPressureEvidenceReadiness(sourceRoot, summary)
+
+	if promoted.NeedsReviewCount != 1 {
+		t.Fatalf("review-required candidate must remain review burden: %+v", promoted)
+	}
+	var loaded SemanticCandidate
+	readCorpusPressureJSON(t, filepath.Join(semanticRoot, SemanticCandidateJSONPath(candidate.CandidateID)), &loaded)
+	if loaded.ReviewStatus != ReviewStatusNeedsReview || loaded.Confidence != ConfidenceLow || len(loaded.Blockers) != 1 {
+		t.Fatalf("review-required candidate should not be rewritten as ready: %+v", loaded)
 	}
 }
 
