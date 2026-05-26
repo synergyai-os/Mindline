@@ -35,7 +35,7 @@ func WriteCorpusPressure(outDir string, summary CorpusPressureSummary, graph Cor
 	if err != nil {
 		return ArtifactWriteError{Err: err}
 	}
-	expected := map[string]bool{"pressure-summary.json": true, "pressure-report.md": true}
+	expected := map[string]bool{"pressure-summary.json": true, "pressure-report.md": true, "eval-input.json": true, "trace-summary.json": true}
 	if err := rejectUnexpectedExistingFiles(realRoot, expected); err != nil {
 		return ArtifactWriteError{Err: err}
 	}
@@ -45,7 +45,136 @@ func WriteCorpusPressure(outDir string, summary CorpusPressureSummary, graph Cor
 	if err := writeFile(realRoot, "pressure-report.md", []byte(corpusPressureMarkdown(summary, graph))); err != nil {
 		return ArtifactWriteError{Err: err}
 	}
+	if err := writeJSON(realRoot, "eval-input.json", corpusPressureEvalInput(summary)); err != nil {
+		return ArtifactWriteError{Err: err}
+	}
+	if err := writeJSON(realRoot, "trace-summary.json", CorpusPressureTraceSummaryFor(summary, CorpusPressureSourceCounters{})); err != nil {
+		return ArtifactWriteError{Err: err}
+	}
 	return nil
+}
+
+func WriteCorpusPressureLoop(outDir string, summary CorpusPressureLoopSummary) error {
+	if strings.TrimSpace(outDir) == "" {
+		return ArtifactWriteError{Err: fmt.Errorf("missing required --out")}
+	}
+	outRoot, err := filepath.Abs(outDir)
+	if err != nil {
+		return ArtifactWriteError{Err: err}
+	}
+	if err := rejectSymlinkAncestors(outRoot); err != nil {
+		return ArtifactWriteError{Err: err}
+	}
+	root, err := filepath.Abs(filepath.Join(outDir, CorpusPressureLoopDirName))
+	if err != nil {
+		return ArtifactWriteError{Err: err}
+	}
+	if err := rejectIfSymlink(root); err != nil {
+		return ArtifactWriteError{Err: err}
+	}
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return ArtifactWriteError{Err: err}
+	}
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return ArtifactWriteError{Err: err}
+	}
+	expected := map[string]bool{"loop-summary.json": true, "loop-report.md": true}
+	if err := rejectUnexpectedExistingFiles(realRoot, expected); err != nil {
+		return ArtifactWriteError{Err: err}
+	}
+	if err := writeJSON(realRoot, "loop-summary.json", summary); err != nil {
+		return ArtifactWriteError{Err: err}
+	}
+	if err := writeFile(realRoot, "loop-report.md", []byte(corpusPressureLoopMarkdown(summary))); err != nil {
+		return ArtifactWriteError{Err: err}
+	}
+	return nil
+}
+
+func corpusPressureLoopMarkdown(summary CorpusPressureLoopSummary) string {
+	var b strings.Builder
+	b.WriteString("# Corpus pressure loop report\n\n")
+	b.WriteString(fmt.Sprintf("- Corpus: %s\n", summary.CorpusID))
+	b.WriteString(fmt.Sprintf("- Runs: %d of %d\n", summary.RunCount, summary.MaxRuns))
+	b.WriteString(fmt.Sprintf("- Stop reason: %s\n", summary.StopReason))
+	b.WriteString(fmt.Sprintf("- KR passed: %t\n", summary.KRPassed))
+	b.WriteString(fmt.Sprintf("- Build fingerprint: %s\n", summary.BuildFingerprint))
+	b.WriteString(fmt.Sprintf("- Config fingerprint: %s\n\n", summary.CommandConfigFingerprint))
+	b.WriteString("## Iterations\n\n")
+	for _, item := range summary.Iterations {
+		b.WriteString(fmt.Sprintf("- %02d: kr=%t processed=%.2f evidence=%.2f blocked=%d skipped=%d excluded=%d fingerprint=%s summary `%s`\n", item.Iteration, item.KRPassed, item.ProcessedSourceRatio, item.EvidenceReadyAtomRatio, item.SourceCounters.Blocked, item.SourceCounters.Skipped, item.SourceCounters.Excluded, item.PressureFingerprint, item.PressureSummaryPath))
+	}
+	return b.String()
+}
+
+func corpusPressureEvalInput(summary CorpusPressureSummary) CorpusPressureEvalInput {
+	return CorpusPressureEvalInput{
+		SchemaVersion:             CorpusPressureEvalInputSchemaVersion,
+		CorpusID:                  summary.CorpusID,
+		CommandConfigFingerprint:  summary.CommandConfigFingerprint,
+		CorpusFingerprint:         summary.CorpusFingerprint,
+		PressureSummaryPath:       filepath.ToSlash(filepath.Join(CorpusPressureDirName, "pressure-summary.json")),
+		GraphSummaryPath:          summary.GraphSummaryPath,
+		SourceCounters:            corpusPressureSourceCounters(summary),
+		ProcessedSourceRatio:      summary.ProcessedSourceRatio,
+		EvidenceReadyAtomRatio:    summary.EvidenceReadyAtomRatio,
+		ReviewBurdenRatio:         summary.ReviewBurdenRatio,
+		ReadyForFiftyFilePressure: summary.ReadyForFiftyFilePressure,
+		Guardrails:                CorpusPressureGuardrailCounters{},
+		NextImprovementTargets:    append([]string{}, summary.NextImprovementTargets...),
+	}
+}
+
+func CorpusPressureTraceSummaryFor(summary CorpusPressureSummary, deltas CorpusPressureSourceCounters) CorpusPressureTraceSummary {
+	return CorpusPressureTraceSummary{
+		SchemaVersion:            CorpusPressureTraceSchemaVersion,
+		CorpusID:                 summary.CorpusID,
+		Stages:                   corpusPressureTraceStages(summary),
+		SourceCounters:           corpusPressureSourceCounters(summary),
+		SourceDeltas:             deltas,
+		ProcessedSourceRatio:     summary.ProcessedSourceRatio,
+		EvidenceReadyAtomRatio:   summary.EvidenceReadyAtomRatio,
+		CommandConfigFingerprint: summary.CommandConfigFingerprint,
+		CorpusFingerprint:        summary.CorpusFingerprint,
+		PressureFingerprint:      summary.ReplayFingerprint,
+		GraphReplayFingerprint:   summary.GraphReplayFingerprint,
+		Guardrails:               CorpusPressureGuardrailCounters{},
+		ArtifactPaths: map[string]string{
+			"pressure_summary": filepath.ToSlash(filepath.Join(CorpusPressureDirName, "pressure-summary.json")),
+			"pressure_report":  filepath.ToSlash(filepath.Join(CorpusPressureDirName, "pressure-report.md")),
+			"graph_summary":    summary.GraphSummaryPath,
+			"graph_manifest":   summary.GraphManifestPath,
+		},
+	}
+}
+
+func corpusPressureTraceStages(summary CorpusPressureSummary) []CorpusPressureTraceStage {
+	stages := []CorpusPressureTraceStage{
+		{Name: "source_accounting", Status: "pass", Count: summary.SourceCount},
+		{Name: "semantic_extraction", Status: "pass", Count: summary.SemanticCandidateCount},
+		{Name: "corpus_graph", Status: "pass", Count: summary.GraphAtomCount},
+		{Name: "pressure_readiness", Status: "pass"},
+	}
+	if !summary.ReadyForFiftyFilePressure {
+		stages[len(stages)-1].Status = "needs_improvement"
+	}
+	if summary.BlockedSourceCount > 0 || summary.UnexplainedExclusionCount > 0 {
+		stages[len(stages)-1].Status = "blocked"
+	}
+	return stages
+}
+
+func corpusPressureSourceCounters(summary CorpusPressureSummary) CorpusPressureSourceCounters {
+	return CorpusPressureSourceCounters{
+		Total:       summary.SourceCount,
+		Eligible:    summary.EligibleSourceCount,
+		Processed:   summary.ProcessedSourceCount,
+		Skipped:     summary.SkippedSourceCount,
+		Excluded:    summary.ExcludedSourceCount,
+		Blocked:     summary.BlockedSourceCount,
+		Unexplained: summary.UnexplainedExclusionCount,
+	}
 }
 
 func corpusPressureMarkdown(summary CorpusPressureSummary, graph CorpusGraphSummary) string {
@@ -59,9 +188,11 @@ func corpusPressureMarkdown(summary CorpusPressureSummary, graph CorpusGraphSumm
 	}
 	b.WriteString(fmt.Sprintf("- Corpus: %s\n", summary.CorpusID))
 	b.WriteString(fmt.Sprintf("- Sources: %d processed, %d skipped, %d blocked, %d total\n", summary.ProcessedSourceCount, summary.SkippedSourceCount, summary.BlockedSourceCount, summary.SourceCount))
+	b.WriteString(fmt.Sprintf("- Source state detail: %.2f processed ratio, %d excluded, %d unexplained exclusions\n", summary.ProcessedSourceRatio, summary.ExcludedSourceCount, summary.UnexplainedExclusionCount))
 	b.WriteString(fmt.Sprintf("- Semantic candidates: %d\n", summary.SemanticCandidateCount))
 	b.WriteString(fmt.Sprintf("- Graph atoms: %d\n", summary.GraphAtomCount))
 	b.WriteString(fmt.Sprintf("- Graph relations: %d\n", summary.GraphRelationCount))
+	b.WriteString(fmt.Sprintf("- Evidence-ready atoms: %d (%.2f)\n", summary.EvidenceReadyAtomCount, summary.EvidenceReadyAtomRatio))
 	b.WriteString(fmt.Sprintf("- Review burden: %d (%.2f)\n", summary.ReviewBurdenCount, summary.ReviewBurdenRatio))
 	b.WriteString(fmt.Sprintf("- Replay fingerprint: %s\n\n", summary.ReplayFingerprint))
 
@@ -86,6 +217,12 @@ func corpusPressureMarkdown(summary CorpusPressureSummary, graph CorpusGraphSumm
 	writeRelationSection(&b, "Connected clusters", graph, CorpusRelationSameTopicAs)
 	writeRelationSection(&b, "Duplicate candidates", graph, CorpusRelationPossibleDuplicate)
 	writeRelationSection(&b, "Contradiction candidates", graph, CorpusRelationContradicts)
+
+	b.WriteString("## Eval/trace artifact pointers\n\n")
+	b.WriteString(fmt.Sprintf("- Eval input: `%s`\n", filepath.ToSlash(filepath.Join(CorpusPressureDirName, "eval-input.json"))))
+	b.WriteString(fmt.Sprintf("- Trace summary: `%s`\n", filepath.ToSlash(filepath.Join(CorpusPressureDirName, "trace-summary.json"))))
+	b.WriteString(fmt.Sprintf("- Pressure summary: `%s`\n", filepath.ToSlash(filepath.Join(CorpusPressureDirName, "pressure-summary.json"))))
+	b.WriteString(fmt.Sprintf("- Graph summary: `%s`\n\n", summary.GraphSummaryPath))
 
 	b.WriteString("## Evidence/readiness failures\n\n")
 	if len(summary.Blockers) == 0 {

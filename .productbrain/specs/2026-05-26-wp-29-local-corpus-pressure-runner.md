@@ -4,6 +4,8 @@
 
 Signed target for the next PR after PR #21 / WP-28. This slice turns the existing per-file semantic commands and WP-28 corpus graph into one repeatable local corpus pressure loop.
 
+**2026-05-26 addendum:** Randy rejected the first PR-ready shape as insufficient because it reported pressure results but did not yet create a strong enough self-auditing eval loop. This addendum raises WP-29's target by 20%: the PR must now include local metadata-only eval/trace artifacts and a repeatable up-to-20 pressure loop that can prove readiness movement or stop honestly when the same binary/input/config cannot improve itself. This is still WP-29 scope, not a new product surface.
+
 ## Authority
 
 - `DEC-164`: PR #21 / WP-28 merged to main at merge commit `7f8d240`.
@@ -36,6 +38,8 @@ Mindline can run a local corpus pressure loop over a directory or manifest of Ma
 
 The runner is local-first and read-only. It does not write to Tolaria, Product Brain, a hosted DB, or any destination. Hosted LLM inference is never used by default and is allowed only through explicit classifier/provider options.
 
+The addendum outcome is stronger: every pressure run also emits machine-readable local eval and trace inputs that an agent can inspect without private text leakage, and the loop command records iteration deltas, stop reason, fingerprints, and KR pass/fail. The loop is an eval harness, not an autonomous optimizer. If the executable, input corpus, and config are unchanged and metrics do not move, it must stop with `same_binary_same_inputs` or `no_change_detected`, not imply self-improvement.
+
 ## Scope
 
 Implement:
@@ -66,6 +70,9 @@ Implement:
 7. Default offline/local behavior using deterministic semantics unless the user explicitly selects `--classifier llm --llm-provider <provider> --llm-model <model>`.
 8. A human/agent-facing report contract that answers the corpus question without requiring JSON archaeology.
 9. Tests for manifest/directory containment, source accounting, no-hosted-by-default behavior, no hosted telemetry export by default, no destination writes, graph composition, deterministic replay, and temp smoke.
+10. Metadata-only `corpus-pressure/eval-input.json` and `corpus-pressure/trace-summary.json`.
+11. `mindline documents corpus-pressure-loop <markdown-dir-or-manifest> --out <dir> [--max-runs <n>]`, capped at 20.
+12. Per-iteration loop artifacts with metrics, deltas, build/config/corpus/artifact fingerprints, KR pass/fail, and honest stop reason.
 
 ## Input Contract
 
@@ -124,6 +131,18 @@ Ready for 50-file pressure is true only when:
 
 If not ready, the report must list blocker reason codes and the next improvement targets.
 
+Addendum readiness rules:
+
+- source accounting is always 100% or the run fails;
+- processed source ratio is measured separately from skipped/excluded sources;
+- aggressive loop success requires processed source ratio >= 0.95;
+- blocked sources must be zero;
+- unexplained exclusions must be zero;
+- every skipped or intentionally excluded source has a closed reason code, source ID, and class;
+- skipped/excluded sources are reported separately and never counted as evidence-ready, accuracy-improving, or loop-improving;
+- evidence-ready atom ratio is computed only over counted processed atoms and must be >= 0.90;
+- top-level eval/trace artifacts must not include raw private source text, prompt bodies, completions, or reconstructable source excerpts.
+
 ## Pressure Report Contract
 
 `corpus-pressure/pressure-report.md` is not only a metrics dump. It is the primary human/agent-facing answer for the corpus run. It must include these sections:
@@ -136,6 +155,7 @@ If not ready, the report must list blocker reason codes and the next improvement
 6. **Contradiction candidates**: contradiction relation candidates with confidence, status, atom IDs, source IDs, and local artifact paths.
 7. **Evidence/readiness failures**: blocked or evidence-incomplete sources, atoms, and relations with closed reason codes.
 8. **Next improvement targets**: prioritized categories explaining what should improve next, such as extraction coverage, evidence completeness, duplicate precision, contradiction coverage, review burden, or safety containment.
+9. **Eval/trace artifact pointers**: local paths to `eval-input.json`, `trace-summary.json`, and loop summaries when present.
 
 The report may include titles, source IDs, relation types, statuses, counts, reason codes, and local artifact paths. Raw private excerpts remain local to semantic and graph artifacts and are not required in this top-level report.
 
@@ -154,6 +174,11 @@ Aggressive delivery KRs:
 9. **No bespoke temp logic:** tests prove the runner works on fixture corpora without relying on private `temp/` filenames or content.
 10. **Actionable improvement target:** when `ready_for_50_file_pressure=false`, the report names concrete blocker reason codes and next target categories.
 11. **Readable corpus answer:** `pressure-report.md` includes source accounting, extracted candidate summaries, connected clusters, duplicate/contradiction candidates, evidence failures, and next improvement targets without requiring direct JSON inspection.
+12. **Metadata-only eval inputs:** every pressure run writes `corpus-pressure/eval-input.json` containing schema version, corpus ID, command/config fingerprint, corpus fingerprint, pressure summary path, graph summary path, source accounting counters, readiness counters, next targets, and privacy/destination guardrail counters, but no raw private source text.
+13. **Metadata-only trace summary:** every pressure run writes `corpus-pressure/trace-summary.json` with per-stage status, processed/skipped/excluded/blocked counters, processed/skipped/excluded/blocked deltas when previous metrics are available, fingerprints, no-hosted/no-telemetry/no-destination counters, and artifact paths, but no raw private source text.
+14. **Up-to-20 loop harness:** `documents corpus-pressure-loop` runs at most 20 iterations and writes `corpus-pressure-loop/loop-summary.json` plus `loop-report.md` with per-iteration metrics, deltas, KR verdicts, artifact paths, and stop reason.
+15. **Honest no-change stop:** if the binary/build fingerprint, input corpus fingerprint, command config fingerprint, and previous pressure fingerprint are unchanged and metrics do not move, the loop stops as `same_binary_same_inputs` or `no_change_detected`.
+16. **20% raised pressure gates:** the final loop verdict passes only with 100% source accounting, >=95% processed source ratio, 0 blocked sources, 0 unexplained exclusions, >=90% evidence-ready atoms on counted processed atoms, deterministic replay, and no hosted inference/telemetry/destination writes by default.
 
 ## Anti-Goals
 
@@ -168,6 +193,8 @@ Aggressive delivery KRs:
 - No hidden permanent local database.
 - No tuning to private `temp/` filenames or content.
 - No claim that DEC-64 no-human readiness has been met.
+- No claim that pressure/evidence readiness equals semantic accuracy.
+- No counting skipped or excluded sources as evidence-ready or as improvement.
 
 ## Verification
 
@@ -183,6 +210,10 @@ Required before PR:
 - CLI integration test for `documents corpus-pressure`.
 - Fixture corpus proving graph composition works without private data.
 - Real `temp/*.md` smoke run into `/private/tmp`.
+- Loop run over the real `temp/` Markdown corpus into `/private/tmp`, stopping only because KRs pass, same binary/input/config cannot move further, or 20 loops are exhausted.
+- Tests proving skipped/excluded sources are closed-coded, separated from processed ratio, and excluded from evidence-ready/improvement metrics.
+- Tests proving `eval-input.json`, `trace-summary.json`, and loop summary artifacts are written and contain no source excerpts.
+- Tests proving `trace-summary.json` includes processed/skipped/excluded/blocked counters and deltas, and skipped/excluded sources cannot improve processed or evidence-ready metrics.
 - `go test ./...`
 - `git diff --check`
 - `pb audit WP-29 --phase shaping --verbose` or closest available audit.

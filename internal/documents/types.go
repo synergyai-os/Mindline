@@ -278,11 +278,12 @@ const (
 )
 
 type SemanticOptions struct {
-	Classifier  SemanticClassifier
-	LLMProvider string
-	LLMModel    string
-	LLMAPIKey   string
-	LLMClient   LLMSemanticProvider
+	Classifier        SemanticClassifier
+	LLMProvider       string
+	LLMModel          string
+	LLMAPIKey         string
+	LLMClient         LLMSemanticProvider
+	ReferenceFallback bool
 }
 
 type SemanticSummaryCandidate struct {

@@ -64,10 +64,28 @@ func SemanticPathWithOptions(inputPath, outDir string, options SemanticOptions) 
 			return SemanticSummary{}, err
 		}
 	}
+	if options.ReferenceFallback && len(candidates) == 0 && len(nodes) > 0 {
+		observations = referenceFallbackObservations(runID, nodes, sourceText)
+		candidates, relations = ConsolidateSemanticCandidates(runID, observations)
+	}
 	if err := WriteSemantic(outDir, runID, structureSummary.SourceCount, observations, candidates, relations); err != nil {
 		return SemanticSummary{}, err
 	}
 	return BuildSemanticSummary(runID, structureSummary.SourceCount, observations, candidates, relations), nil
+}
+
+func referenceFallbackObservations(runID string, nodes []StructureNode, sourceText semanticSourceText) []SemanticObservation {
+	for _, node := range nodes {
+		if node.ReviewStatus == ReviewStatusBlocked {
+			continue
+		}
+		text := semanticNodeText(node, sourceText)
+		if strings.TrimSpace(text) == "" {
+			continue
+		}
+		return []SemanticObservation{newSemanticObservation(runID, node, SemanticObservationKindReferenceStatement, text)}
+	}
+	return nil
 }
 
 func semanticLLMProvider(options SemanticOptions) (LLMSemanticProvider, error) {
@@ -388,6 +406,10 @@ func candidatesForSource(runID, sourceID string, observations []SemanticObservat
 	capabilityObs := filterObservations(observations, SemanticObservationKindCapabilityStatement, SemanticObservationKindRequirementStatement, SemanticObservationKindDependencyStatement, SemanticObservationKindRiskStatement)
 	if len(capabilityObs) > 0 {
 		out = append(out, newSemanticCandidate(runID, sourceID, SemanticCandidateKindCapability, ReviewStatusReady, ConfidenceMedium, capabilityCandidateTitle(capabilityObs), observationSummary(capabilityObs), capabilityObs))
+	}
+	referenceObs := filterObservations(observations, SemanticObservationKindReferenceStatement)
+	if len(out) == 0 && len(referenceObs) > 0 {
+		out = append(out, newSemanticCandidate(runID, sourceID, SemanticCandidateKindReference, ReviewStatusReady, ConfidenceMedium, "Reference evidence", observationSummary(referenceObs), referenceObs))
 	}
 	if len(out) == 0 {
 		questionObs := filterObservations(observations, SemanticObservationKindQuestion)

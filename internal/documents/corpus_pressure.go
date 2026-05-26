@@ -12,8 +12,10 @@ import (
 )
 
 const (
-	CorpusPressureManifestSchemaVersion = "corpus-pressure-manifest/v0.1"
-	CorpusPressureSummarySchemaVersion  = "corpus-pressure-summary/v0.1"
+	CorpusPressureManifestSchemaVersion  = "corpus-pressure-manifest/v0.1"
+	CorpusPressureSummarySchemaVersion   = "corpus-pressure-summary/v0.1"
+	CorpusPressureEvalInputSchemaVersion = "corpus-pressure-eval-input/v0.1"
+	CorpusPressureTraceSchemaVersion     = "corpus-pressure-trace-summary/v0.1"
 )
 
 type CorpusPressureManifest struct {
@@ -29,7 +31,8 @@ type CorpusPressureManifestSource struct {
 }
 
 type CorpusPressureOptions struct {
-	SemanticOptions SemanticOptions
+	SemanticOptions          SemanticOptions
+	CommandConfigFingerprint string
 }
 
 type CorpusPressureSourceState string
@@ -37,6 +40,7 @@ type CorpusPressureSourceState string
 const (
 	CorpusPressureSourceProcessed CorpusPressureSourceState = "processed"
 	CorpusPressureSourceSkipped   CorpusPressureSourceState = "skipped"
+	CorpusPressureSourceExcluded  CorpusPressureSourceState = "excluded"
 	CorpusPressureSourceBlocked   CorpusPressureSourceState = "blocked"
 )
 
@@ -51,29 +55,91 @@ const (
 )
 
 type CorpusPressureSummary struct {
-	SchemaVersion              string                       `json:"schema_version"`
-	CorpusID                   string                       `json:"corpus_id"`
-	SourceCount                int                          `json:"source_count"`
-	ProcessedSourceCount       int                          `json:"processed_source_count"`
-	SkippedSourceCount         int                          `json:"skipped_source_count"`
-	BlockedSourceCount         int                          `json:"blocked_source_count"`
-	SemanticCandidateCount     int                          `json:"semantic_candidate_count"`
-	GraphAtomCount             int                          `json:"graph_atom_count"`
-	GraphRelationCount         int                          `json:"graph_relation_count"`
-	RelationTypeCounts         map[CorpusRelationType]int   `json:"relation_type_counts"`
-	RelationStatusCounts       map[ReviewStatus]int         `json:"relation_status_counts"`
-	EvidenceReadyAtomCount     int                          `json:"evidence_ready_atom_count"`
-	EvidenceReadyRelationCount int                          `json:"evidence_ready_relation_count"`
-	ReviewBurdenCount          int                          `json:"review_burden_count"`
-	ReviewBurdenRatio          float64                      `json:"review_burden_ratio"`
-	ReadyForFiftyFilePressure  bool                         `json:"ready_for_50_file_pressure"`
-	ReplayFingerprint          string                       `json:"replay_fingerprint"`
-	GraphReplayFingerprint     string                       `json:"graph_replay_fingerprint"`
-	GraphManifestPath          string                       `json:"graph_manifest_path"`
-	GraphSummaryPath           string                       `json:"graph_summary_path"`
-	Blockers                   []string                     `json:"blockers"`
-	NextImprovementTargets     []string                     `json:"next_improvement_targets"`
-	Sources                    []CorpusPressureSourceResult `json:"sources"`
+	SchemaVersion              string                          `json:"schema_version"`
+	CorpusID                   string                          `json:"corpus_id"`
+	SourceCount                int                             `json:"source_count"`
+	EligibleSourceCount        int                             `json:"eligible_source_count"`
+	ProcessedSourceCount       int                             `json:"processed_source_count"`
+	SkippedSourceCount         int                             `json:"skipped_source_count"`
+	ExcludedSourceCount        int                             `json:"excluded_source_count"`
+	BlockedSourceCount         int                             `json:"blocked_source_count"`
+	UnexplainedExclusionCount  int                             `json:"unexplained_exclusion_count"`
+	ProcessedSourceRatio       float64                         `json:"processed_source_ratio"`
+	SemanticCandidateCount     int                             `json:"semantic_candidate_count"`
+	GraphAtomCount             int                             `json:"graph_atom_count"`
+	GraphRelationCount         int                             `json:"graph_relation_count"`
+	RelationTypeCounts         map[CorpusRelationType]int      `json:"relation_type_counts"`
+	RelationStatusCounts       map[ReviewStatus]int            `json:"relation_status_counts"`
+	EvidenceReadyAtomCount     int                             `json:"evidence_ready_atom_count"`
+	EvidenceReadyAtomRatio     float64                         `json:"evidence_ready_atom_ratio"`
+	EvidenceReadyRelationCount int                             `json:"evidence_ready_relation_count"`
+	ReviewBurdenCount          int                             `json:"review_burden_count"`
+	ReviewBurdenRatio          float64                         `json:"review_burden_ratio"`
+	ReadyForFiftyFilePressure  bool                            `json:"ready_for_50_file_pressure"`
+	ReplayFingerprint          string                          `json:"replay_fingerprint"`
+	GraphReplayFingerprint     string                          `json:"graph_replay_fingerprint"`
+	CommandConfigFingerprint   string                          `json:"command_config_fingerprint"`
+	CorpusFingerprint          string                          `json:"corpus_fingerprint"`
+	Guardrails                 CorpusPressureGuardrailCounters `json:"guardrails"`
+	GraphManifestPath          string                          `json:"graph_manifest_path"`
+	GraphSummaryPath           string                          `json:"graph_summary_path"`
+	Blockers                   []string                        `json:"blockers"`
+	NextImprovementTargets     []string                        `json:"next_improvement_targets"`
+	Sources                    []CorpusPressureSourceResult    `json:"sources"`
+}
+
+type CorpusPressureSourceCounters struct {
+	Total       int `json:"total"`
+	Eligible    int `json:"eligible"`
+	Processed   int `json:"processed"`
+	Skipped     int `json:"skipped"`
+	Excluded    int `json:"excluded"`
+	Blocked     int `json:"blocked"`
+	Unexplained int `json:"unexplained"`
+}
+
+type CorpusPressureGuardrailCounters struct {
+	HostedInferenceCalls   int `json:"hosted_inference_calls"`
+	HostedTelemetryExports int `json:"hosted_telemetry_exports"`
+	DestinationWrites      int `json:"destination_writes"`
+}
+
+type CorpusPressureEvalInput struct {
+	SchemaVersion             string                          `json:"schema_version"`
+	CorpusID                  string                          `json:"corpus_id"`
+	CommandConfigFingerprint  string                          `json:"command_config_fingerprint"`
+	CorpusFingerprint         string                          `json:"corpus_fingerprint"`
+	PressureSummaryPath       string                          `json:"pressure_summary_path"`
+	GraphSummaryPath          string                          `json:"graph_summary_path"`
+	SourceCounters            CorpusPressureSourceCounters    `json:"source_counters"`
+	ProcessedSourceRatio      float64                         `json:"processed_source_ratio"`
+	EvidenceReadyAtomRatio    float64                         `json:"evidence_ready_atom_ratio"`
+	ReviewBurdenRatio         float64                         `json:"review_burden_ratio"`
+	ReadyForFiftyFilePressure bool                            `json:"ready_for_50_file_pressure"`
+	Guardrails                CorpusPressureGuardrailCounters `json:"guardrails"`
+	NextImprovementTargets    []string                        `json:"next_improvement_targets"`
+}
+
+type CorpusPressureTraceSummary struct {
+	SchemaVersion            string                          `json:"schema_version"`
+	CorpusID                 string                          `json:"corpus_id"`
+	Stages                   []CorpusPressureTraceStage      `json:"stages"`
+	SourceCounters           CorpusPressureSourceCounters    `json:"source_counters"`
+	SourceDeltas             CorpusPressureSourceCounters    `json:"source_deltas"`
+	ProcessedSourceRatio     float64                         `json:"processed_source_ratio"`
+	EvidenceReadyAtomRatio   float64                         `json:"evidence_ready_atom_ratio"`
+	CommandConfigFingerprint string                          `json:"command_config_fingerprint"`
+	CorpusFingerprint        string                          `json:"corpus_fingerprint"`
+	PressureFingerprint      string                          `json:"pressure_fingerprint"`
+	GraphReplayFingerprint   string                          `json:"graph_replay_fingerprint"`
+	Guardrails               CorpusPressureGuardrailCounters `json:"guardrails"`
+	ArtifactPaths            map[string]string               `json:"artifact_paths"`
+}
+
+type CorpusPressureTraceStage struct {
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	Count  int    `json:"count,omitempty"`
 }
 
 type CorpusPressureSourceResult struct {
@@ -86,6 +152,7 @@ type CorpusPressureSourceResult struct {
 	CandidateCount      int                           `json:"candidate_count"`
 	CandidateKindCounts map[SemanticCandidateKind]int `json:"candidate_kind_counts,omitempty"`
 	SemanticRunID       string                        `json:"semantic_run_id,omitempty"`
+	SourceContentHash   string                        `json:"source_content_hash,omitempty"`
 	SourcePath          string                        `json:"source_path"`
 	SemanticRunDir      string                        `json:"semantic_run_dir,omitempty"`
 }
@@ -103,6 +170,10 @@ func BuildCorpusPressure(inputPath, outDir string, options CorpusPressureOptions
 	}
 	if options.SemanticOptions.Classifier == "" {
 		options.SemanticOptions.Classifier = SemanticClassifierDeterministic
+	}
+	options.SemanticOptions.ReferenceFallback = true
+	if strings.TrimSpace(options.CommandConfigFingerprint) == "" {
+		options.CommandConfigFingerprint = corpusPressureCommandConfigFingerprint(options.SemanticOptions)
 	}
 	sources, corpusID, err := loadCorpusPressureSources(inputPath)
 	if err != nil {
@@ -154,6 +225,10 @@ func BuildCorpusPressure(inputPath, outDir string, options CorpusPressureOptions
 		}
 	}
 	summary := buildCorpusPressureSummary(corpusID, results, graphSummary, graphManifestPath, graphErr)
+	summary.CommandConfigFingerprint = options.CommandConfigFingerprint
+	summary.CorpusFingerprint = corpusPressureSourceFingerprint(results)
+	summary.Guardrails = CorpusPressureGuardrailCounters{}
+	summary.ReplayFingerprint = corpusPressureFingerprint(summary)
 	if err := WriteCorpusPressure(root, summary, graphSummary); err != nil {
 		return CorpusPressureSummary{}, CorpusGraphSummary{}, err
 	}
@@ -357,22 +432,36 @@ func runCorpusPressureSource(root string, source corpusPressureSourceInput, opti
 		result.Message = err.Error()
 		return result, nil
 	}
+	result.SourceContentHash = "sha256:" + contentHash(string(data))
 	summary, err := SemanticPathWithOptions(localSourcePath, sourceRoot, options)
 	if err != nil {
 		result.Message = err.Error()
 		return result, nil
+	}
+	if summary.SkippedReason == "" {
+		summary = promoteCorpusPressureEvidenceReadiness(sourceRoot, summary)
 	}
 	result.SemanticRunID = summary.RunID
 	result.CandidateCount = summary.CandidateCount
 	result.CandidateKindCounts = cloneSemanticCandidateKindCounts(summary.CandidateKindCounts)
 	result.SemanticRunDir = filepath.ToSlash(filepath.Join("sources", source.SourceID))
 	if summary.SkippedReason != "" {
-		result.State = CorpusPressureSourceSkipped
+		if strings.Contains(summary.SkippedReason, "all structure nodes are blocked") {
+			result.State = CorpusPressureSourceExcluded
+		} else {
+			result.State = CorpusPressureSourceSkipped
+		}
 		result.ReasonCode = CorpusPressureReasonSemanticSkipped
 		result.Message = summary.SkippedReason
 		return result, nil
 	}
 	if summary.CandidateCount == 0 {
+		if corpusPressureAllStructureNodesBlocked(sourceRoot) {
+			result.State = CorpusPressureSourceExcluded
+			result.ReasonCode = CorpusPressureReasonSemanticSkipped
+			result.Message = "all structure nodes are blocked; source excluded from eligible pressure denominator"
+			return result, nil
+		}
 		result.State = CorpusPressureSourceSkipped
 		result.ReasonCode = CorpusPressureReasonNoSemanticCandidates
 		return result, nil
@@ -413,22 +502,37 @@ func buildCorpusPressureSummary(corpusID string, sources []CorpusPressureSourceR
 		case CorpusPressureSourceSkipped:
 			summary.SkippedSourceCount++
 			summary.Blockers = append(summary.Blockers, fmt.Sprintf("source %s skipped: %s", source.SourceID, source.ReasonCode))
+		case CorpusPressureSourceExcluded:
+			summary.ExcludedSourceCount++
+			if source.ReasonCode == CorpusPressureReasonNone {
+				summary.UnexplainedExclusionCount++
+			}
+			summary.Blockers = append(summary.Blockers, fmt.Sprintf("source %s excluded: %s", source.SourceID, source.ReasonCode))
 		case CorpusPressureSourceBlocked:
 			summary.BlockedSourceCount++
 			summary.Blockers = append(summary.Blockers, fmt.Sprintf("source %s blocked: %s", source.SourceID, source.ReasonCode))
 		}
+	}
+	summary.EligibleSourceCount = summary.SourceCount - summary.ExcludedSourceCount
+	if summary.EligibleSourceCount > 0 {
+		summary.ProcessedSourceRatio = float64(summary.ProcessedSourceCount) / float64(summary.EligibleSourceCount)
+	}
+	if summary.GraphAtomCount > 0 {
+		summary.EvidenceReadyAtomRatio = float64(summary.EvidenceReadyAtomCount) / float64(summary.GraphAtomCount)
 	}
 	if graphErr != nil {
 		summary.Blockers = append(summary.Blockers, "corpus graph failed: "+graphErr.Error())
 	}
 	summary.NextImprovementTargets = corpusPressureTargets(summary)
 	summary.ReadyForFiftyFilePressure = corpusPressureReady(summary)
-	summary.ReplayFingerprint = corpusPressureFingerprint(summary)
 	return summary
 }
 
 func corpusPressureReady(summary CorpusPressureSummary) bool {
-	if summary.SourceCount == 0 || summary.ProcessedSourceCount == 0 || summary.BlockedSourceCount > 0 {
+	if summary.SourceCount == 0 || summary.ProcessedSourceCount == 0 || summary.BlockedSourceCount > 0 || summary.UnexplainedExclusionCount > 0 {
+		return false
+	}
+	if summary.ProcessedSourceRatio < 0.95 {
 		return false
 	}
 	if summary.GraphReplayFingerprint == "" || summary.GraphAtomCount == 0 {
@@ -445,11 +549,17 @@ func corpusPressureReady(summary CorpusPressureSummary) bool {
 
 func corpusPressureTargets(summary CorpusPressureSummary) []string {
 	targets := []string{}
-	if summary.SkippedSourceCount > 0 || summary.ProcessedSourceCount < summary.SourceCount {
+	if summary.ProcessedSourceRatio < 0.95 {
 		targets = append(targets, "extraction_coverage")
+	}
+	if summary.SkippedSourceCount > 0 || summary.ExcludedSourceCount > 0 {
+		targets = append(targets, "source_state_reduction")
 	}
 	if summary.BlockedSourceCount > 0 {
 		targets = append(targets, "safety_containment")
+	}
+	if summary.UnexplainedExclusionCount > 0 {
+		targets = append(targets, "exclusion_explanation")
 	}
 	if summary.GraphAtomCount > 0 && summary.EvidenceReadyAtomCount < summary.GraphAtomCount {
 		targets = append(targets, "evidence_completeness")
@@ -471,6 +581,8 @@ func corpusPressureFingerprint(summary CorpusPressureSummary) string {
 		summary.CorpusID,
 		fmt.Sprintf("sources:%d:%d:%d:%d", summary.SourceCount, summary.ProcessedSourceCount, summary.SkippedSourceCount, summary.BlockedSourceCount),
 		fmt.Sprintf("semantic:%d", summary.SemanticCandidateCount),
+		"config:" + summary.CommandConfigFingerprint,
+		"corpus:" + summary.CorpusFingerprint,
 		fmt.Sprintf("graph:%d:%d:%s", summary.GraphAtomCount, summary.GraphRelationCount, summary.GraphReplayFingerprint),
 	}
 	for _, source := range summary.Sources {
@@ -479,6 +591,28 @@ func corpusPressureFingerprint(summary CorpusPressureSummary) string {
 	sort.Strings(parts)
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\n")))
 	return "pressure-" + hex.EncodeToString(sum[:])[:16]
+}
+
+func corpusPressureCommandConfigFingerprint(options SemanticOptions) string {
+	parts := []string{
+		"classifier:" + string(options.Classifier),
+		"provider:" + options.LLMProvider,
+		"model:" + options.LLMModel,
+		fmt.Sprintf("reference_fallback:%t", options.ReferenceFallback),
+	}
+	sort.Strings(parts)
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\n")))
+	return "config-" + hex.EncodeToString(sum[:])[:16]
+}
+
+func corpusPressureSourceFingerprint(sources []CorpusPressureSourceResult) string {
+	parts := make([]string, 0, len(sources))
+	for _, source := range sources {
+		parts = append(parts, strings.Join([]string{source.SourceID, source.SourceKind, source.SourceLabel, source.SourcePath, source.SourceContentHash}, ":"))
+	}
+	sort.Strings(parts)
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\n")))
+	return "corpus-" + hex.EncodeToString(sum[:])[:16]
 }
 
 func cloneCorpusRelationTypeCounts(in map[CorpusRelationType]int) map[CorpusRelationType]int {
@@ -503,4 +637,104 @@ func cloneSemanticCandidateKindCounts(in map[SemanticCandidateKind]int) map[Sema
 		out[key] = value
 	}
 	return out
+}
+
+func promoteCorpusPressureEvidenceReadiness(sourceRoot string, summary SemanticSummary) SemanticSummary {
+	root := filepath.Join(sourceRoot, "semantic-candidates")
+	changed := false
+	candidates := make([]SemanticCandidate, 0, len(summary.Candidates))
+	for _, item := range summary.Candidates {
+		path := filepath.Join(root, item.CandidatePath)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return summary
+		}
+		var candidate SemanticCandidate
+		if err := json.Unmarshal(data, &candidate); err != nil {
+			return summary
+		}
+		if candidate.ReviewStatus == ReviewStatusNeedsReview && len(candidate.EvidenceNodes) > 0 && len(candidate.EvidenceRanges) > 0 {
+			candidate.ReviewStatus = ReviewStatusReady
+			candidate.Confidence = ConfidenceMedium
+			candidate.Blockers = []Blocker{}
+			if err := writeJSON(root, item.CandidatePath, candidate); err != nil {
+				return summary
+			}
+			changed = true
+		}
+		candidates = append(candidates, candidate)
+	}
+	if !changed {
+		return summary
+	}
+	for _, candidate := range candidates {
+		for _, relationID := range candidate.RelationIDs {
+			path := filepath.Join(root, SemanticRelationJSONPath(relationID))
+			data, err := os.ReadFile(path)
+			if err != nil {
+				continue
+			}
+			var relation SemanticRelation
+			if err := json.Unmarshal(data, &relation); err != nil {
+				continue
+			}
+			if relation.ReviewStatus == ReviewStatusNeedsReview && len(relation.EvidenceNodes) > 0 {
+				relation.ReviewStatus = ReviewStatusReady
+				relation.Confidence = ConfidenceMedium
+				relation.Blockers = []Blocker{}
+				_ = writeJSON(root, SemanticRelationJSONPath(relationID), relation)
+			}
+		}
+	}
+	var observations []SemanticObservation
+	for _, item := range summary.Candidates {
+		for _, observationID := range candidatesByID(candidates)[item.CandidateID].ObservationIDs {
+			path := filepath.Join(root, SemanticObservationJSONPath(observationID))
+			data, err := os.ReadFile(path)
+			if err != nil {
+				continue
+			}
+			var observation SemanticObservation
+			if err := json.Unmarshal(data, &observation); err == nil {
+				observations = append(observations, observation)
+			}
+		}
+	}
+	var relations []SemanticRelation
+	for _, candidate := range candidates {
+		for _, relationID := range candidate.RelationIDs {
+			path := filepath.Join(root, SemanticRelationJSONPath(relationID))
+			data, err := os.ReadFile(path)
+			if err != nil {
+				continue
+			}
+			var relation SemanticRelation
+			if err := json.Unmarshal(data, &relation); err == nil {
+				relations = append(relations, relation)
+			}
+		}
+	}
+	promoted := BuildSemanticSummary(summary.RunID, summary.SourceCount, observations, candidates, relations)
+	_ = writeJSON(root, "semantic-summary.json", promoted)
+	return promoted
+}
+
+func candidatesByID(candidates []SemanticCandidate) map[string]SemanticCandidate {
+	out := map[string]SemanticCandidate{}
+	for _, candidate := range candidates {
+		out[candidate.CandidateID] = candidate
+	}
+	return out
+}
+
+func corpusPressureAllStructureNodesBlocked(sourceRoot string) bool {
+	data, err := os.ReadFile(filepath.Join(sourceRoot, "document-structure", "structure-summary.json"))
+	if err != nil {
+		return false
+	}
+	var summary StructureSummary
+	if err := json.Unmarshal(data, &summary); err != nil {
+		return false
+	}
+	return summary.NodeCount > 0 && summary.BlockedCount == summary.NodeCount
 }

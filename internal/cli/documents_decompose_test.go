@@ -216,6 +216,44 @@ func TestDocumentsCorpusPressureNoHostedTelemetryByDefault(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(out, "corpus-pressure", "pressure-report.md")); err != nil {
 		t.Fatalf("missing pressure report: %v", err)
 	}
+	if _, err := os.Stat(filepath.Join(out, "corpus-pressure", "eval-input.json")); err != nil {
+		t.Fatalf("missing eval input: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(out, "corpus-pressure", "trace-summary.json")); err != nil {
+		t.Fatalf("missing trace summary: %v", err)
+	}
+}
+
+func TestDocumentsCorpusPressureLoopCLI(t *testing.T) {
+	out := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "corpus-pressure-loop", documentsFixture(t, "semantic"),
+		"--out", out,
+		"--max-runs", "20",
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+	var summary documents.CorpusPressureLoopSummary
+	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
+		t.Fatalf("decode stdout: %v", err)
+	}
+	if summary.SchemaVersion != documents.CorpusPressureLoopSummarySchemaVersion || summary.RunCount == 0 {
+		t.Fatalf("unexpected loop summary: %+v", summary)
+	}
+	if summary.MaxRuns != documents.DefaultCorpusPressureLoopMaxRuns {
+		t.Fatalf("max-runs should be capped/preserved at 20, got %d", summary.MaxRuns)
+	}
+	if summary.StopReason == "" {
+		t.Fatalf("loop summary must include stop reason: %+v", summary)
+	}
+	if _, err := os.Stat(filepath.Join(out, "corpus-pressure-loop", "loop-summary.json")); err != nil {
+		t.Fatalf("missing loop summary artifact: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(out, "iterations", "01", "corpus-pressure", "trace-summary.json")); err != nil {
+		t.Fatalf("missing iteration trace summary: %v", err)
+	}
 }
 
 func TestDocumentsCorpusPressureDoesNotWriteDestinationArtifacts(t *testing.T) {

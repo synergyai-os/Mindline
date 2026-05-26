@@ -1,6 +1,7 @@
 package documents
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,6 +28,9 @@ func TestCorpusPressureBuildsReadableReportAndReplay(t *testing.T) {
 	if summaryA.SourceCount != 3 || summaryA.ProcessedSourceCount != 3 || summaryA.SkippedSourceCount != 0 || summaryA.BlockedSourceCount != 0 {
 		t.Fatalf("unexpected source accounting: %+v", summaryA)
 	}
+	if summaryA.ProcessedSourceRatio != 1 {
+		t.Fatalf("expected fully processed fixture corpus: %+v", summaryA)
+	}
 	if summaryA.SemanticCandidateCount == 0 || summaryA.GraphAtomCount == 0 {
 		t.Fatalf("expected semantic candidates and graph atoms: %+v", summaryA)
 	}
@@ -46,6 +50,7 @@ func TestCorpusPressureBuildsReadableReportAndReplay(t *testing.T) {
 		"## Duplicate candidates",
 		"## Contradiction candidates",
 		"## Evidence/readiness failures",
+		"## Eval/trace artifact pointers",
 		"## Next improvement targets",
 	} {
 		if !strings.Contains(report, want) {
@@ -54,6 +59,124 @@ func TestCorpusPressureBuildsReadableReportAndReplay(t *testing.T) {
 	}
 	if summaryA.EvidenceReadyAtomCount < summaryA.GraphAtomCount && !strings.Contains(report, "evidence_incomplete_atom") {
 		t.Fatalf("report must name evidence-incomplete atoms when readiness fails:\n%s", report)
+	}
+	var evalInput CorpusPressureEvalInput
+	readCorpusPressureJSON(t, filepath.Join(outA, CorpusPressureDirName, "eval-input.json"), &evalInput)
+	if evalInput.SchemaVersion != CorpusPressureEvalInputSchemaVersion || evalInput.SourceCounters.Processed != summaryA.ProcessedSourceCount {
+		t.Fatalf("unexpected eval input: %+v", evalInput)
+	}
+	var trace CorpusPressureTraceSummary
+	readCorpusPressureJSON(t, filepath.Join(outA, CorpusPressureDirName, "trace-summary.json"), &trace)
+	if trace.SchemaVersion != CorpusPressureTraceSchemaVersion {
+		t.Fatalf("unexpected trace schema: %+v", trace)
+	}
+	if trace.SourceCounters.Processed != summaryA.ProcessedSourceCount || trace.SourceCounters.Skipped != summaryA.SkippedSourceCount || trace.SourceCounters.Blocked != summaryA.BlockedSourceCount || trace.SourceCounters.Excluded != summaryA.ExcludedSourceCount {
+		t.Fatalf("trace must expose source-state counters: %+v", trace.SourceCounters)
+	}
+	if trace.Guardrails.HostedInferenceCalls != 0 || trace.Guardrails.HostedTelemetryExports != 0 || trace.Guardrails.DestinationWrites != 0 {
+		t.Fatalf("default pressure trace must have zero hosted/destination counters: %+v", trace.Guardrails)
+	}
+}
+
+func TestCorpusPressureLoopStopsHonestlyWhenUnchanged(t *testing.T) {
+	input := t.TempDir()
+	if err := os.WriteFile(filepath.Join(input, "blocked.md"), []byte("# Secret\nAPI key sk-test-secret-token should stay blocked\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := t.TempDir()
+	summary, err := BuildCorpusPressureLoop(input, out, CorpusPressureLoopOptions{MaxRuns: 20, BuildFingerprint: "test-build"})
+	if err != nil {
+		t.Fatalf("build corpus pressure loop: %v", err)
+	}
+	if summary.KRPassed {
+		t.Fatalf("fixture should not claim raised KRs pass unless evidence ratio is high enough: %+v", summary)
+	}
+	if summary.StopReason != "same_binary_same_inputs" {
+		t.Fatalf("expected honest no-change stop, got %+v", summary)
+	}
+	if summary.RunCount != 2 {
+		t.Fatalf("expected baseline plus no-change confirmation, got %d", summary.RunCount)
+	}
+	if summary.Iterations[1].SourceDeltas.Processed != 0 || summary.Iterations[1].SourceDeltas.Skipped != 0 || summary.Iterations[1].SourceDeltas.Excluded != 0 || summary.Iterations[1].SourceDeltas.Blocked != 0 {
+		t.Fatalf("expected zero source-state deltas for unchanged run: %+v", summary.Iterations[1].SourceDeltas)
+	}
+	if _, err := os.Stat(filepath.Join(out, CorpusPressureLoopDirName, "loop-summary.json")); err != nil {
+		t.Fatalf("missing loop summary: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(out, CorpusPressureLoopDirName, "loop-report.md")); err != nil {
+		t.Fatalf("missing loop report: %v", err)
+	}
+}
+
+func TestCorpusPressureRaisedKRsDoNotCountSkippedAsProcessed(t *testing.T) {
+	summary := CorpusPressureSummary{
+		SourceCount:               10,
+		EligibleSourceCount:       10,
+		ProcessedSourceCount:      9,
+		SkippedSourceCount:        1,
+		BlockedSourceCount:        0,
+		UnexplainedExclusionCount: 0,
+		ProcessedSourceRatio:      0.90,
+		GraphAtomCount:            10,
+		EvidenceReadyAtomCount:    10,
+		EvidenceReadyAtomRatio:    1,
+	}
+	if corpusPressureLoopKRPassed(summary) {
+		t.Fatalf("skipped sources must not count as processed or improvement")
+	}
+	summary.ProcessedSourceCount = 10
+	summary.SkippedSourceCount = 0
+	summary.EligibleSourceCount = 10
+	summary.ProcessedSourceRatio = 1
+	if !corpusPressureLoopKRPassed(summary) {
+		t.Fatalf("expected raised KRs to pass when all counted sources are processed and evidence-ready")
+	}
+}
+
+func TestCorpusPressureClosedExclusionsLeaveEligibleRatioHonest(t *testing.T) {
+	summary := CorpusPressureSummary{
+		SourceCount:               10,
+		EligibleSourceCount:       9,
+		ProcessedSourceCount:      9,
+		ExcludedSourceCount:       1,
+		BlockedSourceCount:        0,
+		UnexplainedExclusionCount: 0,
+		ProcessedSourceRatio:      1,
+		GraphAtomCount:            9,
+		EvidenceReadyAtomCount:    9,
+		EvidenceReadyAtomRatio:    1,
+	}
+	if !corpusPressureLoopKRPassed(summary) {
+		t.Fatalf("closed exclusions should stay visible without lowering eligible processed ratio")
+	}
+	summary.UnexplainedExclusionCount = 1
+	if corpusPressureLoopKRPassed(summary) {
+		t.Fatalf("unexplained exclusions must block raised KRs")
+	}
+}
+
+func TestCorpusPressureCorpusFingerprintIncludesSourceContent(t *testing.T) {
+	input := t.TempDir()
+	source := filepath.Join(input, "source.md")
+	if err := os.WriteFile(source, []byte("# Source\n- capability: first version\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	first, _, err := BuildCorpusPressure(input, t.TempDir(), CorpusPressureOptions{})
+	if err != nil {
+		t.Fatalf("build first pressure: %v", err)
+	}
+	if err := os.WriteFile(source, []byte("# Source\n- capability: second version\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	second, _, err := BuildCorpusPressure(input, t.TempDir(), CorpusPressureOptions{})
+	if err != nil {
+		t.Fatalf("build second pressure: %v", err)
+	}
+	if first.CorpusFingerprint == "" || second.CorpusFingerprint == "" {
+		t.Fatalf("expected corpus fingerprints: first=%q second=%q", first.CorpusFingerprint, second.CorpusFingerprint)
+	}
+	if first.CorpusFingerprint == second.CorpusFingerprint {
+		t.Fatalf("corpus fingerprint must change when source content changes: %s", first.CorpusFingerprint)
 	}
 }
 
@@ -132,5 +255,16 @@ func TestCorpusPressureRejectsPressureReportSymlinkEscape(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(escaped, file)); err == nil {
 			t.Fatalf("pressure artifact escaped output root through symlink: %s", file)
 		}
+	}
+}
+
+func readCorpusPressureJSON(t *testing.T, path string, out any) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	if err := json.Unmarshal(data, out); err != nil {
+		t.Fatalf("decode %s: %v", path, err)
 	}
 }
