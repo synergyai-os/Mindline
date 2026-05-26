@@ -393,7 +393,7 @@ func TestSemanticWriterRedactsUnsafeEndpointAndEvidenceFields(t *testing.T) {
 	assertGeneratedTreeExcludes(t, filepath.Join(out, "semantic-candidates"), "private_content", "secret", unsafeTokenMarker(), "DEC-49", "WP-13")
 }
 
-func TestLLMClassifierDropsCandidatesWithOnlyInventedEvidenceNodes(t *testing.T) {
+func TestLLMClassifierFailsCandidatesWithOnlyInventedEvidenceNodes(t *testing.T) {
 	nodes := []StructureNode{{
 		NodeID:           "node-real",
 		SourceDocumentID: "doc-test",
@@ -410,13 +410,13 @@ func TestLLMClassifierDropsCandidatesWithOnlyInventedEvidenceNodes(t *testing.T)
 		EvidenceNodes: []string{"node-fake"},
 	}}}
 
-	candidates, relations, err := buildLLMSemanticArtifacts("run-test", nodes, response)
+	_, _, err := buildLLMSemanticArtifacts("run-test", nodes, response)
 
-	if err != nil {
-		t.Fatalf("expected invented evidence node to be dropped, got %v", err)
+	if err == nil {
+		t.Fatalf("expected invented evidence node to fail closed")
 	}
-	if len(candidates) != 0 || len(relations) != 0 {
-		t.Fatalf("expected unsupported candidate to be dropped, got candidates=%+v relations=%+v", candidates, relations)
+	if !strings.Contains(err.Error(), "unknown LLM evidence node") {
+		t.Fatalf("expected unknown evidence node error, got %v", err)
 	}
 }
 

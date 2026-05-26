@@ -121,7 +121,7 @@ func buildLLMSemanticObservationsAndArtifacts(runID string, nodes []StructureNod
 		for _, nodeID := range item.EvidenceNodes {
 			node, ok := resolveLLMEvidenceNode(nodesByID, nodeID)
 			if !ok {
-				continue
+				return nil, nil, nil, fmt.Errorf("unknown LLM evidence node: %s", nodeID)
 			}
 			if seenEvidenceNodes[node.NodeID] {
 				continue
