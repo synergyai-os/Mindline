@@ -523,8 +523,8 @@ func buildCorpusPressureSummary(corpusID string, sources []CorpusPressureSourceR
 	if graphErr != nil {
 		summary.Blockers = append(summary.Blockers, "corpus graph failed: "+graphErr.Error())
 	}
+	summary.ReadyForFiftyFilePressure = graphErr == nil && corpusPressureReady(summary)
 	summary.NextImprovementTargets = corpusPressureTargets(summary)
-	summary.ReadyForFiftyFilePressure = corpusPressureReady(summary)
 	return summary
 }
 

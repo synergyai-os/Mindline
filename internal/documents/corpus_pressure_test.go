@@ -2,6 +2,7 @@ package documents
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -152,6 +153,58 @@ func TestCorpusPressureClosedExclusionsLeaveEligibleRatioHonest(t *testing.T) {
 	summary.UnexplainedExclusionCount = 1
 	if corpusPressureLoopKRPassed(summary) {
 		t.Fatalf("unexplained exclusions must block raised KRs")
+	}
+}
+
+func TestCorpusPressureSummaryDoesNotEmitTargetsWhenReady(t *testing.T) {
+	source := CorpusPressureSourceResult{
+		SourceID:       "ready-source",
+		SourceKind:     "markdown",
+		State:          CorpusPressureSourceProcessed,
+		ReasonCode:     CorpusPressureReasonNone,
+		CandidateCount: 1,
+	}
+	graph := CorpusGraphSummary{
+		AtomCount:              1,
+		RelationCount:          1,
+		EvidenceReadyAtomCount: 1,
+		ReviewBurdenRatio:      0,
+		ReplayFingerprint:      "graph-ready",
+	}
+
+	summary := buildCorpusPressureSummary("ready-corpus", []CorpusPressureSourceResult{source}, graph, "manifest.json", nil)
+
+	if !summary.ReadyForFiftyFilePressure {
+		t.Fatalf("healthy pressure summary should be ready: %+v", summary)
+	}
+	if len(summary.NextImprovementTargets) != 0 {
+		t.Fatalf("ready pressure summary must not emit improvement targets: %+v", summary.NextImprovementTargets)
+	}
+}
+
+func TestCorpusPressureSummaryTreatsGraphFailureAsNotReady(t *testing.T) {
+	source := CorpusPressureSourceResult{
+		SourceID:       "ready-source",
+		SourceKind:     "markdown",
+		State:          CorpusPressureSourceProcessed,
+		ReasonCode:     CorpusPressureReasonNone,
+		CandidateCount: 1,
+	}
+	graph := CorpusGraphSummary{
+		AtomCount:              1,
+		RelationCount:          1,
+		EvidenceReadyAtomCount: 1,
+		ReviewBurdenRatio:      0,
+		ReplayFingerprint:      "graph-ready",
+	}
+
+	summary := buildCorpusPressureSummary("ready-corpus", []CorpusPressureSourceResult{source}, graph, "manifest.json", errors.New("write graph"))
+
+	if summary.ReadyForFiftyFilePressure {
+		t.Fatalf("graph failure must block pressure readiness: %+v", summary)
+	}
+	if len(summary.NextImprovementTargets) == 0 {
+		t.Fatalf("graph failure should leave an improvement target: %+v", summary)
 	}
 }
 
