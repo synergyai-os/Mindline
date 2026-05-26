@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -327,7 +328,7 @@ func autonomyImprovementTargets(report AutonomyReadinessReport, summary Semantic
 	if denominator == 0 && summary.SkippedReason == "" {
 		add("no_judged_eval_outcomes", 1, "Create authoritative judgments for eval-counted candidates before readiness can be assessed.")
 	} else if denominator > 0 && report.Accuracy < report.Threshold {
-		add("below_threshold", int((report.Threshold-report.Accuracy)*10000), "Improve extraction and judgment quality before DEC-64 eligibility.")
+		add("below_threshold", autonomyBelowThresholdGapCount(report), "Improve extraction and judgment quality before DEC-64 eligibility.")
 	}
 	if report.Counts.CandidateCount == 0 && summary.SkippedReason == "" {
 		add("no_candidates", 1, "Fix extraction/classification coverage for sources that produce no semantic candidates.")
@@ -350,12 +351,49 @@ func autonomyImprovementTargets(report AutonomyReadinessReport, summary Semantic
 		return targets[i].Count > targets[j].Count
 	})
 	if len(targets) > 5 {
-		targets = targets[:5]
+		targets = autonomyLimitImprovementTargets(targets, 5, "below_threshold")
 	}
 	if targets == nil {
 		return []AutonomyReadinessImprovement{}
 	}
 	return targets
+}
+
+func autonomyLimitImprovementTargets(targets []AutonomyReadinessImprovement, limit int, requiredCode string) []AutonomyReadinessImprovement {
+	if limit <= 0 || len(targets) <= limit {
+		return targets
+	}
+	limited := append([]AutonomyReadinessImprovement(nil), targets[:limit]...)
+	if improvementTargetsContain(limited, requiredCode) {
+		return limited
+	}
+	for _, target := range targets[limit:] {
+		if target.Code == requiredCode {
+			limited[len(limited)-1] = target
+			return limited
+		}
+	}
+	return limited
+}
+
+func improvementTargetsContain(targets []AutonomyReadinessImprovement, code string) bool {
+	for _, target := range targets {
+		if target.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
+func autonomyBelowThresholdGapCount(report AutonomyReadinessReport) int {
+	if report.Accuracy >= report.Threshold {
+		return 0
+	}
+	count := int(math.Ceil((report.Threshold - report.Accuracy) * 10000))
+	if count < 1 {
+		return 1
+	}
+	return count
 }
 
 func autonomyAccuracyDenominator(counts AutonomyReadinessCounts) int {

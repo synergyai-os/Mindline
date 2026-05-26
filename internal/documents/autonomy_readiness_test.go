@@ -73,6 +73,70 @@ func TestAutonomyReadinessIncludesRequiredSlicesAndImprovementTargets(t *testing
 	}
 }
 
+func TestAutonomyReadinessKeepsBelowThresholdTargetForTinyAccuracyGap(t *testing.T) {
+	report := AutonomyReadinessReport{
+		HeldOut:   true,
+		Threshold: 0.98,
+		Accuracy:  0.97995,
+		Counts: AutonomyReadinessCounts{
+			EvalCountedAcceptedCount:      97995,
+			EvalCountedFalsePositiveCount: 2005,
+		},
+	}
+
+	targets := autonomyImprovementTargets(report, SemanticJudgmentSummary{})
+	for _, target := range targets {
+		if target.Code == "below_threshold" {
+			if target.Count != 1 {
+				t.Fatalf("expected minimum below-threshold count of 1, got %+v", target)
+			}
+			return
+		}
+	}
+	t.Fatalf("expected below-threshold target for tiny accuracy gap, got %+v", targets)
+}
+
+func TestAutonomyReadinessKeepsBelowThresholdTargetWhenTopTargetsAreCapped(t *testing.T) {
+	report := AutonomyReadinessReport{
+		HeldOut:   true,
+		Threshold: 0.98,
+		Accuracy:  0.97995,
+		Counts: AutonomyReadinessCounts{
+			CandidateCount:                1,
+			EvalCountedAcceptedCount:      97995,
+			EvalCountedFalsePositiveCount: 2005,
+			EvidenceExcludedCount:         10,
+			EvalCountedHumanReviewCount:   9,
+			EvalCountedModelErrorCount:    8,
+			ReviewBurdenCount:             7,
+			WrongKindCount:                6,
+			DuplicateCount:                5,
+			FalsePositiveCount:            4,
+			FalseNegativeCount:            3,
+			EvalCountedRemainingCount:     2,
+		},
+	}
+	summary := SemanticJudgmentSummary{
+		WrongKindCount: 6,
+		DuplicateCount: 5,
+		FailureReasonCounts: map[SemanticFailureReason]int{
+			SemanticFailureWrongKind: 6,
+			SemanticFailureDuplicate: 5,
+		},
+	}
+
+	targets := autonomyImprovementTargets(report, summary)
+	if len(targets) > 5 {
+		t.Fatalf("expected capped improvement targets, got %d: %+v", len(targets), targets)
+	}
+	for _, target := range targets {
+		if target.Code == "below_threshold" {
+			return
+		}
+	}
+	t.Fatalf("expected capped targets to retain below_threshold, got %+v", targets)
+}
+
 func TestAutonomyReadinessMapsMissingExpectedOutcomeToFalseNegative(t *testing.T) {
 	summary := SemanticJudgmentSummary{
 		FailureReasonCounts: map[SemanticFailureReason]int{
