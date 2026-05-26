@@ -752,6 +752,7 @@ type SemanticJudgmentSummary struct {
 	JudgmentByRelationType        map[SemanticRelationshipType]map[SemanticJudgmentChoice]int `json:"judgment_by_relation_type,omitempty"`
 	JudgmentByFailureReason       map[SemanticFailureReason]map[SemanticJudgmentChoice]int    `json:"judgment_by_failure_reason,omitempty"`
 	QualityStatement              string                                                      `json:"quality_statement"`
+	SkippedReason                 string                                                      `json:"skipped_reason,omitempty"`
 	CursorPath                    string                                                      `json:"cursor_path"`
 	ReportPath                    string                                                      `json:"report_path"`
 	Candidates                    []SemanticJudgmentCandidateSummary                          `json:"candidates"`

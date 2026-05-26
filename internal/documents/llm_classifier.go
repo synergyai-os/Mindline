@@ -121,7 +121,7 @@ func buildLLMSemanticObservationsAndArtifacts(runID string, nodes []StructureNod
 		for _, nodeID := range item.EvidenceNodes {
 			node, ok := resolveLLMEvidenceNode(nodesByID, nodeID)
 			if !ok {
-				return nil, nil, nil, fmt.Errorf("unknown evidence node: %s", nodeID)
+				return nil, nil, nil, fmt.Errorf("unknown LLM evidence node: %s", nodeID)
 			}
 			if seenEvidenceNodes[node.NodeID] {
 				continue
@@ -151,7 +151,7 @@ func buildLLMSemanticObservationsAndArtifacts(runID string, nodes []StructureNod
 			candidateObservations = append(candidateObservations, observation)
 		}
 		if len(candidateObservations) == 0 {
-			return nil, nil, nil, fmt.Errorf("LLM candidate missing usable evidence nodes")
+			continue
 		}
 		candidate := newSemanticCandidate(runID, candidateObservations[0].SourceDocumentID, kind, reviewStatus, confidence, item.Title, item.Summary, candidateObservations)
 		candidate.CandidateID = SemanticCandidateID(runID, kind, candidate.SourceDocumentID, item.Title+"\x00"+discriminator, candidate.EvidenceNodes)
