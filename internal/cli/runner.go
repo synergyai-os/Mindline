@@ -31,7 +31,7 @@ const (
 	ExitArtifactWrite = 3
 )
 
-const usage = "usage: mindline process <candidate.json> [--out <dir>]\nusage: mindline slack normalize <slack-export.json> [--out <dir>]\nusage: mindline destination dry-run <sbos-result.json> --adapter tolaria --out <dir>\nusage: mindline pipeline dry-run <pipeline-input.json> --method basb-para-code --destination tolaria --out <dir>\nusage: mindline product-brain propose <run-dir> --profile <profile.json> --out <dir>\nusage: mindline documents decompose <markdown-path-or-dir> --out <dir>\nusage: mindline documents structure <markdown-path-or-dir> --out <dir>\nusage: mindline documents semantics <structure-run-dir-or-markdown-path-or-markdown-dir> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents accept <semantic-run-dir> --answer-key <answer-key.json> --out <dir>\nusage: mindline documents calibrate <semantic-acceptance-dir-or-parent> --out <dir> [--threshold 0.98] [--held-out] [--source-root <dir> --source <relative.md>]\nusage: mindline documents calibrate-next <semantic-calibration-dir-or-parent>\nusage: mindline documents judge <semantic-run-dir> --out <dir> [--source-root <dir> --source <relative.md>] [--agent-reviewer llm --llm-provider openai --llm-model <model>]\nusage: mindline documents judge-next <semantic-judgment-dir-or-parent>\nusage: mindline documents judge-record <semantic-judgment-dir-or-parent> --candidate <candidate-id> --choice accept|reject|unclear|duplicate|wrong-kind [--reason <failure-reason>] [--secondary-reason <failure-reason>] [--note <text>] [--reviewer <id>]\nusage: mindline documents judge-serve <semantic-judgment-dir-or-parent> [--addr 127.0.0.1:8787] [--reviewer <id>]\nusage: mindline observability posthog-test\n"
+const usage = "usage: mindline process <candidate.json> [--out <dir>]\nusage: mindline slack normalize <slack-export.json> [--out <dir>]\nusage: mindline destination dry-run <sbos-result.json> --adapter tolaria --out <dir>\nusage: mindline pipeline dry-run <pipeline-input.json> --method basb-para-code --destination tolaria --out <dir>\nusage: mindline product-brain propose <run-dir> --profile <profile.json> --out <dir>\nusage: mindline documents decompose <markdown-path-or-dir> --out <dir>\nusage: mindline documents structure <markdown-path-or-dir> --out <dir>\nusage: mindline documents semantics <structure-run-dir-or-markdown-path-or-markdown-dir> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents accept <semantic-run-dir> --answer-key <answer-key.json> --out <dir>\nusage: mindline documents calibrate <semantic-acceptance-dir-or-parent> --out <dir> [--threshold 0.98] [--held-out] [--source-root <dir> --source <relative.md>]\nusage: mindline documents calibrate-next <semantic-calibration-dir-or-parent>\nusage: mindline documents judge <semantic-run-dir> --out <dir> [--source-root <dir> --source <relative.md>] [--agent-reviewer llm --llm-provider openai --llm-model <model>]\nusage: mindline documents judge-next <semantic-judgment-dir-or-parent>\nusage: mindline documents judge-record <semantic-judgment-dir-or-parent> --candidate <candidate-id> --choice accept|reject|unclear|duplicate|wrong-kind [--reason <failure-reason>] [--secondary-reason <failure-reason>] [--note <text>] [--reviewer <id>]\nusage: mindline documents judge-serve <semantic-judgment-dir-or-parent> [--addr 127.0.0.1:8787] [--reviewer <id>]\nusage: mindline documents readiness-report <semantic-judgment-dir-or-parent> --out <dir> [--threshold 0.98] [--held-out]\nusage: mindline observability posthog-test\n"
 
 const protectedRootsEnv = "MINDLINE_PROTECTED_ROOTS"
 const defaultTolariaProtectedRoot = "/Users/randyhereman/Young Human Club Dropbox/02. Areas/PKM - Tolaria"
@@ -280,6 +280,9 @@ func (r Runner) runDocuments(args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "judge-serve" {
 		return r.runDocumentsJudgeServe(args, stdout, stderr)
 	}
+	if len(args) > 0 && args[0] == "readiness-report" {
+		return r.runDocumentsReadinessReport(args, stdout, stderr)
+	}
 	inputPath, outDir, parseError := parseDocumentsArgs(args, "decompose")
 	if parseError != parseErrorNone {
 		fmt.Fprint(stderr, usage)
@@ -404,6 +407,42 @@ func (r Runner) runDocumentsJudgeServe(args []string, stdout, stderr io.Writer) 
 	if err := http.Serve(listener, newSemanticJudgmentUIHandlerWithAllowedHosts(inputPath, reviewerID, []string{addr, listener.Addr().String()})); err != nil {
 		fmt.Fprintf(stderr, "serve semantic judgment UI: %v\n", err)
 		return ExitProcess
+	}
+	return ExitOK
+}
+
+func (r Runner) runDocumentsReadinessReport(args []string, stdout, stderr io.Writer) int {
+	inputPath, outDir, options, parseError := parseDocumentsReadinessReportArgs(args)
+	if parseError != parseErrorNone {
+		fmt.Fprint(stderr, usage)
+		return ExitUsage
+	}
+	report, err := documents.BuildAutonomyReadinessReport(inputPath, options)
+	if err != nil {
+		if documents.IsArtifactWriteError(err) {
+			fmt.Fprintf(stderr, "write autonomy readiness report: %v\n", err)
+			return ExitArtifactWrite
+		}
+		fmt.Fprintf(stderr, "build autonomy readiness report: %v\n", err)
+		return ExitProcess
+	}
+	report, projectionExit := r.projectAutonomyReadiness(report, stderr)
+	if err := documents.WriteAutonomyReadinessReport(outDir, report); err != nil {
+		if documents.IsArtifactWriteError(err) {
+			fmt.Fprintf(stderr, "write autonomy readiness report: %v\n", err)
+			return ExitArtifactWrite
+		}
+		fmt.Fprintf(stderr, "write autonomy readiness report: %v\n", err)
+		return ExitProcess
+	}
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(report); err != nil {
+		fmt.Fprintf(stderr, "write stdout: %v\n", err)
+		return ExitUsage
+	}
+	if projectionExit != ExitOK {
+		return projectionExit
 	}
 	return ExitOK
 }
@@ -1090,6 +1129,42 @@ func parseDocumentsCalibrateNextArgs(args []string) (inputPath string, err parse
 	return args[1], parseErrorNone
 }
 
+func parseDocumentsReadinessReportArgs(args []string) (inputPath string, outDir string, options documents.AutonomyReadinessOptions, err parseError) {
+	if len(args) < 4 || args[0] != "readiness-report" || strings.TrimSpace(args[1]) == "" {
+		return "", "", options, parseErrorUsage
+	}
+	inputPath = args[1]
+	for i := 2; i < len(args); {
+		switch args[i] {
+		case "--out":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", options, parseErrorUsage
+			}
+			outDir = args[i+1]
+			i += 2
+		case "--threshold":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", options, parseErrorUsage
+			}
+			threshold, parseErr := strconv.ParseFloat(args[i+1], 64)
+			if parseErr != nil || math.IsNaN(threshold) || math.IsInf(threshold, 0) || threshold <= 0 || threshold > 1 {
+				return "", "", options, parseErrorUsage
+			}
+			options.Threshold = threshold
+			i += 2
+		case "--held-out":
+			options.HeldOut = true
+			i++
+		default:
+			return "", "", options, parseErrorUsage
+		}
+	}
+	if outDir == "" {
+		return "", "", options, parseErrorUsage
+	}
+	return inputPath, outDir, options, parseErrorNone
+}
+
 func (r Runner) parseDocumentsJudgeArgs(args []string) (inputPath string, outDir string, options documents.SemanticJudgmentOptions, err parseError, configError string) {
 	if len(args) < 4 || args[0] != "judge" || strings.TrimSpace(args[1]) == "" {
 		return "", "", options, parseErrorUsage, ""
@@ -1562,6 +1637,60 @@ func (r Runner) writeAndExportTrace(outDir string, summary observability.TraceSu
 		}
 	}
 	return nil
+}
+
+func (r Runner) projectAutonomyReadiness(report documents.AutonomyReadinessReport, stderr io.Writer) (documents.AutonomyReadinessReport, int) {
+	values := r.resolveEnvValues([]string{
+		"MINDLINE_TELEMETRY_ENABLED",
+		"MINDLINE_LLM_TRACE_MODE",
+		"MINDLINE_TELEMETRY_SALT",
+		"POSTHOG_PROJECT_API_KEY",
+		"POSTHOG_API_KEY",
+		"POSTHOG_HOST",
+	})
+	config, err := observability.ConfigFromValues(values)
+	if err != nil {
+		status := documents.AutonomyReadinessProjectionFailed
+		exit := ExitOK
+		if strings.Contains(err.Error(), "unsupported LLM trace mode") {
+			status = documents.AutonomyReadinessProjectionBlocked
+			exit = ExitArtifactWrite
+		}
+		fmt.Fprintf(stderr, "posthog readiness projection: %v\n", err)
+		return documents.WithAutonomyReadinessProjection(report, documents.AutonomyReadinessProjectionReport{
+			Status:        status,
+			SchemaVersion: observability.AutonomyReadinessProjectionSchemaVersion,
+			ErrorClass:    "config_error",
+		}), exit
+	}
+	if !config.Enabled {
+		return documents.WithAutonomyReadinessProjection(report, documents.AutonomyReadinessProjectionReport{
+			Status:        documents.AutonomyReadinessProjectionDisabled,
+			SchemaVersion: observability.AutonomyReadinessProjectionSchemaVersion,
+		}), ExitOK
+	}
+	exporter := observability.NewPostHogExporter(config, r.postHogTransport)
+	for _, event := range observability.AutonomyReadinessSafeEvents(report) {
+		if err := exporter.Capture(event); err != nil {
+			if observability.IsSafeEventValidationError(err) {
+				return documents.WithAutonomyReadinessProjection(report, documents.AutonomyReadinessProjectionReport{
+					Status:        documents.AutonomyReadinessProjectionBlocked,
+					SchemaVersion: observability.AutonomyReadinessProjectionSchemaVersion,
+					ErrorClass:    "safety_validation_error",
+				}), ExitArtifactWrite
+			}
+			fmt.Fprintf(stderr, "posthog readiness projection: %v\n", err)
+			return documents.WithAutonomyReadinessProjection(report, documents.AutonomyReadinessProjectionReport{
+				Status:        documents.AutonomyReadinessProjectionFailed,
+				SchemaVersion: observability.AutonomyReadinessProjectionSchemaVersion,
+				ErrorClass:    "network_error",
+			}), ExitOK
+		}
+	}
+	return documents.WithAutonomyReadinessProjection(report, documents.AutonomyReadinessProjectionReport{
+		Status:        documents.AutonomyReadinessProjectionSent,
+		SchemaVersion: observability.AutonomyReadinessProjectionSchemaVersion,
+	}), ExitOK
 }
 
 func semanticTraceSummary(summary documents.SemanticSummary, options documents.SemanticOptions) observability.TraceSummary {

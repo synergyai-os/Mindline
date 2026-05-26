@@ -252,6 +252,115 @@ func TestDocumentsSemanticsContinuesWhenPostHogExportFails(t *testing.T) {
 	}
 }
 
+func TestDocumentsReadinessReportWritesLocalReportWhenPostHogFails(t *testing.T) {
+	t.Setenv("MINDLINE_TELEMETRY_ENABLED", "true")
+	t.Setenv("MINDLINE_LLM_TRACE_MODE", "metadata")
+	t.Setenv("MINDLINE_TELEMETRY_SALT", "salt")
+	t.Setenv("POSTHOG_PROJECT_API_KEY", "phc-test")
+	t.Setenv("POSTHOG_HOST", "https://eu.i.posthog.com")
+	judgeOut := t.TempDir()
+	reportOut := t.TempDir()
+	runner := NewRunnerWithPostHogTransport(NewOSFileSystem(), httpRoundTripper(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 503, Body: io.NopCloser(strings.NewReader("unavailable")), Header: make(http.Header)}, nil
+	}))
+	var stdout, stderr bytes.Buffer
+	semanticOut := t.TempDir()
+	code := runner.Run([]string{
+		"documents", "semantics", documentsFixture(t, "semantic"),
+		"--out", semanticOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("semantics failed: code=%d stderr=%s", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = runner.Run([]string{
+		"documents", "judge", semanticOut,
+		"--out", judgeOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("judge failed: code=%d stderr=%s", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+
+	code = runner.Run([]string{
+		"documents", "readiness-report", judgeOut,
+		"--out", reportOut,
+		"--held-out",
+	}, &stdout, &stderr)
+
+	if code != ExitOK {
+		t.Fatalf("readiness report should ignore PostHog network failure, got %d stderr=%s", code, stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(reportOut, "autonomy-readiness", "readiness-report.json")); err != nil {
+		t.Fatalf("expected local readiness report despite PostHog failure: %v", err)
+	}
+	if !strings.Contains(stderr.String(), "posthog readiness projection:") {
+		t.Fatalf("expected readiness projection warning, got %q", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"status": "failed"`) {
+		t.Fatalf("expected failed projection status in stdout: %s", stdout.String())
+	}
+}
+
+func TestDocumentsReadinessReportRejectsUnsupportedTraceModeBeforeNetwork(t *testing.T) {
+	t.Setenv("MINDLINE_TELEMETRY_ENABLED", "true")
+	t.Setenv("MINDLINE_LLM_TRACE_MODE", "raw")
+	t.Setenv("MINDLINE_TELEMETRY_SALT", "salt")
+	t.Setenv("POSTHOG_PROJECT_API_KEY", "phc-test")
+	t.Setenv("POSTHOG_HOST", "https://eu.i.posthog.com")
+	judgeOut := t.TempDir()
+	reportOut := t.TempDir()
+	called := false
+	runner := NewRunnerWithPostHogTransport(NewOSFileSystem(), httpRoundTripper(func(req *http.Request) (*http.Response, error) {
+		called = true
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("{}")), Header: make(http.Header)}, nil
+	}))
+	var stdout, stderr bytes.Buffer
+	t.Setenv("MINDLINE_TELEMETRY_ENABLED", "false")
+	t.Setenv("MINDLINE_LLM_TRACE_MODE", "metadata")
+	semanticOut := t.TempDir()
+	code := runner.Run([]string{
+		"documents", "semantics", documentsFixture(t, "semantic"),
+		"--out", semanticOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("semantics failed: code=%d stderr=%s", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = runner.Run([]string{
+		"documents", "judge", semanticOut,
+		"--out", judgeOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("judge failed: code=%d stderr=%s", code, stderr.String())
+	}
+	t.Setenv("MINDLINE_TELEMETRY_ENABLED", "true")
+	t.Setenv("MINDLINE_LLM_TRACE_MODE", "raw")
+	stdout.Reset()
+	stderr.Reset()
+
+	code = runner.Run([]string{
+		"documents", "readiness-report", judgeOut,
+		"--out", reportOut,
+	}, &stdout, &stderr)
+
+	if code != ExitArtifactWrite {
+		t.Fatalf("readiness projection should fail closed on unsafe trace mode, got %d stderr=%s", code, stderr.String())
+	}
+	if called {
+		t.Fatalf("unsafe readiness projection must fail before network")
+	}
+	if _, err := os.Stat(filepath.Join(reportOut, "autonomy-readiness", "readiness-report.json")); err != nil {
+		t.Fatalf("expected local readiness report before projection failure: %v", err)
+	}
+	if !strings.Contains(stdout.String(), `"status": "blocked_unsafe"`) {
+		t.Fatalf("expected blocked projection status in stdout: %s", stdout.String())
+	}
+}
+
 func TestWriteAndExportTraceFailsOnUnsafeTelemetryEvent(t *testing.T) {
 	t.Setenv("MINDLINE_TELEMETRY_ENABLED", "true")
 	t.Setenv("MINDLINE_LLM_TRACE_MODE", "metadata")

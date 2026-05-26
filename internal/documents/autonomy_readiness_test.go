@@ -1,0 +1,200 @@
+package documents
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestAutonomyReadinessEligibleOnlyWithHeldOutThresholdEvidenceAndSafety(t *testing.T) {
+	out := t.TempDir()
+	summary := autonomyReadinessTestSummary(t, SemanticJudgmentChoiceAccept, "")
+	if err := WriteSemanticJudgmentRoot(filepath.Join(out, "semantic-judgment"), summary); err != nil {
+		t.Fatalf("write judgment: %v", err)
+	}
+
+	report, err := BuildAutonomyReadinessReport(out, AutonomyReadinessOptions{Threshold: 0.98, HeldOut: true})
+	if err != nil {
+		t.Fatalf("build report: %v", err)
+	}
+	if report.ThresholdStatus != AutonomyReadinessEligible {
+		t.Fatalf("expected eligible report, got %+v", report)
+	}
+	if !report.KRs["KEY-3"].Passed || !report.KRs["KEY-7"].Passed {
+		t.Fatalf("expected threshold and evidence KRs to pass: %+v", report.KRs)
+	}
+
+	report, err = BuildAutonomyReadinessReport(out, AutonomyReadinessOptions{Threshold: 0.98})
+	if err != nil {
+		t.Fatalf("build report: %v", err)
+	}
+	if report.ThresholdStatus != AutonomyReadinessNotEligible || !containsString(report.Blockers, "not_held_out") {
+		t.Fatalf("expected not-held-out blocker, got %+v", report.Blockers)
+	}
+}
+
+func TestAutonomyReadinessIncludesRequiredSlicesAndImprovementTargets(t *testing.T) {
+	out := t.TempDir()
+	summary := autonomyReadinessTestSummary(t, SemanticJudgmentChoiceReject, SemanticFailureUnexpectedCandidate)
+	if err := WriteSemanticJudgmentRoot(filepath.Join(out, "semantic-judgment"), summary); err != nil {
+		t.Fatalf("write judgment: %v", err)
+	}
+	traceDir := filepath.Join(out, "trace")
+	if err := os.MkdirAll(traceDir, 0o755); err != nil {
+		t.Fatalf("mkdir trace: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(traceDir, "trace-summary.json"), []byte(`{"run_id":"run-demo","provider":"openai","model":"gpt-5.2","status":"needs_improvement"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("write trace: %v", err)
+	}
+
+	report, err := BuildAutonomyReadinessReport(out, AutonomyReadinessOptions{Threshold: 0.98, HeldOut: true})
+	if err != nil {
+		t.Fatalf("build report: %v", err)
+	}
+	if report.ThresholdStatus != AutonomyReadinessNotEligible || !containsString(report.Blockers, "below_threshold") {
+		t.Fatalf("expected below-threshold report, got %+v", report)
+	}
+	if report.Counts.FalsePositiveCount != 1 || report.Counts.FalseNegativeCount != 0 {
+		t.Fatalf("expected explicit FP/FN counts, got %+v", report.Counts)
+	}
+	if report.Slices.BySourceType["transcript"][string(SemanticJudgmentChoiceReject)] != 1 {
+		t.Fatalf("expected transcript source type slice: %+v", report.Slices.BySourceType)
+	}
+	if report.Slices.ByProviderModel["openai/gpt-5.2"] != 1 || report.Slices.ByRunStatus["needs_improvement"] != 1 {
+		t.Fatalf("expected trace slices, got provider=%+v status=%+v", report.Slices.ByProviderModel, report.Slices.ByRunStatus)
+	}
+	if !report.KRs["KEY-5"].Passed || !report.KRs["KEY-4"].Passed {
+		t.Fatalf("expected slice and taxonomy KRs to pass: %+v", report.KRs)
+	}
+	if len(report.Improvement) == 0 || report.Improvement[0].Code != "below_threshold" {
+		t.Fatalf("expected below-threshold improvement target, got %+v", report.Improvement)
+	}
+}
+
+func TestAutonomyReadinessMapsMissingExpectedOutcomeToFalseNegative(t *testing.T) {
+	summary := SemanticJudgmentSummary{
+		FailureReasonCounts: map[SemanticFailureReason]int{
+			SemanticFailureMissingExpectedOutcome: 1,
+		},
+	}
+	if autonomyFalseNegativeCount(summary) != 1 {
+		t.Fatalf("expected false negative count from missing expected outcome")
+	}
+}
+
+func TestAutonomyReadinessAccuracyUsesTrueFalsePositiveFalseNegativeDenominator(t *testing.T) {
+	counts := AutonomyReadinessCounts{
+		EvalCountedAcceptedCount:      98,
+		EvalCountedFalsePositiveCount: 1,
+		EvalCountedFalseNegativeCount: 1,
+	}
+	if got := autonomyAccuracy(counts); got != 0.98 {
+		t.Fatalf("expected accuracy 0.98, got %f", got)
+	}
+	counts = AutonomyReadinessCounts{EvalCountedAcceptedCount: 98, EvalCountedFalsePositiveCount: 0, EvalCountedFalseNegativeCount: 2}
+	if got := autonomyAccuracy(counts); got != 0.98 {
+		t.Fatalf("expected false negatives to affect denominator, got %f", got)
+	}
+}
+
+func TestAutonomyReadinessAccuracyIgnoresEvidenceExcludedJudgments(t *testing.T) {
+	out := t.TempDir()
+	summary := autonomyReadinessTestSummary(t, SemanticJudgmentChoiceReject, SemanticFailureUnexpectedCandidate)
+	item := summary.Items[0]
+	item.RelationContext = nil
+	item.EvidenceReadiness = semanticEvidenceReadiness(item)
+	summary = BuildSemanticJudgmentSummary("run-demo", 1, []SemanticJudgmentCandidate{item}, summary.Judgments)
+	if err := WriteSemanticJudgmentRoot(filepath.Join(out, "semantic-judgment"), summary); err != nil {
+		t.Fatalf("write judgment: %v", err)
+	}
+
+	report, err := BuildAutonomyReadinessReport(out, AutonomyReadinessOptions{Threshold: 0.98, HeldOut: true})
+	if err != nil {
+		t.Fatalf("build report: %v", err)
+	}
+	if report.Counts.FalsePositiveCount != 1 || report.Counts.EvalCountedFalsePositiveCount != 0 || report.Accuracy != 0 {
+		t.Fatalf("expected excluded judgment to stay out of DEC-64 denominator, got %+v accuracy=%f", report.Counts, report.Accuracy)
+	}
+}
+
+func TestAutonomyReadinessReportsNoCandidateRunsAsSpecificImprovementTarget(t *testing.T) {
+	out := t.TempDir()
+	summary := BuildSemanticJudgmentSummary("run-empty", 1, nil, nil)
+	if err := WriteSemanticJudgmentRoot(filepath.Join(out, "semantic-judgment"), summary); err != nil {
+		t.Fatalf("write judgment: %v", err)
+	}
+
+	report, err := BuildAutonomyReadinessReport(out, AutonomyReadinessOptions{Threshold: 0.98, HeldOut: true})
+	if err != nil {
+		t.Fatalf("build report: %v", err)
+	}
+	found := false
+	for _, target := range report.Improvement {
+		if target.Code == "no_candidates" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected no_candidates target, got %+v", report.Improvement)
+	}
+}
+
+func TestWriteAutonomyReadinessReportRejectsUnexpectedFiles(t *testing.T) {
+	out := t.TempDir()
+	root := filepath.Join(out, AutonomyReadinessDirName)
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "private.md"), []byte("nope"), 0o644); err != nil {
+		t.Fatalf("write poison: %v", err)
+	}
+	report := AutonomyReadinessReport{
+		SchemaVersion:    AutonomyReadinessReportSchemaVersion,
+		EvaluatorVersion: AutonomyReadinessEvaluatorVersion,
+		SuiteID:          "suite-demo",
+		ThresholdStatus:  AutonomyReadinessNotEligible,
+		KRs:              map[string]AutonomyReadinessKR{},
+		Projection:       AutonomyReadinessProjectionReport{Status: AutonomyReadinessProjectionDisabled},
+	}
+	err := WriteAutonomyReadinessReport(out, report)
+	if err == nil || !strings.Contains(err.Error(), "unexpected existing generated file") {
+		t.Fatalf("expected unexpected file rejection, got %v", err)
+	}
+}
+
+func autonomyReadinessTestSummary(t *testing.T, choice SemanticJudgmentChoice, reason SemanticFailureReason) SemanticJudgmentSummary {
+	t.Helper()
+	node := validStructureNode()
+	node.SourceDocumentID = "doc-meeting-transcript-1"
+	observation := validSemanticObservation(node)
+	candidate := validSemanticCandidate(observation, node)
+	candidate.SourceDocumentID = "doc-meeting-transcript-1"
+	item := semanticJudgmentCandidates([]SemanticCandidate{candidate}, []SemanticRelation{validSemanticRelation(candidate, observation, node)}, []SemanticObservation{observation}, semanticCalibrationSourceContext{
+		Label: "meeting-transcript-1.md",
+		Lines: []string{"one", "two"},
+	}, nil)[0]
+	record := SemanticJudgmentRecord{
+		SchemaVersion:    SemanticJudgmentRecordSchemaVersion,
+		RunID:            "run-demo",
+		CandidateID:      item.CandidateID,
+		SourceDocumentID: item.SourceDocumentID,
+		CandidateKind:    item.CandidateKind,
+		Confidence:       item.Confidence,
+		Choice:           choice,
+		FailureReason:    reason,
+		ReviewerID:       "test",
+		RecordedAt:       time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC).Format(time.RFC3339),
+	}
+	return BuildSemanticJudgmentSummary("run-demo", 1, []SemanticJudgmentCandidate{item}, []SemanticJudgmentRecord{record})
+}
+
+func containsString(values []string, needle string) bool {
+	for _, value := range values {
+		if value == needle {
+			return true
+		}
+	}
+	return false
+}
