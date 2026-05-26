@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCorpusPressureBuildsReadableReportAndReplay(t *testing.T) {
@@ -186,6 +187,35 @@ func TestCorpusPressureLLMClassifierCountsHostedInferenceGuardrail(t *testing.T)
 	readCorpusPressureJSON(t, filepath.Join(out, CorpusPressureDirName, "trace-summary.json"), &trace)
 	if trace.Guardrails.HostedInferenceCalls != provider.calls {
 		t.Fatalf("trace summary must count hosted inference calls: got %+v calls=%d", trace.Guardrails, provider.calls)
+	}
+}
+
+func TestCorpusPressureFailsWhenOutputSourcesPathIsNotDirectory(t *testing.T) {
+	input := t.TempDir()
+	if err := os.WriteFile(filepath.Join(input, "source.md"), []byte("# Source\n- capability: fail instead of hanging on invalid output sources path\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := t.TempDir()
+	if err := os.WriteFile(filepath.Join(out, "sources"), []byte("not a directory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := BuildCorpusPressure(input, out, CorpusPressureOptions{})
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected invalid output sources path to fail")
+		}
+		if !strings.Contains(err.Error(), "sources") {
+			t.Fatalf("expected actionable sources-path error, got %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("build corpus pressure hung while assigning source run directories")
 	}
 }
 

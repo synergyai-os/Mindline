@@ -167,6 +167,8 @@ type corpusPressureSourceInput struct {
 	RunDir     string
 }
 
+const corpusPressureMaxRunDirAttempts = 1000
+
 type corpusPressureCountingLLMProvider struct {
 	inner LLMSemanticProvider
 	calls *int
@@ -217,7 +219,10 @@ func BuildCorpusPressure(inputPath, outDir string, options CorpusPressureOptions
 			calls: &guardrails.HostedInferenceCalls,
 		}
 	}
-	sources = assignCorpusPressureSourceRunDirs(root, sources)
+	sources, err = assignCorpusPressureSourceRunDirs(root, sources)
+	if err != nil {
+		return CorpusPressureSummary{}, CorpusGraphSummary{}, err
+	}
 	results := make([]CorpusPressureSourceResult, 0, len(sources))
 	graphSources := make([]CorpusGraphManifestSource, 0, len(sources))
 	for _, source := range sources {
@@ -479,7 +484,16 @@ func corpusPressureGeneratedSourceCopy(path string) bool {
 	return err == nil && !info.IsDir()
 }
 
-func assignCorpusPressureSourceRunDirs(root string, sources []corpusPressureSourceInput) []corpusPressureSourceInput {
+func assignCorpusPressureSourceRunDirs(root string, sources []corpusPressureSourceInput) ([]corpusPressureSourceInput, error) {
+	outputSourcesRoot := filepath.Join(root, "sources")
+	if info, err := os.Stat(outputSourcesRoot); err == nil {
+		if !info.IsDir() {
+			return nil, fmt.Errorf("corpus pressure output sources path is not a directory: %s", outputSourcesRoot)
+		}
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("inspect corpus pressure output sources path: %w", err)
+	}
+
 	inputPaths := map[string]bool{}
 	for _, source := range sources {
 		if path, ok := canonicalExistingPath(source.Path); ok {
@@ -489,7 +503,8 @@ func assignCorpusPressureSourceRunDirs(root string, sources []corpusPressureSour
 	usedRunDirs := map[string]bool{}
 	for i := range sources {
 		baseID := sources[i].SourceID
-		for attempt := 0; ; attempt++ {
+		assigned := false
+		for attempt := 0; attempt < corpusPressureMaxRunDirAttempts; attempt++ {
 			runID := corpusPressureRunDirID(baseID, attempt)
 			runDir := filepath.ToSlash(filepath.Join("sources", runID))
 			if usedRunDirs[runDir] {
@@ -501,10 +516,14 @@ func assignCorpusPressureSourceRunDirs(root string, sources []corpusPressureSour
 			}
 			sources[i].RunDir = runDir
 			usedRunDirs[runDir] = true
+			assigned = true
 			break
 		}
+		if !assigned {
+			return nil, fmt.Errorf("assign corpus pressure run directory for source %q after %d attempts under %s", baseID, corpusPressureMaxRunDirAttempts, outputSourcesRoot)
+		}
 	}
-	return sources
+	return sources, nil
 }
 
 func corpusPressureRunDirID(baseID string, attempt int) string {
