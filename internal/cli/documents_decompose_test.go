@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -179,6 +180,84 @@ func TestDocumentsCorpusGraphCLI(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(out, "corpus-graph", "graph-summary.json")); err != nil {
 		t.Fatalf("missing graph summary: %v", err)
+	}
+}
+
+func TestDocumentsCorpusPressureNoHostedTelemetryByDefault(t *testing.T) {
+	t.Setenv("MINDLINE_TELEMETRY_ENABLED", "true")
+	t.Setenv("MINDLINE_LLM_TRACE_MODE", "metadata")
+	t.Setenv("POSTHOG_PROJECT_API_KEY", "ph-test")
+	t.Setenv("POSTHOG_HOST", "https://eu.posthog.com")
+	input := documentsFixture(t, "semantic")
+	out := t.TempDir()
+	networkCalled := false
+	runner := NewRunnerWithPostHogTransport(NewOSFileSystem(), httpRoundTripper(func(req *http.Request) (*http.Response, error) {
+		networkCalled = true
+		return nil, fmt.Errorf("corpus-pressure must not export hosted telemetry by default")
+	}))
+	var stdout, stderr bytes.Buffer
+	code := runner.Run([]string{
+		"documents", "corpus-pressure", input,
+		"--out", out,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+	if networkCalled {
+		t.Fatalf("corpus-pressure exported hosted telemetry by default")
+	}
+	var summary documents.CorpusPressureSummary
+	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
+		t.Fatalf("decode stdout: %v", err)
+	}
+	if summary.SchemaVersion != documents.CorpusPressureSummarySchemaVersion || summary.SourceCount == 0 {
+		t.Fatalf("unexpected pressure summary: %+v", summary)
+	}
+	if _, err := os.Stat(filepath.Join(out, "corpus-pressure", "pressure-report.md")); err != nil {
+		t.Fatalf("missing pressure report: %v", err)
+	}
+}
+
+func TestDocumentsCorpusPressureDoesNotWriteDestinationArtifacts(t *testing.T) {
+	out := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "corpus-pressure", documentsFixture(t, "semantic"),
+		"--out", out,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+	for _, forbidden := range []string{
+		"destination",
+		"tolaria",
+		"product-brain",
+		"productbrain",
+		"proposals",
+		"operations",
+	} {
+		if _, err := os.Stat(filepath.Join(out, forbidden)); err == nil {
+			t.Fatalf("unexpected destination artifact directory %s", forbidden)
+		}
+	}
+}
+
+func TestDocumentsCorpusPressureRejectsProtectedOutputRoot(t *testing.T) {
+	protected := t.TempDir()
+	out := filepath.Join(protected, "pressure")
+	var stdout, stderr bytes.Buffer
+	code := NewRunnerWithProtectedRoots(NewOSFileSystem(), []string{protected}).Run([]string{
+		"documents", "corpus-pressure", documentsFixture(t, "semantic"),
+		"--out", out,
+	}, &stdout, &stderr)
+	if code != ExitArtifactWrite {
+		t.Fatalf("expected protected output to fail with %d, got %d stdout=%s stderr=%s", ExitArtifactWrite, code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "protected output root") {
+		t.Fatalf("expected protected output error, got %q", stderr.String())
+	}
+	if _, err := os.Stat(out); err == nil {
+		t.Fatalf("protected corpus-pressure output should not be created")
 	}
 }
 
