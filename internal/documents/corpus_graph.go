@@ -70,11 +70,18 @@ type CorpusGraphSummaryAtom struct {
 }
 
 type CorpusGraphSummaryRelation struct {
-	RelationID   string             `json:"relation_id"`
-	RelationType CorpusRelationType `json:"relation_type"`
-	ReviewStatus ReviewStatus       `json:"review_status"`
-	RelationPath string             `json:"relation_path"`
-	ReviewPath   string             `json:"review_path"`
+	RelationID      string             `json:"relation_id"`
+	RelationType    CorpusRelationType `json:"relation_type"`
+	ReviewStatus    ReviewStatus       `json:"review_status"`
+	Confidence      Confidence         `json:"confidence"`
+	FromAtomID      string             `json:"from_atom_id"`
+	FromSourceID    string             `json:"from_source_id"`
+	FromSourceLabel string             `json:"from_source_label"`
+	ToAtomID        string             `json:"to_atom_id"`
+	ToSourceID      string             `json:"to_source_id"`
+	ToSourceLabel   string             `json:"to_source_label"`
+	RelationPath    string             `json:"relation_path"`
+	ReviewPath      string             `json:"review_path"`
 }
 
 type CorpusRelationType string
@@ -596,6 +603,10 @@ func buildCorpusGraphSummary(manifest CorpusGraphManifest, semanticRunCount, ski
 		}
 		summary.Atoms = append(summary.Atoms, CorpusGraphSummaryAtom{AtomID: atom.AtomID, SourceID: atom.SourceID, CandidateKind: atom.CandidateKind, ReviewStatus: atom.ReviewStatus, AtomPath: CorpusAtomJSONPath(atom.AtomID)})
 	}
+	atomsByID := map[string]CorpusGraphAtom{}
+	for _, atom := range atoms {
+		atomsByID[atom.AtomID] = atom
+	}
 	for _, relation := range relations {
 		summary.RelationTypeCounts[relation.RelationType]++
 		summary.RelationStatusCounts[relation.ReviewStatus]++
@@ -607,7 +618,22 @@ func buildCorpusGraphSummary(manifest CorpusGraphManifest, semanticRunCount, ski
 		} else if relationHasEvidence(relation) {
 			summary.EvidenceReadyRelationCount++
 		}
-		summary.Relations = append(summary.Relations, CorpusGraphSummaryRelation{RelationID: relation.RelationID, RelationType: relation.RelationType, ReviewStatus: relation.ReviewStatus, RelationPath: CorpusRelationJSONPath(relation.RelationID), ReviewPath: CorpusReviewJSONPath(relation.RelationID)})
+		from := atomsByID[relation.FromAtomID]
+		to := atomsByID[relation.ToAtomID]
+		summary.Relations = append(summary.Relations, CorpusGraphSummaryRelation{
+			RelationID:      relation.RelationID,
+			RelationType:    relation.RelationType,
+			ReviewStatus:    relation.ReviewStatus,
+			Confidence:      relation.Confidence,
+			FromAtomID:      relation.FromAtomID,
+			FromSourceID:    from.SourceID,
+			FromSourceLabel: from.SourceLabel,
+			ToAtomID:        relation.ToAtomID,
+			ToSourceID:      to.SourceID,
+			ToSourceLabel:   to.SourceLabel,
+			RelationPath:    CorpusRelationJSONPath(relation.RelationID),
+			ReviewPath:      CorpusReviewJSONPath(relation.RelationID),
+		})
 	}
 	summary.DuplicateClusterCount = duplicateClusterCount(relations)
 	if len(relations) > 0 {
