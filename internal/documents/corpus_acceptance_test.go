@@ -80,6 +80,25 @@ func TestCorpusAcceptanceMissingSourceDocumentIDDoesNotHideUnexpectedCandidates(
 	}
 }
 
+func TestCorpusAcceptanceEvaluatesNoCandidateNegativeControls(t *testing.T) {
+	root, _, answerKey := writeCorpusAcceptanceFixture(t, nil, func(summary *CorpusPressureSummary) {
+		summary.Sources[0].State = CorpusPressureSourceSkipped
+		summary.Sources[0].ReasonCode = CorpusPressureReasonNoSemanticCandidates
+	})
+	answerKey.MinEvalCount = 1
+	answerKey.Sources[0].ExpectedOutcomes[0].ExpectedState = ExpectedOutcomeAbsent
+	answerKey.Sources[0].ExpectedOutcomes[0].RequiredEvidence = nil
+	writeDocumentsTestJSON(t, filepath.Join(root, "answer-key.json"), answerKey)
+
+	summary, err := BuildCorpusAcceptanceBenchmark(root, filepath.Join(root, "answer-key.json"), filepath.Join(root, "benchmark"), CorpusAcceptanceBenchmarkOptions{Threshold: 0.98, HeldOut: true})
+	if err != nil {
+		t.Fatalf("build corpus acceptance benchmark: %v", err)
+	}
+	if summary.UnjudgedCount != 0 || summary.MatchedExpectedCount != 1 || summary.FalseNegativeCount != 0 || summary.Sources[0].Accuracy != 1 {
+		t.Fatalf("no-candidate negative control should be judged correct, got unjudged=%d matched=%d fn=%d source_accuracy=%.2f blockers=%v", summary.UnjudgedCount, summary.MatchedExpectedCount, summary.FalseNegativeCount, summary.Sources[0].Accuracy, summary.Sources[0].Blockers)
+	}
+}
+
 func TestCorpusAcceptanceCalibrationAndTinySuitesCannotPassEligibility(t *testing.T) {
 	root, _, answerKey := writeCorpusAcceptanceFixture(t, []SemanticCandidate{corpusAcceptanceCandidate(t, SemanticCandidateKindAction, ReviewStatusReady)}, nil)
 	answerKey.SuiteKind = CorpusAcceptanceSuiteCalibration
@@ -145,6 +164,35 @@ func TestCorpusAcceptanceRelationMissesDoNotInvalidateSuite(t *testing.T) {
 	}
 	if summary.FalseNegativeCount != 1 || !stringListContains(summary.EligibilityBlockers, "false_negative") {
 		t.Fatalf("expected relation miss to count as false-negative eligibility blocker, got fn=%d blockers=%v", summary.FalseNegativeCount, summary.EligibilityBlockers)
+	}
+}
+
+func TestCorpusAcceptanceRelationFailuresDoNotDistortCandidateRates(t *testing.T) {
+	root, _, answerKey := writeCorpusAcceptanceFixture(t, []SemanticCandidate{corpusAcceptanceCandidate(t, SemanticCandidateKindAction, ReviewStatusReady)}, nil)
+	answerKey.MinEvalCount = 1
+	graphDir := filepath.Join(root, CorpusGraphDirName)
+	if err := os.MkdirAll(graphDir, 0o755); err != nil {
+		t.Fatalf("mkdir graph: %v", err)
+	}
+	writeDocumentsTestJSON(t, filepath.Join(graphDir, "graph-summary.json"), CorpusGraphSummary{
+		SchemaVersion: CorpusGraphSummarySchemaVersion,
+		RelationMetrics: CorpusRelationMetrics{
+			EvalCountedRelationCount: 3,
+			FalsePositiveCount:       2,
+			FalseNegativeCount:       1,
+		},
+	})
+	writeDocumentsTestJSON(t, filepath.Join(root, "answer-key.json"), answerKey)
+
+	summary, err := BuildCorpusAcceptanceBenchmark(root, filepath.Join(root, "answer-key.json"), filepath.Join(root, "benchmark"), CorpusAcceptanceBenchmarkOptions{Threshold: 0.98, HeldOut: true})
+	if err != nil {
+		t.Fatalf("build corpus acceptance benchmark: %v", err)
+	}
+	if summary.FalsePositiveCount != 2 || summary.FalseNegativeCount != 1 {
+		t.Fatalf("relation failures should remain visible in counts, got fp=%d fn=%d", summary.FalsePositiveCount, summary.FalseNegativeCount)
+	}
+	if summary.FalsePositiveRate != 0 || summary.FalseNegativeRate != 0 {
+		t.Fatalf("relation failures should not distort candidate/outcome rates, got fp_rate=%.2f fn_rate=%.2f", summary.FalsePositiveRate, summary.FalseNegativeRate)
 	}
 }
 

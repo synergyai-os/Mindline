@@ -128,7 +128,7 @@ func evaluateCorpusAcceptance(root string, pressure CorpusPressureSummary, answe
 			benchmark.Sources = append(benchmark.Sources, sourceResult)
 			continue
 		}
-		if source.State != CorpusPressureSourceProcessed {
+		if source.State != CorpusPressureSourceProcessed && source.ReasonCode != CorpusPressureReasonNoSemanticCandidates {
 			sourceResult.Blockers = append(sourceResult.Blockers, "source_not_processed:"+string(source.State))
 			sourceResult.EvalCount = len(sourceKey.ExpectedOutcomes)
 			sourceResult.FalseNegativeCount = countExpectedPresent(sourceKey.ExpectedOutcomes)
@@ -145,6 +145,8 @@ func evaluateCorpusAcceptance(root string, pressure CorpusPressureSummary, answe
 		applyCorpusAcceptanceSource(&benchmark, &sourceResult, sourceBenchmark)
 		benchmark.Sources = append(benchmark.Sources, sourceResult)
 	}
+	candidateFalsePositiveCount := benchmark.FalsePositiveCount
+	candidateFalseNegativeCount := benchmark.FalseNegativeCount
 	if graphOK {
 		benchmark.DuplicateCount += graphSummary.RelationTypeCounts[CorpusRelationPossibleDuplicate]
 		benchmark.ContradictionCount += graphSummary.RelationTypeCounts[CorpusRelationContradicts]
@@ -159,9 +161,9 @@ func evaluateCorpusAcceptance(root string, pressure CorpusPressureSummary, answe
 	}
 	benchmark.SuiteValid = len(benchmark.SuiteValidityBlockers) == 0
 	benchmark.Accuracy = ratio(benchmark.MatchedExpectedCount, benchmark.EvalCount)
-	benchmark.FalsePositiveRate = ratio(benchmark.FalsePositiveCount, benchmark.CandidateCount)
-	benchmark.FalseNegativeRate = ratio(benchmark.FalseNegativeCount, benchmark.EvalCount)
-	benchmark.ReviewBurdenRate = ratio(benchmark.ReviewBurdenCount, benchmark.CandidateCount+benchmark.FalseNegativeCount)
+	benchmark.FalsePositiveRate = ratio(candidateFalsePositiveCount, benchmark.CandidateCount)
+	benchmark.FalseNegativeRate = ratio(candidateFalseNegativeCount, benchmark.EvalCount)
+	benchmark.ReviewBurdenRate = ratio(benchmark.ReviewBurdenCount, benchmark.CandidateCount+candidateFalseNegativeCount)
 	benchmark.NextImprovementTargets = corpusAcceptanceTargets(benchmark)
 	benchmark.EligibilityBlockers = corpusAcceptanceEligibilityBlockers(benchmark)
 	benchmark.DEC64Eligible = len(benchmark.EligibilityBlockers) == 0
