@@ -101,6 +101,68 @@ func TestBuildSourceEnrichmentAccountsForMissingUnsupportedAndBlockedURLs(t *tes
 	}
 }
 
+func TestBuildSourceEnrichmentStripsSlackMrkdwnLinkLabels(t *testing.T) {
+	root := t.TempDir()
+	sourcePath := writeSourceEnrichmentFixture(t, root, "source-1", "# Slack link\n\nSave this: <https://example.com/research|read this>\n")
+	manifestPath := writeSourceEnrichmentManifest(t, root, "corpus-enrich-test", CorpusPressureManifestSource{
+		SourceID:   "source-1",
+		SourceKind: SourceKindMarkdown,
+		Path:       sourcePath,
+	})
+	artifactsPath := writeSourceEnrichmentArtifacts(t, root, LocalSourceEnrichmentArtifact{
+		URL:     "https://example.com/research",
+		Title:   "Enriched Slack source",
+		Excerpt: "Requirement: Slack mrkdwn labels must not alter artifact matching.",
+	})
+
+	out := filepath.Join(root, "enriched")
+	summary, err := BuildSourceEnrichment(manifestPath, artifactsPath, out)
+	if err != nil {
+		t.Fatalf("BuildSourceEnrichment: %v", err)
+	}
+	if summary.URLCount != 1 || summary.EnrichedURLCount != 1 || summary.NeedsManualURLCount != 0 {
+		t.Fatalf("expected Slack mrkdwn URL to match local artifact: %+v", summary)
+	}
+	artifact := mustReadString(t, filepath.Join(out, SourceEnrichmentDirName, "sources", "source-1.json"))
+	if strings.Contains(artifact, "|read this") {
+		t.Fatalf("Slack label leaked into extracted URL:\n%s", artifact)
+	}
+	if !strings.Contains(artifact, `"normalized_url": "https://example.com/research"`) {
+		t.Fatalf("missing normalized URL without Slack label:\n%s", artifact)
+	}
+}
+
+func TestBuildSourceEnrichmentBlocksUnsafeSlackMrkdwnLinkLabels(t *testing.T) {
+	root := t.TempDir()
+	unsafeSecret := "sk-proj-" + strings.Repeat("c", 48)
+	sourcePath := writeSourceEnrichmentFixture(t, root, "source-1", "# Slack link\n\nSave this: <https://example.com/research|"+unsafeSecret+">\n")
+	manifestPath := writeSourceEnrichmentManifest(t, root, "corpus-enrich-test", CorpusPressureManifestSource{
+		SourceID:   "source-1",
+		SourceKind: SourceKindMarkdown,
+		Path:       sourcePath,
+	})
+	artifactsPath := writeSourceEnrichmentArtifacts(t, root, LocalSourceEnrichmentArtifact{
+		URL:   "https://example.com/research",
+		Title: "Should not enrich",
+	})
+
+	out := filepath.Join(root, "enriched")
+	summary, err := BuildSourceEnrichment(manifestPath, artifactsPath, out)
+	if err != nil {
+		t.Fatalf("BuildSourceEnrichment: %v", err)
+	}
+	if summary.EnrichedURLCount != 0 || summary.BlockedURLCount != 1 {
+		t.Fatalf("expected unsafe Slack label to block enrichment: %+v", summary)
+	}
+	all := readAllFiles(t, out)
+	if strings.Contains(all, unsafeSecret) || strings.Contains(all, "Should not enrich") {
+		t.Fatalf("unsafe Slack label or artifact payload leaked:\n%s", all)
+	}
+	if !strings.Contains(all, "unsafe_or_private_url") || !strings.Contains(all, redactedSourceEnrichmentURL) {
+		t.Fatalf("expected unsafe Slack label redaction proof:\n%s", all)
+	}
+}
+
 func TestBuildSourceEnrichmentBlocksUnsafeArtifactPayload(t *testing.T) {
 	root := t.TempDir()
 	sourcePath := writeSourceEnrichmentFixture(t, root, "source-1", "# Link\n\nhttps://example.com/research\n")

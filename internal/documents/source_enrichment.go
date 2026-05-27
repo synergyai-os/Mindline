@@ -124,7 +124,12 @@ type localArtifactIndex struct {
 	byURL map[string]LocalSourceEnrichmentArtifact
 }
 
-var sourceEnrichmentURLPattern = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s<>"')\]]+`)
+type sourceEnrichmentURLMatch struct {
+	rawURL      string
+	sourceToken string
+}
+
+var sourceEnrichmentURLPattern = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s<>"')\]|]+`)
 
 const redactedSourceEnrichmentURL = "[redacted blocked url]"
 
@@ -283,7 +288,7 @@ func enrichManifestSource(manifestRoot, outRoot string, source CorpusPressureMan
 	}
 	body := string(data)
 	outputBody := body
-	rawURLs := extractSourceEnrichmentURLs(body)
+	urlMatches := extractSourceEnrichmentURLs(body)
 	outputPath := filepath.ToSlash(filepath.Join("sources", sanitizeID(source.SourceID), "source.md"))
 	artifactPath := filepath.ToSlash(filepath.Join(SourceEnrichmentDirName, "sources", sanitizeID(source.SourceID)+".json"))
 	sourceArtifact := SourceEnrichmentSourceArtifact{
@@ -302,18 +307,18 @@ func enrichManifestSource(manifestRoot, outRoot string, source CorpusPressureMan
 		ArtifactPath: artifactPath,
 		URLStates:    map[SourceEnrichmentState]int{},
 	}
-	if len(rawURLs) == 0 {
+	if len(urlMatches) == 0 {
 		sourceSummary.State = SourceEnrichmentStateNoURL
 		sourceArtifact.State = SourceEnrichmentStateNoURL
 		sourceArtifact.ReasonCodes = []string{"no_url"}
 		sourceSummary.ReasonCodes = []string{"no_url"}
 		return sourceSummary, sourceArtifact, body, nil
 	}
-	for _, rawURL := range rawURLs {
-		enrichedURL := enrichSourceURL(rawURL, artifacts)
+	for _, urlMatch := range urlMatches {
+		enrichedURL := enrichSourceURL(urlMatch, artifacts)
 		sourceArtifact.URLs = append(sourceArtifact.URLs, enrichedURL)
 		if sourceEnrichmentBlockedState(enrichedURL.State) {
-			outputBody = strings.ReplaceAll(outputBody, rawURL, redactedSourceEnrichmentURL)
+			outputBody = strings.ReplaceAll(outputBody, urlMatch.sourceToken, redactedSourceEnrichmentURL)
 		}
 		sourceSummary.URLCount++
 		sourceSummary.URLStates[enrichedURL.State]++
@@ -342,20 +347,20 @@ func ensureSourceEnrichmentOutputPath(root, rel string) error {
 	return nil
 }
 
-func enrichSourceURL(rawURL string, artifacts localArtifactIndex) SourceEnrichmentURL {
-	if sourceEnrichmentUnsafe(rawURL) {
+func enrichSourceURL(urlMatch sourceEnrichmentURLMatch, artifacts localArtifactIndex) SourceEnrichmentURL {
+	if sourceEnrichmentUnsafe(urlMatch.sourceToken) {
 		return SourceEnrichmentURL{
 			RawURL:        redactedSourceEnrichmentURL,
 			NormalizedURL: redactedSourceEnrichmentURL,
-			Kind:          sourceEnrichmentURLKindFromRaw(rawURL),
+			Kind:          sourceEnrichmentURLKindFromRaw(urlMatch.rawURL),
 			State:         SourceEnrichmentStateBlockedPrivateOrSecret,
 			RetrievalMode: SourceEnrichmentRetrievalNone,
 			ReasonCodes:   []string{"unsafe_or_private_url"},
 		}
 	}
-	normalized, kind, policyOK := classifySourceEnrichmentURL(rawURL)
+	normalized, kind, policyOK := classifySourceEnrichmentURL(urlMatch.rawURL)
 	record := SourceEnrichmentURL{
-		RawURL:        rawURL,
+		RawURL:        urlMatch.rawURL,
 		NormalizedURL: normalized,
 		Kind:          kind,
 		RetrievalMode: SourceEnrichmentRetrievalNone,
@@ -395,18 +400,36 @@ func enrichSourceURL(rawURL string, artifacts localArtifactIndex) SourceEnrichme
 	return record
 }
 
-func extractSourceEnrichmentURLs(value string) []string {
+func extractSourceEnrichmentURLs(value string) []sourceEnrichmentURLMatch {
 	seen := map[string]bool{}
-	var out []string
-	for _, match := range sourceEnrichmentURLPattern.FindAllString(value, -1) {
+	var out []sourceEnrichmentURLMatch
+	for _, loc := range sourceEnrichmentURLPattern.FindAllStringIndex(value, -1) {
+		match := value[loc[0]:loc[1]]
 		clean := strings.TrimRight(match, ".,;:")
-		if seen[clean] {
+		token := clean
+		if loc[0] > 0 && value[loc[0]-1] == '<' {
+			if closeOffset := strings.IndexByte(value[loc[1]:], '>'); closeOffset >= 0 {
+				label := value[loc[1] : loc[1]+closeOffset]
+				if strings.HasPrefix(label, "|") {
+					token = value[loc[0]-1 : loc[1]+closeOffset+1]
+				}
+			}
+		}
+		if seen[token] {
 			continue
 		}
-		seen[clean] = true
-		out = append(out, clean)
+		seen[token] = true
+		out = append(out, sourceEnrichmentURLMatch{
+			rawURL:      clean,
+			sourceToken: token,
+		})
 	}
-	sort.Strings(out)
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].rawURL == out[j].rawURL {
+			return out[i].sourceToken < out[j].sourceToken
+		}
+		return out[i].rawURL < out[j].rawURL
+	})
 	return out
 }
 
