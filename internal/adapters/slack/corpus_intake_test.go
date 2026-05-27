@@ -141,6 +141,112 @@ func TestBuildCorpusIntakeRemovesStaleManifestWhenNoSourcesAreEligible(t *testin
 	}
 }
 
+func TestBuildCorpusIntakeRemovesStaleSourcesWhenNoSourcesAreEligible(t *testing.T) {
+	out := t.TempDir()
+	staleSourcePath := filepath.Join(out, "sources", "slack-stale", "source.md")
+	if err := os.MkdirAll(filepath.Dir(staleSourcePath), 0o755); err != nil {
+		t.Fatalf("seed stale source dir: %v", err)
+	}
+	if err := os.WriteFile(staleSourcePath, []byte("stale private Slack source"), 0o644); err != nil {
+		t.Fatalf("seed stale source: %v", err)
+	}
+
+	summary, err := BuildCorpusIntake(Payload{
+		Source: Source{Workspace: "synthetic", ChannelID: "DTEST", ChannelName: "self-dm", AdapterID: "slack"},
+		Messages: []Message{
+			{TS: "1710000000.000001", User: "U123", AuthorName: "Randy", Text: ""},
+			{TS: "1710000001.000001", User: "U123", AuthorName: "Randy", Text: "api_key=sk_live_secret"},
+		},
+	}, out)
+	if err != nil {
+		t.Fatalf("BuildCorpusIntake: %v", err)
+	}
+	if summary.ProcessedCount != 0 || summary.ManifestPath != "" {
+		t.Fatalf("expected no processed sources and no manifest: %#v", summary)
+	}
+	if _, err := os.Stat(filepath.Join(out, "sources")); !os.IsNotExist(err) {
+		t.Fatalf("expected stale source tree removed, stat err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(out, CorpusIntakeDirName, "intake-summary.json")); err != nil {
+		t.Fatalf("expected summary retained after source cleanup: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(out, CorpusIntakeDirName, "intake-report.md")); err != nil {
+		t.Fatalf("expected report retained after source cleanup: %v", err)
+	}
+}
+
+func TestBuildCorpusIntakePrunesStaleSourcesWhenCurrentSourcesAreEligible(t *testing.T) {
+	out := t.TempDir()
+	staleSourcePath := filepath.Join(out, "sources", "slack-stale", "source.md")
+	if err := os.MkdirAll(filepath.Dir(staleSourcePath), 0o755); err != nil {
+		t.Fatalf("seed stale source dir: %v", err)
+	}
+	if err := os.WriteFile(staleSourcePath, []byte("stale private Slack source"), 0o644); err != nil {
+		t.Fatalf("seed stale source: %v", err)
+	}
+
+	summary, err := BuildCorpusIntake(Payload{
+		Source: Source{Workspace: "synthetic", ChannelID: "DTEST", ChannelName: "self-dm", AdapterID: "slack"},
+		Messages: []Message{
+			{TS: "1710000000.000001", User: "U123", AuthorName: "Randy", Text: "current batch source"},
+		},
+	}, out)
+	if err != nil {
+		t.Fatalf("BuildCorpusIntake: %v", err)
+	}
+	if summary.ProcessedCount != 1 || summary.ManifestPath == "" {
+		t.Fatalf("expected current source and manifest: %#v", summary)
+	}
+	if _, err := os.Stat(staleSourcePath); !os.IsNotExist(err) {
+		t.Fatalf("expected stale source removed, stat err=%v", err)
+	}
+	currentSource := filepath.Join(out, filepath.FromSlash(summary.Items[0].SourcePath))
+	if source := string(mustReadFile(t, currentSource)); !strings.Contains(source, "current batch source") {
+		t.Fatalf("expected current source retained, got:\n%s", source)
+	}
+}
+
+func TestBuildCorpusIntakePrunesCurrentSourceWhenArtifactWriteFails(t *testing.T) {
+	out := t.TempDir()
+	outside := t.TempDir()
+	badTS := "1710000000.000001"
+	badSourceID := corpusIntakeSourceID(Source{Workspace: "synthetic", ChannelID: "DTEST"}, badTS)
+	badSourcePath := filepath.Join(out, "sources", badSourceID)
+	if err := os.MkdirAll(filepath.Dir(badSourcePath), 0o755); err != nil {
+		t.Fatalf("seed sources dir: %v", err)
+	}
+	if err := os.Symlink(outside, badSourcePath); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	summary, err := BuildCorpusIntake(Payload{
+		Source: Source{Workspace: "synthetic", ChannelID: "DTEST", ChannelName: "self-dm", AdapterID: "slack"},
+		Messages: []Message{
+			{TS: badTS, User: "U123", AuthorName: "Randy", Text: "current bad source"},
+			{TS: "1710000001.000001", User: "U123", AuthorName: "Randy", Text: "current good source"},
+		},
+	}, out)
+	if err != nil {
+		t.Fatalf("BuildCorpusIntake: %v", err)
+	}
+	if summary.ProcessedCount != 1 || summary.BlockedCount != 1 || summary.ManifestPath == "" {
+		t.Fatalf("expected one processed source, one blocked artifact write, and manifest: %#v", summary)
+	}
+	if summary.Items[0].ReasonCode != CorpusIntakeReasonArtifactWrite {
+		t.Fatalf("expected bad source to be blocked by artifact write, got %#v", summary.Items)
+	}
+	if _, err := os.Lstat(badSourcePath); !os.IsNotExist(err) {
+		t.Fatalf("expected failed current source path pruned, lstat err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "source.md")); !os.IsNotExist(err) {
+		t.Fatalf("source escaped to symlink target, stat err=%v", err)
+	}
+	currentSource := filepath.Join(out, filepath.FromSlash(summary.Items[1].SourcePath))
+	if source := string(mustReadFile(t, currentSource)); !strings.Contains(source, "current good source") {
+		t.Fatalf("expected good current source retained, got:\n%s", source)
+	}
+}
+
 func TestBuildCorpusIntakeUsesMissingPermalinkSentinelInSource(t *testing.T) {
 	out := t.TempDir()
 	summary, err := BuildCorpusIntake(Payload{

@@ -60,10 +60,12 @@ type Runner struct {
 type FileSystem interface {
 	ReadFile(path string) ([]byte, error)
 	MkdirAll(path string, perm fs.FileMode) error
+	ReadDir(path string) ([]fs.DirEntry, error)
 	Stat(path string) (fs.FileInfo, error)
 	CanWriteDir(path string) error
 	WriteFile(path string, data []byte) error
 	Remove(path string) error
+	RemoveAll(path string) error
 	Getwd() (string, error)
 	RealPath(path string) (string, error)
 	IsSymlink(path string) (bool, error)

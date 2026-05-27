@@ -20,6 +20,14 @@ func (OSFileSystem) MkdirAll(path string, perm fs.FileMode) error {
 	return os.MkdirAll(path, perm)
 }
 
+func (OSFileSystem) ReadDir(path string) ([]fs.DirEntry, error) {
+	entries, err := os.ReadDir(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	return entries, err
+}
+
 func (OSFileSystem) Stat(path string) (fs.FileInfo, error) {
 	return os.Stat(path)
 }
@@ -47,6 +55,10 @@ func (OSFileSystem) Remove(path string) error {
 		return err
 	}
 	return nil
+}
+
+func (OSFileSystem) RemoveAll(path string) error {
+	return os.RemoveAll(path)
 }
 
 func (OSFileSystem) Getwd() (string, error) {

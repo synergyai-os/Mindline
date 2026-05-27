@@ -55,6 +55,30 @@ func (m *MemoryFS) MkdirAll(path string, _ fs.FileMode) error {
 	return nil
 }
 
+func (m *MemoryFS) ReadDir(path string) ([]fs.DirEntry, error) {
+	clean := filepath.Clean(path)
+	seen := map[string]bool{}
+	for file := range m.files {
+		if dir := filepath.Dir(file); dir == clean {
+			seen[filepath.Base(file)] = false
+		}
+	}
+	for dir := range m.dirs {
+		parent := filepath.Dir(dir)
+		if parent == clean && dir != clean {
+			seen[filepath.Base(dir)] = true
+		}
+	}
+	entries := make([]fs.DirEntry, 0, len(seen))
+	for name, isDir := range seen {
+		entries = append(entries, memoryDirEntry{name: name, dir: isDir})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Name() < entries[j].Name()
+	})
+	return entries, nil
+}
+
 func (m *MemoryFS) Stat(path string) (fs.FileInfo, error) {
 	clean := filepath.Clean(path)
 	if data, ok := m.files[clean]; ok {
@@ -102,6 +126,21 @@ func (m *MemoryFS) Remove(path string) error {
 		return fmt.Errorf("cannot remove directory: %s", clean)
 	}
 	delete(m.files, clean)
+	return nil
+}
+
+func (m *MemoryFS) RemoveAll(path string) error {
+	clean := filepath.Clean(path)
+	for file := range m.files {
+		if file == clean || strings.HasPrefix(file, clean+string(filepath.Separator)) {
+			delete(m.files, file)
+		}
+	}
+	for dir := range m.dirs {
+		if dir == clean || strings.HasPrefix(dir, clean+string(filepath.Separator)) {
+			delete(m.dirs, dir)
+		}
+	}
 	return nil
 }
 
@@ -192,3 +231,20 @@ func (m memoryFileInfo) Mode() fs.FileMode {
 func (m memoryFileInfo) ModTime() time.Time { return time.Time{} }
 func (m memoryFileInfo) IsDir() bool        { return m.dir }
 func (m memoryFileInfo) Sys() any           { return nil }
+
+type memoryDirEntry struct {
+	name string
+	dir  bool
+}
+
+func (m memoryDirEntry) Name() string { return m.name }
+func (m memoryDirEntry) IsDir() bool  { return m.dir }
+func (m memoryDirEntry) Type() fs.FileMode {
+	if m.dir {
+		return fs.ModeDir
+	}
+	return 0
+}
+func (m memoryDirEntry) Info() (fs.FileInfo, error) {
+	return memoryFileInfo{name: m.name, dir: m.dir}, nil
+}

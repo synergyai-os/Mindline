@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -19,8 +20,10 @@ const CorpusIntakeDirName = "slack-corpus-intake"
 
 type CorpusIntakeFileSystem interface {
 	MkdirAll(path string, perm os.FileMode) error
+	ReadDir(path string) ([]fs.DirEntry, error)
 	WriteFile(path string, data []byte) error
 	Remove(path string) error
+	RemoveAll(path string) error
 	IsSymlink(path string) (bool, error)
 }
 
@@ -75,6 +78,10 @@ func buildCorpusIntake(payload Payload, root string, fileSystem CorpusIntakeFile
 		SchemaVersion: documents.CorpusPressureManifestSchemaVersion,
 		CorpusID:      summary.CorpusID,
 	}
+	currentSourceIDs := corpusIntakeProcessedSourceIDs(result.Candidates, payload.Source)
+	if err := pruneCorpusIntakeSources(fileSystem, root, currentSourceIDs); err != nil {
+		return CorpusIntakeSummary{}, err
+	}
 	processedSourceIDs := map[string]bool{}
 	for _, candidate := range result.Candidates {
 		item := corpusIntakeItem(candidate, payload.Source)
@@ -116,12 +123,18 @@ func buildCorpusIntake(payload Payload, root string, fileSystem CorpusIntakeFile
 	summary.ProcessedCount = summary.StateCounts[CorpusIntakeItemProcessed]
 	summary.SkippedCount = summary.StateCounts[CorpusIntakeItemSkipped]
 	summary.BlockedCount = summary.StateCounts[CorpusIntakeItemBlocked]
+	if err := pruneCorpusIntakeSources(fileSystem, root, corpusIntakeManifestSourceIDs(manifest)); err != nil {
+		return CorpusIntakeSummary{}, err
+	}
 	if len(manifest.Sources) > 0 {
 		if err := writeCorpusIntakeManifest(fileSystem, root, manifest); err != nil {
 			return CorpusIntakeSummary{}, err
 		}
 	} else {
 		if err := removeCorpusIntakeManifest(fileSystem, root); err != nil {
+			return CorpusIntakeSummary{}, err
+		}
+		if err := removeCorpusIntakeSources(fileSystem, root); err != nil {
 			return CorpusIntakeSummary{}, err
 		}
 		summary.ManifestPath = ""
@@ -133,6 +146,25 @@ func buildCorpusIntake(payload Payload, root string, fileSystem CorpusIntakeFile
 		return CorpusIntakeSummary{}, err
 	}
 	return summary, nil
+}
+
+func corpusIntakeManifestSourceIDs(manifest documents.CorpusPressureManifest) map[string]bool {
+	sourceIDs := map[string]bool{}
+	for _, source := range manifest.Sources {
+		sourceIDs[source.SourceID] = true
+	}
+	return sourceIDs
+}
+
+func corpusIntakeProcessedSourceIDs(candidates []sbos.Candidate, source Source) map[string]bool {
+	sourceIDs := map[string]bool{}
+	for _, candidate := range candidates {
+		item := corpusIntakeItem(candidate, source)
+		if item.State == CorpusIntakeItemProcessed {
+			sourceIDs[item.SourceID] = true
+		}
+	}
+	return sourceIDs
 }
 
 func corpusIntakeItem(candidate sbos.Candidate, source Source) CorpusIntakeItem {
@@ -198,6 +230,45 @@ func removeCorpusIntakeManifest(fileSystem CorpusIntakeFileSystem, root string) 
 		return fmt.Errorf("manifest path escaped output directory")
 	}
 	return fileSystem.Remove(target)
+}
+
+func removeCorpusIntakeSources(fileSystem CorpusIntakeFileSystem, root string) error {
+	target := filepath.Join(root, "sources")
+	if !isInside(root, target) {
+		return fmt.Errorf("sources path escaped output directory")
+	}
+	return fileSystem.RemoveAll(target)
+}
+
+func pruneCorpusIntakeSources(fileSystem CorpusIntakeFileSystem, root string, keepSourceIDs map[string]bool) error {
+	sourcesDir := filepath.Join(root, "sources")
+	if !isInside(root, sourcesDir) {
+		return fmt.Errorf("sources path escaped output directory")
+	}
+	isSymlink, err := fileSystem.IsSymlink(sourcesDir)
+	if err != nil {
+		return err
+	}
+	if isSymlink {
+		return nil
+	}
+	entries, err := fileSystem.ReadDir(sourcesDir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if keepSourceIDs[entry.Name()] {
+			continue
+		}
+		target := filepath.Join(sourcesDir, entry.Name())
+		if !isInside(root, target) {
+			return fmt.Errorf("source path escaped output directory")
+		}
+		if err := fileSystem.RemoveAll(target); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func writeCorpusIntakeSummary(fileSystem CorpusIntakeFileSystem, root string, summary CorpusIntakeSummary) error {
@@ -423,6 +494,14 @@ func (osCorpusIntakeFileSystem) MkdirAll(path string, perm os.FileMode) error {
 	return os.MkdirAll(path, perm)
 }
 
+func (osCorpusIntakeFileSystem) ReadDir(path string) ([]fs.DirEntry, error) {
+	entries, err := os.ReadDir(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	return entries, err
+}
+
 func (osCorpusIntakeFileSystem) WriteFile(path string, data []byte) error {
 	return os.WriteFile(path, data, 0o644)
 }
@@ -432,6 +511,10 @@ func (osCorpusIntakeFileSystem) Remove(path string) error {
 		return err
 	}
 	return nil
+}
+
+func (osCorpusIntakeFileSystem) RemoveAll(path string) error {
+	return os.RemoveAll(path)
 }
 
 func (osCorpusIntakeFileSystem) IsSymlink(path string) (bool, error) {
