@@ -119,6 +119,35 @@ func TestCorpusAcceptanceBlocksWrongKindFalseTrust(t *testing.T) {
 	}
 }
 
+func TestCorpusAcceptanceRelationMissesDoNotInvalidateSuite(t *testing.T) {
+	root, _, answerKey := writeCorpusAcceptanceFixture(t, []SemanticCandidate{corpusAcceptanceCandidate(t, SemanticCandidateKindAction, ReviewStatusReady)}, nil)
+	answerKey.MinEvalCount = 1
+	answerKey.CoverageRequirements.RelationTypes = []SemanticRelationshipType{SemanticRelationshipDerivedFrom}
+	graphDir := filepath.Join(root, CorpusGraphDirName)
+	if err := os.MkdirAll(graphDir, 0o755); err != nil {
+		t.Fatalf("mkdir graph: %v", err)
+	}
+	writeDocumentsTestJSON(t, filepath.Join(graphDir, "graph-summary.json"), CorpusGraphSummary{
+		SchemaVersion: CorpusGraphSummarySchemaVersion,
+		RelationMetrics: CorpusRelationMetrics{
+			EvalCountedRelationCount: 0,
+			FalseNegativeCount:       1,
+		},
+	})
+	writeDocumentsTestJSON(t, filepath.Join(root, "answer-key.json"), answerKey)
+
+	summary, err := BuildCorpusAcceptanceBenchmark(root, filepath.Join(root, "answer-key.json"), filepath.Join(root, "benchmark"), CorpusAcceptanceBenchmarkOptions{Threshold: 0.98, HeldOut: true})
+	if err != nil {
+		t.Fatalf("build corpus acceptance benchmark: %v", err)
+	}
+	if stringListContains(summary.SuiteValidityBlockers, "relation_answer_key_missing") {
+		t.Fatalf("relation misses should not be treated as a missing answer key, got blockers=%v", summary.SuiteValidityBlockers)
+	}
+	if summary.FalseNegativeCount != 1 || !stringListContains(summary.EligibilityBlockers, "false_negative") {
+		t.Fatalf("expected relation miss to count as false-negative eligibility blocker, got fn=%d blockers=%v", summary.FalseNegativeCount, summary.EligibilityBlockers)
+	}
+}
+
 func TestCorpusAcceptanceRejectsGeneratedRunProvenance(t *testing.T) {
 	root, _, answerKey := writeCorpusAcceptanceFixture(t, []SemanticCandidate{corpusAcceptanceCandidate(t, SemanticCandidateKindAction, ReviewStatusReady)}, nil)
 	answerKey.Provenance.Independence = "generated_from_evaluated_run"

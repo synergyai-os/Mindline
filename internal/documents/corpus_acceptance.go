@@ -154,7 +154,7 @@ func evaluateCorpusAcceptance(root string, pressure CorpusPressureSummary, answe
 	if requiresCorpusRelationCoverage(answerKey) && !graphOK {
 		benchmark.SuiteValidityBlockers = append(benchmark.SuiteValidityBlockers, "graph_summary_missing")
 	}
-	if requiresCorpusRelationCoverage(answerKey) && graphOK && graphSummary.RelationMetrics.EvalCountedRelationCount == 0 {
+	if requiresCorpusRelationCoverage(answerKey) && graphOK && graphSummary.RelationMetrics.EvalCountedRelationCount == 0 && graphSummary.RelationMetrics.FalseNegativeCount == 0 {
 		benchmark.SuiteValidityBlockers = append(benchmark.SuiteValidityBlockers, "relation_answer_key_missing")
 	}
 	benchmark.SuiteValid = len(benchmark.SuiteValidityBlockers) == 0
