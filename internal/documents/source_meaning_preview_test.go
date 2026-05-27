@@ -92,6 +92,36 @@ func TestSourceMeaningPreviewRedactsUnsafeEvidence(t *testing.T) {
 	}
 }
 
+func TestReadSourceMeaningGraphDeduplicatesSameSourceRelations(t *testing.T) {
+	root := t.TempDir()
+	graphDir := filepath.Join(root, "corpus-graph")
+	writeDocumentsTestJSON(t, filepath.Join(graphDir, "graph-summary.json"), CorpusGraphSummary{
+		SchemaVersion: CorpusGraphSummarySchemaVersion,
+		Atoms: []CorpusGraphSummaryAtom{
+			{AtomID: "atom-a", SourceID: "source-1", AtomPath: "atoms/atom-a.json"},
+			{AtomID: "atom-b", SourceID: "source-1", AtomPath: "atoms/atom-b.json"},
+		},
+		Relations: []CorpusGraphSummaryRelation{
+			{RelationID: "rel-same-source", FromAtomID: "atom-a", ToAtomID: "atom-b", RelationPath: "relations/rel-same-source.json"},
+		},
+	})
+	writeDocumentsTestJSON(t, filepath.Join(graphDir, "atoms", "atom-a.json"), CorpusGraphAtom{AtomID: "atom-a", SourceID: "source-1"})
+	writeDocumentsTestJSON(t, filepath.Join(graphDir, "atoms", "atom-b.json"), CorpusGraphAtom{AtomID: "atom-b", SourceID: "source-1"})
+	writeDocumentsTestJSON(t, filepath.Join(graphDir, "relations", "rel-same-source.json"), CorpusGraphRelation{
+		RelationID: "rel-same-source",
+		FromAtomID: "atom-a",
+		ToAtomID:   "atom-b",
+	})
+
+	_, _, relationsBySource, err := readSourceMeaningGraph(root, "corpus-graph/graph-summary.json")
+	if err != nil {
+		t.Fatalf("read source meaning graph: %v", err)
+	}
+	if got := len(relationsBySource["source-1"]); got != 1 {
+		t.Fatalf("same-source relation count = %d, want 1", got)
+	}
+}
+
 func mustReadString(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)

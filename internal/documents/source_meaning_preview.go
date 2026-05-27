@@ -219,10 +219,11 @@ func readSourceMeaningGraph(root, graphSummaryPath string) (CorpusGraphSummary, 
 		if err := readSourceMeaningJSONFile(relationPath, &relation); err != nil {
 			return CorpusGraphSummary{}, nil, nil, err
 		}
-		if fromSource := sourceForRelationEndpoint(summary, relation.FromAtomID); fromSource != "" {
+		fromSource := sourceForRelationEndpoint(summary, relation.FromAtomID)
+		if fromSource != "" {
 			relationsBySource[fromSource] = append(relationsBySource[fromSource], relation)
 		}
-		if toSource := sourceForRelationEndpoint(summary, relation.ToAtomID); toSource != "" {
+		if toSource := sourceForRelationEndpoint(summary, relation.ToAtomID); toSource != "" && toSource != fromSource {
 			relationsBySource[toSource] = append(relationsBySource[toSource], relation)
 		}
 	}
