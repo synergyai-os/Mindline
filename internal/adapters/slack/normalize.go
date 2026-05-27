@@ -22,6 +22,9 @@ var secretPatterns = []string{
 	"xoxp-",
 	"bearer ",
 	"sk_live_",
+	"sk-proj-",
+	"sk-svcacct-",
+	"sk-admin-",
 }
 
 func Normalize(payload Payload) (Result, error) {

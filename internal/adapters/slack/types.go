@@ -71,3 +71,60 @@ type Checkpoint struct {
 	LastTS                string `json:"last_ts"`
 	NextOldestExclusiveTS string `json:"next_oldest_exclusive_ts"`
 }
+
+const CorpusIntakeSummarySchemaVersion = "slack-corpus-intake-summary/v0.1"
+
+type CorpusIntakeItemState string
+
+const (
+	CorpusIntakeItemProcessed CorpusIntakeItemState = "processed"
+	CorpusIntakeItemSkipped   CorpusIntakeItemState = "skipped"
+	CorpusIntakeItemBlocked   CorpusIntakeItemState = "blocked"
+)
+
+type CorpusIntakeReason string
+
+const (
+	CorpusIntakeReasonNone             CorpusIntakeReason = "none"
+	CorpusIntakeReasonEmptyMessage     CorpusIntakeReason = "empty_message"
+	CorpusIntakeReasonSecretLike       CorpusIntakeReason = "secret_like"
+	CorpusIntakeReasonDuplicateMessage CorpusIntakeReason = "duplicate_message"
+	CorpusIntakeReasonArtifactWrite    CorpusIntakeReason = "artifact_write"
+)
+
+type CorpusIntakeSummary struct {
+	SchemaVersion      string                        `json:"schema_version"`
+	AdapterID          string                        `json:"adapter_id"`
+	CorpusID           string                        `json:"corpus_id"`
+	Source             string                        `json:"source"`
+	ChannelID          string                        `json:"channel_id"`
+	ChannelName        string                        `json:"channel_name"`
+	BatchOrder         string                        `json:"batch_order"`
+	InputCount         int                           `json:"input_count"`
+	ProcessedCount     int                           `json:"processed_count"`
+	SkippedCount       int                           `json:"skipped_count"`
+	BlockedCount       int                           `json:"blocked_count"`
+	PrivateProvenance  int                           `json:"private_provenance_count"`
+	SecretLikeCount    int                           `json:"secret_like_count"`
+	ManifestPath       string                        `json:"manifest_path"`
+	ReportPath         string                        `json:"report_path"`
+	DestinationWrites  int                           `json:"destination_writes"`
+	ProductBrainWrites int                           `json:"product_brain_writes"`
+	TolariaWrites      int                           `json:"tolaria_writes"`
+	AuthorityIDs       []string                      `json:"authority_ids"`
+	Items              []CorpusIntakeItem            `json:"items"`
+	ReasonCounts       map[CorpusIntakeReason]int    `json:"reason_counts"`
+	StateCounts        map[CorpusIntakeItemState]int `json:"state_counts"`
+}
+
+type CorpusIntakeItem struct {
+	SourceID     string                `json:"source_id"`
+	ExternalID   string                `json:"external_id"`
+	SlackTS      string                `json:"slack_ts"`
+	State        CorpusIntakeItemState `json:"state"`
+	ReasonCode   CorpusIntakeReason    `json:"reason_code"`
+	SourcePath   string                `json:"source_path,omitempty"`
+	Private      bool                  `json:"private"`
+	SecretLike   bool                  `json:"secret_like"`
+	EmptyContent bool                  `json:"empty_content"`
+}
