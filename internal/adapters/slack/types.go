@@ -85,10 +85,11 @@ const (
 type CorpusIntakeReason string
 
 const (
-	CorpusIntakeReasonNone          CorpusIntakeReason = "none"
-	CorpusIntakeReasonEmptyMessage  CorpusIntakeReason = "empty_message"
-	CorpusIntakeReasonSecretLike    CorpusIntakeReason = "secret_like"
-	CorpusIntakeReasonArtifactWrite CorpusIntakeReason = "artifact_write"
+	CorpusIntakeReasonNone             CorpusIntakeReason = "none"
+	CorpusIntakeReasonEmptyMessage     CorpusIntakeReason = "empty_message"
+	CorpusIntakeReasonSecretLike       CorpusIntakeReason = "secret_like"
+	CorpusIntakeReasonDuplicateMessage CorpusIntakeReason = "duplicate_message"
+	CorpusIntakeReasonArtifactWrite    CorpusIntakeReason = "artifact_write"
 )
 
 type CorpusIntakeSummary struct {

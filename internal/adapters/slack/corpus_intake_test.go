@@ -109,6 +109,38 @@ func TestBuildCorpusIntakeUsesMissingPermalinkSentinelInSource(t *testing.T) {
 	}
 }
 
+func TestBuildCorpusIntakeSkipsDuplicateSlackTimestamps(t *testing.T) {
+	out := t.TempDir()
+	summary, err := BuildCorpusIntake(Payload{
+		Source: Source{Workspace: "synthetic", ChannelID: "DTEST", ChannelName: "self-dm", AdapterID: "slack"},
+		Messages: []Message{
+			{TS: "1710000000.000001", User: "U123", AuthorName: "Randy", Text: "Save this once"},
+			{TS: "1710000000.000001", User: "U123", AuthorName: "Randy", Text: "Save this duplicate"},
+		},
+	}, out)
+	if err != nil {
+		t.Fatalf("BuildCorpusIntake: %v", err)
+	}
+	if summary.InputCount != 2 || summary.ProcessedCount != 1 || summary.SkippedCount != 1 || summary.BlockedCount != 0 {
+		t.Fatalf("expected one processed source and one skipped duplicate: %#v", summary)
+	}
+	if summary.Items[1].ReasonCode != CorpusIntakeReasonDuplicateMessage {
+		t.Fatalf("expected duplicate reason for second item: %#v", summary.Items)
+	}
+
+	var manifest documents.CorpusPressureManifest
+	if err := json.Unmarshal(mustReadFile(t, filepath.Join(out, "corpus-pressure-manifest.json")), &manifest); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+	if len(manifest.Sources) != 1 {
+		t.Fatalf("expected duplicate timestamp to emit one manifest source, got %#v", manifest.Sources)
+	}
+	source := string(mustReadFile(t, filepath.Join(out, filepath.FromSlash(manifest.Sources[0].Path))))
+	if !strings.Contains(source, "Save this once") || strings.Contains(source, "Save this duplicate") {
+		t.Fatalf("expected first source content only, got:\n%s", source)
+	}
+}
+
 func TestBuildCorpusIntakeRejectsNestedSourceSymlinkEscape(t *testing.T) {
 	out := t.TempDir()
 	outside := t.TempDir()

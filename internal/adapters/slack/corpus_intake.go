@@ -57,22 +57,29 @@ func BuildCorpusIntake(payload Payload, outDir string) (CorpusIntakeSummary, err
 		SchemaVersion: documents.CorpusPressureManifestSchemaVersion,
 		CorpusID:      summary.CorpusID,
 	}
+	processedSourceIDs := map[string]bool{}
 	for _, candidate := range result.Candidates {
 		item := corpusIntakeItem(candidate, payload.Source)
 		switch item.State {
 		case CorpusIntakeItemProcessed:
-			sourcePath, err := writeCorpusIntakeSource(root, item.SourceID, candidate)
-			if err != nil {
-				item.State = CorpusIntakeItemBlocked
-				item.ReasonCode = CorpusIntakeReasonArtifactWrite
-				item.SourcePath = ""
+			if processedSourceIDs[item.SourceID] {
+				item.State = CorpusIntakeItemSkipped
+				item.ReasonCode = CorpusIntakeReasonDuplicateMessage
 			} else {
-				item.SourcePath = sourcePath
-				manifest.Sources = append(manifest.Sources, documents.CorpusPressureManifestSource{
-					SourceID:   item.SourceID,
-					SourceKind: documents.SourceKindMarkdown,
-					Path:       sourcePath,
-				})
+				processedSourceIDs[item.SourceID] = true
+				sourcePath, err := writeCorpusIntakeSource(root, item.SourceID, candidate)
+				if err != nil {
+					item.State = CorpusIntakeItemBlocked
+					item.ReasonCode = CorpusIntakeReasonArtifactWrite
+					item.SourcePath = ""
+				} else {
+					item.SourcePath = sourcePath
+					manifest.Sources = append(manifest.Sources, documents.CorpusPressureManifestSource{
+						SourceID:   item.SourceID,
+						SourceKind: documents.SourceKindMarkdown,
+						Path:       sourcePath,
+					})
+				}
 			}
 		}
 		summary.Items = append(summary.Items, item)
