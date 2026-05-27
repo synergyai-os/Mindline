@@ -1,0 +1,243 @@
+package documents
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestBuildSourceEnrichmentWritesPressureCompatibleEnrichedSources(t *testing.T) {
+	root := t.TempDir()
+	sourcePath := writeSourceEnrichmentFixture(t, root, "source-1", "# Captured link\n\nSave this: https://example.com/research\n")
+	manifestPath := writeSourceEnrichmentManifest(t, root, "corpus-enrich-test", CorpusPressureManifestSource{
+		SourceID:   "source-1",
+		SourceKind: SourceKindMarkdown,
+		Path:       sourcePath,
+	})
+	artifactsPath := writeSourceEnrichmentArtifacts(t, root, LocalSourceEnrichmentArtifact{
+		URL:         "https://example.com/research",
+		Kind:        "web_url",
+		Title:       "Gateway evidence review",
+		Description: "Requirement: Review captured gateway evidence before destination routing.",
+		Excerpt:     "Requirement: Gateway evidence must stay linked to source context before routing.",
+		SourceName:  "Example Research",
+	})
+
+	out := filepath.Join(root, "enriched")
+	summary, err := BuildSourceEnrichment(manifestPath, artifactsPath, out)
+	if err != nil {
+		t.Fatalf("BuildSourceEnrichment: %v", err)
+	}
+	if summary.SourceCount != 1 || summary.URLCount != 1 || summary.AccountedURLCount != 1 || summary.EnrichedURLCount != 1 {
+		t.Fatalf("bad summary counts: %+v", summary)
+	}
+	if summary.URLAccountingCoverage != 1 || summary.EnrichedArtifactCoverage != 1 {
+		t.Fatalf("bad coverage: %+v", summary)
+	}
+	if summary.Guardrails.DestinationWrites != 0 || summary.Guardrails.ProductBrainWrites != 0 || summary.Guardrails.TolariaWrites != 0 || summary.Guardrails.HostedInferenceCalls != 0 || summary.Guardrails.HostedTelemetryExports != 0 {
+		t.Fatalf("expected zero guardrails: %+v", summary.Guardrails)
+	}
+
+	enrichedSource := mustReadString(t, filepath.Join(out, "sources", "source-1", "source.md"))
+	for _, expected := range []string{"## Enriched Sources", "Retrieval mode: `local_artifact`", "Gateway evidence review", "Requirement: Gateway evidence must stay linked"} {
+		if !strings.Contains(enrichedSource, expected) {
+			t.Fatalf("missing %q in enriched source:\n%s", expected, enrichedSource)
+		}
+	}
+
+	pressureOut := filepath.Join(root, "pressure")
+	if _, _, err := BuildCorpusPressure(filepath.Join(out, "corpus-pressure-manifest.json"), pressureOut, CorpusPressureOptions{}); err != nil {
+		t.Fatalf("BuildCorpusPressure over enriched manifest: %v", err)
+	}
+	meaningOut := filepath.Join(root, "meaning")
+	meaning, _, err := BuildSourceMeaningPreview(pressureOut, meaningOut)
+	if err != nil {
+		t.Fatalf("BuildSourceMeaningPreview over enriched pressure: %v", err)
+	}
+	if meaning.PreviewedSourceCount != 1 {
+		t.Fatalf("expected meaning preview for enriched source: %+v", meaning)
+	}
+	preview := mustReadString(t, filepath.Join(meaningOut, SourceMeaningPreviewDirName, "sources", "source-1.md"))
+	if !strings.Contains(preview, "Review captured gateway evidence") && !strings.Contains(preview, "Requirement: Gateway evidence") {
+		t.Fatalf("meaning preview did not expose enriched evidence:\n%s", preview)
+	}
+}
+
+func TestBuildSourceEnrichmentAccountsForMissingUnsupportedAndBlockedURLs(t *testing.T) {
+	root := t.TempDir()
+	sourcePath := writeSourceEnrichmentFixture(t, root, "source-1", strings.Join([]string{
+		"# Captured links",
+		"https://example.com/missing",
+		"https://localhost/private",
+		"https://example.com/file.zip",
+		"file:///tmp/source.md",
+		"slack-file-private://redacted",
+	}, "\n"))
+	manifestPath := writeSourceEnrichmentManifest(t, root, "corpus-enrich-test", CorpusPressureManifestSource{
+		SourceID:   "source-1",
+		SourceKind: SourceKindMarkdown,
+		Path:       sourcePath,
+	})
+	artifactsPath := writeSourceEnrichmentArtifacts(t, root)
+
+	summary, err := BuildSourceEnrichment(manifestPath, artifactsPath, filepath.Join(root, "enriched"))
+	if err != nil {
+		t.Fatalf("BuildSourceEnrichment: %v", err)
+	}
+	if summary.URLCount != 5 || summary.AccountedURLCount != 5 {
+		t.Fatalf("expected every URL accounted for: %+v", summary)
+	}
+	if summary.NeedsManualURLCount == 0 || summary.BlockedURLCount < 3 || summary.UnsupportedURLCount != 1 {
+		t.Fatalf("expected missing, unsupported, and blocked URL counts: %+v", summary)
+	}
+	artifact := mustReadString(t, filepath.Join(root, "enriched", SourceEnrichmentDirName, "sources", "source-1.json"))
+	if strings.Contains(artifact, "file:///tmp/source.md") || strings.Contains(artifact, "slack-file-private://redacted") || strings.Contains(artifact, "https://localhost/private") {
+		t.Fatalf("blocked URLs leaked in artifact:\n%s", artifact)
+	}
+	if !strings.Contains(artifact, "unsupported_source") || !strings.Contains(artifact, "blocked_private_or_secret") || !strings.Contains(artifact, "blocked_by_policy") {
+		t.Fatalf("expected unsupported/private/policy states in artifact:\n%s", artifact)
+	}
+}
+
+func TestBuildSourceEnrichmentBlocksUnsafeArtifactPayload(t *testing.T) {
+	root := t.TempDir()
+	sourcePath := writeSourceEnrichmentFixture(t, root, "source-1", "# Link\n\nhttps://example.com/research\n")
+	manifestPath := writeSourceEnrichmentManifest(t, root, "corpus-enrich-test", CorpusPressureManifestSource{
+		SourceID:   "source-1",
+		SourceKind: SourceKindMarkdown,
+		Path:       sourcePath,
+	})
+	unsafeSecret := "sk-proj-" + strings.Repeat("a", 48)
+	artifactsPath := writeSourceEnrichmentArtifacts(t, root, LocalSourceEnrichmentArtifact{
+		URL:     "https://example.com/research",
+		Title:   "Unsafe artifact",
+		Excerpt: "do not leak " + unsafeSecret,
+	})
+
+	out := filepath.Join(root, "enriched")
+	summary, err := BuildSourceEnrichment(manifestPath, artifactsPath, out)
+	if err != nil {
+		t.Fatalf("BuildSourceEnrichment: %v", err)
+	}
+	if summary.EnrichedURLCount != 0 || summary.BlockedURLCount != 1 {
+		t.Fatalf("expected unsafe artifact to block enrichment: %+v", summary)
+	}
+	all := readAllFiles(t, out)
+	if strings.Contains(all, unsafeSecret) || strings.Contains(all, "Unsafe artifact") {
+		t.Fatalf("unsafe artifact payload leaked:\n%s", all)
+	}
+	if !strings.Contains(all, "unsafe_artifact_payload") {
+		t.Fatalf("expected blocked reason in output:\n%s", all)
+	}
+}
+
+func TestBuildSourceEnrichmentRedactsUnsafeSourceURLInAllOutput(t *testing.T) {
+	root := t.TempDir()
+	unsafeSecret := "sk-proj-" + strings.Repeat("b", 48)
+	unsafeURL := "https://example.com/research?token=" + unsafeSecret
+	sourcePath := writeSourceEnrichmentFixture(t, root, "source-1", "# Link\n\n"+unsafeURL+"\n")
+	manifestPath := writeSourceEnrichmentManifest(t, root, "corpus-enrich-test", CorpusPressureManifestSource{
+		SourceID:   "source-1",
+		SourceKind: SourceKindMarkdown,
+		Path:       sourcePath,
+	})
+	artifactsPath := writeSourceEnrichmentArtifacts(t, root)
+
+	out := filepath.Join(root, "enriched")
+	summary, err := BuildSourceEnrichment(manifestPath, artifactsPath, out)
+	if err != nil {
+		t.Fatalf("BuildSourceEnrichment: %v", err)
+	}
+	if summary.URLCount != 1 || summary.BlockedURLCount != 1 {
+		t.Fatalf("expected unsafe URL accounted and blocked: %+v", summary)
+	}
+	all := readAllFiles(t, out)
+	if strings.Contains(all, unsafeSecret) || strings.Contains(all, unsafeURL) {
+		t.Fatalf("unsafe source URL leaked:\n%s", all)
+	}
+	if !strings.Contains(all, "unsafe_or_private_url") || !strings.Contains(all, redactedSourceEnrichmentURL) {
+		t.Fatalf("expected redaction reason and marker in output:\n%s", all)
+	}
+}
+
+func TestSourceEnrichmentURLPolicyBlocksUnsafeTargets(t *testing.T) {
+	blocked := []string{
+		"file:///tmp/source.md",
+		"http://localhost/test",
+		"http://127.0.0.1/test",
+		"http://10.0.0.1/test",
+		"http://192.168.1.1/test",
+		"http://169.254.169.254/latest/meta-data",
+		"not a url",
+	}
+	for _, raw := range blocked {
+		if _, _, ok := classifySourceEnrichmentURL(raw); ok {
+			t.Fatalf("expected URL policy block for %s", raw)
+		}
+	}
+	if normalized, kind, ok := classifySourceEnrichmentURL("https://example.com/research/"); !ok || normalized != "https://example.com/research" || kind != "web_url" {
+		t.Fatalf("expected normalized public web URL, got normalized=%q kind=%q ok=%v", normalized, kind, ok)
+	}
+}
+
+func writeSourceEnrichmentFixture(t *testing.T, root, sourceID, body string) string {
+	t.Helper()
+	rel := filepath.ToSlash(filepath.Join("fixtures", sourceID+".md"))
+	path := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir fixture: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	return rel
+}
+
+func writeSourceEnrichmentManifest(t *testing.T, root, corpusID string, sources ...CorpusPressureManifestSource) string {
+	t.Helper()
+	path := filepath.Join(root, "corpus-pressure-manifest.json")
+	writeDocumentsTestJSON(t, path, CorpusPressureManifest{
+		SchemaVersion: CorpusPressureManifestSchemaVersion,
+		CorpusID:      corpusID,
+		Sources:       sources,
+	})
+	return path
+}
+
+func writeSourceEnrichmentArtifacts(t *testing.T, root string, artifacts ...LocalSourceEnrichmentArtifact) string {
+	t.Helper()
+	path := filepath.Join(root, "local-artifacts.json")
+	data, err := json.MarshalIndent(LocalSourceEnrichmentArtifactManifest{
+		SchemaVersion: LocalSourceEnrichmentArtifactsSchemaVersion,
+		Artifacts:     artifacts,
+	}, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal artifacts: %v", err)
+	}
+	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
+		t.Fatalf("write artifacts: %v", err)
+	}
+	return path
+}
+
+func readAllFiles(t *testing.T, root string) string {
+	t.Helper()
+	var combined strings.Builder
+	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		combined.Write(data)
+		combined.WriteString("\n")
+		return nil
+	}); err != nil {
+		t.Fatalf("walk output: %v", err)
+	}
+	return combined.String()
+}

@@ -1,0 +1,13 @@
+{
+  "schema_version": "local-source-enrichment-artifacts/v0.1",
+  "artifacts": [
+    {
+      "url": "https://example.com/research",
+      "kind": "web_url",
+      "title": "Evidence review source",
+      "description": "Requirement: Review enriched source evidence before destination routing.",
+      "excerpt": "Requirement: Source enrichment must preserve the original capture and add local evidence before semantic routing.",
+      "source_name": "Example Research"
+    }
+  ]
+}
