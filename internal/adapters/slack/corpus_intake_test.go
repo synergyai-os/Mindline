@@ -136,6 +136,30 @@ func TestBuildCorpusIntakeRejectsNestedSourceSymlinkEscape(t *testing.T) {
 	}
 }
 
+func TestBuildCorpusIntakeRejectsOutputRootSymlinkEscape(t *testing.T) {
+	parent := t.TempDir()
+	outside := t.TempDir()
+	out := filepath.Join(parent, "intake")
+	if err := os.Symlink(outside, out); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	_, err := BuildCorpusIntake(Payload{
+		Source: Source{Workspace: "synthetic", ChannelID: "DTEST", ChannelName: "self-dm", AdapterID: "slack"},
+		Messages: []Message{
+			{TS: "1710000000.000001", User: "U123", AuthorName: "Randy", Text: "private note"},
+		},
+	}, out)
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("expected symlink error, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "sources")); !os.IsNotExist(err) {
+		t.Fatalf("source artifacts escaped to symlink root, stat err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, CorpusIntakeDirName)); !os.IsNotExist(err) {
+		t.Fatalf("summary artifacts escaped to symlink root, stat err=%v", err)
+	}
+}
+
 func TestBuildCorpusIntakeRejectsSummarySymlinkEscape(t *testing.T) {
 	out := t.TempDir()
 	outside := t.TempDir()

@@ -25,6 +25,9 @@ func BuildCorpusIntake(payload Payload, outDir string) (CorpusIntakeSummary, err
 	if err != nil {
 		return CorpusIntakeSummary{}, err
 	}
+	if err := rejectSlackCorpusIntakeSymlinkAncestors(root); err != nil {
+		return CorpusIntakeSummary{}, err
+	}
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return CorpusIntakeSummary{}, err
 	}
@@ -329,6 +332,44 @@ func rejectSlackCorpusIntakeSymlink(path string) error {
 		return fmt.Errorf("output path contains symlink: %s", path)
 	}
 	return nil
+}
+
+func rejectSlackCorpusIntakeSymlinkAncestors(path string) error {
+	clean := filepath.Clean(path)
+	current := string(filepath.Separator)
+	rel, err := filepath.Rel(current, clean)
+	if err != nil {
+		return err
+	}
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		if part == "" || part == "." {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			if isSlackCorpusIntakePlatformTempAlias(current) {
+				continue
+			}
+			return fmt.Errorf("output path contains symlink: %s", current)
+		}
+	}
+	return nil
+}
+
+func isSlackCorpusIntakePlatformTempAlias(path string) bool {
+	switch filepath.Clean(path) {
+	case "/tmp", "/var":
+		return true
+	default:
+		return false
+	}
 }
 
 func corpusIntakeAuthorityIDs() []string {
