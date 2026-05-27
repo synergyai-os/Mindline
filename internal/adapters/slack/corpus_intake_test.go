@@ -89,6 +89,31 @@ func TestBuildCorpusIntakeSuppressesManifestWhenNoSourcesAreEligible(t *testing.
 	}
 }
 
+func TestBuildCorpusIntakeRemovesStaleManifestWhenNoSourcesAreEligible(t *testing.T) {
+	out := t.TempDir()
+	manifestPath := filepath.Join(out, "corpus-pressure-manifest.json")
+	if err := os.WriteFile(manifestPath, []byte(`{"sources":[{"source_id":"stale"}]}`), 0o644); err != nil {
+		t.Fatalf("seed stale manifest: %v", err)
+	}
+
+	summary, err := BuildCorpusIntake(Payload{
+		Source: Source{Workspace: "synthetic", ChannelID: "DTEST", ChannelName: "self-dm", AdapterID: "slack"},
+		Messages: []Message{
+			{TS: "1710000000.000001", User: "U123", AuthorName: "Randy", Text: ""},
+			{TS: "1710000001.000001", User: "U123", AuthorName: "Randy", Text: "api_key=sk_live_secret"},
+		},
+	}, out)
+	if err != nil {
+		t.Fatalf("BuildCorpusIntake: %v", err)
+	}
+	if summary.ProcessedCount != 0 || summary.ManifestPath != "" {
+		t.Fatalf("expected no processed sources and no manifest: %#v", summary)
+	}
+	if _, err := os.Stat(manifestPath); !os.IsNotExist(err) {
+		t.Fatalf("expected stale pressure manifest removed, stat err=%v", err)
+	}
+}
+
 func TestBuildCorpusIntakeUsesMissingPermalinkSentinelInSource(t *testing.T) {
 	out := t.TempDir()
 	summary, err := BuildCorpusIntake(Payload{

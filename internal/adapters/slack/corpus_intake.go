@@ -103,6 +103,9 @@ func BuildCorpusIntake(payload Payload, outDir string) (CorpusIntakeSummary, err
 			return CorpusIntakeSummary{}, err
 		}
 	} else {
+		if err := removeCorpusIntakeManifest(root); err != nil {
+			return CorpusIntakeSummary{}, err
+		}
 		summary.ManifestPath = ""
 	}
 	if err := writeCorpusIntakeSummary(root, summary); err != nil {
@@ -169,6 +172,17 @@ func writeCorpusIntakeManifest(root string, manifest documents.CorpusPressureMan
 	}
 	data = append(data, '\n')
 	return os.WriteFile(target, data, 0o644)
+}
+
+func removeCorpusIntakeManifest(root string) error {
+	target := filepath.Join(root, "corpus-pressure-manifest.json")
+	if !isInside(root, target) {
+		return fmt.Errorf("manifest path escaped output directory")
+	}
+	if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 func writeCorpusIntakeSummary(root string, summary CorpusIntakeSummary) error {
