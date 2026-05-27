@@ -52,6 +52,35 @@ func TestSlackCorpusIntakeCLIWritesPressureCompatibleManifest(t *testing.T) {
 	}
 }
 
+func TestSlackCorpusIntakeCLIUsesRunnerFileSystemForWrites(t *testing.T) {
+	realCWD := t.TempDir()
+	t.Chdir(realCWD)
+	fs := NewMemoryFS()
+	if err := fs.WriteFile("slack.json", []byte(`{
+  "source": {"workspace": "synthetic", "channel_id": "DTEST", "channel_name": "self-dm", "adapter_id": "slack"},
+  "messages": [
+    {"ts": "1710000001.000001", "user": "U123", "author_name": "Randy", "text": "Save https://example.com/research"}
+  ]
+}`)); err != nil {
+		t.Fatalf("write memory input: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(fs).Run([]string{"slack", "corpus-intake", "slack.json", "--out", "intake"}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected exit %d got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+	if !fs.Exists(cleanPath("intake/corpus-pressure-manifest.json")) {
+		t.Fatalf("expected manifest written through runner filesystem; paths=%v", fs.Paths())
+	}
+	if !fs.Exists(cleanPath("intake/slack-corpus-intake/intake-summary.json")) {
+		t.Fatalf("expected summary written through runner filesystem; paths=%v", fs.Paths())
+	}
+	if _, err := os.Stat(filepath.Join(realCWD, "intake", "corpus-pressure-manifest.json")); !os.IsNotExist(err) {
+		t.Fatalf("corpus intake wrote through real filesystem, stat err=%v", err)
+	}
+}
+
 func TestSlackCorpusIntakeCLIUsage(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := NewRunner(NewOSFileSystem()).Run([]string{"slack", "corpus-intake", "input.json"}, &stdout, &stderr)

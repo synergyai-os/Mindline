@@ -96,6 +96,15 @@ func (m *MemoryFS) WriteFile(path string, data []byte) error {
 	return nil
 }
 
+func (m *MemoryFS) Remove(path string) error {
+	clean := filepath.Clean(path)
+	if m.dirs[clean] {
+		return fmt.Errorf("cannot remove directory: %s", clean)
+	}
+	delete(m.files, clean)
+	return nil
+}
+
 func (m *MemoryFS) Getwd() (string, error) {
 	return ".", nil
 }

@@ -42,6 +42,13 @@ func (OSFileSystem) WriteFile(path string, data []byte) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
+func (OSFileSystem) Remove(path string) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 func (OSFileSystem) Getwd() (string, error) {
 	return os.Getwd()
 }

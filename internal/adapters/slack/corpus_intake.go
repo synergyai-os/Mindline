@@ -17,6 +17,13 @@ import (
 
 const CorpusIntakeDirName = "slack-corpus-intake"
 
+type CorpusIntakeFileSystem interface {
+	MkdirAll(path string, perm os.FileMode) error
+	WriteFile(path string, data []byte) error
+	Remove(path string) error
+	IsSymlink(path string) (bool, error)
+}
+
 func BuildCorpusIntake(payload Payload, outDir string) (CorpusIntakeSummary, error) {
 	if strings.TrimSpace(outDir) == "" {
 		return CorpusIntakeSummary{}, fmt.Errorf("missing required --out")
@@ -25,10 +32,21 @@ func BuildCorpusIntake(payload Payload, outDir string) (CorpusIntakeSummary, err
 	if err != nil {
 		return CorpusIntakeSummary{}, err
 	}
-	if err := rejectSlackCorpusIntakeSymlinkAncestors(root); err != nil {
+	return buildCorpusIntake(payload, root, osCorpusIntakeFileSystem{})
+}
+
+func BuildCorpusIntakeWithFileSystem(payload Payload, outDir string, fileSystem CorpusIntakeFileSystem) (CorpusIntakeSummary, error) {
+	if strings.TrimSpace(outDir) == "" {
+		return CorpusIntakeSummary{}, fmt.Errorf("missing required --out")
+	}
+	return buildCorpusIntake(payload, filepath.Clean(outDir), fileSystem)
+}
+
+func buildCorpusIntake(payload Payload, root string, fileSystem CorpusIntakeFileSystem) (CorpusIntakeSummary, error) {
+	if err := rejectSlackCorpusIntakeSymlinkAncestors(fileSystem, root); err != nil {
 		return CorpusIntakeSummary{}, err
 	}
-	if err := os.MkdirAll(root, 0o755); err != nil {
+	if err := fileSystem.MkdirAll(root, 0o755); err != nil {
 		return CorpusIntakeSummary{}, err
 	}
 	result, err := Normalize(payload)
@@ -67,7 +85,7 @@ func BuildCorpusIntake(payload Payload, outDir string) (CorpusIntakeSummary, err
 				item.ReasonCode = CorpusIntakeReasonDuplicateMessage
 			} else {
 				processedSourceIDs[item.SourceID] = true
-				sourcePath, err := writeCorpusIntakeSource(root, item.SourceID, candidate)
+				sourcePath, err := writeCorpusIntakeSource(fileSystem, root, item.SourceID, candidate)
 				if err != nil {
 					item.State = CorpusIntakeItemBlocked
 					item.ReasonCode = CorpusIntakeReasonArtifactWrite
@@ -99,19 +117,19 @@ func BuildCorpusIntake(payload Payload, outDir string) (CorpusIntakeSummary, err
 	summary.SkippedCount = summary.StateCounts[CorpusIntakeItemSkipped]
 	summary.BlockedCount = summary.StateCounts[CorpusIntakeItemBlocked]
 	if len(manifest.Sources) > 0 {
-		if err := writeCorpusIntakeManifest(root, manifest); err != nil {
+		if err := writeCorpusIntakeManifest(fileSystem, root, manifest); err != nil {
 			return CorpusIntakeSummary{}, err
 		}
 	} else {
-		if err := removeCorpusIntakeManifest(root); err != nil {
+		if err := removeCorpusIntakeManifest(fileSystem, root); err != nil {
 			return CorpusIntakeSummary{}, err
 		}
 		summary.ManifestPath = ""
 	}
-	if err := writeCorpusIntakeSummary(root, summary); err != nil {
+	if err := writeCorpusIntakeSummary(fileSystem, root, summary); err != nil {
 		return CorpusIntakeSummary{}, err
 	}
-	if err := writeCorpusIntakeReport(root, summary); err != nil {
+	if err := writeCorpusIntakeReport(fileSystem, root, summary); err != nil {
 		return CorpusIntakeSummary{}, err
 	}
 	return summary, nil
@@ -140,30 +158,30 @@ func corpusIntakeItem(candidate sbos.Candidate, source Source) CorpusIntakeItem 
 	return item
 }
 
-func writeCorpusIntakeSource(root, sourceID string, candidate sbos.Candidate) (string, error) {
+func writeCorpusIntakeSource(fileSystem CorpusIntakeFileSystem, root, sourceID string, candidate sbos.Candidate) (string, error) {
 	rel := filepath.ToSlash(filepath.Join("sources", sourceID, "source.md"))
 	target := filepath.Join(root, filepath.FromSlash(rel))
 	if !isInside(root, target) {
 		return "", fmt.Errorf("source path escaped output directory")
 	}
-	if err := rejectSlackCorpusIntakeSymlinkPath(root, filepath.Dir(target)); err != nil {
+	if err := rejectSlackCorpusIntakeSymlinkPath(fileSystem, root, filepath.Dir(target)); err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+	if err := fileSystem.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return "", err
 	}
-	if err := rejectSlackCorpusIntakeSymlinkPath(root, target); err != nil {
+	if err := rejectSlackCorpusIntakeSymlinkPath(fileSystem, root, target); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(target, []byte(corpusIntakeMarkdown(candidate)), 0o644); err != nil {
+	if err := fileSystem.WriteFile(target, []byte(corpusIntakeMarkdown(candidate))); err != nil {
 		return "", err
 	}
 	return rel, nil
 }
 
-func writeCorpusIntakeManifest(root string, manifest documents.CorpusPressureManifest) error {
+func writeCorpusIntakeManifest(fileSystem CorpusIntakeFileSystem, root string, manifest documents.CorpusPressureManifest) error {
 	target := filepath.Join(root, "corpus-pressure-manifest.json")
-	if err := rejectSlackCorpusIntakeSymlinkPath(root, target); err != nil {
+	if err := rejectSlackCorpusIntakeSymlinkPath(fileSystem, root, target); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(manifest, "", "  ")
@@ -171,30 +189,27 @@ func writeCorpusIntakeManifest(root string, manifest documents.CorpusPressureMan
 		return err
 	}
 	data = append(data, '\n')
-	return os.WriteFile(target, data, 0o644)
+	return fileSystem.WriteFile(target, data)
 }
 
-func removeCorpusIntakeManifest(root string) error {
+func removeCorpusIntakeManifest(fileSystem CorpusIntakeFileSystem, root string) error {
 	target := filepath.Join(root, "corpus-pressure-manifest.json")
 	if !isInside(root, target) {
 		return fmt.Errorf("manifest path escaped output directory")
 	}
-	if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	return nil
+	return fileSystem.Remove(target)
 }
 
-func writeCorpusIntakeSummary(root string, summary CorpusIntakeSummary) error {
+func writeCorpusIntakeSummary(fileSystem CorpusIntakeFileSystem, root string, summary CorpusIntakeSummary) error {
 	dir := filepath.Join(root, CorpusIntakeDirName)
-	if err := rejectSlackCorpusIntakeSymlinkPath(root, dir); err != nil {
+	if err := rejectSlackCorpusIntakeSymlinkPath(fileSystem, root, dir); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := fileSystem.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
 	target := filepath.Join(dir, "intake-summary.json")
-	if err := rejectSlackCorpusIntakeSymlinkPath(root, target); err != nil {
+	if err := rejectSlackCorpusIntakeSymlinkPath(fileSystem, root, target); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(summary, "", "  ")
@@ -202,22 +217,22 @@ func writeCorpusIntakeSummary(root string, summary CorpusIntakeSummary) error {
 		return err
 	}
 	data = append(data, '\n')
-	return os.WriteFile(target, data, 0o644)
+	return fileSystem.WriteFile(target, data)
 }
 
-func writeCorpusIntakeReport(root string, summary CorpusIntakeSummary) error {
+func writeCorpusIntakeReport(fileSystem CorpusIntakeFileSystem, root string, summary CorpusIntakeSummary) error {
 	dir := filepath.Join(root, CorpusIntakeDirName)
-	if err := rejectSlackCorpusIntakeSymlinkPath(root, dir); err != nil {
+	if err := rejectSlackCorpusIntakeSymlinkPath(fileSystem, root, dir); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := fileSystem.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
 	target := filepath.Join(dir, "intake-report.md")
-	if err := rejectSlackCorpusIntakeSymlinkPath(root, target); err != nil {
+	if err := rejectSlackCorpusIntakeSymlinkPath(fileSystem, root, target); err != nil {
 		return err
 	}
-	return os.WriteFile(target, []byte(corpusIntakeReport(summary)), 0o644)
+	return fileSystem.WriteFile(target, []byte(corpusIntakeReport(summary)))
 }
 
 func corpusIntakeMarkdown(candidate sbos.Candidate) string {
@@ -317,13 +332,13 @@ func isInside(root, path string) bool {
 	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
-func rejectSlackCorpusIntakeSymlinkPath(root, path string) error {
+func rejectSlackCorpusIntakeSymlinkPath(fileSystem CorpusIntakeFileSystem, root, path string) error {
 	rel, err := filepath.Rel(root, path)
 	if err != nil {
 		return err
 	}
 	if rel == "." {
-		return rejectSlackCorpusIntakeSymlink(root)
+		return rejectSlackCorpusIntakeSymlink(fileSystem, root)
 	}
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return fmt.Errorf("path escaped output directory")
@@ -334,47 +349,50 @@ func rejectSlackCorpusIntakeSymlinkPath(root, path string) error {
 			continue
 		}
 		current = filepath.Join(current, part)
-		if err := rejectSlackCorpusIntakeSymlink(current); err != nil {
+		if err := rejectSlackCorpusIntakeSymlink(fileSystem, current); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func rejectSlackCorpusIntakeSymlink(path string) error {
-	info, err := os.Lstat(path)
-	if os.IsNotExist(err) {
-		return nil
-	}
+func rejectSlackCorpusIntakeSymlink(fileSystem CorpusIntakeFileSystem, path string) error {
+	isSymlink, err := fileSystem.IsSymlink(path)
 	if err != nil {
 		return err
 	}
-	if info.Mode()&os.ModeSymlink != 0 {
+	if isSymlink {
 		return fmt.Errorf("output path contains symlink: %s", path)
 	}
 	return nil
 }
 
-func rejectSlackCorpusIntakeSymlinkAncestors(path string) error {
+func rejectSlackCorpusIntakeSymlinkAncestors(fileSystem CorpusIntakeFileSystem, path string) error {
 	clean := filepath.Clean(path)
-	current := string(filepath.Separator)
-	rel, err := filepath.Rel(current, clean)
-	if err != nil {
-		return err
+	current := ""
+	rel := clean
+	if filepath.IsAbs(clean) {
+		current = string(filepath.Separator)
+		var err error
+		rel, err = filepath.Rel(current, clean)
+		if err != nil {
+			return err
+		}
 	}
 	for _, part := range strings.Split(rel, string(filepath.Separator)) {
 		if part == "" || part == "." {
 			continue
 		}
-		current = filepath.Join(current, part)
-		info, err := os.Lstat(current)
-		if os.IsNotExist(err) {
-			continue
+		if current == "" {
+			current = part
+		} else {
+			current = filepath.Join(current, part)
 		}
+		isSymlink, err := fileSystem.IsSymlink(current)
 		if err != nil {
 			return err
 		}
-		if info.Mode()&os.ModeSymlink != 0 {
+		if isSymlink {
 			if isSlackCorpusIntakePlatformTempAlias(current) {
 				continue
 			}
@@ -397,4 +415,32 @@ func corpusIntakeAuthorityIDs() []string {
 	ids := append([]string{}, authorityIDs()...)
 	ids = append(ids, "WP-31", "WP-29", "WP-30", "STR-3", "PRI-1", "BR-1")
 	return ids
+}
+
+type osCorpusIntakeFileSystem struct{}
+
+func (osCorpusIntakeFileSystem) MkdirAll(path string, perm os.FileMode) error {
+	return os.MkdirAll(path, perm)
+}
+
+func (osCorpusIntakeFileSystem) WriteFile(path string, data []byte) error {
+	return os.WriteFile(path, data, 0o644)
+}
+
+func (osCorpusIntakeFileSystem) Remove(path string) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func (osCorpusIntakeFileSystem) IsSymlink(path string) (bool, error) {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return info.Mode()&os.ModeSymlink != 0, nil
 }

@@ -63,6 +63,7 @@ type FileSystem interface {
 	Stat(path string) (fs.FileInfo, error)
 	CanWriteDir(path string) error
 	WriteFile(path string, data []byte) error
+	Remove(path string) error
 	Getwd() (string, error)
 	RealPath(path string) (string, error)
 	IsSymlink(path string) (bool, error)
@@ -974,7 +975,7 @@ func (r Runner) runSlackCorpusIntake(args []string, stdout, stderr io.Writer) in
 		fmt.Fprintf(stderr, "build Slack corpus intake: %v\n", err)
 		return ExitProcess
 	}
-	summary, err := slackadapter.BuildCorpusIntake(payload, outDir)
+	summary, err := slackadapter.BuildCorpusIntakeWithFileSystem(payload, outDir, r.fs)
 	if err != nil {
 		fmt.Fprintf(stderr, "build Slack corpus intake: %v\n", err)
 		return ExitArtifactWrite
