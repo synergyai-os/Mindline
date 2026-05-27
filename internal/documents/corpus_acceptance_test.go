@@ -243,6 +243,26 @@ func TestCorpusAcceptanceCountsSemanticErrorAsModelError(t *testing.T) {
 	}
 }
 
+func TestCorpusAcceptanceBlockedSourceIncludesArtifactPath(t *testing.T) {
+	root, _, answerKey := writeCorpusAcceptanceFixture(t, []SemanticCandidate{corpusAcceptanceCandidate(t, SemanticCandidateKindAction, ReviewStatusReady)}, func(summary *CorpusPressureSummary) {
+		summary.Sources[0].State = CorpusPressureSourceBlocked
+		summary.Sources[0].ReasonCode = CorpusPressureReasonSemanticError
+	})
+	answerKey.MinEvalCount = 1
+	writeDocumentsTestJSON(t, filepath.Join(root, "answer-key.json"), answerKey)
+
+	summary, err := BuildCorpusAcceptanceBenchmark(root, filepath.Join(root, "answer-key.json"), filepath.Join(root, "benchmark"), CorpusAcceptanceBenchmarkOptions{Threshold: 0.98, HeldOut: true})
+	if err != nil {
+		t.Fatalf("build corpus acceptance benchmark: %v", err)
+	}
+	if summary.Sources[0].AcceptanceSummaryPath != filepath.ToSlash(filepath.Join(corpusAcceptanceDirName, "sources", "source-demo", "acceptance-summary.json")) {
+		t.Fatalf("blocked source should include discoverable artifact path, got %q", summary.Sources[0].AcceptanceSummaryPath)
+	}
+	if _, err := os.Stat(filepath.Join(root, "benchmark", summary.Sources[0].AcceptanceSummaryPath)); err != nil {
+		t.Fatalf("expected per-source artifact at summary path: %v", err)
+	}
+}
+
 func TestCorpusAcceptanceRejectsEscapingSemanticRunDir(t *testing.T) {
 	root, _, answerKey := writeCorpusAcceptanceFixture(t, []SemanticCandidate{corpusAcceptanceCandidate(t, SemanticCandidateKindAction, ReviewStatusReady)}, func(summary *CorpusPressureSummary) {
 		summary.Sources[0].SemanticRunDir = "../outside"

@@ -104,6 +104,7 @@ func evaluateCorpusAcceptance(root string, pressure CorpusPressureSummary, answe
 	benchmark.SuiteValidityBlockers = validateCorpusAcceptanceAnswerKey(answerKey, pressure, options)
 	for _, sourceKey := range answerKey.Sources {
 		sourceResult := CorpusAcceptanceSourceSummary{SourceID: sourceKey.SourceID}
+		sourceResult.AcceptanceSummaryPath = corpusAcceptanceSourceSummaryPath(sourceResult.SourceID)
 		source, ok := sourceByID[sourceKey.SourceID]
 		if ok {
 			sourceResult.SourceContentHash = source.SourceContentHash
@@ -358,7 +359,7 @@ func applyCorpusAcceptanceSource(benchmark *CorpusAcceptanceBenchmarkSummary, so
 	sourceResult.FalseNegativeCount = acceptance.FalseNegativeCount
 	sourceResult.WrongKindCount = acceptance.WrongKindCount
 	sourceResult.HumanReviewRequiredCount = acceptance.NeedsReviewCount
-	sourceResult.AcceptanceSummaryPath = filepath.ToSlash(filepath.Join(corpusAcceptanceDirName, "sources", sourceResult.SourceID, "acceptance-summary.json"))
+	sourceResult.AcceptanceSummaryPath = corpusAcceptanceSourceSummaryPath(sourceResult.SourceID)
 	sourceResult.Accuracy = ratio(sourceResult.MatchedExpectedCount, sourceResult.EvalCount)
 	benchmark.CandidateCount += acceptance.CandidateCount
 	benchmark.AcceptedCount += acceptance.AcceptedCount
@@ -374,6 +375,10 @@ func applyCorpusAcceptanceSource(benchmark *CorpusAcceptanceBenchmarkSummary, so
 	}
 	benchmark.SafetyBlockedCount += acceptance.BlockedCount
 	benchmark.ReviewBurdenCount += acceptance.ReviewBurdenCount
+}
+
+func corpusAcceptanceSourceSummaryPath(sourceID string) string {
+	return filepath.ToSlash(filepath.Join(corpusAcceptanceDirName, "sources", sourceID, "acceptance-summary.json"))
 }
 
 func correctExpectedAbsentCount(acceptance SemanticAcceptanceSummary) int {
