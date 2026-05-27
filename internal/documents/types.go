@@ -16,6 +16,8 @@ const (
 	SemanticAcceptanceExpectedOutcomeSchemaVersion       = "semantic-acceptance-expected-outcome/v0.2"
 	SemanticAcceptanceExpectedOutcomeLegacySchemaVersion = "semantic-acceptance-expected-outcome/v0.1"
 	SemanticAcceptanceItemSchemaVersion                  = "semantic-acceptance-item/v0.1"
+	CorpusAcceptanceAnswerKeySchemaVersion               = "corpus-acceptance-answer-key/v0.1"
+	CorpusAcceptanceSummarySchemaVersion                 = "corpus-acceptance-summary/v0.1"
 	SemanticCalibrationSummarySchemaVersion              = "semantic-calibration-summary/v0.2"
 	SemanticCalibrationSummaryLegacySchemaVersion        = "semantic-calibration-summary/v0.1"
 	SemanticCalibrationReviewItemSchemaVersion           = "semantic-calibration-review-item/v0.3"
@@ -443,6 +445,7 @@ type SemanticAcceptanceSummary struct {
 	UnexpectedCandidateCount          int                             `json:"unexpected_candidate_count"`
 	FalsePositiveCount                int                             `json:"false_positive_count"`
 	FalseNegativeCount                int                             `json:"false_negative_count"`
+	WrongKindCount                    int                             `json:"wrong_kind_count"`
 	DuplicateCount                    int                             `json:"duplicate_count"`
 	EvidenceMissingCount              int                             `json:"evidence_missing_count"`
 	AcceptedCount                     int                             `json:"accepted_count"`
@@ -456,6 +459,104 @@ type SemanticAcceptanceSummary struct {
 	ExpectedOutcomes                  []SemanticExpectedOutcomeResult `json:"expected_outcomes"`
 	Candidates                        []SemanticAcceptanceItemSummary `json:"candidates"`
 	Items                             []SemanticAcceptanceItem        `json:"-"`
+}
+
+type CorpusAcceptanceSuiteKind string
+
+const (
+	CorpusAcceptanceSuiteHeldOut     CorpusAcceptanceSuiteKind = "held_out"
+	CorpusAcceptanceSuiteCalibration CorpusAcceptanceSuiteKind = "calibration"
+)
+
+type CorpusAcceptanceAnswerKey struct {
+	SchemaVersion            string                            `json:"schema_version"`
+	SuiteID                  string                            `json:"suite_id"`
+	SuiteKind                CorpusAcceptanceSuiteKind         `json:"suite_kind"`
+	Provenance               CorpusAcceptanceProvenance        `json:"provenance"`
+	CorpusID                 string                            `json:"corpus_id"`
+	CorpusFingerprint        string                            `json:"corpus_fingerprint"`
+	CommandConfigFingerprint string                            `json:"command_config_fingerprint,omitempty"`
+	MinEvalCount             int                               `json:"min_eval_count"`
+	CoverageRequirements     CorpusAcceptanceCoverage          `json:"coverage_requirements"`
+	Sources                  []CorpusAcceptanceAnswerKeySource `json:"sources"`
+}
+
+type CorpusAcceptanceProvenance struct {
+	Labeler      string `json:"labeler"`
+	Independence string `json:"independence"`
+}
+
+type CorpusAcceptanceCoverage struct {
+	MinSourceCount int                        `json:"min_source_count"`
+	CandidateKinds []SemanticCandidateKind    `json:"candidate_kinds"`
+	RelationTypes  []SemanticRelationshipType `json:"relation_types"`
+	FailureModes   []SemanticAcceptanceReason `json:"failure_modes"`
+}
+
+type CorpusAcceptanceAnswerKeySource struct {
+	SourceID         string                    `json:"source_id"`
+	SourceDocumentID string                    `json:"source_document_id,omitempty"`
+	ExpectedOutcomes []SemanticExpectedOutcome `json:"expected_outcomes"`
+}
+
+type CorpusAcceptanceBenchmarkOptions struct {
+	Threshold float64
+	HeldOut   bool
+}
+
+type CorpusAcceptanceBenchmarkSummary struct {
+	SchemaVersion             string                          `json:"schema_version"`
+	SuiteID                   string                          `json:"suite_id"`
+	SuiteKind                 CorpusAcceptanceSuiteKind       `json:"suite_kind"`
+	CorpusID                  string                          `json:"corpus_id"`
+	CorpusFingerprint         string                          `json:"corpus_fingerprint"`
+	CommandConfigFingerprint  string                          `json:"command_config_fingerprint"`
+	PressureReplayFingerprint string                          `json:"pressure_replay_fingerprint"`
+	Threshold                 float64                         `json:"threshold"`
+	HeldOut                   bool                            `json:"held_out"`
+	SuiteValid                bool                            `json:"suite_valid"`
+	DEC64Eligible             bool                            `json:"dec64_eligible"`
+	EvalCount                 int                             `json:"eval_count"`
+	ExpectedPresentCount      int                             `json:"expected_present_count"`
+	ExpectedAbsentCount       int                             `json:"expected_absent_count"`
+	MatchedExpectedCount      int                             `json:"matched_expected_count"`
+	MissedExpectedCount       int                             `json:"missed_expected_count"`
+	CandidateCount            int                             `json:"candidate_count"`
+	AcceptedCount             int                             `json:"accepted_count"`
+	FalsePositiveCount        int                             `json:"false_positive_count"`
+	FalseNegativeCount        int                             `json:"false_negative_count"`
+	WrongKindCount            int                             `json:"wrong_kind_count"`
+	DuplicateCount            int                             `json:"duplicate_count"`
+	ContradictionCount        int                             `json:"contradiction_count"`
+	ModelErrorCount           int                             `json:"model_error_count"`
+	UnjudgedCount             int                             `json:"unjudged_count"`
+	HumanReviewRequiredCount  int                             `json:"human_review_required_count"`
+	SafetyBlockedCount        int                             `json:"safety_blocked_count"`
+	ReviewBurdenCount         int                             `json:"review_burden_count"`
+	Accuracy                  float64                         `json:"accuracy"`
+	FalsePositiveRate         float64                         `json:"false_positive_rate"`
+	FalseNegativeRate         float64                         `json:"false_negative_rate"`
+	ReviewBurdenRate          float64                         `json:"review_burden_rate"`
+	Guardrails                CorpusPressureGuardrailCounters `json:"guardrails"`
+	SuiteValidityBlockers     []string                        `json:"suite_validity_blockers"`
+	EligibilityBlockers       []string                        `json:"eligibility_blockers"`
+	NextImprovementTargets    []string                        `json:"next_improvement_targets"`
+	Sources                   []CorpusAcceptanceSourceSummary `json:"sources"`
+}
+
+type CorpusAcceptanceSourceSummary struct {
+	SourceID                 string   `json:"source_id"`
+	SourceContentHash        string   `json:"source_content_hash,omitempty"`
+	AcceptanceSummaryPath    string   `json:"acceptance_summary_path,omitempty"`
+	EvalCount                int      `json:"eval_count"`
+	CandidateCount           int      `json:"candidate_count"`
+	MatchedExpectedCount     int      `json:"matched_expected_count"`
+	FalsePositiveCount       int      `json:"false_positive_count"`
+	FalseNegativeCount       int      `json:"false_negative_count"`
+	WrongKindCount           int      `json:"wrong_kind_count"`
+	HumanReviewRequiredCount int      `json:"human_review_required_count"`
+	Accuracy                 float64  `json:"accuracy"`
+	Blockers                 []string `json:"blockers,omitempty"`
 }
 
 type SemanticExpectedOutcomeResult struct {

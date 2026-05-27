@@ -267,6 +267,7 @@ func EvaluateSemanticAcceptance(runID string, answerKey SemanticAcceptanceAnswer
 				usedCandidates[candidate.CandidateID] = outcome.ExpectedOutcomeID
 				result.AcceptanceState = SemanticAcceptanceRejected
 				result.Reason = SemanticAcceptanceReasonUnexpectedCandidate
+				result.MatchedCandidateID = candidate.CandidateID
 			} else {
 				result.AcceptanceState = SemanticAcceptanceAccepted
 				result.Reason = SemanticAcceptanceReasonCorrect

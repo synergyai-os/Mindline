@@ -256,6 +256,52 @@ func TestDocumentsCorpusPressureLoopCLI(t *testing.T) {
 	}
 }
 
+func TestDocumentsCorpusAcceptanceCLI(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "corpus-pressure"), 0o755); err != nil {
+		t.Fatalf("mkdir pressure: %v", err)
+	}
+	writeCLITestJSON(t, filepath.Join(root, "corpus-pressure", "pressure-summary.json"), documents.CorpusPressureSummary{
+		SchemaVersion:            documents.CorpusPressureSummarySchemaVersion,
+		CorpusID:                 "corpus-cli",
+		CorpusFingerprint:        "corpus-cli-fingerprint",
+		CommandConfigFingerprint: "config-cli",
+		ReplayFingerprint:        "pressure-cli",
+		Sources:                  []documents.CorpusPressureSourceResult{},
+	})
+	answerKeyPath := filepath.Join(root, "answer-key.json")
+	writeCLITestJSON(t, answerKeyPath, documents.CorpusAcceptanceAnswerKey{
+		SchemaVersion:     documents.CorpusAcceptanceAnswerKeySchemaVersion,
+		SuiteID:           "heldout-cli",
+		SuiteKind:         documents.CorpusAcceptanceSuiteHeldOut,
+		Provenance:        documents.CorpusAcceptanceProvenance{Labeler: "fixture-human", Independence: "not_generated_from_evaluated_run"},
+		CorpusID:          "corpus-cli",
+		CorpusFingerprint: "corpus-cli-fingerprint",
+		MinEvalCount:      1,
+	})
+	out := filepath.Join(root, "benchmark")
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "corpus-acceptance", root,
+		"--answer-key", answerKeyPath,
+		"--out", out,
+		"--held-out",
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+	var summary documents.CorpusAcceptanceBenchmarkSummary
+	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
+		t.Fatalf("decode stdout: %v", err)
+	}
+	if summary.SchemaVersion != documents.CorpusAcceptanceSummarySchemaVersion || summary.DEC64Eligible {
+		t.Fatalf("expected invalid benchmark summary, got %+v", summary)
+	}
+	if _, err := os.Stat(filepath.Join(out, "corpus-acceptance", "benchmark-summary.json")); err != nil {
+		t.Fatalf("missing benchmark summary: %v", err)
+	}
+}
+
 func TestDocumentsCorpusPressureDoesNotWriteDestinationArtifacts(t *testing.T) {
 	out := t.TempDir()
 	var stdout, stderr bytes.Buffer

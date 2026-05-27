@@ -31,7 +31,7 @@ const (
 	ExitArtifactWrite = 3
 )
 
-const usage = "usage: mindline process <candidate.json> [--out <dir>]\nusage: mindline slack normalize <slack-export.json> [--out <dir>]\nusage: mindline destination dry-run <sbos-result.json> --adapter tolaria --out <dir>\nusage: mindline pipeline dry-run <pipeline-input.json> --method basb-para-code --destination tolaria --out <dir>\nusage: mindline product-brain propose <run-dir> --profile <profile.json> --out <dir>\nusage: mindline documents decompose <markdown-path-or-dir> --out <dir>\nusage: mindline documents structure <markdown-path-or-dir> --out <dir>\nusage: mindline documents semantics <structure-run-dir-or-markdown-path-or-markdown-dir> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents accept <semantic-run-dir> --answer-key <answer-key.json> --out <dir>\nusage: mindline documents calibrate <semantic-acceptance-dir-or-parent> --out <dir> [--threshold 0.98] [--held-out] [--source-root <dir> --source <relative.md>]\nusage: mindline documents calibrate-next <semantic-calibration-dir-or-parent>\nusage: mindline documents judge <semantic-run-dir> --out <dir> [--source-root <dir> --source <relative.md>] [--agent-reviewer llm --llm-provider openai --llm-model <model>]\nusage: mindline documents judge-next <semantic-judgment-dir-or-parent>\nusage: mindline documents judge-record <semantic-judgment-dir-or-parent> --candidate <candidate-id> --choice accept|reject|unclear|duplicate|wrong-kind [--reason <failure-reason>] [--secondary-reason <failure-reason>] [--note <text>] [--reviewer <id>]\nusage: mindline documents judge-serve <semantic-judgment-dir-or-parent> [--addr 127.0.0.1:8787] [--reviewer <id>]\nusage: mindline documents readiness-report <semantic-judgment-dir-or-parent> --out <dir> [--threshold 0.98] [--held-out]\nusage: mindline documents corpus-graph <manifest.json> --out <dir>\nusage: mindline documents corpus-pressure <markdown-dir-or-manifest> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents corpus-pressure-loop <markdown-dir-or-manifest> --out <dir> [--max-runs <n>] [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline observability posthog-test\n"
+const usage = "usage: mindline process <candidate.json> [--out <dir>]\nusage: mindline slack normalize <slack-export.json> [--out <dir>]\nusage: mindline destination dry-run <sbos-result.json> --adapter tolaria --out <dir>\nusage: mindline pipeline dry-run <pipeline-input.json> --method basb-para-code --destination tolaria --out <dir>\nusage: mindline product-brain propose <run-dir> --profile <profile.json> --out <dir>\nusage: mindline documents decompose <markdown-path-or-dir> --out <dir>\nusage: mindline documents structure <markdown-path-or-dir> --out <dir>\nusage: mindline documents semantics <structure-run-dir-or-markdown-path-or-markdown-dir> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents accept <semantic-run-dir> --answer-key <answer-key.json> --out <dir>\nusage: mindline documents calibrate <semantic-acceptance-dir-or-parent> --out <dir> [--threshold 0.98] [--held-out] [--source-root <dir> --source <relative.md>]\nusage: mindline documents calibrate-next <semantic-calibration-dir-or-parent>\nusage: mindline documents judge <semantic-run-dir> --out <dir> [--source-root <dir> --source <relative.md>] [--agent-reviewer llm --llm-provider openai --llm-model <model>]\nusage: mindline documents judge-next <semantic-judgment-dir-or-parent>\nusage: mindline documents judge-record <semantic-judgment-dir-or-parent> --candidate <candidate-id> --choice accept|reject|unclear|duplicate|wrong-kind [--reason <failure-reason>] [--secondary-reason <failure-reason>] [--note <text>] [--reviewer <id>]\nusage: mindline documents judge-serve <semantic-judgment-dir-or-parent> [--addr 127.0.0.1:8787] [--reviewer <id>]\nusage: mindline documents readiness-report <semantic-judgment-dir-or-parent> --out <dir> [--threshold 0.98] [--held-out]\nusage: mindline documents corpus-graph <manifest.json> --out <dir>\nusage: mindline documents corpus-pressure <markdown-dir-or-manifest> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents corpus-pressure-loop <markdown-dir-or-manifest> --out <dir> [--max-runs <n>] [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents corpus-acceptance <corpus-pressure-out-or-parent> --answer-key <corpus-answer-key.json> --out <dir> [--threshold 0.98] [--held-out]\nusage: mindline observability posthog-test\n"
 
 const protectedRootsEnv = "MINDLINE_PROTECTED_ROOTS"
 const defaultTolariaProtectedRoot = "/Users/randyhereman/Young Human Club Dropbox/02. Areas/PKM - Tolaria"
@@ -292,6 +292,9 @@ func (r Runner) runDocuments(args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "corpus-pressure-loop" {
 		return r.runDocumentsCorpusPressureLoop(args, stdout, stderr)
 	}
+	if len(args) > 0 && args[0] == "corpus-acceptance" {
+		return r.runDocumentsCorpusAcceptance(args, stdout, stderr)
+	}
 	inputPath, outDir, parseError := parseDocumentsArgs(args, "decompose")
 	if parseError != parseErrorNone {
 		fmt.Fprint(stderr, usage)
@@ -404,6 +407,34 @@ func (r Runner) runDocumentsCorpusPressureLoop(args []string, stdout, stderr io.
 			return ExitArtifactWrite
 		}
 		fmt.Fprintf(stderr, "run corpus pressure loop: %v\n", err)
+		return ExitProcess
+	}
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(summary); err != nil {
+		fmt.Fprintf(stderr, "write stdout: %v\n", err)
+		return ExitUsage
+	}
+	return ExitOK
+}
+
+func (r Runner) runDocumentsCorpusAcceptance(args []string, stdout, stderr io.Writer) int {
+	pressurePath, answerKeyPath, outDir, options, parseError := parseDocumentsCorpusAcceptanceArgs(args)
+	if parseError != parseErrorNone {
+		fmt.Fprint(stderr, usage)
+		return ExitUsage
+	}
+	if err := r.validateDestinationOutDir(outDir); err != nil {
+		fmt.Fprintf(stderr, "validate corpus acceptance output: %v\n", err)
+		return ExitArtifactWrite
+	}
+	summary, err := documents.BuildCorpusAcceptanceBenchmark(pressurePath, answerKeyPath, outDir, options)
+	if err != nil {
+		if documents.IsArtifactWriteError(err) {
+			fmt.Fprintf(stderr, "write corpus acceptance: %v\n", err)
+			return ExitArtifactWrite
+		}
+		fmt.Fprintf(stderr, "run corpus acceptance: %v\n", err)
 		return ExitProcess
 	}
 	encoder := json.NewEncoder(stdout)
@@ -1432,6 +1463,51 @@ func (r Runner) parseDocumentsCorpusPressureLoopArgs(args []string) (inputPath s
 		}
 	}
 	return inputPath, outDir, maxRuns, options, parseErrorNone, ""
+}
+
+func parseDocumentsCorpusAcceptanceArgs(args []string) (pressurePath string, answerKeyPath string, outDir string, options documents.CorpusAcceptanceBenchmarkOptions, err parseError) {
+	options.Threshold = 0.98
+	if len(args) < 6 || args[0] != "corpus-acceptance" || strings.TrimSpace(args[1]) == "" {
+		return "", "", "", options, parseErrorUsage
+	}
+	pressurePath = args[1]
+	for i := 2; i < len(args); {
+		switch args[i] {
+		case "--answer-key":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", "", options, parseErrorUsage
+			}
+			answerKeyPath = args[i+1]
+			i += 2
+		case "--out":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", "", options, parseErrorUsage
+			}
+			outDir = args[i+1]
+			i += 2
+		case "--threshold":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", "", options, parseErrorUsage
+			}
+			threshold, parseErr := strconv.ParseFloat(args[i+1], 64)
+			if parseErr != nil || math.IsNaN(threshold) || math.IsInf(threshold, 0) || threshold < documents.CorpusAcceptanceDEC64MinThreshold {
+				return "", "", "", options, parseErrorUsage
+			}
+			options.Threshold = threshold
+			i += 2
+		case "--held-out":
+			options.HeldOut = true
+			i++
+		case "--profile", "--destination", "--classifier", "--llm-provider", "--llm-model":
+			return "", "", "", options, parseErrorUsage
+		default:
+			return "", "", "", options, parseErrorUsage
+		}
+	}
+	if answerKeyPath == "" || outDir == "" {
+		return "", "", "", options, parseErrorUsage
+	}
+	return pressurePath, answerKeyPath, outDir, options, parseErrorNone
 }
 
 func (r Runner) parseDocumentsJudgeArgs(args []string) (inputPath string, outDir string, options documents.SemanticJudgmentOptions, err parseError, configError string) {
