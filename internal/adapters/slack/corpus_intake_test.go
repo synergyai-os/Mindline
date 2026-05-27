@@ -65,6 +65,33 @@ func TestBuildCorpusIntakeDoesNotLeakSecretOrPrivateFileURLToReports(t *testing.
 	}
 }
 
+func TestBuildCorpusIntakeBlocksModernAPIKeys(t *testing.T) {
+	out := t.TempDir()
+	modernKey := "sk-proj-" + strings.Repeat("a", 48)
+	summary, err := BuildCorpusIntake(Payload{
+		Source: Source{Workspace: "synthetic", ChannelID: "DTEST", ChannelName: "self-dm", AdapterID: "slack"},
+		Messages: []Message{
+			{TS: "1710000000.000001", User: "U123", AuthorName: "Randy", Text: "OpenAI key " + modernKey},
+		},
+	}, out)
+	if err != nil {
+		t.Fatalf("BuildCorpusIntake: %v", err)
+	}
+	if summary.ProcessedCount != 0 || summary.BlockedCount != 1 || summary.SecretLikeCount != 1 || summary.ManifestPath != "" {
+		t.Fatalf("expected modern API key to be blocked without manifest: %#v", summary)
+	}
+	if summary.Items[0].ReasonCode != CorpusIntakeReasonSecretLike || summary.Items[0].SourcePath != "" {
+		t.Fatalf("expected secret-like blocked item without source path: %#v", summary.Items[0])
+	}
+	combined := readAllFiles(t, out)
+	if strings.Contains(combined, modernKey) {
+		t.Fatalf("modern API key leaked in output:\n%s", combined)
+	}
+	if _, err := os.Stat(filepath.Join(out, "sources")); !os.IsNotExist(err) {
+		t.Fatalf("expected no source markdown for modern API key, stat err=%v", err)
+	}
+}
+
 func TestBuildCorpusIntakeSuppressesManifestWhenNoSourcesAreEligible(t *testing.T) {
 	out := t.TempDir()
 	summary, err := BuildCorpusIntake(Payload{
