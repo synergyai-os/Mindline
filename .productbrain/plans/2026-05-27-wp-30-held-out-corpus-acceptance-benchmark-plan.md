@@ -86,4 +86,3 @@ Before commit/PR:
 ## Expected PR Value
 
 After this PR, Mindline has the missing measurement layer between pressure runs and no-human claims. A developer or agent can run a corpus, evaluate it against independent held-out expectations, and know exactly why autonomy remains blocked or what quality failure class to improve next.
-

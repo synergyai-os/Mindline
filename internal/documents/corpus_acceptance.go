@@ -294,18 +294,40 @@ func evaluateCorpusAcceptanceSource(root string, source CorpusPressureSourceResu
 	if err != nil {
 		return unevaluatedSourceAcceptance(source.SemanticRunID, sourceKey)
 	}
+	sourceDocumentID := sourceKey.SourceDocumentID
+	if strings.TrimSpace(sourceDocumentID) == "" {
+		sourceDocumentID = corpusAcceptanceArtifactSourceDocumentID(candidates, source.SourceID)
+	}
 	answerKey := SemanticAcceptanceAnswerKey{
 		SchemaVersion:    SemanticAcceptanceAnswerKeySchemaVersion,
 		AnswerKeyID:      sourceKey.SourceID,
-		SourceDocumentID: sourceKey.SourceDocumentID,
+		SourceDocumentID: sourceDocumentID,
 		ExpectedOutcomes: sourceKey.ExpectedOutcomes,
-	}
-	if answerKey.SourceDocumentID == "" {
-		answerKey.SourceDocumentID = source.SourceID
 	}
 	acceptance := EvaluateSemanticAcceptance(source.SemanticRunID, answerKey, candidates, relations)
 	acceptance.WrongKindCount = countWrongKindMatches(answerKey.SourceDocumentID, sourceKey.ExpectedOutcomes, candidates)
 	return acceptance
+}
+
+func corpusAcceptanceArtifactSourceDocumentID(candidates []SemanticCandidate, fallback string) string {
+	sourceDocumentID := ""
+	for _, candidate := range candidates {
+		candidateSourceID := candidateSourceDocumentID(candidate)
+		if strings.TrimSpace(candidateSourceID) == "" {
+			continue
+		}
+		if sourceDocumentID == "" {
+			sourceDocumentID = candidateSourceID
+			continue
+		}
+		if sourceDocumentID != candidateSourceID {
+			return fallback
+		}
+	}
+	if sourceDocumentID != "" {
+		return sourceDocumentID
+	}
+	return fallback
 }
 
 func unevaluatedSourceAcceptance(runID string, sourceKey CorpusAcceptanceAnswerKeySource) SemanticAcceptanceSummary {

@@ -49,6 +49,37 @@ func TestCorpusAcceptanceExpectedAbsentCountsAsCorrect(t *testing.T) {
 	}
 }
 
+func TestCorpusAcceptanceDerivesMissingSourceDocumentIDFromSemanticArtifacts(t *testing.T) {
+	root, _, answerKey := writeCorpusAcceptanceFixture(t, []SemanticCandidate{corpusAcceptanceCandidate(t, SemanticCandidateKindAction, ReviewStatusReady)}, nil)
+	answerKey.MinEvalCount = 1
+	answerKey.Sources[0].SourceDocumentID = ""
+	writeDocumentsTestJSON(t, filepath.Join(root, "answer-key.json"), answerKey)
+
+	summary, err := BuildCorpusAcceptanceBenchmark(root, filepath.Join(root, "answer-key.json"), filepath.Join(root, "benchmark"), CorpusAcceptanceBenchmarkOptions{Threshold: 0.98, HeldOut: true})
+	if err != nil {
+		t.Fatalf("build corpus acceptance benchmark: %v", err)
+	}
+	if summary.MatchedExpectedCount != 1 || summary.FalseNegativeCount != 0 || summary.Sources[0].Accuracy != 1 {
+		t.Fatalf("expected omitted source_document_id to derive from semantic artifacts, got matched=%d fn=%d source_accuracy=%.2f", summary.MatchedExpectedCount, summary.FalseNegativeCount, summary.Sources[0].Accuracy)
+	}
+}
+
+func TestCorpusAcceptanceMissingSourceDocumentIDDoesNotHideUnexpectedCandidates(t *testing.T) {
+	root, _, answerKey := writeCorpusAcceptanceFixture(t, []SemanticCandidate{corpusAcceptanceCandidate(t, SemanticCandidateKindAction, ReviewStatusReady)}, nil)
+	answerKey.MinEvalCount = 1
+	answerKey.Sources[0].SourceDocumentID = ""
+	answerKey.Sources[0].ExpectedOutcomes[0].ExpectedState = ExpectedOutcomeAbsent
+	writeDocumentsTestJSON(t, filepath.Join(root, "answer-key.json"), answerKey)
+
+	summary, err := BuildCorpusAcceptanceBenchmark(root, filepath.Join(root, "answer-key.json"), filepath.Join(root, "benchmark"), CorpusAcceptanceBenchmarkOptions{Threshold: 0.98, HeldOut: true})
+	if err != nil {
+		t.Fatalf("build corpus acceptance benchmark: %v", err)
+	}
+	if summary.FalsePositiveCount != 1 || summary.MatchedExpectedCount != 0 || summary.Sources[0].Accuracy != 0 {
+		t.Fatalf("expected omitted source_document_id to expose unexpected artifact candidates, got fp=%d matched=%d source_accuracy=%.2f", summary.FalsePositiveCount, summary.MatchedExpectedCount, summary.Sources[0].Accuracy)
+	}
+}
+
 func TestCorpusAcceptanceCalibrationAndTinySuitesCannotPassEligibility(t *testing.T) {
 	root, _, answerKey := writeCorpusAcceptanceFixture(t, []SemanticCandidate{corpusAcceptanceCandidate(t, SemanticCandidateKindAction, ReviewStatusReady)}, nil)
 	answerKey.SuiteKind = CorpusAcceptanceSuiteCalibration
