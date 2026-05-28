@@ -55,6 +55,7 @@ func sourceEnrichmentReport(summary SourceEnrichmentSummary, sources []SourceEnr
 	b.WriteString(fmt.Sprintf("- Unsupported URLs: %d\n", summary.UnsupportedURLCount))
 	b.WriteString(fmt.Sprintf("- Blocked URLs: %d\n", summary.BlockedURLCount))
 	b.WriteString(fmt.Sprintf("- URL accounting coverage: %.2f\n", summary.URLAccountingCoverage))
+	b.WriteString(fmt.Sprintf("- Enriched artifact coverage: %.2f\n", summary.EnrichedArtifactCoverage))
 	b.WriteString("- Retrieval mode: local artifacts only\n")
 	b.WriteString("- Network fetches: 0\n")
 	b.WriteString("- Destination writes: 0\n")

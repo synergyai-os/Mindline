@@ -220,6 +220,40 @@ func TestBuildSourceEnrichmentPrefersUnresolvedSourceStateOverEnriched(t *testin
 	}
 }
 
+func TestBuildSourceEnrichmentComputesPartialArtifactCoverage(t *testing.T) {
+	root := t.TempDir()
+	sourcePath := writeSourceEnrichmentFixture(t, root, "source-1", strings.Join([]string{
+		"# Mixed links",
+		"https://example.com/research",
+		"https://example.com/missing",
+	}, "\n"))
+	manifestPath := writeSourceEnrichmentManifest(t, root, "corpus-enrich-test", CorpusPressureManifestSource{
+		SourceID:   "source-1",
+		SourceKind: SourceKindMarkdown,
+		Path:       sourcePath,
+	})
+	artifactsPath := writeSourceEnrichmentArtifacts(t, root, LocalSourceEnrichmentArtifact{
+		URL:   "https://example.com/research",
+		Title: "Enriched source",
+	})
+
+	out := filepath.Join(root, "enriched")
+	summary, err := BuildSourceEnrichment(manifestPath, artifactsPath, out)
+	if err != nil {
+		t.Fatalf("BuildSourceEnrichment: %v", err)
+	}
+	if summary.URLCount != 2 || summary.EnrichedURLCount != 1 {
+		t.Fatalf("expected one enriched URL across two source URLs: %+v", summary)
+	}
+	if summary.EnrichedArtifactCoverage != 0.5 {
+		t.Fatalf("expected partial enriched artifact coverage, got %+v", summary)
+	}
+	report := mustReadString(t, filepath.Join(out, SourceEnrichmentDirName, "enrichment-report.md"))
+	if !strings.Contains(report, "- Enriched artifact coverage: 0.50") {
+		t.Fatalf("expected report to show partial artifact coverage:\n%s", report)
+	}
+}
+
 func TestBuildSourceEnrichmentDoesNotTrimQueryValueSlashDuringMatching(t *testing.T) {
 	root := t.TempDir()
 	sourcePath := writeSourceEnrichmentFixture(t, root, "source-1", "# Query link\n\nhttps://example.com/?next=/\n")

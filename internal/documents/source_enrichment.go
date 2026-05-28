@@ -203,8 +203,8 @@ func BuildSourceEnrichment(manifestPath, artifactManifestPath, outDir string) (S
 	if summary.URLCount > 0 {
 		summary.URLAccountingCoverage = float64(summary.AccountedURLCount) / float64(summary.URLCount)
 	}
-	if summary.EnrichedURLCount > 0 {
-		summary.EnrichedArtifactCoverage = 1
+	if summary.URLCount > 0 {
+		summary.EnrichedArtifactCoverage = float64(summary.EnrichedURLCount) / float64(summary.URLCount)
 	}
 	if err := writeJSON(realRoot, "corpus-pressure-manifest.json", outputManifest); err != nil {
 		return SourceEnrichmentSummary{}, ArtifactWriteError{Err: err}
