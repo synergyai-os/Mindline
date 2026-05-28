@@ -50,6 +50,25 @@ Safe pattern:
 - We are building Randy's OS around Product Brain and Tolaria.
 - Slack is the first source adapter, but the model must support many future sources.
 - Build for our own workflow first, while keeping adapter boundaries clean enough to open source later.
+- Do not optimize for one private sample, one destination, one provider, one workspace, or one user unless the work explicitly declares that bounded scope. Product progress must generalize to the stated user/input/output/workspace surface.
+
+## Eval-Driven Improvement Protocol
+
+Product Brain is authoritative for this protocol. Decision anchors: DEC-250, DEC-251, DEC-252, DEC-241, STR-3, PRI-1, BR-1, STD-17, and DEC-64. Supporting flow/tension anchors: FLO-1 and TEN-23.
+
+Use this protocol for any work package, implementation, review, or proof that touches LLM calls, semantic extraction/classification, source enrichment, routing, review automation, autonomy claims, destination writes, user data/privacy, or measurable quality KRs.
+
+Scale the protocol to risk. Mechanical changes inside a relevant work package do not need heavyweight new evals unless they are used as product proof or can affect quality, privacy, routing, autonomy, or destination behavior.
+
+- First-round plans are provisional. Before implementation, challenge the spec/plan once for a tighter, leaner, more ambitious, more product-general version, then reconcile that challenge against Product Brain.
+- Command success is not outcome success. A process exit code of `0` proves only that the command ran; product success requires the relevant eval/KR gates and guardrails to pass.
+- Every run used as proof for a relevant work package must produce or reference local trace/eval artifacts. When hosted telemetry is used, it must be explicit, metadata-only, allowlisted, and governed by PRI-1 and BR-1.
+- Eval projections for relevant proof must state intended users, input/source types, output or destination surfaces, workspace assumptions, provider/model assumptions, privacy boundary, sample status, held-out/generalization claim, KR thresholds, and guardrails.
+- Private or sample-bound proof is not generalizable proof. `/temp`, Randy Slack, one Tolaria folder, one Product Brain profile, one PostHog run, or one customer workspace can support discovery/debugging, but closure claims require a reusable fixture, held-out eval case, reusable rule, or an explicit non-generalizable flag.
+- A sample-specific fix must name the generalized product behavior it proves. If it cannot, treat it as local remediation rather than product progress.
+- The default improvement loop is: run -> trace/eval -> diagnose failure -> propose generalized fix -> rerun comparable proof -> compare before/after -> capture reusable learning on Chain.
+- Short term, Codex is the active operator that inspects eval artifacts, improves the system, and captures learnings. Long term, the system should aggregate eval runs and propose improvement work automatically; do not claim that exists until it is built and proven.
+- Do not add an AGENTS.md/process shortcut that bypasses Chain authority. If this protocol changes, update Product Brain first, then update instruction surfaces to point at the Chain truth.
 
 ## PB vs Tolaria Boundary
 
