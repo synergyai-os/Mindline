@@ -299,6 +299,39 @@ func TestBuildUnsafeArtifactBlocksImprovementClaim(t *testing.T) {
 	}
 }
 
+func TestBuildSanitizesPrivateArtifactRefs(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "Users", "randy", "slack.com", "archives", "C123", "corpus-pressure", "pressure-summary.json"), map[string]any{
+		"schema_version":             "corpus-pressure-summary/v0.1",
+		"corpus_id":                  "corpus-a",
+		"source_count":               2,
+		"evidence_ready_atom_ratio":  0.9,
+		"review_burden_ratio":        0.1,
+		"corpus_fingerprint":         "same",
+		"command_config_fingerprint": "same-config",
+		"guardrails":                 completeGuardrails(),
+	})
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if gateStatus(summary, "privacy_safe_readback") != "fail" {
+		t.Fatalf("expected private ref to fail privacy gate: %+v", summary.ClaimGates)
+	}
+	serialized, err := json.Marshal(summary)
+	if err != nil {
+		t.Fatalf("marshal summary: %v", err)
+	}
+	if strings.Contains(string(serialized), "Users/") || strings.Contains(string(serialized), "slack.com/archives") {
+		t.Fatalf("summary leaked private artifact ref: %s", serialized)
+	}
+	chainDraft := readString(t, filepath.Join(root, "out", DirName, "chain-capture-draft.md"))
+	if strings.Contains(chainDraft, "Users/") || strings.Contains(chainDraft, "slack.com/archives") {
+		t.Fatalf("chain draft leaked private artifact ref: %s", chainDraft)
+	}
+}
+
 func TestBuildBaselineUnsafeArtifactBlocksProofClaims(t *testing.T) {
 	root := t.TempDir()
 	baseline := filepath.Join(root, "baseline")
@@ -484,6 +517,40 @@ func TestBuildReadsLinkArtifactRequestSummaryMetrics(t *testing.T) {
 	}
 	if summary.TopImprovementTarget.Code != "needs_held_out_labels" {
 		t.Fatalf("expected nested flag to drive non-generalizable target, got %+v", summary.TopImprovementTarget)
+	}
+}
+
+func TestBuildPreservesNonGeneralizableRuntimeAcrossArtifacts(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "corpus-pressure", "pressure-summary.json"), map[string]any{
+		"schema_version":             "corpus-pressure-summary/v0.1",
+		"corpus_id":                  "corpus-a",
+		"source_count":               2,
+		"evidence_ready_atom_ratio":  0.9,
+		"review_burden_ratio":        0.1,
+		"corpus_fingerprint":         "same",
+		"command_config_fingerprint": "same-config",
+		"held_out":                   true,
+		"non_generalizable_runtime":  true,
+		"guardrails":                 completeGuardrails(),
+	})
+	writeFixture(t, filepath.Join(root, "link-enrichment", "requests", "link-artifact-requests.json"), map[string]any{
+		"schema_version": "local-link-artifact-requests/v0.1",
+		"summary": map[string]any{
+			"source_count":                 2,
+			"url_accounting_coverage":      1,
+			"artifact_match_coverage":      1,
+			"non_generalizable_runtime":    false,
+			"missing_link_reduction_ratio": 0.5,
+		},
+	})
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if summary.GeneralizationStatus != "non_generalizable" {
+		t.Fatalf("expected non-generalizable blocker to be sticky, got %s", summary.GeneralizationStatus)
 	}
 }
 

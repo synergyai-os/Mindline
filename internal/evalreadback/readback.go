@@ -167,6 +167,11 @@ func artifactTypeForRef(ref string) string {
 }
 
 func readArtifact(path, ref, artifactType string) (ArtifactEvidence, error) {
+	if containsDeniedRefString(ref) {
+		return ArtifactEvidence{
+			Type: artifactType, Ref: sanitizedArtifactRef(ref), Status: "unsafe_or_leaky", ReasonCodes: []string{"unsafe_artifact_ref"},
+		}, nil
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return ArtifactEvidence{}, err
@@ -369,7 +374,11 @@ func mergeModelEvidence(model *readbackModel, artifact ArtifactEvidence) {
 		}
 	}
 	for key, value := range artifact.Flags {
-		model.flags[key] = value
+		if value {
+			model.flags[key] = true
+		} else if _, exists := model.flags[key]; !exists {
+			model.flags[key] = false
+		}
 	}
 	for key, value := range artifact.Fingerprints {
 		if existing, exists := model.fingerprints[key]; exists {
@@ -1062,6 +1071,18 @@ func containsDeniedString(value string) bool {
 		}
 	}
 	return false
+}
+
+func containsDeniedRefString(ref string) bool {
+	lower := strings.ToLower(filepath.ToSlash(ref))
+	if strings.HasPrefix(lower, "users/") || containsDeniedString("/"+lower) {
+		return true
+	}
+	return false
+}
+
+func sanitizedArtifactRef(ref string) string {
+	return stableID("artifact-ref", []string{filepath.ToSlash(ref)}) + ".json"
 }
 
 func numberValue(value any) (float64, bool) {
