@@ -129,7 +129,7 @@ type sourceEnrichmentURLMatch struct {
 	sourceToken string
 }
 
-var sourceEnrichmentURLPattern = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s<>"')\]|]+`)
+var sourceEnrichmentURLPattern = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s<>"'|]+`)
 
 const redactedSourceEnrichmentURL = "[redacted blocked url]"
 
@@ -407,7 +407,7 @@ func extractSourceEnrichmentURLs(value string) []sourceEnrichmentURLMatch {
 	var out []sourceEnrichmentURLMatch
 	for _, loc := range sourceEnrichmentURLPattern.FindAllStringIndex(value, -1) {
 		match := value[loc[0]:loc[1]]
-		clean := strings.TrimRight(match, ".,;:")
+		clean := trimSourceEnrichmentURLMatch(match)
 		token := clean
 		if loc[0] > 0 && value[loc[0]-1] == '<' {
 			if closeOffset := strings.IndexByte(value[loc[1]:], '>'); closeOffset >= 0 {
@@ -433,6 +433,22 @@ func extractSourceEnrichmentURLs(value string) []sourceEnrichmentURLMatch {
 		return out[i].rawURL < out[j].rawURL
 	})
 	return out
+}
+
+func trimSourceEnrichmentURLMatch(match string) string {
+	clean := strings.TrimRight(match, ".,;:")
+	for {
+		switch {
+		case strings.HasSuffix(clean, ")") && strings.Count(clean, ")") > strings.Count(clean, "("):
+			clean = strings.TrimSuffix(clean, ")")
+			clean = strings.TrimRight(clean, ".,;:")
+		case strings.HasSuffix(clean, "]") && strings.Count(clean, "]") > strings.Count(clean, "["):
+			clean = strings.TrimSuffix(clean, "]")
+			clean = strings.TrimRight(clean, ".,;:")
+		default:
+			return clean
+		}
+	}
 }
 
 func classifySourceEnrichmentURL(rawURL string) (string, string, bool) {

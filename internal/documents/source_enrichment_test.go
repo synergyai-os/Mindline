@@ -250,6 +250,63 @@ func TestBuildSourceEnrichmentDoesNotTrimQueryValueSlashDuringMatching(t *testin
 	}
 }
 
+func TestBuildSourceEnrichmentPreservesValidURLPunctuationDuringMatching(t *testing.T) {
+	root := t.TempDir()
+	sourcePath := writeSourceEnrichmentFixture(t, root, "source-1", strings.Join([]string{
+		"# Punctuated links",
+		"https://example.com/Foo_(bar)",
+		"https://example.com/reference[alpha]",
+		"[markdown](https://example.com/plain)",
+	}, "\n"))
+	manifestPath := writeSourceEnrichmentManifest(t, root, "corpus-enrich-test", CorpusPressureManifestSource{
+		SourceID:   "source-1",
+		SourceKind: SourceKindMarkdown,
+		Path:       sourcePath,
+	})
+	artifactsPath := writeSourceEnrichmentArtifacts(t, root,
+		LocalSourceEnrichmentArtifact{
+			URL:   "https://example.com/Foo_(bar)",
+			Title: "Parenthesized source",
+		},
+		LocalSourceEnrichmentArtifact{
+			URL:   "https://example.com/reference[alpha]",
+			Title: "Bracketed source",
+		},
+		LocalSourceEnrichmentArtifact{
+			URL:   "https://example.com/plain",
+			Title: "Markdown link source",
+		},
+	)
+
+	out := filepath.Join(root, "enriched")
+	summary, err := BuildSourceEnrichment(manifestPath, artifactsPath, out)
+	if err != nil {
+		t.Fatalf("BuildSourceEnrichment: %v", err)
+	}
+	if summary.URLCount != 3 || summary.EnrichedURLCount != 3 || summary.NeedsManualURLCount != 0 {
+		t.Fatalf("expected punctuated URLs and Markdown link URL to match artifacts: %+v", summary)
+	}
+	artifact := mustReadString(t, filepath.Join(out, SourceEnrichmentDirName, "sources", "source-1.json"))
+	for _, expected := range []string{
+		`"normalized_url": "https://example.com/Foo_(bar)"`,
+		`"normalized_url": "https://example.com/reference[alpha]"`,
+		`"normalized_url": "https://example.com/plain"`,
+		"Parenthesized source",
+		"Bracketed source",
+		"Markdown link source",
+	} {
+		if !strings.Contains(artifact, expected) {
+			t.Fatalf("missing %q in artifact:\n%s", expected, artifact)
+		}
+	}
+	if strings.Contains(artifact, `"raw_url": "https://example.com/Foo_("`) ||
+		strings.Contains(artifact, `"normalized_url": "https://example.com/Foo_("`) ||
+		strings.Contains(artifact, "https://example.com/reference[alpha]]") ||
+		strings.Contains(artifact, "https://example.com/plain)") {
+		t.Fatalf("URL punctuation was truncated or delimiter leaked:\n%s", artifact)
+	}
+}
+
 func TestBuildSourceEnrichmentBlocksUnsafeArtifactPayload(t *testing.T) {
 	root := t.TempDir()
 	sourcePath := writeSourceEnrichmentFixture(t, root, "source-1", "# Link\n\nhttps://example.com/research\n")
