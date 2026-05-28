@@ -163,6 +163,34 @@ func TestBuildSourceEnrichmentBlocksUnsafeSlackMrkdwnLinkLabels(t *testing.T) {
 	}
 }
 
+func TestBuildSourceEnrichmentBlocksWorkspaceSlackArchivePermalinks(t *testing.T) {
+	root := t.TempDir()
+	privateURL := "https://acme.slack.com/archives/C123/p1710000001000001"
+	sourcePath := writeSourceEnrichmentFixture(t, root, "source-1", "# Slack permalink\n\n"+privateURL+"\n")
+	manifestPath := writeSourceEnrichmentManifest(t, root, "corpus-enrich-test", CorpusPressureManifestSource{
+		SourceID:   "source-1",
+		SourceKind: SourceKindMarkdown,
+		Path:       sourcePath,
+	})
+	artifactsPath := writeSourceEnrichmentArtifacts(t, root)
+
+	out := filepath.Join(root, "enriched")
+	summary, err := BuildSourceEnrichment(manifestPath, artifactsPath, out)
+	if err != nil {
+		t.Fatalf("BuildSourceEnrichment: %v", err)
+	}
+	if summary.EnrichedURLCount != 0 || summary.NeedsManualURLCount != 0 || summary.BlockedURLCount != 1 {
+		t.Fatalf("expected workspace Slack permalink to be blocked: %+v", summary)
+	}
+	all := readAllFiles(t, out)
+	if strings.Contains(all, privateURL) || strings.Contains(all, "acme.slack.com/archives") {
+		t.Fatalf("private Slack permalink leaked:\n%s", all)
+	}
+	if !strings.Contains(all, "unsafe_or_private_url") || !strings.Contains(all, redactedSourceEnrichmentURL) {
+		t.Fatalf("expected private Slack permalink redaction proof:\n%s", all)
+	}
+}
+
 func TestBuildSourceEnrichmentBlocksUnsafeArtifactPayload(t *testing.T) {
 	root := t.TempDir()
 	sourcePath := writeSourceEnrichmentFixture(t, root, "source-1", "# Link\n\nhttps://example.com/research\n")

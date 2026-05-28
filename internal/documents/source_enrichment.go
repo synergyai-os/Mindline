@@ -507,12 +507,27 @@ func sourceEnrichmentUnsafe(value string) bool {
 	lower := strings.ToLower(value)
 	return strings.Contains(lower, "slack-file-private://") ||
 		strings.Contains(lower, "files-pri") ||
-		strings.Contains(lower, "workspace.slack.com/archives") ||
+		containsPrivateSlackArchiveURL(value) ||
 		strings.Contains(lower, "xoxb-") ||
 		strings.Contains(lower, "sk_live_") ||
 		strings.Contains(lower, "sk-proj-") ||
 		containsUnsafeMarker(value) ||
 		containsGovernanceID(value)
+}
+
+func containsPrivateSlackArchiveURL(value string) bool {
+	for _, match := range sourceEnrichmentURLPattern.FindAllString(value, -1) {
+		parsed, err := url.Parse(strings.TrimRight(match, ".,;:"))
+		if err != nil {
+			continue
+		}
+		host := strings.ToLower(parsed.Hostname())
+		path := strings.ToLower(parsed.Path)
+		if (host == "slack.com" || strings.HasSuffix(host, ".slack.com")) && strings.HasPrefix(path, "/archives/") {
+			return true
+		}
+	}
+	return false
 }
 
 func sourceEnrichmentUnsafeArtifact(artifact LocalSourceEnrichmentArtifact) bool {
