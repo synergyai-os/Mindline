@@ -233,6 +233,41 @@ func TestBuildAcceptsCorpusAcceptanceGuardrailsAsCompleteSideEffectEvidence(t *t
 	}
 }
 
+func TestBuildBlocksDEC64ClaimWhenReadbackEvidenceUnsafe(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "corpus-acceptance", "benchmark-summary.json"), map[string]any{
+		"schema_version":             "corpus-acceptance-summary/v0.1",
+		"suite_kind":                 "held_out",
+		"corpus_fingerprint":         "held-out-corpus",
+		"command_config_fingerprint": "held-out-config",
+		"threshold":                  0.98,
+		"accuracy":                   1.0,
+		"eval_count":                 50,
+		"held_out":                   true,
+		"suite_valid":                true,
+		"dec64_eligible":             true,
+		"guardrails":                 map[string]any{"destination_writes": 0, "hosted_telemetry_exports": 0, "hosted_inference_calls": 0},
+	})
+	writeRaw(t, filepath.Join(root, "trace", "trace-summary.json"), `{"schema_version":"mindline-trace-summary/v0.1","input_path":"/private/tmp/source.json"}`)
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if gateStatus(summary, "privacy_safe_readback") != "fail" {
+		t.Fatalf("expected privacy gate to fail: %+v", summary.ClaimGates)
+	}
+	if gateStatus(summary, "side_effect_claim") != "pass" {
+		t.Fatalf("expected side-effect evidence to remain complete: %+v", summary.ClaimGates)
+	}
+	if gateStatus(summary, "dec64_no_human_claim") == "pass" {
+		t.Fatalf("expected unsafe evidence to block DEC-64 claim: %+v", summary.ClaimGates)
+	}
+	if gate := gateByName(summary, "dec64_no_human_claim"); !containsString(gate.ReasonCodes, "unsafe_or_leaky") {
+		t.Fatalf("expected unsafe DEC-64 block reason, got %+v", gate)
+	}
+}
+
 func TestBuildAcceptsCorpusPressureGuardrailsAsCompleteSideEffectEvidence(t *testing.T) {
 	root := t.TempDir()
 	writeFixture(t, filepath.Join(root, "corpus-pressure", "pressure-summary.json"), map[string]any{

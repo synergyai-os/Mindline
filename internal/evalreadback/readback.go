@@ -462,10 +462,10 @@ func rebuildClaimGates(summary *Summary) {
 	default:
 		gates = append(gates, ClaimGate{Gate: "improvement_claim", Status: "blocked", ReasonCodes: []string{"missing_baseline"}, ClaimImpact: "blocks improvement claim until comparable baseline is supplied"})
 	}
-	if hasDEC64ThresholdProof(summary) && hasSideEffectEvidence(summary) && !hasSideEffectCounter(summary) {
+	if hasDEC64ThresholdProof(summary) && hasSideEffectEvidence(summary) && !hasSideEffectCounter(summary) && !unsafe && !unsupported {
 		gates = append(gates, ClaimGate{Gate: "dec64_no_human_claim", Status: "pass", EvidenceRefs: firstRefs(summary.SafeArtifactRefs), ClaimImpact: "held-out threshold proof supports bounded no-human readiness claim"})
 	} else {
-		gates = append(gates, ClaimGate{Gate: "dec64_no_human_claim", Status: "blocked", ReasonCodes: []string{"held_out_threshold_not_proven"}, ClaimImpact: "blocks no-human autonomy readiness claim"})
+		gates = append(gates, ClaimGate{Gate: "dec64_no_human_claim", Status: "blocked", ReasonCodes: dec64BlockedReasonCodes(summary, unsafe, unsupported), ClaimImpact: "blocks no-human autonomy readiness claim"})
 	}
 	if hasSideEffectCounter(summary) {
 		gates = append(gates, ClaimGate{Gate: "side_effect_claim", Status: "fail", ReasonCodes: []string{"guardrail_counter_nonzero"}, ClaimImpact: "blocks safety claim"})
@@ -478,6 +478,29 @@ func rebuildClaimGates(summary *Summary) {
 		gates = append(gates, ClaimGate{Gate: "next_target", Status: "pass", EvidenceRefs: summary.TopImprovementTarget.EvidenceRefs, ClaimImpact: "next improvement target is explicit"})
 	}
 	summary.ClaimGates = gates
+}
+
+func dec64BlockedReasonCodes(summary *Summary, unsafe bool, unsupported bool) []string {
+	reasonCodes := []string{}
+	if !hasDEC64ThresholdProof(summary) {
+		reasonCodes = append(reasonCodes, "held_out_threshold_not_proven")
+	}
+	if !hasSideEffectEvidence(summary) {
+		reasonCodes = append(reasonCodes, "missing_side_effect_evidence")
+	}
+	if hasSideEffectCounter(summary) {
+		reasonCodes = append(reasonCodes, "guardrail_counter_nonzero")
+	}
+	if unsafe {
+		reasonCodes = append(reasonCodes, "unsafe_or_leaky")
+	}
+	if unsupported {
+		reasonCodes = append(reasonCodes, "unsupported_schema")
+	}
+	if len(reasonCodes) == 0 {
+		return []string{"held_out_threshold_not_proven"}
+	}
+	return reasonCodes
 }
 
 func hasUnsafeArtifact(summary *Summary) bool {
