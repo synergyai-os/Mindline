@@ -1161,6 +1161,24 @@ func TestBuildRejectsSymlinkEscapeOutput(t *testing.T) {
 	}
 }
 
+func TestBuildSkipsSymlinkedInputArtifactFile(t *testing.T) {
+	root := t.TempDir()
+	current := filepath.Join(root, "current")
+	escaped := filepath.Join(root, "escaped")
+	if err := os.MkdirAll(filepath.Join(current, "corpus-pressure"), 0o755); err != nil {
+		t.Fatalf("mkdir current: %v", err)
+	}
+	writePressure(t, escaped, 0.9, 0.2)
+	if err := os.Symlink(filepath.Join(escaped, "corpus-pressure", "pressure-summary.json"), filepath.Join(current, "corpus-pressure", "pressure-summary.json")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	_, err := Build(current, filepath.Join(root, "out"), Options{})
+	if err == nil || !strings.Contains(err.Error(), "no supported eval/trace artifacts found") {
+		t.Fatalf("expected symlinked input artifact to be skipped, got %v", err)
+	}
+}
+
 func TestBuildRejectsSymlinkEscapeOutputFile(t *testing.T) {
 	root := t.TempDir()
 	current := filepath.Join(root, "current")

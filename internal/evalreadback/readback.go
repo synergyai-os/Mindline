@@ -83,6 +83,9 @@ func buildModel(inputRoot string) (readbackModel, error) {
 			}
 			return nil
 		}
+		if d.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
 		if filepath.Ext(path) != ".json" {
 			return nil
 		}
