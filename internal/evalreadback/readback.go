@@ -348,29 +348,29 @@ func mergeModelEvidence(model *readbackModel, artifact ArtifactEvidence) {
 		model.metrics[key] = value
 		switch key {
 		case "guardrail_network_fetches", "safety_network_fetches":
-			model.guardrails.NetworkFetches += int(value)
+			model.guardrails.NetworkFetches = maxInt(model.guardrails.NetworkFetches, int(value))
 		case "guardrail_hosted_telemetry_exports", "safety_hosted_telemetry_exports":
-			model.guardrails.HostedTelemetryExports += int(value)
+			model.guardrails.HostedTelemetryExports = maxInt(model.guardrails.HostedTelemetryExports, int(value))
 		case "guardrail_hosted_inference_calls", "safety_hosted_inference_calls":
-			model.guardrails.HostedInferenceCalls += int(value)
+			model.guardrails.HostedInferenceCalls = maxInt(model.guardrails.HostedInferenceCalls, int(value))
 		case "guardrail_browser_calls", "safety_browser_calls":
-			model.guardrails.BrowserCalls += int(value)
+			model.guardrails.BrowserCalls = maxInt(model.guardrails.BrowserCalls, int(value))
 		case "guardrail_slack_api_calls", "safety_slack_api_calls":
-			model.guardrails.SlackAPICalls += int(value)
+			model.guardrails.SlackAPICalls = maxInt(model.guardrails.SlackAPICalls, int(value))
 		case "guardrail_destination_writes", "safety_destination_writes":
-			model.guardrails.DestinationWrites += int(value)
+			model.guardrails.DestinationWrites = maxInt(model.guardrails.DestinationWrites, int(value))
 		case "guardrail_product_brain_writes", "safety_product_brain_writes":
-			model.guardrails.ProductBrainWrites += int(value)
+			model.guardrails.ProductBrainWrites = maxInt(model.guardrails.ProductBrainWrites, int(value))
 		case "guardrail_tolaria_writes", "safety_tolaria_writes":
-			model.guardrails.TolariaWrites += int(value)
+			model.guardrails.TolariaWrites = maxInt(model.guardrails.TolariaWrites, int(value))
 		case "safety_auto_accepts":
-			model.guardrails.AutoAccepts += int(value)
+			model.guardrails.AutoAccepts = maxInt(model.guardrails.AutoAccepts, int(value))
 		case "safety_no_human_claims":
 			if value > 0 {
 				model.guardrails.NoHumanClaims = true
 			}
 		case "safety_committed_private_artifacts":
-			model.guardrails.CommittedPrivateArtifacts += int(value)
+			model.guardrails.CommittedPrivateArtifacts = maxInt(model.guardrails.CommittedPrivateArtifacts, int(value))
 		}
 	}
 	for key, value := range artifact.Flags {
@@ -768,6 +768,13 @@ func boolMetric(value bool) float64 {
 		return 1
 	}
 	return 0
+}
+
+func maxInt(a, b int) int {
+	if b > a {
+		return b
+	}
+	return a
 }
 
 func comparableModels(a, b readbackModel) (bool, []string) {

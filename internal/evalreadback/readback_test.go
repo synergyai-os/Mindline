@@ -408,6 +408,48 @@ func TestBuildGuardrailRegressionBlocksImprovementClaim(t *testing.T) {
 	}
 }
 
+func TestBuildDoesNotDoubleCountDuplicatedCorpusPressureGuardrails(t *testing.T) {
+	root := t.TempDir()
+	baseline := filepath.Join(root, "baseline")
+	current := filepath.Join(root, "current")
+	guardrails := completeGuardrails()
+	guardrails["hosted_inference_calls"] = 1
+	writePressureWithGuardrails(t, baseline, 0.4, 0.7, guardrails)
+	for _, fixture := range []struct {
+		path          string
+		schemaVersion string
+	}{
+		{path: "corpus-pressure/pressure-summary.json", schemaVersion: "corpus-pressure-summary/v0.1"},
+		{path: "corpus-pressure/eval-input.json", schemaVersion: "corpus-pressure-eval-input/v0.1"},
+		{path: "corpus-pressure/trace-summary.json", schemaVersion: "corpus-pressure-trace-summary/v0.1"},
+	} {
+		writeFixture(t, filepath.Join(current, fixture.path), map[string]any{
+			"schema_version":             fixture.schemaVersion,
+			"corpus_id":                  "corpus-a",
+			"source_count":               2,
+			"evidence_ready_atom_ratio":  0.9,
+			"review_burden_ratio":        0.2,
+			"corpus_fingerprint":         "same",
+			"command_config_fingerprint": "same-config",
+			"guardrails":                 guardrails,
+		})
+	}
+
+	summary, err := Build(current, filepath.Join(root, "out"), Options{BaselineRoot: baseline})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if summary.Guardrails.HostedInferenceCalls != 1 {
+		t.Fatalf("expected duplicated run-level guardrail to be counted once, got %+v", summary.Guardrails)
+	}
+	if summary.ImprovementStatus != "improved" {
+		t.Fatalf("expected duplicated guardrail artifacts not to create regression, got %s comparison=%+v", summary.ImprovementStatus, summary.Comparison)
+	}
+	if summary.Comparison != nil && containsString(summary.Comparison.ReasonCodes, "guardrail_regression") {
+		t.Fatalf("expected no guardrail_regression from duplicated guardrails, got %+v", summary.Comparison)
+	}
+}
+
 func TestBuildHostedTelemetryBlocksSideEffectClaim(t *testing.T) {
 	root := t.TempDir()
 	writePressureWithGuardrails(t, root, 0.9, 0.2, map[string]any{"destination_writes": 0, "hosted_telemetry_exports": 1, "hosted_inference_calls": 0})
