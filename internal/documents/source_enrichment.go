@@ -448,7 +448,8 @@ func classifySourceEnrichmentURL(rawURL string) (string, string, bool) {
 	parsed.Scheme = strings.ToLower(parsed.Scheme)
 	parsed.Host = strings.ToLower(parsed.Host)
 	parsed.Fragment = ""
-	normalized := strings.TrimRight(parsed.String(), "/")
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	normalized := parsed.String()
 	return normalized, sourceEnrichmentURLKind(parsed), true
 }
 
@@ -558,8 +559,6 @@ func sourceEnrichmentSourceState(urls []SourceEnrichmentURL) SourceEnrichmentSta
 		}
 	}
 	switch {
-	case hasEnriched:
-		return SourceEnrichmentStateEnriched
 	case hasManual:
 		return SourceEnrichmentStateNeedsManualProcessing
 	case hasUnsupported:
@@ -568,6 +567,8 @@ func sourceEnrichmentSourceState(urls []SourceEnrichmentURL) SourceEnrichmentSta
 		return SourceEnrichmentStateBlockedPrivateOrSecret
 	case hasBlockedPolicy:
 		return SourceEnrichmentStateBlockedByPolicy
+	case hasEnriched:
+		return SourceEnrichmentStateEnriched
 	default:
 		return SourceEnrichmentStateNeedsManualProcessing
 	}

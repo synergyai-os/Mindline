@@ -191,6 +191,65 @@ func TestBuildSourceEnrichmentBlocksWorkspaceSlackArchivePermalinks(t *testing.T
 	}
 }
 
+func TestBuildSourceEnrichmentPrefersUnresolvedSourceStateOverEnriched(t *testing.T) {
+	root := t.TempDir()
+	sourcePath := writeSourceEnrichmentFixture(t, root, "source-1", strings.Join([]string{
+		"# Mixed links",
+		"https://example.com/research",
+		"https://example.com/missing",
+	}, "\n"))
+	manifestPath := writeSourceEnrichmentManifest(t, root, "corpus-enrich-test", CorpusPressureManifestSource{
+		SourceID:   "source-1",
+		SourceKind: SourceKindMarkdown,
+		Path:       sourcePath,
+	})
+	artifactsPath := writeSourceEnrichmentArtifacts(t, root, LocalSourceEnrichmentArtifact{
+		URL:   "https://example.com/research",
+		Title: "Enriched source",
+	})
+
+	summary, err := BuildSourceEnrichment(manifestPath, artifactsPath, filepath.Join(root, "enriched"))
+	if err != nil {
+		t.Fatalf("BuildSourceEnrichment: %v", err)
+	}
+	if summary.Sources[0].State != SourceEnrichmentStateNeedsManualProcessing || summary.StateCounts[SourceEnrichmentStateNeedsManualProcessing] != 1 {
+		t.Fatalf("expected mixed enriched+missing source to remain unresolved: %+v", summary)
+	}
+	if summary.EnrichedURLCount != 1 || summary.NeedsManualURLCount != 1 {
+		t.Fatalf("expected both URL states counted: %+v", summary)
+	}
+}
+
+func TestBuildSourceEnrichmentDoesNotTrimQueryValueSlashDuringMatching(t *testing.T) {
+	root := t.TempDir()
+	sourcePath := writeSourceEnrichmentFixture(t, root, "source-1", "# Query link\n\nhttps://example.com/?next=/\n")
+	manifestPath := writeSourceEnrichmentManifest(t, root, "corpus-enrich-test", CorpusPressureManifestSource{
+		SourceID:   "source-1",
+		SourceKind: SourceKindMarkdown,
+		Path:       sourcePath,
+	})
+	artifactsPath := writeSourceEnrichmentArtifacts(t, root, LocalSourceEnrichmentArtifact{
+		URL:   "https://example.com/?next=",
+		Title: "Wrong artifact",
+	})
+
+	out := filepath.Join(root, "enriched")
+	summary, err := BuildSourceEnrichment(manifestPath, artifactsPath, out)
+	if err != nil {
+		t.Fatalf("BuildSourceEnrichment: %v", err)
+	}
+	if summary.EnrichedURLCount != 0 || summary.NeedsManualURLCount != 1 {
+		t.Fatalf("expected query-value slash URL not to match different artifact: %+v", summary)
+	}
+	artifact := mustReadString(t, filepath.Join(out, SourceEnrichmentDirName, "sources", "source-1.json"))
+	if strings.Contains(artifact, "Wrong artifact") {
+		t.Fatalf("query-value slash URL matched wrong artifact:\n%s", artifact)
+	}
+	if !strings.Contains(artifact, `"normalized_url": "https://example.com?next=/"`) {
+		t.Fatalf("expected normalized URL to preserve query value slash:\n%s", artifact)
+	}
+}
+
 func TestBuildSourceEnrichmentBlocksUnsafeArtifactPayload(t *testing.T) {
 	root := t.TempDir()
 	sourcePath := writeSourceEnrichmentFixture(t, root, "source-1", "# Link\n\nhttps://example.com/research\n")
