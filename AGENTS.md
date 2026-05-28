@@ -1,15 +1,26 @@
-# AGENTS.md - PKM with Codex
+# AGENTS.md - Mindline Control Workspace
 
-This repository is the Product Brain control workspace for Randy's PKM/Tolaria system.
+This repository is the Product Brain control workspace for **Mindline**.
 
-## Non-negotiable Paths
+Mindline is the product. It is a headless, provider-agnostic semantic ingestion engine that turns messy private source material into evidence-backed knowledge candidates, eval artifacts, review packets, and destination-ready proposals.
+
+Product Brain and Tolaria matter, but they are not the product:
+
+- Product Brain is the source of truth for building Mindline in this workspace.
+- Product Brain may also become a premium downstream destination or authority consumer for Mindline outputs.
+- Tolaria is Randy's current local PKM destination and adapter test surface.
+- Other possible destinations include Notion, Obsidian, Linear, local folders, APIs, custom apps, or future Product Brain workspaces.
+
+## Non-Negotiable Paths
 
 - Product Brain CLI working directory: `/Users/randyhereman/Young Human Club Dropbox/01. Projects/PKM with Codex`
-- Tolaria vault file target: `/Users/randyhereman/Young Human Club Dropbox/02. Areas/PKM - Tolaria`
+- Current Tolaria destination root: `/Users/randyhereman/Young Human Club Dropbox/02. Areas/PKM - Tolaria`
+
+The repository path still says `PKM with Codex` for historical/local reasons. Do not infer product identity from the folder name. The product identity is Mindline.
 
 ## Product Brain Context
 
-- Treat Product Brain as the source of truth for building and system decisions.
+- Treat Product Brain as the source of truth for Mindline product, architecture, standards, work packages, decisions, tensions, and proof.
 - Run all `pb` commands from this repository root unless Randy explicitly says otherwise.
 - This repository pins the intended PB workspace via `.productbrain/config.local.json`.
 - Before using PB in a new session, verify the resolved profile with `pb profile list`.
@@ -20,63 +31,129 @@ This repository is the Product Brain control workspace for Randy's PKM/Tolaria s
 
 Protecting Product Brain as the source of truth is the highest-priority operating responsibility in this workspace.
 
-- Before doing substantive work, orient from PB and verify the relevant decisions, standards, work packages, tensions, and features are current.
+- Before substantive work, orient from PB and verify the relevant decisions, standards, work packages, tensions, features, product strategy, and architecture constraints are current.
 - If PB is missing an important rule, decision, work package, blocker, or scope boundary needed for the task, update PB before treating that information as authoritative.
 - Operate from PB, not from chat memory alone. Chat can clarify intent, but PB is where durable system truth must live.
 - During work, capture reusable system learnings, decisions, standards, risks, and scope changes in PB as they become clear.
 - At the end of work, PB must reflect the truth of what was decided, changed, blocked, completed, deferred, and learned.
-- Do not leave important system state only in code, markdown, Tolaria, terminal output, or conversation history.
+- Do not leave important system state only in code, markdown, Tolaria, terminal output, PostHog, or conversation history.
 - When PB and local artifacts disagree, pause and reconcile the mismatch before continuing.
 
-## Tolaria Vault Access
+## Product Architecture Frame
 
-- Read and write Tolaria notes in `/Users/randyhereman/Young Human Club Dropbox/02. Areas/PKM - Tolaria`.
+Mindline sits between sources and destinations.
+
+Sources are places content comes from:
+
+- Slack
+- Markdown files
+- Notion exports
+- transcripts
+- web links
+- future source adapters
+
+Destinations are places outputs may go:
+
+- Product Brain
+- Tolaria
+- Notion
+- Obsidian
+- Linear
+- local folders
+- APIs
+- custom apps
+
+The core product is not any one source or destination. The core product is the reusable processing system:
+
+1. Ingest native source items with provenance.
+2. Normalize into source-neutral candidates.
+3. Decompose and structure documents.
+4. Extract semantic atoms with evidence.
+5. Evaluate quality with traces, answer keys, baselines, and readback gates.
+6. Produce destination-neutral candidates, proposals, or write plans.
+7. Let destination adapters map those outputs into a specific surface only after evidence and safety gates pass.
+
+## Product Model Rules
+
+- Build source-agnostic and destination-agnostic behavior by default.
+- Never optimize core logic for one private `/temp` corpus, one Slack export, one workspace, one destination, or one review UI.
+- Treat Tolaria-specific behavior as adapter-specific unless PB explicitly says it is a core Mindline rule.
+- Treat Product Brain-specific proposal behavior as adapter-specific unless PB explicitly says it is a core Mindline rule.
+- When adding a new feature, state which layer owns it: source adapter, normalized candidate, document structure, semantic extraction, evaluation/readback, review workflow, or destination adapter.
+- If a decision would make Notion, Obsidian, Linear, Product Brain, or Tolaria harder to support later, capture the tradeoff in PB before implementing.
+- Do not make destination writes, no-human approval, or autonomous action claims until the Chain says the required held-out accuracy, privacy, evidence, and safety gates are met.
+
+## Evaluation And Improvement Protocol
+
+For work that touches semantic extraction, LLM behavior, review, source enrichment, destination readiness, traceability, or autonomy:
+
+1. Define the outcome and guardrails before implementation.
+2. Run against representative local fixtures or real private runtime data as allowed.
+3. Produce local trace/eval artifacts.
+4. Run readback or an equivalent claim gate to answer:
+   - what evidence exists;
+   - what changed versus baseline;
+   - what cannot be generalized;
+   - what claims are blocked;
+   - what the next product-general improvement target is.
+5. Treat hosted observability such as PostHog as an observability and analysis plane, not the durable source of truth.
+6. Keep PB as the durable decision/proof plane.
+7. Keep local readback artifacts as the canonical machine-checkable proof unless and until PB establishes a different authority.
+
+PostHog can help inspect traces, latency, model behavior, and eval projections. It should not by itself authorize product claims, destination writes, or no-human autonomy.
+
+## Tolaria Boundary
+
+Tolaria is currently Randy's local PKM destination. It is useful for testing destination behavior, but it is not the product boundary.
+
+- Read and write Tolaria notes only when the task explicitly targets Tolaria or Randy's personal PKM output.
 - Do not `cd` into the Tolaria vault to run PB commands.
 - When a shell command needs to inspect or edit vault files, use the vault path as the command `workdir` or as an explicit file path only for file operations.
 - When a shell command needs PB context, use this repository root as the command `workdir`.
+- Do not treat Tolaria folders, note types, or domain taxonomy as Mindline core schema.
+- If a Tolaria rule seems reusable, capture it in PB as a candidate destination-adapter rule or core standard before generalizing it.
 
 ## Failure Mode To Avoid
 
-The Tolaria vault does not own the PB workspace configuration. Running `pb` from the vault can fall back to the global `product-brain` profile and read or write the wrong workspace. That is a bug-class operational error.
+The Tolaria vault does not own the PB workspace configuration. Running `pb` from the vault can fall back to the global `product-brain` profile and read or write the wrong workspace.
 
 Safe pattern:
 
 1. Run PB commands from `/Users/randyhereman/Young Human Club Dropbox/01. Projects/PKM with Codex`.
-2. Read/write vault Markdown files under `/Users/randyhereman/Young Human Club Dropbox/02. Areas/PKM - Tolaria`.
-3. Keep PB workspace state and vault file state conceptually separate unless a task explicitly bridges them.
-
-## Current Build Frame
-
-- We are building Randy's OS around Product Brain and Tolaria.
-- Slack is the first source adapter, but the model must support many future sources.
-- Build for our own workflow first, while keeping adapter boundaries clean enough to open source later.
-
-## PB vs Tolaria Boundary
-
-- Product Brain is the source of truth for the open-source system we are building: product decisions, standards, principles, business rules, tensions, features, architecture, flows, patterns, questions, tasks, adapter contracts, and implementation learnings.
-- Tolaria is Randy's personal PKM output surface: captured sources, processed notes, personal resources, signals, tasks, issues, decisions, and domain organization bespoke to Randy.
-- Do not put Randy's personal captured content into PB unless it is about the PKM OS itself.
-- Do put reusable system learnings, adapter rules, classification decisions, and automation behavior into PB continuously.
+2. Read/write Tolaria files under `/Users/randyhereman/Young Human Club Dropbox/02. Areas/PKM - Tolaria` only when Tolaria is explicitly in scope.
+3. Keep PB workspace state, Mindline product state, and destination file state conceptually separate unless a task explicitly bridges them.
 
 ## Markdown Artifact Placement
 
 When creating any new `.md` file, decide the destination before writing it.
 
-- Default personal PKM artifacts to the Tolaria vault, not this repository.
-- Put research reports, source analyses, company/product analyses, processed notes, personal resources, personal signals, and general reference documents in Tolaria.
-- Use Tolaria folders by workflow object:
-  - `00-inbox/` for uncertain or unprocessed captures.
-  - `10-projects/` for active personal/project outcome notes.
-  - `20-areas/` for ongoing area/domain notes.
-  - `30-resources/` for reusable references, research reports, and evergreen analyses.
-  - `40-archives/` for inactive material.
-- Only create Markdown files in this Product Brain control repository when the file is explicitly about the PKM OS/Product Brain system itself: repo documentation, implementation plans, system standards, adapter contracts, architecture notes, build decisions, or reusable automation behavior.
-- If a Markdown artifact could plausibly belong in either place, choose Tolaria unless it directly changes or documents how the PKM OS is built.
-- Never create a repo-local `docs/` Markdown file for personal research or external-company analysis unless Randy explicitly asks for repo documentation.
+- Put Mindline product/system artifacts in this repository when they document implementation plans, system standards, adapter contracts, architecture notes, build decisions, reusable automation behavior, or Product Brain work package artifacts.
+- Put Randy personal PKM artifacts in Tolaria only when the requested output is personal knowledge material rather than Mindline product work.
+- Do not default to Tolaria for product documentation.
+- Do not default to this repository for personal research, private source analysis, or destination-specific content.
+- If an artifact could plausibly belong in either place, decide based on ownership:
+  - product/system truth -> PB or this repository;
+  - personal PKM output -> selected destination adapter, currently often Tolaria;
+  - destination-neutral run output -> explicit `--out` artifact directory.
+
+## Destination Adapter Notes
+
+Destination adapters translate Mindline outputs into surface-specific representations. They must not shape the core semantic model unless PB explicitly promotes the pattern.
+
+Examples:
+
+- Product Brain adapter: proposal/authority-aware output, external identity, Chain write constraints, draft-first behavior.
+- Tolaria adapter: Markdown note output for Randy's local vault.
+- Linear adapter: issue/project/update output if later built.
+- Notion or Obsidian adapter: page/block/file output if later built.
+
+Adapter rules belong in PB as standards, decisions, or work packages when they become reusable.
 
 ## Tolaria Classification Model
 
-Classify personal PKM items with three independent axes:
+The following taxonomy is adapter-specific guidance for Randy's current Tolaria destination. It is not Mindline core schema.
+
+Classify Tolaria personal PKM items with three independent axes:
 
 1. Type: what kind of workflow object this is.
 2. Domain: where in Randy's life/work map it belongs.
@@ -107,23 +184,22 @@ Use domains as stable areas, not folders-only categories:
 - `Research Landscape`
 - `Inbox / Unknown`
 
-Use topics as flexible tags or linked topic notes, such as `ai-tools`, `organization-design`, `competitors`, `ai-image-generation`, `product-ops`, `knowledge-management`, `moving`, `nutrition`, and `leadership-circle`.
-
-Default uncertain captures to `type: Source`, `domain: Inbox / Unknown` or `Research Landscape`, and `status: Inbox`. Do not invent certainty.
+Default uncertain Tolaria captures to `type: Source`, `domain: Inbox / Unknown` or `Research Landscape`, and `status: Inbox`. Do not invent certainty.
 
 ## Source Adapter Workflow
 
-Slack is the first adapter. The target behavior is: Randy captures freely; the OS enriches, classifies, writes confident items to Tolaria, and asks only when save intent or classification is genuinely ambiguous.
+Slack is the first source adapter. The product model must support many future sources.
 
 Every source adapter should process items through this pipeline:
 
 1. Ingest native items with provenance: adapter id, external id, author, timestamp, permalink, raw text, files, urls, and thread/context.
-2. Normalize into a common candidate model before any Tolaria write.
+2. Normalize into a common candidate model before any destination-specific write or proposal.
 3. Enrich external links/media according to save intent, not just the first visible URL.
-4. Classify by type, domain, topic, confidence, and processing status.
-5. Write high-confidence personal PKM outputs to Tolaria.
-6. Queue uncertain items for clarification instead of guessing.
-7. Capture reusable system rules, decisions, features, tensions, and learnings in PB.
+4. Classify by type, domain/topic or destination-neutral equivalent, confidence, and processing status.
+5. Produce evidence-backed candidates or proposals.
+6. Write to a destination only when that destination is explicitly selected and the applicable safety/evidence gates pass.
+7. Queue uncertain items for clarification instead of guessing.
+8. Capture reusable system rules, decisions, features, tensions, and learnings in PB.
 
 Important enrichment rules:
 
@@ -133,3 +209,13 @@ Important enrichment rules:
 - GitHub links require at least repo metadata and README-level understanding.
 - Articles require title, author, date, thesis, and key points.
 - If required context is inaccessible, mark the item as `needs_manual_processing` or `needs_clarification`; do not pretend the source is complete.
+
+## Review Standard For This Workspace
+
+Before opening, updating, or merging a PR that changes Mindline product behavior:
+
+- Check PB authority first.
+- Check whether the work is source/destination/provider agnostic or explicitly adapter-scoped.
+- Run the relevant tests and readback/eval proof.
+- Capture durable learnings or corrections in PB.
+- Use LOOP reviewer sign-off when the change affects product direction, agent instructions, evaluation, trust, privacy, destination readiness, or autonomy claims.
