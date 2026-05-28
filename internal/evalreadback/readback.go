@@ -256,14 +256,16 @@ func extractEvidence(raw map[string]any, artifact *ArtifactEvidence) {
 			artifact.Fingerprints[key] = value
 		}
 	}
-	for source, target := range map[string]string{
-		"enriched_corpus_fingerprint": "corpus_fingerprint",
-		"enriched_config_fingerprint": "command_config_fingerprint",
-	} {
-		if value := stringValue(raw[source]); value != "" {
-			artifact.Fingerprints[source] = value
-			artifact.Fingerprints[target] = value
+	for _, key := range []string{"baseline_corpus_fingerprint", "enriched_corpus_fingerprint", "baseline_config_fingerprint", "enriched_config_fingerprint"} {
+		if value := stringValue(raw[key]); value != "" {
+			artifact.Fingerprints[key] = value
 		}
+	}
+	if value := stringValue(raw["baseline_corpus_fingerprint"]); value != "" {
+		artifact.Fingerprints["corpus_fingerprint"] = value
+	}
+	if value := stringValue(raw["baseline_config_fingerprint"]); value != "" {
+		artifact.Fingerprints["command_config_fingerprint"] = value
 	}
 	if guardrails, ok := raw["guardrails"].(map[string]any); ok {
 		extractGuardrails(guardrails, artifact)

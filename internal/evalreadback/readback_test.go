@@ -641,10 +641,13 @@ func TestBuildReadsLinkEnrichmentComparisonFingerprints(t *testing.T) {
 	}
 	fingerprints := summary.Artifacts[0].Fingerprints
 	if fingerprints["corpus_fingerprint"] != "same-corpus" {
-		t.Fatalf("expected enriched corpus fingerprint normalized, got %+v", fingerprints)
+		t.Fatalf("expected baseline corpus fingerprint normalized, got %+v", fingerprints)
 	}
 	if fingerprints["command_config_fingerprint"] != "same-config" {
-		t.Fatalf("expected enriched config fingerprint normalized, got %+v", fingerprints)
+		t.Fatalf("expected baseline config fingerprint normalized, got %+v", fingerprints)
+	}
+	if fingerprints["enriched_corpus_fingerprint"] != "same-corpus" || fingerprints["baseline_corpus_fingerprint"] != "same-corpus" {
+		t.Fatalf("expected raw link-enrichment fingerprints preserved, got %+v", fingerprints)
 	}
 }
 
@@ -661,6 +664,25 @@ func TestBuildComparesMissingLinkEnrichmentReductionRatio(t *testing.T) {
 	}
 	if summary.ImprovementStatus != "improved" {
 		t.Fatalf("expected missing-link enrichment improvement, got %s comparison=%+v", summary.ImprovementStatus, summary.Comparison)
+	}
+	if summary.Comparison == nil || summary.Comparison.MetricDeltas["missing_link_enrichment_reduction_ratio"] <= 0 {
+		t.Fatalf("expected missing-link enrichment delta, got %+v", summary.Comparison)
+	}
+}
+
+func TestBuildComparesLinkEnrichmentOnBaselineFingerprints(t *testing.T) {
+	root := t.TempDir()
+	baseline := filepath.Join(root, "baseline")
+	current := filepath.Join(root, "current")
+	writeLinkEnrichmentComparisonWithFingerprints(t, baseline, "source-corpus", "baseline-enriched", "source-config", "baseline-enriched-config", 0.2)
+	writeLinkEnrichmentComparisonWithFingerprints(t, current, "source-corpus", "current-enriched", "source-config", "current-enriched-config", 0.6)
+
+	summary, err := Build(current, filepath.Join(root, "out"), Options{BaselineRoot: baseline})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if summary.ImprovementStatus != "improved" {
+		t.Fatalf("expected baseline fingerprint match to compare despite enriched fingerprint changes, got %s comparison=%+v", summary.ImprovementStatus, summary.Comparison)
 	}
 	if summary.Comparison == nil || summary.Comparison.MetricDeltas["missing_link_enrichment_reduction_ratio"] <= 0 {
 		t.Fatalf("expected missing-link enrichment delta, got %+v", summary.Comparison)
@@ -1257,11 +1279,18 @@ func writePressureWithCommandFingerprintOnly(t *testing.T, root string, evidence
 
 func writeLinkEnrichmentComparison(t *testing.T, root, corpusFingerprint, configFingerprint string, missingLinkReduction float64) {
 	t.Helper()
+	writeLinkEnrichmentComparisonWithFingerprints(t, root, corpusFingerprint, corpusFingerprint, configFingerprint, configFingerprint, missingLinkReduction)
+}
+
+func writeLinkEnrichmentComparisonWithFingerprints(t *testing.T, root, baselineCorpusFingerprint, enrichedCorpusFingerprint, baselineConfigFingerprint, enrichedConfigFingerprint string, missingLinkReduction float64) {
+	t.Helper()
 	writeFixture(t, filepath.Join(root, "link-enrichment", "comparison", "comparison-summary.json"), map[string]any{
 		"schema_version":                          "link-enrichment-comparison/v0.1",
 		"comparable":                              true,
-		"enriched_corpus_fingerprint":             corpusFingerprint,
-		"enriched_config_fingerprint":             configFingerprint,
+		"baseline_corpus_fingerprint":             baselineCorpusFingerprint,
+		"enriched_corpus_fingerprint":             enrichedCorpusFingerprint,
+		"baseline_config_fingerprint":             baselineConfigFingerprint,
+		"enriched_config_fingerprint":             enrichedConfigFingerprint,
 		"missing_link_enrichment_reduction_ratio": missingLinkReduction,
 		"needs_enrichment_reduction_ratio":        missingLinkReduction,
 		"guardrails":                              completeGuardrails(),
