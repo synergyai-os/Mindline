@@ -1,0 +1,11 @@
+{
+  "schema_version": "corpus-pressure-manifest/v0.1",
+  "corpus_id": "corpus-source-enrichment-fixture",
+  "sources": [
+    {
+      "source_id": "source-link-capture",
+      "source_kind": "markdown",
+      "path": "source-link-capture.md"
+    }
+  ]
+}
