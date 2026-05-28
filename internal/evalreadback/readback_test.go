@@ -486,6 +486,52 @@ func TestBuildBlocksFingerprintlessSameArtifactComparison(t *testing.T) {
 	}
 }
 
+func TestBuildBlocksCommandOnlyFingerprintComparison(t *testing.T) {
+	root := t.TempDir()
+	baseline := filepath.Join(root, "baseline")
+	current := filepath.Join(root, "current")
+	writePressureWithCommandFingerprintOnly(t, baseline, 0.4, 0.7, "same-config")
+	writePressureWithCommandFingerprintOnly(t, current, 0.9, 0.2, "same-config")
+
+	summary, err := Build(current, filepath.Join(root, "out"), Options{BaselineRoot: baseline})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if summary.ImprovementStatus != "not_comparable" {
+		t.Fatalf("expected not_comparable, got %s", summary.ImprovementStatus)
+	}
+	if summary.Comparison == nil || !containsString(summary.Comparison.ReasonCodes, "missing_fingerprints") {
+		t.Fatalf("expected missing_fingerprints reason, got %+v", summary.Comparison)
+	}
+}
+
+func TestBuildBlocksConflictingCorpusFingerprintsWithinRun(t *testing.T) {
+	root := t.TempDir()
+	baseline := filepath.Join(root, "baseline")
+	current := filepath.Join(root, "current")
+	writePressureWithFingerprint(t, baseline, 0.4, 0.7, "same")
+	writePressureWithFingerprint(t, current, 0.9, 0.2, "same")
+	writeFixture(t, filepath.Join(current, "corpus-pressure", "trace-summary.json"), map[string]any{
+		"schema_version":             "corpus-pressure-trace-summary/v0.1",
+		"processed_source_ratio":     1,
+		"evidence_ready_atom_ratio":  0.9,
+		"corpus_fingerprint":         "different",
+		"command_config_fingerprint": "same-config",
+		"guardrails":                 completeGuardrails(),
+	})
+
+	summary, err := Build(current, filepath.Join(root, "out"), Options{BaselineRoot: baseline})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if summary.ImprovementStatus != "not_comparable" {
+		t.Fatalf("expected not_comparable, got %s", summary.ImprovementStatus)
+	}
+	if summary.Comparison == nil || !containsString(summary.Comparison.ReasonCodes, "conflicting_fingerprints") {
+		t.Fatalf("expected conflicting_fingerprints reason, got %+v", summary.Comparison)
+	}
+}
+
 func TestBuildBlocksMixedFingerprintlessArtifactDomains(t *testing.T) {
 	root := t.TempDir()
 	baseline := filepath.Join(root, "baseline")
@@ -679,6 +725,19 @@ func writePressureWithoutFingerprint(t *testing.T, root string, evidenceReady, r
 		"evidence_ready_atom_ratio": evidenceReady,
 		"review_burden_ratio":       reviewBurden,
 		"guardrails":                map[string]any{"destination_writes": 0, "hosted_inference_calls": 0},
+	})
+}
+
+func writePressureWithCommandFingerprintOnly(t *testing.T, root string, evidenceReady, reviewBurden float64, commandFingerprint string) {
+	t.Helper()
+	writeFixture(t, filepath.Join(root, "corpus-pressure", "pressure-summary.json"), map[string]any{
+		"schema_version":             "corpus-pressure-summary/v0.1",
+		"corpus_id":                  "corpus-a",
+		"source_count":               2,
+		"evidence_ready_atom_ratio":  evidenceReady,
+		"review_burden_ratio":        reviewBurden,
+		"command_config_fingerprint": commandFingerprint,
+		"guardrails":                 completeGuardrails(),
 	})
 }
 

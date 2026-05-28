@@ -318,7 +318,11 @@ func mergeModelEvidence(model *readbackModel, artifact ArtifactEvidence) {
 		model.flags[key] = value
 	}
 	for key, value := range artifact.Fingerprints {
-		if _, exists := model.fingerprints[key]; !exists {
+		if existing, exists := model.fingerprints[key]; exists {
+			if existing != value {
+				model.flags["conflicting_"+key] = true
+			}
+		} else {
 			model.fingerprints[key] = value
 		}
 	}
@@ -591,28 +595,42 @@ func boolInt(value bool) int {
 }
 
 func comparableModels(a, b readbackModel) (bool, []string) {
-	checked := false
-	for _, key := range []string{"corpus_fingerprint", "command_config_fingerprint"} {
-		av, aok := a.fingerprints[key]
-		bv, bok := b.fingerprints[key]
-		if aok && bok {
-			checked = true
-			if av != bv {
-				return false, []string{"fingerprint_mismatch"}
-			}
-		} else if aok != bok {
-			return false, []string{"one_sided_fingerprint"}
-		}
+	if a.flags["conflicting_corpus_fingerprint"] || b.flags["conflicting_corpus_fingerprint"] || a.flags["conflicting_command_config_fingerprint"] || b.flags["conflicting_command_config_fingerprint"] {
+		return false, []string{"conflicting_fingerprints"}
 	}
-	if checked {
-		return true, nil
+	av, aok := a.fingerprints["corpus_fingerprint"]
+	bv, bok := b.fingerprints["corpus_fingerprint"]
+	if aok != bok {
+		return false, []string{"one_sided_fingerprint"}
 	}
-	for artifactType := range a.artifactTypes {
-		if b.artifactTypes[artifactType] {
+	if !aok {
+		if sharesArtifactDomain(a, b) {
 			return false, []string{"missing_fingerprints"}
 		}
+		return false, []string{"artifact_domain_mismatch"}
 	}
-	return false, []string{"artifact_domain_mismatch"}
+	if av != bv {
+		return false, []string{"fingerprint_mismatch"}
+	}
+
+	av, aok = a.fingerprints["command_config_fingerprint"]
+	bv, bok = b.fingerprints["command_config_fingerprint"]
+	if aok != bok {
+		return false, []string{"one_sided_fingerprint"}
+	}
+	if aok && av != bv {
+		return false, []string{"fingerprint_mismatch"}
+	}
+	return true, nil
+}
+
+func sharesArtifactDomain(a, b readbackModel) bool {
+	for artifactType := range a.artifactTypes {
+		if b.artifactTypes[artifactType] {
+			return true
+		}
+	}
+	return false
 }
 
 func chooseTarget(model readbackModel, generalization string) ImprovementTarget {
