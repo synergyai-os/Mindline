@@ -632,6 +632,37 @@ func TestBuildComparesMissingLinkEnrichmentReductionRatio(t *testing.T) {
 	}
 }
 
+func TestBuildBlocksComparisonWhenArtifactDeclaresNotComparable(t *testing.T) {
+	root := t.TempDir()
+	baseline := filepath.Join(root, "baseline")
+	current := filepath.Join(root, "current")
+	writeLinkEnrichmentComparison(t, baseline, "same-corpus", "same-config", 0.2)
+	writeFixture(t, filepath.Join(current, "link-enrichment", "comparison", "comparison-summary.json"), map[string]any{
+		"schema_version":                          "link-enrichment-comparison/v0.1",
+		"comparable":                              false,
+		"reason_codes":                            []any{"not_comparable"},
+		"enriched_corpus_fingerprint":             "same-corpus",
+		"enriched_config_fingerprint":             "same-config",
+		"missing_link_enrichment_reduction_ratio": 0.8,
+		"needs_enrichment_reduction_ratio":        0.8,
+		"guardrails":                              completeGuardrails(),
+	})
+
+	summary, err := Build(current, filepath.Join(root, "out"), Options{BaselineRoot: baseline})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if summary.ImprovementStatus != "not_comparable" {
+		t.Fatalf("expected artifact non-comparability to block improvement, got %s comparison=%+v", summary.ImprovementStatus, summary.Comparison)
+	}
+	if summary.Comparison == nil || !containsString(summary.Comparison.ReasonCodes, "artifact_not_comparable") {
+		t.Fatalf("expected artifact_not_comparable reason, got %+v", summary.Comparison)
+	}
+	if gateStatus(summary, "improvement_claim") != "blocked" {
+		t.Fatalf("expected improvement claim blocked, got %+v", summary.ClaimGates)
+	}
+}
+
 func TestBuildReadsAutonomyReadinessCountMetrics(t *testing.T) {
 	root := t.TempDir()
 	writeFixture(t, filepath.Join(root, "autonomy-readiness", "readiness-report.json"), map[string]any{

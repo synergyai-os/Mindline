@@ -374,6 +374,9 @@ func mergeModelEvidence(model *readbackModel, artifact ArtifactEvidence) {
 		}
 	}
 	for key, value := range artifact.Flags {
+		if key == "comparable" && !value {
+			model.flags["artifact_not_comparable"] = true
+		}
 		if value {
 			model.flags[key] = true
 		} else if _, exists := model.flags[key]; !exists {
@@ -778,6 +781,9 @@ func maxInt(a, b int) int {
 }
 
 func comparableModels(a, b readbackModel) (bool, []string) {
+	if a.flags["artifact_not_comparable"] || b.flags["artifact_not_comparable"] {
+		return false, []string{"artifact_not_comparable"}
+	}
 	if a.flags["conflicting_corpus_fingerprint"] || b.flags["conflicting_corpus_fingerprint"] || a.flags["conflicting_command_config_fingerprint"] || b.flags["conflicting_command_config_fingerprint"] {
 		return false, []string{"conflicting_fingerprints"}
 	}
