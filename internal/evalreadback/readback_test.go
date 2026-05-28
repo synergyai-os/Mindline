@@ -315,6 +315,42 @@ func TestBuildReadsLinkArtifactRequestSummaryMetrics(t *testing.T) {
 	}
 }
 
+func TestBuildReadsLinkEnrichmentComparisonFingerprints(t *testing.T) {
+	root := t.TempDir()
+	writeLinkEnrichmentComparison(t, root, "same-corpus", "same-config", 0.4)
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	fingerprints := summary.Artifacts[0].Fingerprints
+	if fingerprints["corpus_fingerprint"] != "same-corpus" {
+		t.Fatalf("expected enriched corpus fingerprint normalized, got %+v", fingerprints)
+	}
+	if fingerprints["command_config_fingerprint"] != "same-config" {
+		t.Fatalf("expected enriched config fingerprint normalized, got %+v", fingerprints)
+	}
+}
+
+func TestBuildComparesMissingLinkEnrichmentReductionRatio(t *testing.T) {
+	root := t.TempDir()
+	baseline := filepath.Join(root, "baseline")
+	current := filepath.Join(root, "current")
+	writeLinkEnrichmentComparison(t, baseline, "same-corpus", "same-config", 0.2)
+	writeLinkEnrichmentComparison(t, current, "same-corpus", "same-config", 0.6)
+
+	summary, err := Build(current, filepath.Join(root, "out"), Options{BaselineRoot: baseline})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if summary.ImprovementStatus != "improved" {
+		t.Fatalf("expected missing-link enrichment improvement, got %s comparison=%+v", summary.ImprovementStatus, summary.Comparison)
+	}
+	if summary.Comparison == nil || summary.Comparison.MetricDeltas["missing_link_enrichment_reduction_ratio"] <= 0 {
+		t.Fatalf("expected missing-link enrichment delta, got %+v", summary.Comparison)
+	}
+}
+
 func TestBuildReadsAutonomyReadinessCountMetrics(t *testing.T) {
 	root := t.TempDir()
 	writeFixture(t, filepath.Join(root, "autonomy-readiness", "readiness-report.json"), map[string]any{
@@ -850,6 +886,19 @@ func writePressureWithCommandFingerprintOnly(t *testing.T, root string, evidence
 		"review_burden_ratio":        reviewBurden,
 		"command_config_fingerprint": commandFingerprint,
 		"guardrails":                 completeGuardrails(),
+	})
+}
+
+func writeLinkEnrichmentComparison(t *testing.T, root, corpusFingerprint, configFingerprint string, missingLinkReduction float64) {
+	t.Helper()
+	writeFixture(t, filepath.Join(root, "link-enrichment", "comparison", "comparison-summary.json"), map[string]any{
+		"schema_version":                          "link-enrichment-comparison/v0.1",
+		"comparable":                              true,
+		"enriched_corpus_fingerprint":             corpusFingerprint,
+		"enriched_config_fingerprint":             configFingerprint,
+		"missing_link_enrichment_reduction_ratio": missingLinkReduction,
+		"needs_enrichment_reduction_ratio":        missingLinkReduction,
+		"guardrails":                              completeGuardrails(),
 	})
 }
 

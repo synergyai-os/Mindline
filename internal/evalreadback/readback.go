@@ -249,6 +249,15 @@ func extractEvidence(raw map[string]any, artifact *ArtifactEvidence) {
 			artifact.Fingerprints[key] = value
 		}
 	}
+	for source, target := range map[string]string{
+		"enriched_corpus_fingerprint": "corpus_fingerprint",
+		"enriched_config_fingerprint": "command_config_fingerprint",
+	} {
+		if value := stringValue(raw[source]); value != "" {
+			artifact.Fingerprints[source] = value
+			artifact.Fingerprints[target] = value
+		}
+	}
 	if guardrails, ok := raw["guardrails"].(map[string]any); ok {
 		extractGuardrails(guardrails, artifact)
 	}
@@ -577,7 +586,7 @@ func compareModels(baseline, current readbackModel) ComparisonSummary {
 	}
 	comparison.ReasonCodes = reasons
 	improved, regressed := false, false
-	for _, metric := range []string{"evidence_ready_atom_ratio", "processed_source_ratio", "missing_link_reduction_ratio", "needs_enrichment_reduction_ratio", "url_accounting_coverage", "artifact_match_coverage", "evidence_ready_count"} {
+	for _, metric := range []string{"evidence_ready_atom_ratio", "processed_source_ratio", "missing_link_reduction_ratio", "missing_link_enrichment_reduction_ratio", "needs_enrichment_reduction_ratio", "url_accounting_coverage", "artifact_match_coverage", "evidence_ready_count"} {
 		before, bok := baseline.metrics[metric]
 		after, aok := current.metrics[metric]
 		if !bok || !aok {
