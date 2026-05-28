@@ -132,6 +132,40 @@ func TestBuildSourceEnrichmentStripsSlackMrkdwnLinkLabels(t *testing.T) {
 	}
 }
 
+func TestBuildSourceEnrichmentIgnoresSlackAdapterPermalinkProvenance(t *testing.T) {
+	root := t.TempDir()
+	sourcePath := writeSourceEnrichmentFixture(t, root, "source-1", strings.Join([]string{
+		"# Slack capture",
+		"- Permalink: slack://missing-permalink/DTEST/1710000001000001",
+		"",
+		"## Content",
+		"https://example.com/research",
+	}, "\n"))
+	manifestPath := writeSourceEnrichmentManifest(t, root, "corpus-enrich-test", CorpusPressureManifestSource{
+		SourceID:   "source-1",
+		SourceKind: SourceKindMarkdown,
+		Path:       sourcePath,
+	})
+	artifactsPath := writeSourceEnrichmentArtifacts(t, root, LocalSourceEnrichmentArtifact{
+		URL:     "https://example.com/research",
+		Title:   "Enriched Slack link",
+		Excerpt: "Requirement: Slack destination URL has enough local evidence for enrichment.",
+	})
+
+	summary, err := BuildSourceEnrichment(manifestPath, artifactsPath, filepath.Join(root, "enriched"))
+	if err != nil {
+		t.Fatalf("BuildSourceEnrichment: %v", err)
+	}
+	if summary.URLCount != 1 || summary.EnrichedURLCount != 1 || summary.BlockedURLCount != 0 {
+		t.Fatalf("expected Slack adapter permalink to be ignored, not counted as a link: %+v", summary)
+	}
+	artifact := mustReadString(t, filepath.Join(root, "enriched", SourceEnrichmentDirName, "sources", "source-1.json"))
+	report := mustReadString(t, filepath.Join(root, "enriched", SourceEnrichmentDirName, "enrichment-report.md"))
+	if strings.Contains(artifact, "slack://missing-permalink") || strings.Contains(report, "url_policy_blocked") {
+		t.Fatalf("Slack adapter permalink should not be counted in enrichment artifacts:\n%s\n%s", artifact, report)
+	}
+}
+
 func TestBuildSourceEnrichmentBlocksUnsafeSlackMrkdwnLinkLabels(t *testing.T) {
 	root := t.TempDir()
 	unsafeSecret := "sk-proj-" + strings.Repeat("c", 48)
@@ -204,8 +238,9 @@ func TestBuildSourceEnrichmentPrefersUnresolvedSourceStateOverEnriched(t *testin
 		Path:       sourcePath,
 	})
 	artifactsPath := writeSourceEnrichmentArtifacts(t, root, LocalSourceEnrichmentArtifact{
-		URL:   "https://example.com/research",
-		Title: "Enriched source",
+		URL:     "https://example.com/research",
+		Title:   "Enriched source",
+		Excerpt: "Requirement: enriched source has supporting evidence.",
 	})
 
 	summary, err := BuildSourceEnrichment(manifestPath, artifactsPath, filepath.Join(root, "enriched"))
@@ -217,6 +252,33 @@ func TestBuildSourceEnrichmentPrefersUnresolvedSourceStateOverEnriched(t *testin
 	}
 	if summary.EnrichedURLCount != 1 || summary.NeedsManualURLCount != 1 {
 		t.Fatalf("expected both URL states counted: %+v", summary)
+	}
+}
+
+func TestBuildSourceEnrichmentRequiresLocalArtifactEvidence(t *testing.T) {
+	root := t.TempDir()
+	sourcePath := writeSourceEnrichmentFixture(t, root, "source-1", "# Captured link\n\nhttps://example.com/research\n")
+	manifestPath := writeSourceEnrichmentManifest(t, root, "corpus-enrich-test", CorpusPressureManifestSource{
+		SourceID:   "source-1",
+		SourceKind: SourceKindMarkdown,
+		Path:       sourcePath,
+	})
+	artifactsPath := writeSourceEnrichmentArtifacts(t, root, LocalSourceEnrichmentArtifact{
+		URL:   "https://example.com/research",
+		Title: "Title alone is not evidence",
+	})
+
+	out := filepath.Join(root, "enriched")
+	summary, err := BuildSourceEnrichment(manifestPath, artifactsPath, out)
+	if err != nil {
+		t.Fatalf("BuildSourceEnrichment: %v", err)
+	}
+	if summary.EnrichedURLCount != 0 || summary.NeedsManualURLCount != 1 || summary.EnrichedArtifactCoverage != 0 {
+		t.Fatalf("expected title-only artifact to remain needs_manual_processing: %+v", summary)
+	}
+	artifact := mustReadString(t, filepath.Join(out, SourceEnrichmentDirName, "sources", "source-1.json"))
+	if !strings.Contains(artifact, "insufficient_local_artifact_evidence") || strings.Contains(artifact, `"state": "enriched"`) {
+		t.Fatalf("expected insufficient evidence reason and no enriched state:\n%s", artifact)
 	}
 }
 
@@ -233,8 +295,9 @@ func TestBuildSourceEnrichmentComputesPartialArtifactCoverage(t *testing.T) {
 		Path:       sourcePath,
 	})
 	artifactsPath := writeSourceEnrichmentArtifacts(t, root, LocalSourceEnrichmentArtifact{
-		URL:   "https://example.com/research",
-		Title: "Enriched source",
+		URL:     "https://example.com/research",
+		Title:   "Enriched source",
+		Excerpt: "Requirement: enriched source has supporting evidence.",
 	})
 
 	out := filepath.Join(root, "enriched")
@@ -299,16 +362,19 @@ func TestBuildSourceEnrichmentPreservesValidURLPunctuationDuringMatching(t *test
 	})
 	artifactsPath := writeSourceEnrichmentArtifacts(t, root,
 		LocalSourceEnrichmentArtifact{
-			URL:   "https://example.com/Foo_(bar)",
-			Title: "Parenthesized source",
+			URL:     "https://example.com/Foo_(bar)",
+			Title:   "Parenthesized source",
+			Excerpt: "Requirement: parenthesized source has evidence.",
 		},
 		LocalSourceEnrichmentArtifact{
-			URL:   "https://example.com/reference[alpha]",
-			Title: "Bracketed source",
+			URL:     "https://example.com/reference[alpha]",
+			Title:   "Bracketed source",
+			Excerpt: "Requirement: bracketed source has evidence.",
 		},
 		LocalSourceEnrichmentArtifact{
-			URL:   "https://example.com/plain",
-			Title: "Markdown link source",
+			URL:     "https://example.com/plain",
+			Title:   "Markdown link source",
+			Excerpt: "Requirement: markdown link source has evidence.",
 		},
 	)
 

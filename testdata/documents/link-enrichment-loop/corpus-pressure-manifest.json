@@ -1,0 +1,16 @@
+{
+  "schema_version": "corpus-pressure-manifest/v0.1",
+  "corpus_id": "corpus-link-enrichment-loop-fixture",
+  "sources": [
+    {
+      "source_id": "slack-link-capture-a",
+      "source_kind": "markdown",
+      "path": "slack-link-capture-a.md"
+    },
+    {
+      "source_id": "slack-link-capture-b",
+      "source_kind": "markdown",
+      "path": "slack-link-capture-b.md"
+    }
+  ]
+}

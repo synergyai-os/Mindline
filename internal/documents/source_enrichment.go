@@ -391,15 +391,25 @@ func enrichSourceURL(urlMatch sourceEnrichmentURLMatch, artifacts localArtifactI
 		record.ReasonCodes = []string{"unsafe_artifact_payload"}
 		return record
 	}
-	record.State = SourceEnrichmentStateEnriched
-	record.ReasonCodes = []string{"local_artifact_matched"}
 	record.Title = strings.TrimSpace(artifact.Title)
 	record.Description = strings.TrimSpace(artifact.Description)
 	record.Excerpt = strings.TrimSpace(artifact.Excerpt)
 	record.SourceName = strings.TrimSpace(artifact.SourceName)
 	record.CapturedAt = strings.TrimSpace(artifact.CapturedAt)
+	if !sourceEnrichmentArtifactEvidenceReady(record) {
+		record.State = SourceEnrichmentStateNeedsManualProcessing
+		record.ReasonCodes = []string{"insufficient_local_artifact_evidence"}
+		return record
+	}
+	record.State = SourceEnrichmentStateEnriched
+	record.ReasonCodes = []string{"local_artifact_matched"}
 	record.ContentHash = "sha256:" + contentHash(strings.Join([]string{record.NormalizedURL, record.Title, record.Description, record.Excerpt, record.SourceName}, "\n"))
 	return record
+}
+
+func sourceEnrichmentArtifactEvidenceReady(record SourceEnrichmentURL) bool {
+	return strings.TrimSpace(record.Title) != "" &&
+		(strings.TrimSpace(record.Description) != "" || strings.TrimSpace(record.Excerpt) != "")
 }
 
 func extractSourceEnrichmentURLs(value string) []sourceEnrichmentURLMatch {
@@ -408,6 +418,9 @@ func extractSourceEnrichmentURLs(value string) []sourceEnrichmentURLMatch {
 	for _, loc := range sourceEnrichmentURLPattern.FindAllStringIndex(value, -1) {
 		match := value[loc[0]:loc[1]]
 		clean := trimSourceEnrichmentURLMatch(match)
+		if sourceEnrichmentIgnoredURL(clean) {
+			continue
+		}
 		token := clean
 		if loc[0] > 0 && value[loc[0]-1] == '<' {
 			if closeOffset := strings.IndexByte(value[loc[1]:], '>'); closeOffset >= 0 {
@@ -433,6 +446,14 @@ func extractSourceEnrichmentURLs(value string) []sourceEnrichmentURLMatch {
 		return out[i].rawURL < out[j].rawURL
 	})
 	return out
+}
+
+func sourceEnrichmentIgnoredURL(rawURL string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(parsed.Scheme, "slack")
 }
 
 func trimSourceEnrichmentURLMatch(match string) string {

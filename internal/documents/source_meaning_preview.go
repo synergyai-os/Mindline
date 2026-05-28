@@ -349,7 +349,7 @@ func routesForAtom(atom CorpusGraphAtom, sourceContent string) ([]SourceMeaningP
 	if atom.ReviewStatus == ReviewStatusBlocked {
 		return []SourceMeaningPreviewRoute{{Hint: SourceMeaningRoutingBlocked, ReasonCodes: []string{"blocked_atom"}, WriteEligible: false}}, []SourceMeaningPreviewMissingness{SourceMeaningMissingnessBlockedSource}
 	}
-	if atom.CandidateKind == SemanticCandidateKindReference && containsURL(sourceContent+"\n"+atom.Excerpt+"\n"+atom.Summary) {
+	if atom.CandidateKind == SemanticCandidateKindReference && containsURL(sourceContent+"\n"+atom.Excerpt+"\n"+atom.Summary) && !sourceHasCompleteLocalEnrichment(sourceContent) {
 		return []SourceMeaningPreviewRoute{{Hint: SourceMeaningRoutingNeedsEnrichment, ReasonCodes: []string{"reference_only", "link_only_source", "missing_link_enrichment"}, WriteEligible: false}}, []SourceMeaningPreviewMissingness{SourceMeaningMissingnessReferenceOnly, SourceMeaningMissingnessLinkOnlySource, SourceMeaningMissingnessMissingLinkEnrichment}
 	}
 	switch atom.CandidateKind {
@@ -366,6 +366,15 @@ func routesForAtom(atom CorpusGraphAtom, sourceContent string) ([]SourceMeaningP
 
 func containsURL(value string) bool {
 	return strings.Contains(value, "http://") || strings.Contains(value, "https://")
+}
+
+func sourceHasCompleteLocalEnrichment(value string) bool {
+	return strings.Contains(value, "## Enriched Sources") &&
+		strings.Contains(value, "State: `enriched`") &&
+		!strings.Contains(value, "State: `needs_manual_processing`") &&
+		!strings.Contains(value, "State: `unsupported_source`") &&
+		!strings.Contains(value, "State: `blocked_private_or_secret`") &&
+		!strings.Contains(value, "State: `blocked_by_policy`")
 }
 
 func sourceMissingness(source CorpusPressureSourceResult, item SourceMeaningPreviewItem, sourceContent string) []SourceMeaningPreviewMissingness {
