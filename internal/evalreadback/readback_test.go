@@ -125,6 +125,30 @@ func TestBuildSupportsActualWriterSchemas(t *testing.T) {
 	}
 }
 
+func TestBuildAcceptsCorpusPressureArtifactDirectory(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "corpus-pressure")
+	writeFixture(t, filepath.Join(root, "pressure-summary.json"), map[string]any{
+		"schema_version":             "corpus-pressure-summary/v0.1",
+		"source_count":               2,
+		"evidence_ready_atom_ratio":  1,
+		"review_burden_ratio":        0,
+		"corpus_fingerprint":         "artifact-root-corpus",
+		"command_config_fingerprint": "artifact-root-config",
+		"guardrails":                 completeGuardrails(),
+	})
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build artifact directory: %v", err)
+	}
+	if summary.ArtifactCount != 1 {
+		t.Fatalf("expected one artifact, got %d", summary.ArtifactCount)
+	}
+	if summary.ArtifactTypeCounts["corpus_pressure_summary"] != 1 {
+		t.Fatalf("expected corpus pressure summary detected, got %+v", summary.ArtifactTypeCounts)
+	}
+}
+
 func TestBuildHonorsHeldOutArtifactOutsideTestdata(t *testing.T) {
 	root := t.TempDir()
 	writeFixture(t, filepath.Join(root, "corpus-acceptance", "benchmark-summary.json"), map[string]any{
@@ -232,6 +256,31 @@ func TestBuildHostedTelemetryBlocksSideEffectClaim(t *testing.T) {
 	}
 	if gateStatus(summary, "side_effect_claim") != "fail" {
 		t.Fatalf("expected side effect claim to fail on hosted telemetry, got %+v", summary.ClaimGates)
+	}
+}
+
+func TestBuildBrowserSlackGuardrailsBlockSideEffectClaim(t *testing.T) {
+	root := t.TempDir()
+	guardrails := completeGuardrails()
+	guardrails["browser_calls"] = 1
+	guardrails["slack_api_calls"] = 1
+	writeFixture(t, filepath.Join(root, "link-enrichment", "loop-summary.json"), map[string]any{
+		"schema_version": "link-enrichment-loop-summary/v0.1",
+		"guardrails":     guardrails,
+	})
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if got := summary.Artifacts[0].Metrics["guardrail_browser_calls"]; got != 1 {
+		t.Fatalf("expected browser guardrail metric, got metrics=%+v", summary.Artifacts[0].Metrics)
+	}
+	if got := summary.Artifacts[0].Metrics["guardrail_slack_api_calls"]; got != 1 {
+		t.Fatalf("expected Slack guardrail metric, got metrics=%+v", summary.Artifacts[0].Metrics)
+	}
+	if gateStatus(summary, "side_effect_claim") != "fail" {
+		t.Fatalf("expected side effect claim to fail on browser/Slack calls, got %+v", summary.ClaimGates)
 	}
 }
 
@@ -710,6 +759,8 @@ func completeGuardrails() map[string]any {
 		"network_fetches":          0,
 		"hosted_telemetry_exports": 0,
 		"hosted_inference_calls":   0,
+		"browser_calls":            0,
+		"slack_api_calls":          0,
 		"destination_writes":       0,
 		"product_brain_writes":     0,
 		"tolaria_writes":           0,

@@ -89,7 +89,7 @@ func buildModel(inputRoot string) (readbackModel, error) {
 			return err
 		}
 		ref := filepath.ToSlash(rel)
-		artifactType := artifactTypeFor(ref)
+		artifactType := artifactTypeFor(root, ref)
 		if artifactType == "" {
 			return nil
 		}
@@ -111,7 +111,31 @@ func buildModel(inputRoot string) (readbackModel, error) {
 	return model, nil
 }
 
-func artifactTypeFor(ref string) string {
+func artifactTypeFor(root, ref string) string {
+	if artifactType := artifactTypeForRef(ref); artifactType != "" {
+		return artifactType
+	}
+	prefix := artifactRootPrefix(root)
+	if prefix == "" {
+		return ""
+	}
+	return artifactTypeForRef(filepath.ToSlash(filepath.Join(prefix, ref)))
+}
+
+func artifactRootPrefix(root string) string {
+	base := filepath.Base(root)
+	switch base {
+	case "trace", "corpus-pressure", "corpus-pressure-loop", "corpus-acceptance", "autonomy-readiness", "link-enrichment":
+		return base
+	case "comparison", "requests", "posthog":
+		if filepath.Base(filepath.Dir(root)) == "link-enrichment" {
+			return filepath.ToSlash(filepath.Join("link-enrichment", base))
+		}
+	}
+	return ""
+}
+
+func artifactTypeForRef(ref string) string {
 	switch {
 	case strings.HasSuffix(ref, "trace/trace-summary.json"):
 		return "generic_trace_summary"
@@ -258,6 +282,7 @@ func extractEvidence(raw map[string]any, artifact *ArtifactEvidence) {
 				"missing_link_enrichment_reduction_ratio",
 				"url_accounting_coverage", "artifact_match_coverage",
 				"safety_network_fetches", "safety_hosted_telemetry_exports", "safety_hosted_inference_calls",
+				"safety_browser_calls", "safety_slack_api_calls",
 				"safety_destination_writes",
 			} {
 				if value, ok := numberValue(props[key]); ok {
@@ -269,7 +294,7 @@ func extractEvidence(raw map[string]any, artifact *ArtifactEvidence) {
 }
 
 func extractGuardrails(guardrails map[string]any, artifact *ArtifactEvidence) {
-	for _, key := range []string{"network_fetches", "hosted_telemetry_exports", "hosted_inference_calls", "destination_writes", "product_brain_writes", "tolaria_writes"} {
+	for _, key := range []string{"network_fetches", "hosted_telemetry_exports", "hosted_inference_calls", "browser_calls", "slack_api_calls", "destination_writes", "product_brain_writes", "tolaria_writes"} {
 		if value, ok := numberValue(guardrails[key]); ok {
 			artifact.Metrics["guardrail_"+key] = value
 		}
@@ -298,6 +323,10 @@ func mergeModelEvidence(model *readbackModel, artifact ArtifactEvidence) {
 			model.guardrails.HostedTelemetryExports += int(value)
 		case "guardrail_hosted_inference_calls", "safety_hosted_inference_calls":
 			model.guardrails.HostedInferenceCalls += int(value)
+		case "guardrail_browser_calls", "safety_browser_calls":
+			model.guardrails.BrowserCalls += int(value)
+		case "guardrail_slack_api_calls", "safety_slack_api_calls":
+			model.guardrails.SlackAPICalls += int(value)
 		case "guardrail_destination_writes", "safety_destination_writes":
 			model.guardrails.DestinationWrites += int(value)
 		case "guardrail_product_brain_writes":
@@ -436,9 +465,13 @@ func hasUnsupportedArtifact(summary *Summary) bool {
 func hasSideEffectEvidence(summary *Summary) bool {
 	present := map[string]bool{}
 	hasAutonomyReport := false
+	hasLinkEnrichmentSafetyArtifact := false
 	for _, artifact := range summary.Artifacts {
 		if artifact.Type == "autonomy_readiness_report" {
 			hasAutonomyReport = true
+		}
+		if isLinkEnrichmentSafetyArtifact(artifact.Type) {
+			hasLinkEnrichmentSafetyArtifact = true
 		}
 		for key := range artifact.Metrics {
 			if name, ok := sideEffectMetricName(key); ok {
@@ -450,12 +483,24 @@ func hasSideEffectEvidence(summary *Summary) bool {
 	if hasAutonomyReport {
 		required = append(required, "auto_accepts", "no_human_claims", "committed_private_artifacts")
 	}
+	if hasLinkEnrichmentSafetyArtifact {
+		required = append(required, "browser_calls", "slack_api_calls")
+	}
 	for _, key := range required {
 		if !present[key] {
 			return false
 		}
 	}
 	return true
+}
+
+func isLinkEnrichmentSafetyArtifact(artifactType string) bool {
+	switch artifactType {
+	case "link_enrichment_loop_summary", "link_enrichment_comparison_summary", "link_enrichment_eval_projection":
+		return true
+	default:
+		return false
+	}
 }
 
 func sideEffectMetricName(metric string) (string, bool) {
@@ -467,7 +512,7 @@ func sideEffectMetricName(metric string) (string, bool) {
 		return "", false
 	}
 	switch name {
-	case "network_fetches", "hosted_telemetry_exports", "hosted_inference_calls", "destination_writes", "product_brain_writes", "tolaria_writes", "auto_accepts", "no_human_claims", "committed_private_artifacts":
+	case "network_fetches", "hosted_telemetry_exports", "hosted_inference_calls", "browser_calls", "slack_api_calls", "destination_writes", "product_brain_writes", "tolaria_writes", "auto_accepts", "no_human_claims", "committed_private_artifacts":
 		return name, true
 	default:
 		return "", false
@@ -478,6 +523,8 @@ func hasSideEffectCounter(summary *Summary) bool {
 	return summary.Guardrails.NetworkFetches > 0 ||
 		summary.Guardrails.HostedTelemetryExports > 0 ||
 		summary.Guardrails.HostedInferenceCalls > 0 ||
+		summary.Guardrails.BrowserCalls > 0 ||
+		summary.Guardrails.SlackAPICalls > 0 ||
 		summary.Guardrails.DestinationWrites > 0 ||
 		summary.Guardrails.ProductBrainWrites > 0 ||
 		summary.Guardrails.TolariaWrites > 0 ||
@@ -560,6 +607,8 @@ func compareModels(baseline, current readbackModel) ComparisonSummary {
 		{name: "network_fetches", before: baseline.guardrails.NetworkFetches, after: current.guardrails.NetworkFetches},
 		{name: "hosted_telemetry_exports", before: baseline.guardrails.HostedTelemetryExports, after: current.guardrails.HostedTelemetryExports},
 		{name: "hosted_inference_calls", before: baseline.guardrails.HostedInferenceCalls, after: current.guardrails.HostedInferenceCalls},
+		{name: "browser_calls", before: baseline.guardrails.BrowserCalls, after: current.guardrails.BrowserCalls},
+		{name: "slack_api_calls", before: baseline.guardrails.SlackAPICalls, after: current.guardrails.SlackAPICalls},
 		{name: "destination_writes", before: baseline.guardrails.DestinationWrites, after: current.guardrails.DestinationWrites},
 		{name: "product_brain_writes", before: baseline.guardrails.ProductBrainWrites, after: current.guardrails.ProductBrainWrites},
 		{name: "tolaria_writes", before: baseline.guardrails.TolariaWrites, after: current.guardrails.TolariaWrites},

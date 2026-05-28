@@ -53,6 +53,8 @@ type Guardrails struct {
 	NetworkFetches            int  `json:"network_fetches"`
 	HostedTelemetryExports    int  `json:"hosted_telemetry_exports"`
 	HostedInferenceCalls      int  `json:"hosted_inference_calls"`
+	BrowserCalls              int  `json:"browser_calls"`
+	SlackAPICalls             int  `json:"slack_api_calls"`
 	DestinationWrites         int  `json:"destination_writes"`
 	ProductBrainWrites        int  `json:"product_brain_writes"`
 	TolariaWrites             int  `json:"tolaria_writes"`
