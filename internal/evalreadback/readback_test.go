@@ -1109,6 +1109,25 @@ func TestBuildRejectsSymlinkEscapeOutputFile(t *testing.T) {
 	}
 }
 
+func TestBuildRejectsProtectedOutputRootBeforeCreatingDirs(t *testing.T) {
+	root := t.TempDir()
+	current := filepath.Join(root, "current")
+	writePressure(t, current, 0.9, 0.2)
+	protected := filepath.Join(root, "protected")
+	if err := os.MkdirAll(protected, 0o755); err != nil {
+		t.Fatalf("mkdir protected: %v", err)
+	}
+	out := filepath.Join(protected, "out")
+
+	_, err := Build(current, out, Options{ProtectedRoots: []string{protected}})
+	if err == nil || !strings.Contains(err.Error(), "protected output root") {
+		t.Fatalf("expected protected output root rejection, got %v", err)
+	}
+	if _, err := os.Stat(out); !os.IsNotExist(err) {
+		t.Fatalf("protected output directory should not be created, err=%v", err)
+	}
+}
+
 func containsString(values []string, expected string) bool {
 	for _, value := range values {
 		if value == expected {

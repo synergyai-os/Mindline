@@ -856,6 +856,9 @@ func writeSummary(outRoot string, summary Summary, protectedRoots []string) erro
 	if err != nil {
 		return err
 	}
+	if err := rejectSymlinkEscape(root, root, protectedRoots); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return err
 	}
@@ -905,11 +908,7 @@ func writeSummary(outRoot string, summary Summary, protectedRoots []string) erro
 }
 
 func rejectSymlinkEscape(root, dir string, protectedRoots []string) error {
-	realRoot, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return err
-	}
-	realRoot, err = filepath.Abs(realRoot)
+	realRoot, err := resolveOutputPath(root)
 	if err != nil {
 		return err
 	}
@@ -953,6 +952,30 @@ func rejectSymlinkEscape(root, dir string, protectedRoots []string) error {
 		}
 	}
 	return nil
+}
+
+func resolveOutputPath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return filepath.Abs(resolved)
+	}
+	current := abs
+	missing := []string{}
+	for {
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", fmt.Errorf("resolve output path: %s", path)
+		}
+		missing = append([]string{filepath.Base(current)}, missing...)
+		if resolved, err := filepath.EvalSymlinks(parent); err == nil {
+			parts := append([]string{resolved}, missing...)
+			return filepath.Abs(filepath.Join(parts...))
+		}
+		current = parent
+	}
 }
 
 func isSameOrInside(root, candidate string) bool {
