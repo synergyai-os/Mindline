@@ -549,8 +549,14 @@ func sourceEnrichmentUnsafe(value string) bool {
 		strings.Contains(lower, "files-pri") ||
 		containsPrivateSlackArchiveURL(value) ||
 		strings.Contains(lower, "xoxb-") ||
+		strings.Contains(lower, "xoxp-") ||
+		strings.Contains(lower, "bearer ") ||
+		strings.Contains(lower, "password=") ||
+		strings.Contains(lower, "api_key=") ||
 		strings.Contains(lower, "sk_live_") ||
 		strings.Contains(lower, "sk-proj-") ||
+		strings.Contains(lower, "sk-svcacct-") ||
+		strings.Contains(lower, "sk-admin-") ||
 		containsUnsafeMarker(value) ||
 		containsGovernanceID(value)
 }

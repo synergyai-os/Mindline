@@ -468,6 +468,50 @@ func TestBuildSourceEnrichmentBlocksCredentialBearingURLUserinfo(t *testing.T) {
 	}
 }
 
+func TestBuildSourceEnrichmentBlocksCredentialMarkerURLs(t *testing.T) {
+	root := t.TempDir()
+	passwordURL := "https://example.com/research?password=open-sesame"
+	apiKeyURL := "https://example.com/research?api_key=public-looking-value"
+	sourcePath := writeSourceEnrichmentFixture(t, root, "source-1", strings.Join([]string{
+		"# Links",
+		passwordURL,
+		apiKeyURL,
+	}, "\n"))
+	manifestPath := writeSourceEnrichmentManifest(t, root, "corpus-enrich-test", CorpusPressureManifestSource{
+		SourceID:   "source-1",
+		SourceKind: SourceKindMarkdown,
+		Path:       sourcePath,
+	})
+	artifactsPath := writeSourceEnrichmentArtifacts(t, root,
+		LocalSourceEnrichmentArtifact{
+			URL:   passwordURL,
+			Title: "Password artifact",
+		},
+		LocalSourceEnrichmentArtifact{
+			URL:   apiKeyURL,
+			Title: "API key artifact",
+		},
+	)
+
+	out := filepath.Join(root, "enriched")
+	summary, err := BuildSourceEnrichment(manifestPath, artifactsPath, out)
+	if err != nil {
+		t.Fatalf("BuildSourceEnrichment: %v", err)
+	}
+	if summary.EnrichedURLCount != 0 || summary.NeedsManualURLCount != 0 || summary.BlockedURLCount != 2 {
+		t.Fatalf("expected credential marker URLs to be blocked: %+v", summary)
+	}
+	all := readAllFiles(t, out)
+	for _, forbidden := range []string{passwordURL, apiKeyURL, "password=", "api_key=", "open-sesame", "public-looking-value", "Password artifact", "API key artifact"} {
+		if strings.Contains(all, forbidden) {
+			t.Fatalf("credential marker URL leaked %q:\n%s", forbidden, all)
+		}
+	}
+	if !strings.Contains(all, "unsafe_or_private_url") || !strings.Contains(all, redactedSourceEnrichmentURL) {
+		t.Fatalf("expected unsafe URL redaction proof:\n%s", all)
+	}
+}
+
 func TestBuildSourceEnrichmentBlocksTrailingDotLocalhostURL(t *testing.T) {
 	root := t.TempDir()
 	privateURL := "http://localhost./private"
