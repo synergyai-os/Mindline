@@ -1,6 +1,7 @@
 package documents
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -100,6 +101,35 @@ func TestBuildLinkEnrichmentLoopContinuesFromCorpusPressureOutput(t *testing.T) 
 	_ = mustReadString(t, filepath.Join(out, LinkEnrichmentDirName, "generated-input", "sources", "slack-source-1", "source.md"))
 }
 
+func TestBuildLinkEnrichmentLoopRedactsAbsoluteInputPaths(t *testing.T) {
+	root := t.TempDir()
+	sourcePath := writeSourceEnrichmentFixture(t, root, "slack-source-1", "# Slack capture\n\nhttps://example.com/research\n")
+	manifestPath := writeSourceEnrichmentManifest(t, root, "corpus-link-loop-test", CorpusPressureManifestSource{
+		SourceID:   "slack-source-1",
+		SourceKind: SourceKindMarkdown,
+		Path:       sourcePath,
+	})
+	artifactsPath := writeSourceEnrichmentArtifacts(t, root, LocalSourceEnrichmentArtifact{
+		URL:     "https://example.com/research",
+		Title:   "Research source",
+		Excerpt: "Requirement: absolute caller paths must not leak into generated summaries.",
+	})
+
+	out := filepath.Join(root, "loop")
+	summary, err := BuildLinkEnrichmentLoop(manifestPath, artifactsPath, out, LinkEnrichmentLoopOptions{})
+	if err != nil {
+		t.Fatalf("BuildLinkEnrichmentLoop: %v", err)
+	}
+	summaryJSON, err := json.Marshal(summary)
+	if err != nil {
+		t.Fatalf("marshal summary: %v", err)
+	}
+	all := string(summaryJSON) + "\n" + readAllFiles(t, out)
+	if strings.Contains(filepath.ToSlash(all), filepath.ToSlash(root)) {
+		t.Fatalf("generated link enrichment outputs leaked absolute input path %s:\n%s", root, all)
+	}
+}
+
 func TestLinkEnrichmentNonGeneralizableRuntimeMarksPrivateRuntimePaths(t *testing.T) {
 	if !linkEnrichmentNonGeneralizableRuntime("/private/tmp/mindline-runtime/intake") {
 		t.Fatalf("expected private runtime path to be non-generalizable")
@@ -140,6 +170,39 @@ func TestBuildLinkEnrichmentLoopReportsPartialCoverageAndStaleArtifacts(t *testi
 		if !strings.Contains(requests, expected) {
 			t.Fatalf("missing %q in request report:\n%s", expected, requests)
 		}
+	}
+}
+
+func TestBuildLinkArtifactRequestPackUsesUniqueIDsForRepeatedURLMentions(t *testing.T) {
+	root := t.TempDir()
+	sourcePath := writeSourceEnrichmentFixture(t, root, "slack-source-1", strings.Join([]string{
+		"# Slack captures",
+		"<https://example.com/research|first label>",
+		"<https://example.com/research|second label>",
+	}, "\n"))
+	manifestPath := writeSourceEnrichmentManifest(t, root, "corpus-link-loop-test", CorpusPressureManifestSource{
+		SourceID:   "slack-source-1",
+		SourceKind: SourceKindMarkdown,
+		Path:       sourcePath,
+	})
+	manifest, manifestRoot, err := readSourceEnrichmentManifest(manifestPath)
+	if err != nil {
+		t.Fatalf("readSourceEnrichmentManifest: %v", err)
+	}
+
+	pack, err := BuildLinkArtifactRequestPack(manifest, manifestRoot, localArtifactIndex{byURL: map[string]LocalSourceEnrichmentArtifact{}}, map[string]bool{})
+	if err != nil {
+		t.Fatalf("BuildLinkArtifactRequestPack: %v", err)
+	}
+	if len(pack.Requests) != 2 {
+		t.Fatalf("expected both Slack mrkdwn URL mentions to be preserved: %+v", pack.Requests)
+	}
+	seen := map[string]bool{}
+	for _, request := range pack.Requests {
+		if seen[request.RequestID] {
+			t.Fatalf("duplicate request ID %s for repeated URL mentions: %+v", request.RequestID, pack.Requests)
+		}
+		seen[request.RequestID] = true
 	}
 }
 

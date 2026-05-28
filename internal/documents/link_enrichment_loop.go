@@ -208,9 +208,9 @@ func BuildLinkEnrichmentLoop(inputPath, artifactsPath, outDir string, options Li
 	summary := LinkEnrichmentLoopSummary{
 		SchemaVersion:        LinkEnrichmentLoopSummarySchemaVersion,
 		CorpusID:             manifest.CorpusID,
-		InputPath:            filepath.ToSlash(inputPath),
-		ResolvedManifestPath: filepath.ToSlash(manifestPath),
-		ArtifactsPath:        filepath.ToSlash(artifactsPath),
+		InputPath:            safeArtifactDisplayPath(inputPath, root),
+		ResolvedManifestPath: safeArtifactDisplayPath(manifestPath, root),
+		ArtifactsPath:        safeArtifactDisplayPath(artifactsPath, root),
 		RequestSummary:       requestPack.Summary,
 		Comparison:           comparison,
 		Guardrails:           comparison.Guardrails,
@@ -339,6 +339,9 @@ func BuildLinkArtifactRequestPack(manifest CorpusPressureManifest, manifestRoot 
 	}
 	sort.Slice(pack.Requests, func(i, j int) bool {
 		if pack.Requests[i].SourceID == pack.Requests[j].SourceID {
+			if pack.Requests[i].NormalizedURL == pack.Requests[j].NormalizedURL {
+				return pack.Requests[i].RequestID < pack.Requests[j].RequestID
+			}
 			return pack.Requests[i].NormalizedURL < pack.Requests[j].NormalizedURL
 		}
 		return pack.Requests[i].SourceID < pack.Requests[j].SourceID
@@ -368,7 +371,7 @@ func BuildLinkArtifactRequestPack(manifest CorpusPressureManifest, manifestRoot 
 func buildLinkArtifactRequest(source CorpusPressureManifestSource, urlMatch sourceEnrichmentURLMatch, artifacts localArtifactIndex) LinkArtifactRequest {
 	enriched := enrichSourceURL(urlMatch, artifacts)
 	request := LinkArtifactRequest{
-		RequestID:               "lreq-" + contentHash(strings.Join([]string{source.SourceID, enriched.NormalizedURL, urlMatch.rawURL}, "\n"))[:16],
+		RequestID:               "lreq-" + contentHash(strings.Join([]string{source.SourceID, enriched.NormalizedURL, urlMatch.rawURL, urlMatch.sourceToken}, "\n"))[:16],
 		SourceID:                source.SourceID,
 		SourceKind:              source.SourceKind,
 		SourceLabel:             filepath.ToSlash(source.Path),

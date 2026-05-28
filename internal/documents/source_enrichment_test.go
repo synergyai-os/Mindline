@@ -161,8 +161,41 @@ func TestBuildSourceEnrichmentIgnoresSlackAdapterPermalinkProvenance(t *testing.
 	}
 	artifact := mustReadString(t, filepath.Join(root, "enriched", SourceEnrichmentDirName, "sources", "source-1.json"))
 	report := mustReadString(t, filepath.Join(root, "enriched", SourceEnrichmentDirName, "enrichment-report.md"))
-	if strings.Contains(artifact, "slack://missing-permalink") || strings.Contains(report, "url_policy_blocked") {
+	all := readAllFiles(t, filepath.Join(root, "enriched"))
+	if strings.Contains(all, "slack://missing-permalink") {
+		t.Fatalf("Slack adapter permalink should be redacted from all enrichment outputs:\n%s", all)
+	}
+	if strings.Contains(artifact, "url_policy_blocked") || strings.Contains(report, "url_policy_blocked") {
 		t.Fatalf("Slack adapter permalink should not be counted in enrichment artifacts:\n%s\n%s", artifact, report)
+	}
+}
+
+func TestBuildSourceEnrichmentRedactsIgnoredSlackPermalinkWithoutOtherURLs(t *testing.T) {
+	root := t.TempDir()
+	sourcePath := writeSourceEnrichmentFixture(t, root, "source-1", strings.Join([]string{
+		"# Slack capture",
+		"- Permalink: slack://missing-permalink/DTEST/1710000001000001",
+		"",
+		"## Content",
+		"Captured without an external URL.",
+	}, "\n"))
+	manifestPath := writeSourceEnrichmentManifest(t, root, "corpus-enrich-test", CorpusPressureManifestSource{
+		SourceID:   "source-1",
+		SourceKind: SourceKindMarkdown,
+		Path:       sourcePath,
+	})
+	artifactsPath := writeSourceEnrichmentArtifacts(t, root)
+
+	summary, err := BuildSourceEnrichment(manifestPath, artifactsPath, filepath.Join(root, "enriched"))
+	if err != nil {
+		t.Fatalf("BuildSourceEnrichment: %v", err)
+	}
+	if summary.URLCount != 0 || summary.NoURLSourceCount != 1 {
+		t.Fatalf("expected ignored Slack permalink not to count as a URL: %+v", summary)
+	}
+	all := readAllFiles(t, filepath.Join(root, "enriched"))
+	if strings.Contains(all, "slack://missing-permalink") {
+		t.Fatalf("ignored Slack permalink should be redacted from no-URL outputs:\n%s", all)
 	}
 }
 
