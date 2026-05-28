@@ -1,0 +1,23 @@
+{
+  "schema_version": "local-source-enrichment-artifacts/v0.1",
+  "artifacts": [
+    {
+      "url": "https://example.com/research-a",
+      "kind": "web_url",
+      "title": "Research A",
+      "source_name": "Example Research",
+      "description": "Requirement: review source A before destination routing.",
+      "excerpt": "Requirement: source A has enough local evidence to judge the captured link without reopening the source.",
+      "captured_at": "2026-05-28T00:00:00Z"
+    },
+    {
+      "url": "https://example.com/research-b",
+      "kind": "web_url",
+      "title": "Research B",
+      "source_name": "Example Research",
+      "description": "Requirement: review source B before destination routing.",
+      "excerpt": "Requirement: source B has enough local evidence to judge the captured link without reopening the source.",
+      "captured_at": "2026-05-28T00:00:00Z"
+    }
+  ]
+}

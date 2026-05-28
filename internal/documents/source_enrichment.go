@@ -16,6 +16,7 @@ const (
 	SourceEnrichmentSummarySchemaVersion        = "source-enrichment-summary/v0.1"
 	LocalSourceEnrichmentArtifactsSchemaVersion = "local-source-enrichment-artifacts/v0.1"
 	SourceEnrichmentDirName                     = "source-enrichment"
+	redactedLocalPathPrefix                     = "[redacted local path]"
 )
 
 type SourceEnrichmentState string
@@ -127,6 +128,7 @@ type localArtifactIndex struct {
 type sourceEnrichmentURLMatch struct {
 	rawURL      string
 	sourceToken string
+	sourceStart int
 }
 
 var sourceEnrichmentURLPattern = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s<>"'|]+`)
@@ -168,7 +170,7 @@ func BuildSourceEnrichment(manifestPath, artifactManifestPath, outDir string) (S
 	summary := SourceEnrichmentSummary{
 		SchemaVersion:      SourceEnrichmentSummarySchemaVersion,
 		CorpusID:           manifest.CorpusID,
-		InputManifestPath:  filepath.ToSlash(manifestPath),
+		InputManifestPath:  safeArtifactDisplayPath(manifestPath, realRoot),
 		OutputManifestPath: "corpus-pressure-manifest.json",
 		StateCounts:        map[SourceEnrichmentState]int{},
 		ReportPath:         filepath.ToSlash(filepath.Join(SourceEnrichmentDirName, "enrichment-report.md")),
@@ -289,6 +291,7 @@ func enrichManifestSource(manifestRoot, outRoot string, source CorpusPressureMan
 	body := string(data)
 	outputBody := body
 	urlMatches := extractSourceEnrichmentURLs(body)
+	blockedSourceTokens := extractIgnoredSourceEnrichmentURLTokens(body)
 	outputPath := filepath.ToSlash(filepath.Join("sources", sanitizeID(source.SourceID), "source.md"))
 	artifactPath := filepath.ToSlash(filepath.Join(SourceEnrichmentDirName, "sources", sanitizeID(source.SourceID)+".json"))
 	sourceArtifact := SourceEnrichmentSourceArtifact{
@@ -312,9 +315,8 @@ func enrichManifestSource(manifestRoot, outRoot string, source CorpusPressureMan
 		sourceArtifact.State = SourceEnrichmentStateNoURL
 		sourceArtifact.ReasonCodes = []string{"no_url"}
 		sourceSummary.ReasonCodes = []string{"no_url"}
-		return sourceSummary, sourceArtifact, body, nil
+		return sourceSummary, sourceArtifact, redactSourceEnrichmentTokens(body, blockedSourceTokens), nil
 	}
-	var blockedSourceTokens []string
 	for _, urlMatch := range urlMatches {
 		enrichedURL := enrichSourceURL(urlMatch, artifacts)
 		sourceArtifact.URLs = append(sourceArtifact.URLs, enrichedURL)
@@ -391,48 +393,120 @@ func enrichSourceURL(urlMatch sourceEnrichmentURLMatch, artifacts localArtifactI
 		record.ReasonCodes = []string{"unsafe_artifact_payload"}
 		return record
 	}
-	record.State = SourceEnrichmentStateEnriched
-	record.ReasonCodes = []string{"local_artifact_matched"}
 	record.Title = strings.TrimSpace(artifact.Title)
 	record.Description = strings.TrimSpace(artifact.Description)
 	record.Excerpt = strings.TrimSpace(artifact.Excerpt)
 	record.SourceName = strings.TrimSpace(artifact.SourceName)
 	record.CapturedAt = strings.TrimSpace(artifact.CapturedAt)
+	if !sourceEnrichmentArtifactEvidenceReady(record) {
+		record.State = SourceEnrichmentStateNeedsManualProcessing
+		record.ReasonCodes = []string{"insufficient_local_artifact_evidence"}
+		return record
+	}
+	record.State = SourceEnrichmentStateEnriched
+	record.ReasonCodes = []string{"local_artifact_matched"}
 	record.ContentHash = "sha256:" + contentHash(strings.Join([]string{record.NormalizedURL, record.Title, record.Description, record.Excerpt, record.SourceName}, "\n"))
 	return record
 }
 
+func sourceEnrichmentArtifactEvidenceReady(record SourceEnrichmentURL) bool {
+	return strings.TrimSpace(record.Title) != "" &&
+		(strings.TrimSpace(record.Description) != "" || strings.TrimSpace(record.Excerpt) != "")
+}
+
 func extractSourceEnrichmentURLs(value string) []sourceEnrichmentURLMatch {
-	seen := map[string]bool{}
 	var out []sourceEnrichmentURLMatch
 	for _, loc := range sourceEnrichmentURLPattern.FindAllStringIndex(value, -1) {
 		match := value[loc[0]:loc[1]]
 		clean := trimSourceEnrichmentURLMatch(match)
-		token := clean
-		if loc[0] > 0 && value[loc[0]-1] == '<' {
-			if closeOffset := strings.IndexByte(value[loc[1]:], '>'); closeOffset >= 0 {
-				label := value[loc[1] : loc[1]+closeOffset]
-				if strings.HasPrefix(label, "|") {
-					token = value[loc[0]-1 : loc[1]+closeOffset+1]
-				}
-			}
-		}
-		if seen[token] {
+		if sourceEnrichmentIgnoredURL(clean) {
 			continue
 		}
-		seen[token] = true
+		token := sourceEnrichmentSourceToken(value, loc, clean)
 		out = append(out, sourceEnrichmentURLMatch{
 			rawURL:      clean,
 			sourceToken: token,
+			sourceStart: loc[0],
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].rawURL == out[j].rawURL {
+			if out[i].sourceToken == out[j].sourceToken {
+				return out[i].sourceStart < out[j].sourceStart
+			}
 			return out[i].sourceToken < out[j].sourceToken
 		}
 		return out[i].rawURL < out[j].rawURL
 	})
 	return out
+}
+
+func extractIgnoredSourceEnrichmentURLTokens(value string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, loc := range sourceEnrichmentURLPattern.FindAllStringIndex(value, -1) {
+		match := value[loc[0]:loc[1]]
+		clean := trimSourceEnrichmentURLMatch(match)
+		if !sourceEnrichmentIgnoredURL(clean) {
+			continue
+		}
+		token := sourceEnrichmentSourceToken(value, loc, clean)
+		if seen[token] {
+			continue
+		}
+		seen[token] = true
+		out = append(out, token)
+	}
+	return out
+}
+
+func sourceEnrichmentSourceToken(value string, loc []int, clean string) string {
+	token := clean
+	if loc[0] > 0 && value[loc[0]-1] == '<' {
+		if closeOffset := strings.IndexByte(value[loc[1]:], '>'); closeOffset >= 0 {
+			label := value[loc[1] : loc[1]+closeOffset]
+			if strings.HasPrefix(label, "|") {
+				token = value[loc[0]-1 : loc[1]+closeOffset+1]
+			}
+		}
+	}
+	return token
+}
+
+func safeArtifactDisplayPath(path string, roots ...string) string {
+	cleaned := strings.TrimSpace(path)
+	if cleaned == "" {
+		return ""
+	}
+	if !filepath.IsAbs(cleaned) {
+		return filepath.ToSlash(cleaned)
+	}
+	absPath, err := filepath.Abs(cleaned)
+	if err != nil {
+		return redactedLocalPathPrefix + "/" + filepath.Base(cleaned)
+	}
+	for _, root := range roots {
+		if strings.TrimSpace(root) == "" {
+			continue
+		}
+		absRoot, err := filepath.Abs(root)
+		if err != nil {
+			continue
+		}
+		rel, err := filepath.Rel(absRoot, absPath)
+		if err == nil && rel != "." && !filepath.IsAbs(rel) && !strings.HasPrefix(filepath.ToSlash(rel), "../") {
+			return filepath.ToSlash(rel)
+		}
+	}
+	return redactedLocalPathPrefix + "/" + filepath.Base(cleaned)
+}
+
+func sourceEnrichmentIgnoredURL(rawURL string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(parsed.Scheme, "slack")
 }
 
 func trimSourceEnrichmentURLMatch(match string) string {

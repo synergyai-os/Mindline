@@ -31,7 +31,7 @@ const (
 	ExitArtifactWrite = 3
 )
 
-const usage = "usage: mindline process <candidate.json> [--out <dir>]\nusage: mindline slack normalize <slack-export.json> [--out <dir>]\nusage: mindline slack corpus-intake <slack-export.json> --out <dir>\nusage: mindline destination dry-run <sbos-result.json> --adapter tolaria --out <dir>\nusage: mindline pipeline dry-run <pipeline-input.json> --method basb-para-code --destination tolaria --out <dir>\nusage: mindline product-brain propose <run-dir> --profile <profile.json> --out <dir>\nusage: mindline documents decompose <markdown-path-or-dir> --out <dir>\nusage: mindline documents structure <markdown-path-or-dir> --out <dir>\nusage: mindline documents semantics <structure-run-dir-or-markdown-path-or-markdown-dir> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents accept <semantic-run-dir> --answer-key <answer-key.json> --out <dir>\nusage: mindline documents calibrate <semantic-acceptance-dir-or-parent> --out <dir> [--threshold 0.98] [--held-out] [--source-root <dir> --source <relative.md>]\nusage: mindline documents calibrate-next <semantic-calibration-dir-or-parent>\nusage: mindline documents judge <semantic-run-dir> --out <dir> [--source-root <dir> --source <relative.md>] [--agent-reviewer llm --llm-provider openai --llm-model <model>]\nusage: mindline documents judge-next <semantic-judgment-dir-or-parent>\nusage: mindline documents judge-record <semantic-judgment-dir-or-parent> --candidate <candidate-id> --choice accept|reject|unclear|duplicate|wrong-kind [--reason <failure-reason>] [--secondary-reason <failure-reason>] [--note <text>] [--reviewer <id>]\nusage: mindline documents judge-serve <semantic-judgment-dir-or-parent> [--addr 127.0.0.1:8787] [--reviewer <id>]\nusage: mindline documents readiness-report <semantic-judgment-dir-or-parent> --out <dir> [--threshold 0.98] [--held-out]\nusage: mindline documents corpus-graph <manifest.json> --out <dir>\nusage: mindline documents enrich-sources <corpus-pressure-manifest.json> --artifacts <local-enrichment-artifacts.json> --out <dir>\nusage: mindline documents corpus-pressure <markdown-dir-or-manifest> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents corpus-pressure-loop <markdown-dir-or-manifest> --out <dir> [--max-runs <n>] [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents corpus-acceptance <corpus-pressure-out-or-parent> --answer-key <corpus-answer-key.json> --out <dir> [--threshold 0.98] [--held-out]\nusage: mindline documents meaning-preview <corpus-pressure-out-or-parent> --out <dir>\nusage: mindline observability posthog-test\n"
+const usage = "usage: mindline process <candidate.json> [--out <dir>]\nusage: mindline slack normalize <slack-export.json> [--out <dir>]\nusage: mindline slack corpus-intake <slack-export.json> --out <dir>\nusage: mindline destination dry-run <sbos-result.json> --adapter tolaria --out <dir>\nusage: mindline pipeline dry-run <pipeline-input.json> --method basb-para-code --destination tolaria --out <dir>\nusage: mindline product-brain propose <run-dir> --profile <profile.json> --out <dir>\nusage: mindline documents decompose <markdown-path-or-dir> --out <dir>\nusage: mindline documents structure <markdown-path-or-dir> --out <dir>\nusage: mindline documents semantics <structure-run-dir-or-markdown-path-or-markdown-dir> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents accept <semantic-run-dir> --answer-key <answer-key.json> --out <dir>\nusage: mindline documents calibrate <semantic-acceptance-dir-or-parent> --out <dir> [--threshold 0.98] [--held-out] [--source-root <dir> --source <relative.md>]\nusage: mindline documents calibrate-next <semantic-calibration-dir-or-parent>\nusage: mindline documents judge <semantic-run-dir> --out <dir> [--source-root <dir> --source <relative.md>] [--agent-reviewer llm --llm-provider openai --llm-model <model>]\nusage: mindline documents judge-next <semantic-judgment-dir-or-parent>\nusage: mindline documents judge-record <semantic-judgment-dir-or-parent> --candidate <candidate-id> --choice accept|reject|unclear|duplicate|wrong-kind [--reason <failure-reason>] [--secondary-reason <failure-reason>] [--note <text>] [--reviewer <id>]\nusage: mindline documents judge-serve <semantic-judgment-dir-or-parent> [--addr 127.0.0.1:8787] [--reviewer <id>]\nusage: mindline documents readiness-report <semantic-judgment-dir-or-parent> --out <dir> [--threshold 0.98] [--held-out]\nusage: mindline documents corpus-graph <manifest.json> --out <dir>\nusage: mindline documents enrich-sources <corpus-pressure-manifest.json> --artifacts <local-enrichment-artifacts.json> --out <dir>\nusage: mindline documents link-enrichment-loop <corpus-pressure-manifest-or-intake-dir> --artifacts <local-enrichment-artifacts.json> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents corpus-pressure <markdown-dir-or-manifest> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents corpus-pressure-loop <markdown-dir-or-manifest> --out <dir> [--max-runs <n>] [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents corpus-acceptance <corpus-pressure-out-or-parent> --answer-key <corpus-answer-key.json> --out <dir> [--threshold 0.98] [--held-out]\nusage: mindline documents meaning-preview <corpus-pressure-out-or-parent> --out <dir>\nusage: mindline observability posthog-test\n"
 
 const protectedRootsEnv = "MINDLINE_PROTECTED_ROOTS"
 const defaultTolariaProtectedRoot = "/Users/randyhereman/Young Human Club Dropbox/02. Areas/PKM - Tolaria"
@@ -295,6 +295,9 @@ func (r Runner) runDocuments(args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "enrich-sources" {
 		return r.runDocumentsEnrichSources(args, stdout, stderr)
 	}
+	if len(args) > 0 && args[0] == "link-enrichment-loop" {
+		return r.runDocumentsLinkEnrichmentLoop(args, stdout, stderr)
+	}
 	if len(args) > 0 && args[0] == "corpus-pressure-loop" {
 		return r.runDocumentsCorpusPressureLoop(args, stdout, stderr)
 	}
@@ -409,6 +412,41 @@ func (r Runner) runDocumentsEnrichSources(args []string, stdout, stderr io.Write
 		}
 		fmt.Fprintf(stderr, "run source enrichment: %v\n", err)
 		return ExitProcess
+	}
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(summary); err != nil {
+		fmt.Fprintf(stderr, "write stdout: %v\n", err)
+		return ExitUsage
+	}
+	return ExitOK
+}
+
+func (r Runner) runDocumentsLinkEnrichmentLoop(args []string, stdout, stderr io.Writer) int {
+	inputPath, artifactsPath, outDir, options, parseError, configError := r.parseDocumentsLinkEnrichmentLoopArgs(args)
+	if configError != "" {
+		fmt.Fprintln(stderr, configError)
+		return ExitUsage
+	}
+	if parseError != parseErrorNone {
+		fmt.Fprint(stderr, usage)
+		return ExitUsage
+	}
+	if err := r.validateDestinationOutDir(outDir); err != nil {
+		fmt.Fprintf(stderr, "validate link enrichment output: %v\n", err)
+		return ExitArtifactWrite
+	}
+	summary, err := documents.BuildLinkEnrichmentLoop(inputPath, artifactsPath, outDir, documents.LinkEnrichmentLoopOptions{SemanticOptions: options})
+	if err != nil {
+		if documents.IsArtifactWriteError(err) {
+			fmt.Fprintf(stderr, "write link enrichment loop: %v\n", err)
+			return ExitArtifactWrite
+		}
+		fmt.Fprintf(stderr, "run link enrichment loop: %v\n", err)
+		return ExitProcess
+	}
+	if exit := r.writeAndExportLinkEnrichmentProjection(outDir, summary, stderr); exit != ExitOK {
+		return exit
 	}
 	encoder := json.NewEncoder(stdout)
 	encoder.SetIndent("", "  ")
@@ -1463,6 +1501,73 @@ func parseDocumentsEnrichSourcesArgs(args []string) (manifestPath string, artifa
 	return manifestPath, artifactsPath, outDir, parseErrorNone
 }
 
+func (r Runner) parseDocumentsLinkEnrichmentLoopArgs(args []string) (inputPath string, artifactsPath string, outDir string, options documents.SemanticOptions, err parseError, configError string) {
+	options.Classifier = documents.SemanticClassifierDeterministic
+	if len(args) < 6 || args[0] != "link-enrichment-loop" || strings.TrimSpace(args[1]) == "" {
+		return "", "", "", options, parseErrorUsage, ""
+	}
+	inputPath = args[1]
+	for i := 2; i < len(args); {
+		switch args[i] {
+		case "--artifacts":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", "", options, parseErrorUsage, ""
+			}
+			artifactsPath = args[i+1]
+			i += 2
+		case "--out":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", "", options, parseErrorUsage, ""
+			}
+			outDir = args[i+1]
+			i += 2
+		case "--classifier":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", "", options, parseErrorUsage, ""
+			}
+			classifier := documents.SemanticClassifier(args[i+1])
+			if classifier != documents.SemanticClassifierDeterministic && classifier != documents.SemanticClassifierLLM {
+				return "", "", "", options, parseErrorUsage, ""
+			}
+			options.Classifier = classifier
+			i += 2
+		case "--llm-provider":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", "", options, parseErrorUsage, ""
+			}
+			options.LLMProvider = strings.TrimSpace(args[i+1])
+			i += 2
+		case "--llm-model":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", "", options, parseErrorUsage, ""
+			}
+			options.LLMModel = strings.TrimSpace(args[i+1])
+			i += 2
+		default:
+			return "", "", "", options, parseErrorUsage, ""
+		}
+	}
+	if artifactsPath == "" || outDir == "" {
+		return "", "", "", options, parseErrorUsage, ""
+	}
+	options = r.resolveSemanticLLMEnv(options)
+	if options.Classifier == documents.SemanticClassifierLLM {
+		if options.LLMProvider == "" {
+			return "", "", "", options, parseErrorNone, "missing LLM provider"
+		}
+		if options.LLMProvider != "openai" {
+			return "", "", "", options, parseErrorNone, fmt.Sprintf("unsupported LLM provider: %s", options.LLMProvider)
+		}
+		if options.LLMModel == "" {
+			return "", "", "", options, parseErrorNone, "missing OpenAI model"
+		}
+		if options.LLMAPIKey == "" {
+			return "", "", "", options, parseErrorNone, "missing OpenAI API key"
+		}
+	}
+	return inputPath, artifactsPath, outDir, options, parseErrorNone, ""
+}
+
 func (r Runner) parseDocumentsCorpusPressureArgs(args []string) (inputPath string, outDir string, options documents.SemanticOptions, err parseError, configError string) {
 	options.Classifier = documents.SemanticClassifierDeterministic
 	if len(args) < 4 || args[0] != "corpus-pressure" || strings.TrimSpace(args[1]) == "" {
@@ -2117,6 +2222,80 @@ func (r Runner) writeAndExportTrace(outDir string, summary observability.TraceSu
 		}
 	}
 	return nil
+}
+
+func (r Runner) writeAndExportLinkEnrichmentProjection(outDir string, summary documents.LinkEnrichmentLoopSummary, stderr io.Writer) int {
+	values := r.resolveEnvValues([]string{
+		"MINDLINE_TELEMETRY_ENABLED",
+		"MINDLINE_LLM_TRACE_MODE",
+		"MINDLINE_TELEMETRY_SALT",
+		"POSTHOG_PROJECT_API_KEY",
+		"POSTHOG_API_KEY",
+		"POSTHOG_HOST",
+	})
+	projection := observability.LinkEnrichmentProjection{
+		SchemaVersion: observability.LinkEnrichmentProjectionSchemaVersion,
+		Status:        "disabled",
+		Events:        observability.LinkEnrichmentSafeEvents(summary, values["MINDLINE_TELEMETRY_SALT"]),
+	}
+	if telemetryEnabled(values["MINDLINE_TELEMETRY_ENABLED"]) {
+		config, err := observability.ConfigFromValues(values)
+		if err != nil {
+			projection.Status = "failed"
+			projection.ErrorClass = "config_error"
+			exit := ExitOK
+			if strings.Contains(err.Error(), "unsupported LLM trace mode") {
+				projection.Status = "blocked"
+				exit = ExitArtifactWrite
+			}
+			if writeErr := r.writeLinkEnrichmentProjection(outDir, projection); writeErr != nil {
+				fmt.Fprintf(stderr, "write link enrichment PostHog projection: %v\n", writeErr)
+				return ExitArtifactWrite
+			}
+			fmt.Fprintf(stderr, "posthog link enrichment projection: %v\n", err)
+			return exit
+		}
+		projection.Events = observability.LinkEnrichmentSafeEvents(summary, config.TelemetrySalt)
+		projection.Status = "sent"
+		exporter := observability.NewPostHogExporter(config, r.postHogTransport)
+		for _, event := range projection.Events {
+			if err := exporter.Capture(event); err != nil {
+				if observability.IsSafeEventValidationError(err) {
+					projection.Status = "blocked"
+					projection.ErrorClass = "safety_validation_error"
+					if writeErr := r.writeLinkEnrichmentProjection(outDir, projection); writeErr != nil {
+						fmt.Fprintf(stderr, "write link enrichment PostHog projection: %v\n", writeErr)
+					}
+					return ExitArtifactWrite
+				}
+				projection.Status = "failed"
+				projection.ErrorClass = "network_error"
+				fmt.Fprintf(stderr, "posthog link enrichment projection: %v\n", err)
+				break
+			}
+		}
+	}
+	if err := r.writeLinkEnrichmentProjection(outDir, projection); err != nil {
+		fmt.Fprintf(stderr, "write link enrichment PostHog projection: %v\n", err)
+		return ExitArtifactWrite
+	}
+	return ExitOK
+}
+
+func (r Runner) writeLinkEnrichmentProjection(outDir string, projection observability.LinkEnrichmentProjection) error {
+	data, err := json.MarshalIndent(projection, "", "  ")
+	if err != nil {
+		return err
+	}
+	child := filepath.Join(documents.LinkEnrichmentDirName, "posthog")
+	if err := r.ensureOutputChildDir(outDir, child); err != nil {
+		return err
+	}
+	target := filepath.Join(outDir, child, "eval-projection.json")
+	if err := r.rejectUnsafeOutputFile(outDir, target); err != nil {
+		return err
+	}
+	return r.fs.WriteFile(target, append(data, '\n'))
 }
 
 func (r Runner) projectAutonomyReadiness(report documents.AutonomyReadinessReport, stderr io.Writer) (documents.AutonomyReadinessReport, int) {
