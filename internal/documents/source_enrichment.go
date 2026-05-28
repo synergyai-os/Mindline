@@ -314,11 +314,12 @@ func enrichManifestSource(manifestRoot, outRoot string, source CorpusPressureMan
 		sourceSummary.ReasonCodes = []string{"no_url"}
 		return sourceSummary, sourceArtifact, body, nil
 	}
+	var blockedSourceTokens []string
 	for _, urlMatch := range urlMatches {
 		enrichedURL := enrichSourceURL(urlMatch, artifacts)
 		sourceArtifact.URLs = append(sourceArtifact.URLs, enrichedURL)
 		if sourceEnrichmentBlockedState(enrichedURL.State) {
-			outputBody = strings.ReplaceAll(outputBody, urlMatch.sourceToken, redactedSourceEnrichmentURL)
+			blockedSourceTokens = append(blockedSourceTokens, urlMatch.sourceToken)
 		}
 		sourceSummary.URLCount++
 		sourceSummary.URLStates[enrichedURL.State]++
@@ -333,6 +334,7 @@ func enrichManifestSource(manifestRoot, outRoot string, source CorpusPressureMan
 	sourceSummary.State = sourceEnrichmentSourceState(sourceArtifact.URLs)
 	sourceArtifact.State = sourceSummary.State
 	sourceArtifact.ReasonCodes = sourceSummary.ReasonCodes
+	outputBody = redactSourceEnrichmentTokens(outputBody, blockedSourceTokens)
 	return sourceSummary, sourceArtifact, appendSourceEnrichmentMarkdown(outputBody, sourceArtifact), ensureSourceEnrichmentOutputPath(outRoot, outputPath)
 }
 
@@ -442,7 +444,7 @@ func classifySourceEnrichmentURL(rawURL string) (string, string, bool) {
 		return "", "unknown", false
 	}
 	host := strings.ToLower(parsed.Hostname())
-	if host == "" || sourceEnrichmentBlockedHost(host) {
+	if host == "" || parsed.User != nil || sourceEnrichmentBlockedHost(host) {
 		return "", sourceEnrichmentURLKind(parsed), false
 	}
 	parsed.Scheme = strings.ToLower(parsed.Scheme)
@@ -491,6 +493,26 @@ func sourceEnrichmentUnsupportedExtension(path string) bool {
 
 func sourceEnrichmentBlockedState(state SourceEnrichmentState) bool {
 	return state == SourceEnrichmentStateBlockedByPolicy || state == SourceEnrichmentStateBlockedPrivateOrSecret
+}
+
+func redactSourceEnrichmentTokens(body string, tokens []string) string {
+	if len(tokens) == 0 {
+		return body
+	}
+	tokens = append([]string(nil), tokens...)
+	sort.Slice(tokens, func(i, j int) bool {
+		if len(tokens[i]) == len(tokens[j]) {
+			return tokens[i] < tokens[j]
+		}
+		return len(tokens[i]) > len(tokens[j])
+	})
+	for _, token := range tokens {
+		if token == "" {
+			continue
+		}
+		body = strings.ReplaceAll(body, token, redactedSourceEnrichmentURL)
+	}
+	return body
 }
 
 func sourceEnrichmentBlockedHost(host string) bool {

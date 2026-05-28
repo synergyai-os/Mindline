@@ -311,6 +311,72 @@ func TestBuildSourceEnrichmentRedactsUnsafeSourceURLInAllOutput(t *testing.T) {
 	}
 }
 
+func TestBuildSourceEnrichmentRedactsLongerBlockedURLPrefixMatches(t *testing.T) {
+	root := t.TempDir()
+	unsafeSecret := "sk-proj-" + strings.Repeat("c", 48)
+	shortURL := "https://example.com/research?token=" + unsafeSecret
+	longURL := shortURL + "TAILLEAK"
+	sourcePath := writeSourceEnrichmentFixture(t, root, "source-1", strings.Join([]string{
+		"# Links",
+		shortURL,
+		longURL,
+	}, "\n"))
+	manifestPath := writeSourceEnrichmentManifest(t, root, "corpus-enrich-test", CorpusPressureManifestSource{
+		SourceID:   "source-1",
+		SourceKind: SourceKindMarkdown,
+		Path:       sourcePath,
+	})
+	artifactsPath := writeSourceEnrichmentArtifacts(t, root)
+
+	out := filepath.Join(root, "enriched")
+	summary, err := BuildSourceEnrichment(manifestPath, artifactsPath, out)
+	if err != nil {
+		t.Fatalf("BuildSourceEnrichment: %v", err)
+	}
+	if summary.URLCount != 2 || summary.BlockedURLCount != 2 {
+		t.Fatalf("expected both unsafe URLs accounted and blocked: %+v", summary)
+	}
+	all := readAllFiles(t, out)
+	for _, forbidden := range []string{unsafeSecret, shortURL, longURL, "TAILLEAK"} {
+		if strings.Contains(all, forbidden) {
+			t.Fatalf("blocked URL prefix leaked %q:\n%s", forbidden, all)
+		}
+	}
+}
+
+func TestBuildSourceEnrichmentBlocksCredentialBearingURLUserinfo(t *testing.T) {
+	root := t.TempDir()
+	credentialURL := "https://user:pass@example.com/research"
+	sourcePath := writeSourceEnrichmentFixture(t, root, "source-1", "# Link\n\n"+credentialURL+"\n")
+	manifestPath := writeSourceEnrichmentManifest(t, root, "corpus-enrich-test", CorpusPressureManifestSource{
+		SourceID:   "source-1",
+		SourceKind: SourceKindMarkdown,
+		Path:       sourcePath,
+	})
+	artifactsPath := writeSourceEnrichmentArtifacts(t, root, LocalSourceEnrichmentArtifact{
+		URL:   credentialURL,
+		Title: "Credentialed artifact",
+	})
+
+	out := filepath.Join(root, "enriched")
+	summary, err := BuildSourceEnrichment(manifestPath, artifactsPath, out)
+	if err != nil {
+		t.Fatalf("BuildSourceEnrichment: %v", err)
+	}
+	if summary.EnrichedURLCount != 0 || summary.BlockedURLCount != 1 {
+		t.Fatalf("expected credential-bearing URL to be blocked, not enriched: %+v", summary)
+	}
+	all := readAllFiles(t, out)
+	for _, forbidden := range []string{credentialURL, "user:pass", "Credentialed artifact"} {
+		if strings.Contains(all, forbidden) {
+			t.Fatalf("credential-bearing URL leaked %q:\n%s", forbidden, all)
+		}
+	}
+	if !strings.Contains(all, "url_policy_blocked") || !strings.Contains(all, redactedSourceEnrichmentURL) {
+		t.Fatalf("expected policy redaction proof:\n%s", all)
+	}
+}
+
 func TestSourceEnrichmentURLPolicyBlocksUnsafeTargets(t *testing.T) {
 	blocked := []string{
 		"file:///tmp/source.md",
