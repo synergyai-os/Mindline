@@ -308,6 +308,10 @@ func summarize(model readbackModel) Summary {
 		typeCounts[artifact.Type]++
 		refs = append(refs, artifact.Ref)
 	}
+	sampleStatus := model.sampleStatus
+	if sampleStatus == "unknown" && model.flags["held_out"] {
+		sampleStatus = "held_out"
+	}
 	sort.Strings(refs)
 	summary := Summary{
 		SchemaVersion:      SummarySchemaVersion,
@@ -315,13 +319,13 @@ func summarize(model readbackModel) Summary {
 		InputRootLabel:     model.rootLabel,
 		ArtifactCount:      len(model.artifacts),
 		ArtifactTypeCounts: typeCounts,
-		SampleStatus:       model.sampleStatus,
+		SampleStatus:       sampleStatus,
 		ImprovementStatus:  "not_evaluated",
 		Guardrails:         model.guardrails,
 		SafeArtifactRefs:   refs,
 		Artifacts:          model.artifacts,
 	}
-	if model.flags["non_generalizable_runtime"] || model.sampleStatus == "private_runtime" || model.sampleStatus == "temp_runtime" || model.sampleStatus == "unknown" {
+	if model.flags["non_generalizable_runtime"] || sampleStatus == "private_runtime" || sampleStatus == "temp_runtime" || sampleStatus == "unknown" {
 		summary.GeneralizationStatus = "non_generalizable"
 	} else {
 		summary.GeneralizationStatus = "generalizable"
@@ -367,7 +371,7 @@ func rebuildClaimGates(summary *Summary) {
 		gates = append(gates, ClaimGate{Gate: "improvement_claim", Status: "blocked", ReasonCodes: []string{"missing_baseline"}, ClaimImpact: "blocks improvement claim until comparable baseline is supplied"})
 	}
 	gates = append(gates, ClaimGate{Gate: "dec64_no_human_claim", Status: "blocked", ReasonCodes: []string{"held_out_threshold_not_proven"}, ClaimImpact: "blocks no-human autonomy readiness claim"})
-	if summary.Guardrails.NetworkFetches == 0 && summary.Guardrails.HostedInferenceCalls == 0 && summary.Guardrails.DestinationWrites == 0 && summary.Guardrails.ProductBrainWrites == 0 && summary.Guardrails.TolariaWrites == 0 {
+	if summary.Guardrails.NetworkFetches == 0 && summary.Guardrails.HostedTelemetryExports == 0 && summary.Guardrails.HostedInferenceCalls == 0 && summary.Guardrails.DestinationWrites == 0 && summary.Guardrails.ProductBrainWrites == 0 && summary.Guardrails.TolariaWrites == 0 {
 		gates = append(gates, ClaimGate{Gate: "side_effect_claim", Status: "pass", ClaimImpact: "readback found no prohibited side-effect counters"})
 	} else {
 		gates = append(gates, ClaimGate{Gate: "side_effect_claim", Status: "fail", ReasonCodes: []string{"guardrail_counter_nonzero"}, ClaimImpact: "blocks safety claim"})
@@ -492,7 +496,7 @@ func comparableModels(a, b readbackModel) (bool, []string) {
 	}
 	for artifactType := range a.artifactTypes {
 		if b.artifactTypes[artifactType] {
-			return true, []string{"limited_same_artifact_type"}
+			return false, []string{"missing_fingerprints"}
 		}
 	}
 	return false, []string{"artifact_domain_mismatch"}

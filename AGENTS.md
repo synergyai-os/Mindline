@@ -76,31 +76,48 @@ The core product is not any one source or destination. The core product is the r
 ## Product Model Rules
 
 - Build source-agnostic and destination-agnostic behavior by default.
-- Never optimize core logic for one private `/temp` corpus, one Slack export, one workspace, one destination, or one review UI.
+- Never optimize core logic for one private `/temp` corpus, one Slack export, one workspace, one destination, one provider, one user, or one review UI unless the work explicitly declares that bounded scope.
+- Product progress must generalize to the stated user, input, output, and workspace surface.
 - Treat Tolaria-specific behavior as adapter-specific unless PB explicitly says it is a core Mindline rule.
 - Treat Product Brain-specific proposal behavior as adapter-specific unless PB explicitly says it is a core Mindline rule.
 - When adding a new feature, state which layer owns it: source adapter, normalized candidate, document structure, semantic extraction, evaluation/readback, review workflow, or destination adapter.
 - If a decision would make Notion, Obsidian, Linear, Product Brain, or Tolaria harder to support later, capture the tradeoff in PB before implementing.
 - Do not make destination writes, no-human approval, or autonomous action claims until the Chain says the required held-out accuracy, privacy, evidence, and safety gates are met.
 
-## Evaluation And Improvement Protocol
+## Default Eval-Driven Improvement Protocol
 
-For work that touches semantic extraction, LLM behavior, review, source enrichment, destination readiness, traceability, or autonomy:
+Product Brain is authoritative for this protocol. Current anchors include DEC-250, DEC-251, DEC-252, DEC-241, STR-3, PRI-1, BR-1, STD-17, DEC-64, FLO-1, and TEN-23.
 
-1. Define the outcome and guardrails before implementation.
-2. Run against representative local fixtures or real private runtime data as allowed.
-3. Produce local trace/eval artifacts.
-4. Run readback or an equivalent claim gate to answer:
+Use this protocol for any work package, implementation, review, or proof that touches LLM calls, semantic extraction/classification, source enrichment, routing, review automation, autonomy claims, destination writes, user data/privacy, or measurable quality KRs.
+
+Scale the protocol to risk. Mechanical changes inside a relevant work package do not need heavyweight new evals unless they are used as product proof or can affect quality, privacy, routing, autonomy, or destination behavior.
+
+1. Define the outcome, guardrails, and evaluation projection before implementation.
+2. Challenge first-round specs or plans once for a tighter, leaner, more product-general version, then reconcile that challenge against Product Brain.
+3. Run against representative local fixtures or real private runtime data as allowed.
+4. Produce or reference local trace/eval artifacts for every run used as proof.
+5. Run readback or an equivalent claim gate to answer:
    - what evidence exists;
    - what changed versus baseline;
    - what cannot be generalized;
    - what claims are blocked;
    - what the next product-general improvement target is.
-5. Treat hosted observability such as PostHog as an observability and analysis plane, not the durable source of truth.
-6. Keep PB as the durable decision/proof plane.
-7. Keep local readback artifacts as the canonical machine-checkable proof unless and until PB establishes a different authority.
+6. Compare before/after proof when claiming improvement.
+7. Capture reusable learning, decisions, standards, or blockers on Chain.
 
-PostHog can help inspect traces, latency, model behavior, and eval projections. It should not by itself authorize product claims, destination writes, or no-human autonomy.
+Command success is not outcome success. A process exit code of `0` proves only that the command ran; product success requires the relevant eval/KR gates and guardrails to pass.
+
+Eval projections for relevant proof must state intended users, input/source types, output or destination surfaces, workspace assumptions, provider/model assumptions, privacy boundary, sample status, held-out/generalization claim, KR thresholds, and guardrails.
+
+Private or sample-bound proof is not generalizable proof. `/temp`, Randy Slack, one Tolaria folder, one Product Brain profile, one PostHog run, or one customer workspace can support discovery/debugging, but closure claims require a reusable fixture, held-out eval case, reusable rule, or an explicit non-generalizable flag.
+
+A sample-specific fix must name the generalized product behavior it proves. If it cannot, treat it as local remediation rather than product progress.
+
+Hosted observability such as PostHog is an observability and analysis plane, not the durable source of truth. Hosted telemetry must be explicit, metadata-only, allowlisted, and governed by PRI-1 and BR-1. It must not authorize product claims, destination writes, or no-human autonomy by itself.
+
+Short term, Codex is the active operator that inspects eval artifacts, improves the system, and captures learnings. Long term, Mindline should aggregate eval runs and propose improvement work automatically; do not claim that exists until it is built and proven.
+
+Do not add an `AGENTS.md` or process shortcut that bypasses Chain authority. If this protocol changes, update Product Brain first, then update instruction surfaces to point at the Chain truth.
 
 ## Tolaria Boundary
 

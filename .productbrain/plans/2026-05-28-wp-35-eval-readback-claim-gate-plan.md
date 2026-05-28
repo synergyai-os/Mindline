@@ -120,7 +120,7 @@ When `--baseline` is supplied:
    - failure taxonomy counts;
    - KR/eval projection result.
 3. Require matching corpus/config fingerprints when both sides expose them.
-4. If fingerprints are absent, allow comparison only for same artifact type and mark confidence `limited`.
+4. If fingerprints are absent, mark comparison `not_comparable`; shared artifact type alone is not enough to claim improvement.
 5. Write `eval-readback/comparison-summary.json`.
 
 ## 6. CLI Shape

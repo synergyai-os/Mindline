@@ -125,6 +125,34 @@ func TestBuildSupportsActualWriterSchemas(t *testing.T) {
 	}
 }
 
+func TestBuildHonorsHeldOutArtifactOutsideTestdata(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "corpus-acceptance", "benchmark-summary.json"), map[string]any{
+		"schema_version":             "corpus-acceptance-summary/v0.1",
+		"source_count":               2,
+		"evidence_ready_atom_ratio":  1,
+		"review_burden_ratio":        0,
+		"corpus_fingerprint":         "held-out-corpus",
+		"command_config_fingerprint": "held-out-config",
+		"held_out":                   true,
+		"guardrails":                 map[string]any{"destination_writes": 0, "hosted_telemetry_exports": 0, "hosted_inference_calls": 0},
+	})
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if summary.SampleStatus != "held_out" {
+		t.Fatalf("expected held_out sample status, got %s", summary.SampleStatus)
+	}
+	if summary.GeneralizationStatus != "generalizable" {
+		t.Fatalf("expected held-out artifact to support bounded generalization, got %s", summary.GeneralizationStatus)
+	}
+	if gateStatus(summary, "generalization_claim") != "pass" {
+		t.Fatalf("expected generalization claim pass, got %+v", summary.ClaimGates)
+	}
+}
+
 func TestBuildCurrentOnlyDoesNotPassImprovementClaim(t *testing.T) {
 	out := t.TempDir()
 	summary, err := Build(filepath.Join("..", "..", "testdata", "eval-readback", "current"), out, Options{})
@@ -191,6 +219,22 @@ func TestBuildGuardrailRegressionBlocksImprovementClaim(t *testing.T) {
 	}
 }
 
+func TestBuildHostedTelemetryBlocksSideEffectClaim(t *testing.T) {
+	root := t.TempDir()
+	writePressureWithGuardrails(t, root, 0.9, 0.2, map[string]any{"destination_writes": 0, "hosted_telemetry_exports": 1, "hosted_inference_calls": 0})
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if summary.Guardrails.HostedTelemetryExports != 1 {
+		t.Fatalf("expected hosted telemetry counter, got %+v", summary.Guardrails)
+	}
+	if gateStatus(summary, "side_effect_claim") != "fail" {
+		t.Fatalf("expected side effect claim to fail on hosted telemetry, got %+v", summary.ClaimGates)
+	}
+}
+
 func TestBuildRecordsUnsupportedSchemaWithoutMetrics(t *testing.T) {
 	root := t.TempDir()
 	writeFixture(t, filepath.Join(root, "corpus-pressure", "pressure-summary.json"), map[string]any{
@@ -247,6 +291,25 @@ func TestBuildBlocksOneSidedFingerprint(t *testing.T) {
 	}
 	if summary.Comparison == nil || !containsString(summary.Comparison.ReasonCodes, "one_sided_fingerprint") {
 		t.Fatalf("expected one_sided_fingerprint reason, got %+v", summary.Comparison)
+	}
+}
+
+func TestBuildBlocksFingerprintlessSameArtifactComparison(t *testing.T) {
+	root := t.TempDir()
+	baseline := filepath.Join(root, "baseline")
+	current := filepath.Join(root, "current")
+	writePressureWithoutFingerprint(t, baseline, 0.4, 0.7)
+	writePressureWithoutFingerprint(t, current, 0.9, 0.2)
+
+	summary, err := Build(current, filepath.Join(root, "out"), Options{BaselineRoot: baseline})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if summary.ImprovementStatus != "not_comparable" {
+		t.Fatalf("expected not_comparable, got %s", summary.ImprovementStatus)
+	}
+	if summary.Comparison == nil || !containsString(summary.Comparison.ReasonCodes, "missing_fingerprints") {
+		t.Fatalf("expected missing_fingerprints reason, got %+v", summary.Comparison)
 	}
 }
 
