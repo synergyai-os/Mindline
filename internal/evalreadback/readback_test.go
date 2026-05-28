@@ -205,6 +205,34 @@ func TestBuildHonorsHeldOutArtifactOutsideTestdata(t *testing.T) {
 	}
 }
 
+func TestBuildAcceptsCorpusAcceptanceGuardrailsAsCompleteSideEffectEvidence(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "corpus-acceptance", "benchmark-summary.json"), map[string]any{
+		"schema_version":             "corpus-acceptance-summary/v0.1",
+		"suite_kind":                 "held_out",
+		"corpus_fingerprint":         "held-out-corpus",
+		"command_config_fingerprint": "held-out-config",
+		"threshold":                  0.98,
+		"accuracy":                   1.0,
+		"eval_count":                 50,
+		"held_out":                   true,
+		"suite_valid":                true,
+		"dec64_eligible":             true,
+		"guardrails":                 map[string]any{"destination_writes": 0, "hosted_telemetry_exports": 0, "hosted_inference_calls": 0},
+	})
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if gateStatus(summary, "side_effect_claim") != "pass" {
+		t.Fatalf("expected corpus acceptance guardrails to complete side-effect evidence, got %+v", summary.ClaimGates)
+	}
+	if gateStatus(summary, "dec64_no_human_claim") != "pass" {
+		t.Fatalf("expected corpus acceptance threshold proof to pass DEC-64 gate, got %+v", summary.ClaimGates)
+	}
+}
+
 func TestBuildCurrentOnlyDoesNotPassImprovementClaim(t *testing.T) {
 	out := t.TempDir()
 	summary, err := Build(filepath.Join("..", "..", "testdata", "eval-readback", "current"), out, Options{})
@@ -320,15 +348,18 @@ func TestBuildReadsPostHogSafetyNoHumanFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
-	if !summary.Guardrails.NoHumanClaims {
-		t.Fatalf("expected no-human claim guardrail, got %+v", summary.Guardrails)
+	if summary.Guardrails.NoHumanClaims {
+		t.Fatalf("expected PostHog projection flag not to count as no-human claim guardrail, got %+v", summary.Guardrails)
 	}
-	if gateStatus(summary, "side_effect_claim") != "fail" {
-		t.Fatalf("expected side effect claim to fail on no-human projection flag, got %+v", summary.ClaimGates)
+	if !summary.Artifacts[0].Flags["safety_no_human_claims"] {
+		t.Fatalf("expected PostHog projection flag to remain available as evidence, got %+v", summary.Artifacts[0].Flags)
+	}
+	if gateStatus(summary, "side_effect_claim") != "pass" {
+		t.Fatalf("expected side effect claim to pass on projection flag alone, got %+v", summary.ClaimGates)
 	}
 }
 
-func TestBuildComparesPostHogSafetyNoHumanRegression(t *testing.T) {
+func TestBuildComparesIgnoresPostHogSafetyNoHumanProjectionFlag(t *testing.T) {
 	root := t.TempDir()
 	baseline := filepath.Join(root, "baseline")
 	current := filepath.Join(root, "current")
@@ -341,11 +372,11 @@ func TestBuildComparesPostHogSafetyNoHumanRegression(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
-	if summary.ImprovementStatus != "regressed" {
-		t.Fatalf("expected no-human guardrail regression, got %s comparison=%+v", summary.ImprovementStatus, summary.Comparison)
+	if summary.ImprovementStatus != "improved" {
+		t.Fatalf("expected projection flag not to create guardrail regression, got %s comparison=%+v", summary.ImprovementStatus, summary.Comparison)
 	}
-	if summary.Comparison == nil || !containsString(summary.Comparison.ReasonCodes, "guardrail_regression") {
-		t.Fatalf("expected guardrail_regression reason, got %+v", summary.Comparison)
+	if summary.Comparison != nil && containsString(summary.Comparison.ReasonCodes, "guardrail_regression") {
+		t.Fatalf("expected no guardrail_regression reason from projection flag, got %+v", summary.Comparison)
 	}
 }
 
@@ -980,6 +1011,8 @@ func writePostHogLinkEnrichmentSafetyEvent(t *testing.T, root string, noHumanCla
 			"safety_browser_calls":               0,
 			"safety_slack_api_calls":             0,
 			"safety_destination_writes":          0,
+			"safety_product_brain_writes":        0,
+			"safety_tolaria_writes":              0,
 			"safety_auto_accepts":                0,
 			"safety_no_human_claims":             noHumanClaims,
 			"safety_committed_private_artifacts": 0,

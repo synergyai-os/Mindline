@@ -66,6 +66,8 @@ func LinkEnrichmentSafeEvents(summary documents.LinkEnrichmentLoopSummary, telem
 		"safety_browser_calls":               comparison.Guardrails.BrowserCalls,
 		"safety_slack_api_calls":             comparison.Guardrails.SlackAPICalls,
 		"safety_destination_writes":          comparison.Guardrails.DestinationWrites,
+		"safety_product_brain_writes":        comparison.Guardrails.ProductBrainWrites,
+		"safety_tolaria_writes":              comparison.Guardrails.TolariaWrites,
 		"safety_auto_accepts":                0,
 		"safety_no_human_claims":             true,
 		"safety_committed_private_artifacts": 0,

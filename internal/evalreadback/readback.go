@@ -300,17 +300,17 @@ func extractEvidence(raw map[string]any, artifact *ArtifactEvidence) {
 				"url_accounting_coverage", "artifact_match_coverage",
 				"safety_network_fetches", "safety_hosted_telemetry_exports", "safety_hosted_inference_calls",
 				"safety_browser_calls", "safety_slack_api_calls",
-				"safety_destination_writes", "safety_auto_accepts",
+				"safety_destination_writes", "safety_product_brain_writes", "safety_tolaria_writes", "safety_auto_accepts",
 				"safety_committed_private_artifacts",
 			} {
 				if value, ok := numberValue(props[key]); ok {
 					artifact.Metrics[key] = value
 				}
 			}
-			if value, ok := boolValue(props["safety_no_human_claims"]); ok {
-				artifact.Metrics["safety_no_human_claims"] = boolMetric(value)
-			} else if value, ok := numberValue(props["safety_no_human_claims"]); ok {
+			if value, ok := numberValue(props["safety_no_human_claims"]); ok {
 				artifact.Metrics["safety_no_human_claims"] = value
+			} else if value, ok := boolValue(props["safety_no_human_claims"]); ok {
+				artifact.Flags["safety_no_human_claims"] = value
 			}
 		}
 	}
@@ -352,9 +352,9 @@ func mergeModelEvidence(model *readbackModel, artifact ArtifactEvidence) {
 			model.guardrails.SlackAPICalls += int(value)
 		case "guardrail_destination_writes", "safety_destination_writes":
 			model.guardrails.DestinationWrites += int(value)
-		case "guardrail_product_brain_writes":
+		case "guardrail_product_brain_writes", "safety_product_brain_writes":
 			model.guardrails.ProductBrainWrites += int(value)
-		case "guardrail_tolaria_writes":
+		case "guardrail_tolaria_writes", "safety_tolaria_writes":
 			model.guardrails.TolariaWrites += int(value)
 		case "safety_auto_accepts":
 			model.guardrails.AutoAccepts += int(value)
@@ -489,6 +489,7 @@ func hasSideEffectEvidence(summary *Summary) bool {
 	present := map[string]bool{}
 	hasAutonomyReport := false
 	hasLinkEnrichmentSafetyArtifact := false
+	hasCorpusAcceptanceBenchmark := false
 	for _, artifact := range summary.Artifacts {
 		if artifact.Type == "autonomy_readiness_report" {
 			hasAutonomyReport = true
@@ -496,19 +497,32 @@ func hasSideEffectEvidence(summary *Summary) bool {
 		if isLinkEnrichmentSafetyArtifact(artifact.Type) {
 			hasLinkEnrichmentSafetyArtifact = true
 		}
+		if artifact.Type == "corpus_acceptance_benchmark" {
+			hasCorpusAcceptanceBenchmark = true
+		}
 		for key := range artifact.Metrics {
 			if name, ok := sideEffectMetricName(key); ok {
 				present[name] = true
 			}
 		}
 	}
-	required := []string{"network_fetches", "hosted_telemetry_exports", "hosted_inference_calls", "destination_writes", "product_brain_writes", "tolaria_writes"}
-	if hasAutonomyReport {
-		required = append(required, "auto_accepts", "no_human_claims", "committed_private_artifacts")
+	hasBaseEvidence := hasRequiredSideEffectEvidence(present, []string{"network_fetches", "hosted_telemetry_exports", "hosted_inference_calls", "destination_writes", "product_brain_writes", "tolaria_writes"})
+	if hasCorpusAcceptanceBenchmark && hasRequiredSideEffectEvidence(present, []string{"hosted_telemetry_exports", "hosted_inference_calls", "destination_writes"}) {
+		hasBaseEvidence = true
 	}
-	if hasLinkEnrichmentSafetyArtifact {
-		required = append(required, "browser_calls", "slack_api_calls")
+	if !hasBaseEvidence {
+		return false
 	}
+	if hasAutonomyReport && !hasRequiredSideEffectEvidence(present, []string{"auto_accepts", "no_human_claims", "committed_private_artifacts"}) {
+		return false
+	}
+	if hasLinkEnrichmentSafetyArtifact && !hasRequiredSideEffectEvidence(present, []string{"browser_calls", "slack_api_calls"}) {
+		return false
+	}
+	return true
+}
+
+func hasRequiredSideEffectEvidence(present map[string]bool, required []string) bool {
 	for _, key := range required {
 		if !present[key] {
 			return false

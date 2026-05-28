@@ -16,7 +16,14 @@
         "safety_network_fetches": 0,
         "safety_hosted_telemetry_exports": 0,
         "safety_hosted_inference_calls": 0,
-        "safety_destination_writes": 0
+        "safety_browser_calls": 0,
+        "safety_slack_api_calls": 0,
+        "safety_destination_writes": 0,
+        "safety_product_brain_writes": 0,
+        "safety_tolaria_writes": 0,
+        "safety_auto_accepts": 0,
+        "safety_no_human_claims": true,
+        "safety_committed_private_artifacts": 0
       }
     }
   ]

@@ -7,6 +7,10 @@
     "hosted_inference_calls": 0,
     "hosted_telemetry_exports": 0,
     "network_fetches": 0,
-    "destination_writes": 0
+    "browser_calls": 0,
+    "slack_api_calls": 0,
+    "destination_writes": 0,
+    "product_brain_writes": 0,
+    "tolaria_writes": 0
   }
 }
