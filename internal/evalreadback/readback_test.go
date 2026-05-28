@@ -284,6 +284,67 @@ func TestBuildBrowserSlackGuardrailsBlockSideEffectClaim(t *testing.T) {
 	}
 }
 
+func TestBuildReadsLinkArtifactRequestSummaryMetrics(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "link-enrichment", "requests", "link-artifact-requests.json"), map[string]any{
+		"schema_version": "local-link-artifact-requests/v0.1",
+		"summary": map[string]any{
+			"source_count":              3,
+			"url_accounting_coverage":   0.75,
+			"artifact_match_coverage":   0.5,
+			"non_generalizable_runtime": true,
+		},
+	})
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	metrics := summary.Artifacts[0].Metrics
+	if metrics["url_accounting_coverage"] != 0.75 {
+		t.Fatalf("expected nested URL accounting coverage, got metrics=%+v", metrics)
+	}
+	if metrics["artifact_match_coverage"] != 0.5 {
+		t.Fatalf("expected nested artifact match coverage, got metrics=%+v", metrics)
+	}
+	if !summary.Artifacts[0].Flags["non_generalizable_runtime"] {
+		t.Fatalf("expected nested non-generalizable flag, got flags=%+v", summary.Artifacts[0].Flags)
+	}
+	if summary.TopImprovementTarget.Code != "needs_held_out_labels" {
+		t.Fatalf("expected nested flag to drive non-generalizable target, got %+v", summary.TopImprovementTarget)
+	}
+}
+
+func TestBuildReadsAutonomyReadinessCountMetrics(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "autonomy-readiness", "readiness-report.json"), map[string]any{
+		"schema_version":          "autonomy-readiness-report/v0.1",
+		"held_out":                true,
+		"threshold":               0.98,
+		"threshold_status":        "eligible",
+		"accuracy":                0.97,
+		"safety_counters":         map[string]any{"destination_writes": 0, "auto_accepts": 0, "no_human_claims": 0, "committed_private_artifacts": 0},
+		"counts":                  map[string]any{"eval_counted_count": 100, "evidence_ready_count": 92, "human_review_required_count": 8, "model_error_count": 2},
+		"top_improvement_targets": []any{},
+	})
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	metrics := summary.Artifacts[0].Metrics
+	for key, expected := range map[string]float64{
+		"eval_counted_count":          100,
+		"evidence_ready_count":        92,
+		"human_review_required_count": 8,
+		"model_error_count":           2,
+	} {
+		if metrics[key] != expected {
+			t.Fatalf("expected nested %s=%v, got metrics=%+v", key, expected, metrics)
+		}
+	}
+}
+
 func TestBuildBlocksSideEffectClaimWithoutGuardrailEvidence(t *testing.T) {
 	root := t.TempDir()
 	writeFixture(t, filepath.Join(root, "trace", "trace-summary.json"), map[string]any{

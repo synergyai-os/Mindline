@@ -223,6 +223,8 @@ func extractEvidence(raw map[string]any, artifact *ArtifactEvidence) {
 		"missing_link_enrichment_reduction_ratio",
 		"url_accounting_coverage", "artifact_match_coverage", "model_error_count",
 		"human_review_required_count",
+		"eval_counted_count", "evidence_ready_count", "eval_counted_human_review_required_count",
+		"eval_counted_model_error_count",
 		"threshold", "accuracy", "eval_count",
 	} {
 		if value, ok := numberValue(raw[key]); ok {
@@ -258,6 +260,12 @@ func extractEvidence(raw map[string]any, artifact *ArtifactEvidence) {
 	}
 	if requestSummary, ok := raw["request_summary"].(map[string]any); ok {
 		extractEvidence(requestSummary, artifact)
+	}
+	if summary, ok := raw["summary"].(map[string]any); ok {
+		extractEvidence(summary, artifact)
+	}
+	if counts, ok := raw["counts"].(map[string]any); ok {
+		extractEvidence(counts, artifact)
 	}
 	if events, ok := raw["events"].([]any); ok {
 		for _, event := range events {
@@ -569,7 +577,7 @@ func compareModels(baseline, current readbackModel) ComparisonSummary {
 	}
 	comparison.ReasonCodes = reasons
 	improved, regressed := false, false
-	for _, metric := range []string{"evidence_ready_atom_ratio", "processed_source_ratio", "missing_link_reduction_ratio", "needs_enrichment_reduction_ratio", "url_accounting_coverage", "artifact_match_coverage"} {
+	for _, metric := range []string{"evidence_ready_atom_ratio", "processed_source_ratio", "missing_link_reduction_ratio", "needs_enrichment_reduction_ratio", "url_accounting_coverage", "artifact_match_coverage", "evidence_ready_count"} {
 		before, bok := baseline.metrics[metric]
 		after, aok := current.metrics[metric]
 		if !bok || !aok {
@@ -699,6 +707,11 @@ func chooseTarget(model readbackModel, generalization string) ImprovementTarget 
 	}
 	if value, ok := model.metrics["evidence_ready_atom_ratio"]; ok && value < 1 {
 		return ImprovementTarget{Code: "needs_evidence_readiness", Rationale: "Not all eval-counted atoms are evidence-ready.", EvidenceRefs: refs}
+	}
+	if evidenceReady, ok := model.metrics["evidence_ready_count"]; ok {
+		if evalCounted, evalOK := model.metrics["eval_counted_count"]; evalOK && evidenceReady < evalCounted {
+			return ImprovementTarget{Code: "needs_evidence_readiness", Rationale: "Not all eval-counted atoms are evidence-ready.", EvidenceRefs: refs}
+		}
 	}
 	return ImprovementTarget{Code: "ready_for_next_pressure_run", Rationale: "No higher-priority readback blocker was found; rerun the next pressure/eval slice with comparable baseline.", EvidenceRefs: refs}
 }
