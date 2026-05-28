@@ -766,14 +766,16 @@ func writeSummary(outRoot string, summary Summary, protectedRoots []string) erro
 	if err := writeJSON(summaryPath, summary); err != nil {
 		return err
 	}
+	comparisonPath := filepath.Join(dir, "comparison-summary.json")
+	if err := rejectSymlinkEscape(root, comparisonPath, protectedRoots); err != nil {
+		return err
+	}
 	if summary.Comparison != nil {
-		comparisonPath := filepath.Join(dir, "comparison-summary.json")
-		if err := rejectSymlinkEscape(root, comparisonPath, protectedRoots); err != nil {
-			return err
-		}
 		if err := writeJSON(comparisonPath, summary.Comparison); err != nil {
 			return err
 		}
+	} else if err := removeIfExists(comparisonPath); err != nil {
+		return err
 	}
 	reportPath := filepath.Join(dir, "readback-report.md")
 	if err := rejectSymlinkEscape(root, reportPath, protectedRoots); err != nil {
@@ -858,6 +860,13 @@ func writeJSON(path string, value any) error {
 	}
 	data = append(data, '\n')
 	return os.WriteFile(path, data, 0o644)
+}
+
+func removeIfExists(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 func markdownReport(summary Summary) string {

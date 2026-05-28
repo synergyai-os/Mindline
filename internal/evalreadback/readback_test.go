@@ -70,6 +70,34 @@ func TestBuildComparesBaselineCurrent(t *testing.T) {
 	}
 }
 
+func TestBuildRemovesStaleComparisonWhenBaselineOmitted(t *testing.T) {
+	root := t.TempDir()
+	baseline := filepath.Join(root, "baseline")
+	current := filepath.Join(root, "current")
+	out := filepath.Join(root, "out")
+	writePressure(t, baseline, 0.4, 0.7)
+	writePressure(t, current, 0.9, 0.2)
+
+	if _, err := Build(current, out, Options{BaselineRoot: baseline}); err != nil {
+		t.Fatalf("baseline build: %v", err)
+	}
+	comparisonPath := filepath.Join(out, DirName, "comparison-summary.json")
+	if _, err := os.Stat(comparisonPath); err != nil {
+		t.Fatalf("expected comparison output: %v", err)
+	}
+
+	summary, err := Build(current, out, Options{})
+	if err != nil {
+		t.Fatalf("current-only build: %v", err)
+	}
+	if summary.Comparison != nil {
+		t.Fatalf("expected no comparison without baseline, got %+v", summary.Comparison)
+	}
+	if _, err := os.Stat(comparisonPath); !os.IsNotExist(err) {
+		t.Fatalf("expected stale comparison output removed, err=%v", err)
+	}
+}
+
 func TestBuildCommittedFixtureDetectsMultipleArtifactTypes(t *testing.T) {
 	out := t.TempDir()
 	summary, err := Build(filepath.Join("..", "..", "testdata", "eval-readback", "current"), out, Options{
