@@ -1,0 +1,15 @@
+{
+  "schema_version": "corpus-pressure-summary/v0.1",
+  "corpus_id": "fixture-corpus",
+  "source_count": 3,
+  "semantic_candidate_count": 2,
+  "evidence_ready_atom_ratio": 0.4,
+  "review_burden_ratio": 0.7,
+  "corpus_fingerprint": "fixture-corpus-v1",
+  "command_config_fingerprint": "deterministic-v1",
+  "guardrails": {
+    "hosted_inference_calls": 0,
+    "hosted_telemetry_exports": 0,
+    "destination_writes": 0
+  }
+}

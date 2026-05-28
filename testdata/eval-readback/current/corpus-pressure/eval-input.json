@@ -1,0 +1,15 @@
+{
+  "schema_version": "corpus-pressure-eval-input/v0.1",
+  "corpus_id": "fixture-corpus",
+  "processed_source_ratio": 1,
+  "evidence_ready_atom_ratio": 0.9,
+  "review_burden_ratio": 0.2,
+  "corpus_fingerprint": "fixture-corpus-v1",
+  "command_config_fingerprint": "deterministic-v1",
+  "guardrails": {
+    "hosted_inference_calls": 0,
+    "hosted_telemetry_exports": 0,
+    "destination_writes": 0
+  },
+  "next_improvement_targets": ["ready_for_next_pressure_run"]
+}
