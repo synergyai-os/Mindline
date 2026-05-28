@@ -1,0 +1,16 @@
+{
+  "schema_version": "link-enrichment-comparison/v0.1",
+  "comparable": true,
+  "missing_link_reduction_ratio": 1,
+  "needs_enrichment_reduction_ratio": 1,
+  "guardrails": {
+    "hosted_inference_calls": 0,
+    "hosted_telemetry_exports": 0,
+    "network_fetches": 0,
+    "browser_calls": 0,
+    "slack_api_calls": 0,
+    "destination_writes": 0,
+    "product_brain_writes": 0,
+    "tolaria_writes": 0
+  }
+}

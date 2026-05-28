@@ -1,0 +1,30 @@
+{
+  "schema_version": "mindline-link-enrichment-eval-projection/v0.1",
+  "status": "disabled",
+  "events": [
+    {
+      "event": "$ai_evaluation",
+      "properties": {
+        "$ai_evaluation_result": true,
+        "$ai_evaluation_name": "mindline.link_enrichment.covered_missingness_reduction",
+        "metadata_only": true,
+        "non_generalizable_runtime": false,
+        "url_accounting_coverage": 1,
+        "artifact_match_coverage": 1,
+        "missing_link_reduction_ratio": 1,
+        "needs_enrichment_reduction_ratio": 1,
+        "safety_network_fetches": 0,
+        "safety_hosted_telemetry_exports": 0,
+        "safety_hosted_inference_calls": 0,
+        "safety_browser_calls": 0,
+        "safety_slack_api_calls": 0,
+        "safety_destination_writes": 0,
+        "safety_product_brain_writes": 0,
+        "safety_tolaria_writes": 0,
+        "safety_auto_accepts": 0,
+        "safety_no_human_claims": true,
+        "safety_committed_private_artifacts": 0
+      }
+    }
+  ]
+}

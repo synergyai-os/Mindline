@@ -21,7 +21,9 @@ func TestLinkEnrichmentSafeEventsUsePostHogEvaluationMetadata(t *testing.T) {
 		event.Properties["metadata_only"] != true ||
 		event.Properties["missing_link_reduction_ratio"] != 1.0 ||
 		event.Properties["needs_enrichment_reduction_ratio"] != 1.0 ||
-		event.Properties["safety_network_fetches"] != 0 {
+		event.Properties["safety_network_fetches"] != 0 ||
+		event.Properties["safety_product_brain_writes"] != 0 ||
+		event.Properties["safety_tolaria_writes"] != 0 {
 		t.Fatalf("missing expected eval metadata: %+v", event.Properties)
 	}
 	for key, value := range event.Properties {

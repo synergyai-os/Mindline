@@ -112,6 +112,8 @@ var allowedProperties = map[string]bool{
 	"safety_browser_calls":               true,
 	"safety_slack_api_calls":             true,
 	"safety_destination_writes":          true,
+	"safety_product_brain_writes":        true,
+	"safety_tolaria_writes":              true,
 	"safety_auto_accepts":                true,
 	"safety_no_human_claims":             true,
 	"safety_committed_private_artifacts": true,
