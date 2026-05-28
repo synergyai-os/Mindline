@@ -284,6 +284,43 @@ func TestBuildBrowserSlackGuardrailsBlockSideEffectClaim(t *testing.T) {
 	}
 }
 
+func TestBuildReadsPostHogSafetyNoHumanFlag(t *testing.T) {
+	root := t.TempDir()
+	writePostHogLinkEnrichmentSafetyEvent(t, root, true)
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if !summary.Guardrails.NoHumanClaims {
+		t.Fatalf("expected no-human claim guardrail, got %+v", summary.Guardrails)
+	}
+	if gateStatus(summary, "side_effect_claim") != "fail" {
+		t.Fatalf("expected side effect claim to fail on no-human projection flag, got %+v", summary.ClaimGates)
+	}
+}
+
+func TestBuildComparesPostHogSafetyNoHumanRegression(t *testing.T) {
+	root := t.TempDir()
+	baseline := filepath.Join(root, "baseline")
+	current := filepath.Join(root, "current")
+	writePressure(t, baseline, 0.4, 0.7)
+	writePressure(t, current, 0.9, 0.2)
+	writePostHogLinkEnrichmentSafetyEvent(t, baseline, false)
+	writePostHogLinkEnrichmentSafetyEvent(t, current, true)
+
+	summary, err := Build(current, filepath.Join(root, "out"), Options{BaselineRoot: baseline})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if summary.ImprovementStatus != "regressed" {
+		t.Fatalf("expected no-human guardrail regression, got %s comparison=%+v", summary.ImprovementStatus, summary.Comparison)
+	}
+	if summary.Comparison == nil || !containsString(summary.Comparison.ReasonCodes, "guardrail_regression") {
+		t.Fatalf("expected guardrail_regression reason, got %+v", summary.Comparison)
+	}
+}
+
 func TestBuildReadsLinkArtifactRequestSummaryMetrics(t *testing.T) {
 	root := t.TempDir()
 	writeFixture(t, filepath.Join(root, "link-enrichment", "requests", "link-artifact-requests.json"), map[string]any{
@@ -899,6 +936,26 @@ func writeLinkEnrichmentComparison(t *testing.T, root, corpusFingerprint, config
 		"missing_link_enrichment_reduction_ratio": missingLinkReduction,
 		"needs_enrichment_reduction_ratio":        missingLinkReduction,
 		"guardrails":                              completeGuardrails(),
+	})
+}
+
+func writePostHogLinkEnrichmentSafetyEvent(t *testing.T, root string, noHumanClaims bool) {
+	t.Helper()
+	writeFixture(t, filepath.Join(root, "link-enrichment", "posthog", "eval-projection.json"), map[string]any{
+		"schema_version": "mindline-link-enrichment-eval-projection/v0.1",
+		"events": []any{map[string]any{"properties": map[string]any{
+			"$ai_evaluation_result":              true,
+			"metadata_only":                      true,
+			"safety_network_fetches":             0,
+			"safety_hosted_telemetry_exports":    0,
+			"safety_hosted_inference_calls":      0,
+			"safety_browser_calls":               0,
+			"safety_slack_api_calls":             0,
+			"safety_destination_writes":          0,
+			"safety_auto_accepts":                0,
+			"safety_no_human_claims":             noHumanClaims,
+			"safety_committed_private_artifacts": 0,
+		}}},
 	})
 }
 

@@ -300,11 +300,17 @@ func extractEvidence(raw map[string]any, artifact *ArtifactEvidence) {
 				"url_accounting_coverage", "artifact_match_coverage",
 				"safety_network_fetches", "safety_hosted_telemetry_exports", "safety_hosted_inference_calls",
 				"safety_browser_calls", "safety_slack_api_calls",
-				"safety_destination_writes",
+				"safety_destination_writes", "safety_auto_accepts",
+				"safety_committed_private_artifacts",
 			} {
 				if value, ok := numberValue(props[key]); ok {
 					artifact.Metrics[key] = value
 				}
+			}
+			if value, ok := boolValue(props["safety_no_human_claims"]); ok {
+				artifact.Metrics["safety_no_human_claims"] = boolMetric(value)
+			} else if value, ok := numberValue(props["safety_no_human_claims"]); ok {
+				artifact.Metrics["safety_no_human_claims"] = value
 			}
 		}
 	}
@@ -654,6 +660,13 @@ func compareModels(baseline, current readbackModel) ComparisonSummary {
 }
 
 func boolInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+func boolMetric(value bool) float64 {
 	if value {
 		return 1
 	}
