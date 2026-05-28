@@ -532,6 +532,7 @@ func redactSourceEnrichmentTokens(body string, tokens []string) string {
 }
 
 func sourceEnrichmentBlockedHost(host string) bool {
+	host = strings.TrimSuffix(host, ".")
 	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
 		return true
 	}

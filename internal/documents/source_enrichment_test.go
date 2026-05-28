@@ -468,10 +468,39 @@ func TestBuildSourceEnrichmentBlocksCredentialBearingURLUserinfo(t *testing.T) {
 	}
 }
 
+func TestBuildSourceEnrichmentBlocksTrailingDotLocalhostURL(t *testing.T) {
+	root := t.TempDir()
+	privateURL := "http://localhost./private"
+	sourcePath := writeSourceEnrichmentFixture(t, root, "source-1", "# Link\n\n"+privateURL+"\n")
+	manifestPath := writeSourceEnrichmentManifest(t, root, "corpus-enrich-test", CorpusPressureManifestSource{
+		SourceID:   "source-1",
+		SourceKind: SourceKindMarkdown,
+		Path:       sourcePath,
+	})
+	artifactsPath := writeSourceEnrichmentArtifacts(t, root)
+
+	out := filepath.Join(root, "enriched")
+	summary, err := BuildSourceEnrichment(manifestPath, artifactsPath, out)
+	if err != nil {
+		t.Fatalf("BuildSourceEnrichment: %v", err)
+	}
+	if summary.EnrichedURLCount != 0 || summary.NeedsManualURLCount != 0 || summary.BlockedURLCount != 1 {
+		t.Fatalf("expected trailing-dot localhost URL to be blocked: %+v", summary)
+	}
+	all := readAllFiles(t, out)
+	if strings.Contains(all, privateURL) || strings.Contains(all, "localhost./private") {
+		t.Fatalf("trailing-dot localhost URL leaked:\n%s", all)
+	}
+	if !strings.Contains(all, "url_policy_blocked") || !strings.Contains(all, redactedSourceEnrichmentURL) {
+		t.Fatalf("expected policy redaction proof:\n%s", all)
+	}
+}
+
 func TestSourceEnrichmentURLPolicyBlocksUnsafeTargets(t *testing.T) {
 	blocked := []string{
 		"file:///tmp/source.md",
 		"http://localhost/test",
+		"http://localhost./test",
 		"http://127.0.0.1/test",
 		"http://10.0.0.1/test",
 		"http://192.168.1.1/test",
