@@ -255,6 +255,159 @@ func TestBuildBlocksSideEffectClaimWithoutGuardrailEvidence(t *testing.T) {
 	}
 }
 
+func TestBuildReadsAutonomySafetyCountersForSideEffectClaim(t *testing.T) {
+	root := t.TempDir()
+	writePressureWithGuardrails(t, root, 0.9, 0.2, map[string]any{"destination_writes": 0, "hosted_inference_calls": 0})
+	writeFixture(t, filepath.Join(root, "autonomy-readiness", "readiness-report.json"), map[string]any{
+		"schema_version":          "autonomy-readiness-report/v0.1",
+		"held_out":                true,
+		"threshold":               0.98,
+		"threshold_status":        "eligible",
+		"accuracy":                1,
+		"safety_counters":         map[string]any{"destination_writes": 1, "auto_accepts": 1, "no_human_claims": 1, "committed_private_artifacts": 1},
+		"counts":                  map[string]any{"eval_counted_count": 100, "evidence_ready_count": 100},
+		"top_improvement_targets": []any{},
+	})
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if summary.Guardrails.DestinationWrites != 1 || summary.Guardrails.AutoAccepts != 1 || !summary.Guardrails.NoHumanClaims || summary.Guardrails.CommittedPrivateArtifacts != 1 {
+		t.Fatalf("expected autonomy safety counters extracted, got %+v", summary.Guardrails)
+	}
+	if gateStatus(summary, "side_effect_claim") != "fail" {
+		t.Fatalf("expected side effect claim failure from autonomy safety counters, got %+v", summary.ClaimGates)
+	}
+	if gate := gateByName(summary, "dec64_no_human_claim"); gate.Status != "blocked" {
+		t.Fatalf("expected DEC-64 gate blocked when autonomy safety counters are nonzero, got %+v", gate)
+	}
+}
+
+func TestBuildBlocksSideEffectClaimWithIncompleteAutonomySafetyCounters(t *testing.T) {
+	root := t.TempDir()
+	writePressureWithGuardrails(t, root, 0.9, 0.2, map[string]any{"destination_writes": 0, "hosted_inference_calls": 0})
+	writeFixture(t, filepath.Join(root, "autonomy-readiness", "readiness-report.json"), map[string]any{
+		"schema_version":          "autonomy-readiness-report/v0.1",
+		"held_out":                true,
+		"threshold":               0.98,
+		"threshold_status":        "eligible",
+		"accuracy":                1,
+		"safety_counters":         map[string]any{"destination_writes": 0},
+		"counts":                  map[string]any{"eval_counted_count": 100, "evidence_ready_count": 100},
+		"top_improvement_targets": []any{},
+	})
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if gate := gateByName(summary, "side_effect_claim"); gate.Status != "blocked" || !containsString(gate.ReasonCodes, "missing_side_effect_evidence") {
+		t.Fatalf("expected side effect claim blocked without complete safety counters, got %+v", gate)
+	}
+	if gate := gateByName(summary, "dec64_no_human_claim"); gate.Status != "blocked" {
+		t.Fatalf("expected DEC-64 gate blocked without complete safety evidence, got %+v", gate)
+	}
+}
+
+func TestBuildPassesDEC64GateWithHeldOutAcceptanceProof(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "corpus-acceptance", "benchmark-summary.json"), map[string]any{
+		"schema_version":             "corpus-acceptance-summary/v0.1",
+		"suite_kind":                 "held_out",
+		"held_out":                   true,
+		"suite_valid":                true,
+		"dec64_eligible":             true,
+		"threshold":                  0.98,
+		"accuracy":                   1,
+		"eval_count":                 100,
+		"corpus_fingerprint":         "acceptance-corpus",
+		"command_config_fingerprint": "acceptance-config",
+		"guardrails":                 completeGuardrails(),
+	})
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if gate := gateByName(summary, "dec64_no_human_claim"); gate.Status != "pass" {
+		t.Fatalf("expected DEC-64 gate pass from held-out acceptance proof, got %+v", gate)
+	}
+}
+
+func TestBuildPassesDEC64GateWithEligibleAutonomyReadinessProof(t *testing.T) {
+	root := t.TempDir()
+	writePressureWithGuardrails(t, root, 0.9, 0.2, map[string]any{})
+	writeFixture(t, filepath.Join(root, "autonomy-readiness", "readiness-report.json"), map[string]any{
+		"schema_version":          "autonomy-readiness-report/v0.1",
+		"held_out":                true,
+		"threshold":               0.98,
+		"threshold_status":        "eligible",
+		"accuracy":                1,
+		"safety_counters":         map[string]any{"destination_writes": 0, "auto_accepts": 0, "no_human_claims": 0, "committed_private_artifacts": 0},
+		"counts":                  map[string]any{"eval_counted_count": 100, "evidence_ready_count": 100},
+		"top_improvement_targets": []any{},
+	})
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if gate := gateByName(summary, "dec64_no_human_claim"); gate.Status != "pass" {
+		t.Fatalf("expected DEC-64 gate pass from eligible autonomy readiness proof, got %+v", gate)
+	}
+}
+
+func TestBuildBlocksDEC64GateForUnscopedEligibilityFlag(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "corpus-pressure", "pressure-summary.json"), map[string]any{
+		"schema_version":             "corpus-pressure-summary/v0.1",
+		"source_count":               2,
+		"evidence_ready_atom_ratio":  1,
+		"review_burden_ratio":        0,
+		"held_out":                   true,
+		"dec64_eligible":             true,
+		"threshold":                  0.98,
+		"accuracy":                   1,
+		"corpus_fingerprint":         "pressure-corpus",
+		"command_config_fingerprint": "pressure-config",
+		"guardrails":                 completeGuardrails(),
+	})
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if gate := gateByName(summary, "dec64_no_human_claim"); gate.Status != "blocked" {
+		t.Fatalf("expected DEC-64 gate blocked for unscoped eligibility flag, got %+v", gate)
+	}
+}
+
+func TestBuildBlocksDEC64GateForInvalidAcceptanceProof(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "corpus-acceptance", "benchmark-summary.json"), map[string]any{
+		"schema_version":             "corpus-acceptance-summary/v0.1",
+		"suite_kind":                 "held_out",
+		"held_out":                   true,
+		"suite_valid":                false,
+		"dec64_eligible":             true,
+		"threshold":                  0.98,
+		"accuracy":                   1,
+		"eval_count":                 100,
+		"corpus_fingerprint":         "acceptance-corpus",
+		"command_config_fingerprint": "acceptance-config",
+		"guardrails":                 map[string]any{"destination_writes": 0, "hosted_inference_calls": 0},
+	})
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if gate := gateByName(summary, "dec64_no_human_claim"); gate.Status != "blocked" {
+		t.Fatalf("expected DEC-64 gate blocked for invalid acceptance proof, got %+v", gate)
+	}
+}
+
 func TestBuildRecordsUnsupportedSchemaWithoutMetrics(t *testing.T) {
 	root := t.TempDir()
 	writeFixture(t, filepath.Join(root, "corpus-pressure", "pressure-summary.json"), map[string]any{
@@ -358,6 +511,45 @@ func TestBuildBlocksMixedFingerprintlessArtifactDomains(t *testing.T) {
 	}
 }
 
+func TestBuildAutonomySafetyRegressionBlocksImprovementClaim(t *testing.T) {
+	root := t.TempDir()
+	baseline := filepath.Join(root, "baseline")
+	current := filepath.Join(root, "current")
+	writePressureWithGuardrails(t, baseline, 0.4, 0.7, map[string]any{"destination_writes": 0, "hosted_inference_calls": 0})
+	writePressureWithGuardrails(t, current, 0.9, 0.2, map[string]any{"destination_writes": 0, "hosted_inference_calls": 0})
+	writeFixture(t, filepath.Join(baseline, "autonomy-readiness", "readiness-report.json"), map[string]any{
+		"schema_version":          "autonomy-readiness-report/v0.1",
+		"held_out":                true,
+		"threshold":               0.98,
+		"threshold_status":        "eligible",
+		"accuracy":                1,
+		"safety_counters":         map[string]any{"destination_writes": 0, "auto_accepts": 0, "no_human_claims": 0, "committed_private_artifacts": 0},
+		"counts":                  map[string]any{"eval_counted_count": 100, "evidence_ready_count": 100},
+		"top_improvement_targets": []any{},
+	})
+	writeFixture(t, filepath.Join(current, "autonomy-readiness", "readiness-report.json"), map[string]any{
+		"schema_version":          "autonomy-readiness-report/v0.1",
+		"held_out":                true,
+		"threshold":               0.98,
+		"threshold_status":        "eligible",
+		"accuracy":                1,
+		"safety_counters":         map[string]any{"destination_writes": 0, "auto_accepts": 1, "no_human_claims": 1, "committed_private_artifacts": 1},
+		"counts":                  map[string]any{"eval_counted_count": 100, "evidence_ready_count": 100},
+		"top_improvement_targets": []any{},
+	})
+
+	summary, err := Build(current, filepath.Join(root, "out"), Options{BaselineRoot: baseline})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if summary.ImprovementStatus != "regressed" {
+		t.Fatalf("expected autonomy safety regression to dominate quality improvement, got %s comparison=%+v", summary.ImprovementStatus, summary.Comparison)
+	}
+	if summary.Comparison == nil || !containsString(summary.Comparison.ReasonCodes, "guardrail_regression") {
+		t.Fatalf("expected guardrail_regression reason, got %+v", summary.Comparison)
+	}
+}
+
 func TestBuildRejectsSymlinkEscapeOutput(t *testing.T) {
 	root := t.TempDir()
 	current := filepath.Join(root, "current")
@@ -451,6 +643,10 @@ func writePressureWithFingerprint(t *testing.T, root string, evidenceReady, revi
 
 func writePressureWithGuardrails(t *testing.T, root string, evidenceReady, reviewBurden float64, guardrails map[string]any) {
 	t.Helper()
+	allGuardrails := completeGuardrails()
+	for key, value := range guardrails {
+		allGuardrails[key] = value
+	}
 	writeFixture(t, filepath.Join(root, "corpus-pressure", "pressure-summary.json"), map[string]any{
 		"schema_version":             "corpus-pressure-summary/v0.1",
 		"corpus_id":                  "corpus-a",
@@ -459,8 +655,19 @@ func writePressureWithGuardrails(t *testing.T, root string, evidenceReady, revie
 		"review_burden_ratio":        reviewBurden,
 		"corpus_fingerprint":         "same",
 		"command_config_fingerprint": "same-config",
-		"guardrails":                 guardrails,
+		"guardrails":                 allGuardrails,
 	})
+}
+
+func completeGuardrails() map[string]any {
+	return map[string]any{
+		"network_fetches":          0,
+		"hosted_telemetry_exports": 0,
+		"hosted_inference_calls":   0,
+		"destination_writes":       0,
+		"product_brain_writes":     0,
+		"tolaria_writes":           0,
+	}
 }
 
 func writePressureWithoutFingerprint(t *testing.T, root string, evidenceReady, reviewBurden float64) {

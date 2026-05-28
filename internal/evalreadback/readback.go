@@ -199,6 +199,7 @@ func extractEvidence(raw map[string]any, artifact *ArtifactEvidence) {
 		"missing_link_enrichment_reduction_ratio",
 		"url_accounting_coverage", "artifact_match_coverage", "model_error_count",
 		"human_review_required_count",
+		"threshold", "accuracy", "eval_count",
 	} {
 		if value, ok := numberValue(raw[key]); ok {
 			artifact.Metrics[key] = value
@@ -209,10 +210,13 @@ func extractEvidence(raw map[string]any, artifact *ArtifactEvidence) {
 			artifact.Metrics[key] = value
 		}
 	}
-	for _, key := range []string{"ready_for_50_file_pressure", "held_out", "non_generalizable_runtime", "comparable"} {
+	for _, key := range []string{"ready_for_50_file_pressure", "held_out", "non_generalizable_runtime", "comparable", "dec64_eligible", "no_human_eligible", "suite_valid"} {
 		if value, ok := boolValue(raw[key]); ok {
 			artifact.Flags[key] = value
 		}
+	}
+	if stringValue(raw["threshold_status"]) == "eligible" {
+		artifact.Flags["threshold_eligible"] = true
 	}
 	for _, key := range []string{"corpus_fingerprint", "command_config_fingerprint", "replay_fingerprint", "graph_replay_fingerprint"} {
 		if value := stringValue(raw[key]); value != "" {
@@ -221,6 +225,9 @@ func extractEvidence(raw map[string]any, artifact *ArtifactEvidence) {
 	}
 	if guardrails, ok := raw["guardrails"].(map[string]any); ok {
 		extractGuardrails(guardrails, artifact)
+	}
+	if safetyCounters, ok := raw["safety_counters"].(map[string]any); ok {
+		extractSafetyCounters(safetyCounters, artifact)
 	}
 	if comparison, ok := raw["comparison"].(map[string]any); ok {
 		extractEvidence(comparison, artifact)
@@ -269,6 +276,14 @@ func extractGuardrails(guardrails map[string]any, artifact *ArtifactEvidence) {
 	}
 }
 
+func extractSafetyCounters(safetyCounters map[string]any, artifact *ArtifactEvidence) {
+	for _, key := range []string{"destination_writes", "auto_accepts", "no_human_claims", "committed_private_artifacts"} {
+		if value, ok := numberValue(safetyCounters[key]); ok {
+			artifact.Metrics["safety_"+key] = value
+		}
+	}
+}
+
 func mergeModelEvidence(model *readbackModel, artifact ArtifactEvidence) {
 	model.artifactTypes[artifact.Type] = true
 	if artifact.Status == "unsafe_or_leaky" {
@@ -289,6 +304,14 @@ func mergeModelEvidence(model *readbackModel, artifact ArtifactEvidence) {
 			model.guardrails.ProductBrainWrites += int(value)
 		case "guardrail_tolaria_writes":
 			model.guardrails.TolariaWrites += int(value)
+		case "safety_auto_accepts":
+			model.guardrails.AutoAccepts += int(value)
+		case "safety_no_human_claims":
+			if value > 0 {
+				model.guardrails.NoHumanClaims = true
+			}
+		case "safety_committed_private_artifacts":
+			model.guardrails.CommittedPrivateArtifacts += int(value)
 		}
 	}
 	for key, value := range artifact.Flags {
@@ -370,13 +393,17 @@ func rebuildClaimGates(summary *Summary) {
 	default:
 		gates = append(gates, ClaimGate{Gate: "improvement_claim", Status: "blocked", ReasonCodes: []string{"missing_baseline"}, ClaimImpact: "blocks improvement claim until comparable baseline is supplied"})
 	}
-	gates = append(gates, ClaimGate{Gate: "dec64_no_human_claim", Status: "blocked", ReasonCodes: []string{"held_out_threshold_not_proven"}, ClaimImpact: "blocks no-human autonomy readiness claim"})
-	if !hasSideEffectEvidence(summary) {
-		gates = append(gates, ClaimGate{Gate: "side_effect_claim", Status: "blocked", ReasonCodes: []string{"missing_side_effect_evidence"}, ClaimImpact: "blocks safety claim until artifacts expose guardrail counters"})
-	} else if summary.Guardrails.NetworkFetches == 0 && summary.Guardrails.HostedTelemetryExports == 0 && summary.Guardrails.HostedInferenceCalls == 0 && summary.Guardrails.DestinationWrites == 0 && summary.Guardrails.ProductBrainWrites == 0 && summary.Guardrails.TolariaWrites == 0 {
-		gates = append(gates, ClaimGate{Gate: "side_effect_claim", Status: "pass", ClaimImpact: "readback found no prohibited side-effect counters"})
+	if hasDEC64ThresholdProof(summary) && hasSideEffectEvidence(summary) && !hasSideEffectCounter(summary) {
+		gates = append(gates, ClaimGate{Gate: "dec64_no_human_claim", Status: "pass", EvidenceRefs: firstRefs(summary.SafeArtifactRefs), ClaimImpact: "held-out threshold proof supports bounded no-human readiness claim"})
 	} else {
+		gates = append(gates, ClaimGate{Gate: "dec64_no_human_claim", Status: "blocked", ReasonCodes: []string{"held_out_threshold_not_proven"}, ClaimImpact: "blocks no-human autonomy readiness claim"})
+	}
+	if hasSideEffectCounter(summary) {
 		gates = append(gates, ClaimGate{Gate: "side_effect_claim", Status: "fail", ReasonCodes: []string{"guardrail_counter_nonzero"}, ClaimImpact: "blocks safety claim"})
+	} else if !hasSideEffectEvidence(summary) {
+		gates = append(gates, ClaimGate{Gate: "side_effect_claim", Status: "blocked", ReasonCodes: []string{"missing_side_effect_evidence"}, ClaimImpact: "blocks safety claim until artifacts expose guardrail counters"})
+	} else {
+		gates = append(gates, ClaimGate{Gate: "side_effect_claim", Status: "pass", ClaimImpact: "readback found no prohibited side-effect counters"})
 	}
 	if summary.TopImprovementTarget.Code != "" {
 		gates = append(gates, ClaimGate{Gate: "next_target", Status: "pass", EvidenceRefs: summary.TopImprovementTarget.EvidenceRefs, ClaimImpact: "next improvement target is explicit"})
@@ -403,14 +430,77 @@ func hasUnsupportedArtifact(summary *Summary) bool {
 }
 
 func hasSideEffectEvidence(summary *Summary) bool {
+	present := map[string]bool{}
+	hasAutonomyReport := false
 	for _, artifact := range summary.Artifacts {
+		if artifact.Type == "autonomy_readiness_report" {
+			hasAutonomyReport = true
+		}
 		for key := range artifact.Metrics {
-			if strings.HasPrefix(key, "guardrail_") || strings.HasPrefix(key, "safety_") {
-				return true
+			if name, ok := sideEffectMetricName(key); ok {
+				present[name] = true
 			}
 		}
 	}
+	required := []string{"network_fetches", "hosted_telemetry_exports", "hosted_inference_calls", "destination_writes", "product_brain_writes", "tolaria_writes"}
+	if hasAutonomyReport {
+		required = append(required, "auto_accepts", "no_human_claims", "committed_private_artifacts")
+	}
+	for _, key := range required {
+		if !present[key] {
+			return false
+		}
+	}
+	return true
+}
+
+func sideEffectMetricName(metric string) (string, bool) {
+	name := strings.TrimPrefix(metric, "guardrail_")
+	if name == metric {
+		name = strings.TrimPrefix(metric, "safety_")
+	}
+	if name == metric {
+		return "", false
+	}
+	switch name {
+	case "network_fetches", "hosted_telemetry_exports", "hosted_inference_calls", "destination_writes", "product_brain_writes", "tolaria_writes", "auto_accepts", "no_human_claims", "committed_private_artifacts":
+		return name, true
+	default:
+		return "", false
+	}
+}
+
+func hasSideEffectCounter(summary *Summary) bool {
+	return summary.Guardrails.NetworkFetches > 0 ||
+		summary.Guardrails.HostedTelemetryExports > 0 ||
+		summary.Guardrails.HostedInferenceCalls > 0 ||
+		summary.Guardrails.DestinationWrites > 0 ||
+		summary.Guardrails.ProductBrainWrites > 0 ||
+		summary.Guardrails.TolariaWrites > 0 ||
+		summary.Guardrails.AutoAccepts > 0 ||
+		summary.Guardrails.NoHumanClaims ||
+		summary.Guardrails.CommittedPrivateArtifacts > 0
+}
+
+func hasDEC64ThresholdProof(summary *Summary) bool {
+	if summary.GeneralizationStatus != "generalizable" {
+		return false
+	}
+	for _, artifact := range summary.Artifacts {
+		if artifact.Type == "corpus_acceptance_benchmark" && artifact.Flags["held_out"] && artifact.Flags["suite_valid"] && (artifact.Flags["dec64_eligible"] || artifact.Flags["no_human_eligible"]) && hasThresholdProof(artifact) {
+			return true
+		}
+		if artifact.Type == "autonomy_readiness_report" && artifact.Flags["held_out"] && artifact.Flags["threshold_eligible"] && hasThresholdProof(artifact) {
+			return true
+		}
+	}
 	return false
+}
+
+func hasThresholdProof(artifact ArtifactEvidence) bool {
+	threshold, thresholdOK := artifact.Metrics["threshold"]
+	accuracy, accuracyOK := artifact.Metrics["accuracy"]
+	return thresholdOK && accuracyOK && threshold >= 0.98 && accuracy >= threshold
 }
 
 func compareModels(baseline, current readbackModel) ComparisonSummary {
@@ -469,6 +559,9 @@ func compareModels(baseline, current readbackModel) ComparisonSummary {
 		{name: "destination_writes", before: baseline.guardrails.DestinationWrites, after: current.guardrails.DestinationWrites},
 		{name: "product_brain_writes", before: baseline.guardrails.ProductBrainWrites, after: current.guardrails.ProductBrainWrites},
 		{name: "tolaria_writes", before: baseline.guardrails.TolariaWrites, after: current.guardrails.TolariaWrites},
+		{name: "auto_accepts", before: baseline.guardrails.AutoAccepts, after: current.guardrails.AutoAccepts},
+		{name: "no_human_claims", before: boolInt(baseline.guardrails.NoHumanClaims), after: boolInt(current.guardrails.NoHumanClaims)},
+		{name: "committed_private_artifacts", before: baseline.guardrails.CommittedPrivateArtifacts, after: current.guardrails.CommittedPrivateArtifacts},
 	} {
 		delta := float64(guardrail.before - guardrail.after)
 		if delta != 0 {
@@ -488,6 +581,13 @@ func compareModels(baseline, current readbackModel) ComparisonSummary {
 		comparison.Status = "unchanged"
 	}
 	return comparison
+}
+
+func boolInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func comparableModels(a, b readbackModel) (bool, []string) {
