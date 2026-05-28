@@ -873,6 +873,31 @@ func TestBuildPassesDEC64GateWithEligibleAutonomyReadinessProof(t *testing.T) {
 	}
 }
 
+func TestBuildPassesDEC64GateWithStandaloneAutonomyReadinessProof(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "autonomy-readiness", "readiness-report.json"), map[string]any{
+		"schema_version":          "autonomy-readiness-report/v0.1",
+		"held_out":                true,
+		"threshold":               0.98,
+		"threshold_status":        "eligible",
+		"accuracy":                1,
+		"safety_counters":         map[string]any{"destination_writes": 0, "auto_accepts": 0, "no_human_claims": 0, "committed_private_artifacts": 0},
+		"counts":                  map[string]any{"eval_counted_count": 100, "evidence_ready_count": 100},
+		"top_improvement_targets": []any{},
+	})
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if gate := gateByName(summary, "side_effect_claim"); gate.Status != "pass" {
+		t.Fatalf("expected side-effect gate pass from standalone autonomy safety counters, got %+v", gate)
+	}
+	if gate := gateByName(summary, "dec64_no_human_claim"); gate.Status != "pass" {
+		t.Fatalf("expected DEC-64 gate pass from standalone autonomy readiness proof, got %+v", gate)
+	}
+}
+
 func TestBuildBlocksDEC64GateForUnscopedEligibilityFlag(t *testing.T) {
 	root := t.TempDir()
 	writeFixture(t, filepath.Join(root, "corpus-pressure", "pressure-summary.json"), map[string]any{

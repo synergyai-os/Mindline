@@ -608,14 +608,18 @@ func hasSideEffectEvidence(summary *Summary) bool {
 			}
 		}
 	}
+	hasAutonomySafetyEvidence := hasRequiredSideEffectEvidence(present, []string{"destination_writes", "auto_accepts", "no_human_claims", "committed_private_artifacts"})
 	hasBaseEvidence := hasRequiredSideEffectEvidence(present, []string{"network_fetches", "hosted_telemetry_exports", "hosted_inference_calls", "destination_writes", "product_brain_writes", "tolaria_writes"})
+	if hasAutonomyReport && hasAutonomySafetyEvidence {
+		hasBaseEvidence = true
+	}
 	if hasCorpusPressureSafetyArtifact && hasRequiredSideEffectEvidence(present, []string{"hosted_telemetry_exports", "hosted_inference_calls", "destination_writes"}) {
 		hasBaseEvidence = true
 	}
 	if !hasBaseEvidence {
 		return false
 	}
-	if hasAutonomyReport && !hasRequiredSideEffectEvidence(present, []string{"auto_accepts", "no_human_claims", "committed_private_artifacts"}) {
+	if hasAutonomyReport && !hasAutonomySafetyEvidence {
 		return false
 	}
 	if hasLinkEnrichmentSafetyArtifact && !hasRequiredSideEffectEvidence(present, []string{"browser_calls", "slack_api_calls"}) {
