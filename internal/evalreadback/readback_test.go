@@ -233,6 +233,28 @@ func TestBuildAcceptsCorpusAcceptanceGuardrailsAsCompleteSideEffectEvidence(t *t
 	}
 }
 
+func TestBuildAcceptsCorpusPressureGuardrailsAsCompleteSideEffectEvidence(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "corpus-pressure", "pressure-summary.json"), map[string]any{
+		"schema_version":             "corpus-pressure-summary/v0.1",
+		"corpus_id":                  "corpus-a",
+		"source_count":               2,
+		"evidence_ready_atom_ratio":  1,
+		"review_burden_ratio":        0,
+		"corpus_fingerprint":         "corpus-a",
+		"command_config_fingerprint": "config-a",
+		"guardrails":                 map[string]any{"destination_writes": 0, "hosted_telemetry_exports": 0, "hosted_inference_calls": 0},
+	})
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if gateStatus(summary, "side_effect_claim") != "pass" {
+		t.Fatalf("expected corpus pressure guardrails to complete side-effect evidence, got %+v", summary.ClaimGates)
+	}
+}
+
 func TestBuildCurrentOnlyDoesNotPassImprovementClaim(t *testing.T) {
 	out := t.TempDir()
 	summary, err := Build(filepath.Join("..", "..", "testdata", "eval-readback", "current"), out, Options{})

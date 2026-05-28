@@ -554,7 +554,7 @@ func hasSideEffectEvidence(summary *Summary) bool {
 	present := map[string]bool{}
 	hasAutonomyReport := false
 	hasLinkEnrichmentSafetyArtifact := false
-	hasCorpusAcceptanceBenchmark := false
+	hasCorpusPressureSafetyArtifact := false
 	for _, artifact := range summary.Artifacts {
 		if artifact.Type == "autonomy_readiness_report" {
 			hasAutonomyReport = true
@@ -562,8 +562,8 @@ func hasSideEffectEvidence(summary *Summary) bool {
 		if isLinkEnrichmentSafetyArtifact(artifact.Type) {
 			hasLinkEnrichmentSafetyArtifact = true
 		}
-		if artifact.Type == "corpus_acceptance_benchmark" {
-			hasCorpusAcceptanceBenchmark = true
+		if isCorpusPressureSafetyArtifact(artifact.Type) {
+			hasCorpusPressureSafetyArtifact = true
 		}
 		for key := range artifact.Metrics {
 			if name, ok := sideEffectMetricName(key); ok {
@@ -572,7 +572,7 @@ func hasSideEffectEvidence(summary *Summary) bool {
 		}
 	}
 	hasBaseEvidence := hasRequiredSideEffectEvidence(present, []string{"network_fetches", "hosted_telemetry_exports", "hosted_inference_calls", "destination_writes", "product_brain_writes", "tolaria_writes"})
-	if hasCorpusAcceptanceBenchmark && hasRequiredSideEffectEvidence(present, []string{"hosted_telemetry_exports", "hosted_inference_calls", "destination_writes"}) {
+	if hasCorpusPressureSafetyArtifact && hasRequiredSideEffectEvidence(present, []string{"hosted_telemetry_exports", "hosted_inference_calls", "destination_writes"}) {
 		hasBaseEvidence = true
 	}
 	if !hasBaseEvidence {
@@ -594,6 +594,15 @@ func hasRequiredSideEffectEvidence(present map[string]bool, required []string) b
 		}
 	}
 	return true
+}
+
+func isCorpusPressureSafetyArtifact(artifactType string) bool {
+	switch artifactType {
+	case "corpus_pressure_summary", "corpus_pressure_eval_input", "corpus_pressure_trace_summary", "corpus_pressure_loop_summary", "corpus_acceptance_benchmark":
+		return true
+	default:
+		return false
+	}
 }
 
 func isLinkEnrichmentSafetyArtifact(artifactType string) bool {
