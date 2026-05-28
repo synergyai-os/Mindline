@@ -166,6 +166,7 @@ func BuildLinkEnrichmentLoop(inputPath, artifactsPath, outDir string, options Li
 	if err != nil {
 		return LinkEnrichmentLoopSummary{}, err
 	}
+	requestPack.Summary.NonGeneralizableRuntime = linkEnrichmentNonGeneralizableRuntime(inputPath, manifestPath, artifactsPath)
 	if err := writeJSON(root, filepath.ToSlash(filepath.Join(LinkEnrichmentDirName, "requests", "link-artifact-requests.json")), requestPack); err != nil {
 		return LinkEnrichmentLoopSummary{}, ArtifactWriteError{Err: err}
 	}
@@ -226,6 +227,16 @@ func BuildLinkEnrichmentLoop(inputPath, artifactsPath, outDir string, options Li
 		return LinkEnrichmentLoopSummary{}, ArtifactWriteError{Err: err}
 	}
 	return summary, nil
+}
+
+func linkEnrichmentNonGeneralizableRuntime(paths ...string) bool {
+	for _, path := range paths {
+		cleaned := filepath.Clean(strings.TrimSpace(path))
+		if strings.HasPrefix(cleaned, "/private/tmp/") || strings.HasPrefix(cleaned, "/tmp/") {
+			return true
+		}
+	}
+	return false
 }
 
 func resolveLinkEnrichmentManifestPath(inputPath, outRoot string) (string, error) {

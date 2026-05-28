@@ -30,6 +30,9 @@ func TestBuildLinkEnrichmentLoopReducesLinkMissingnessWithLocalArtifacts(t *test
 	if summary.RequestSummary.URLMentionCount != 1 || summary.RequestSummary.AlreadyArtifactedCount != 1 || summary.RequestSummary.URLAccountingCoverage != 1 {
 		t.Fatalf("bad request accounting: %+v", summary.RequestSummary)
 	}
+	if summary.RequestSummary.NonGeneralizableRuntime {
+		t.Fatalf("ordinary fixture input should not be marked non-generalizable runtime")
+	}
 	if summary.Comparison.Verdict != LinkEnrichmentVerdictImproved {
 		t.Fatalf("expected improved verdict: %+v", summary.Comparison)
 	}
@@ -95,6 +98,15 @@ func TestBuildLinkEnrichmentLoopContinuesFromCorpusPressureOutput(t *testing.T) 
 		t.Fatalf("expected full missingness reduction from pressure output: %+v", summary.Comparison)
 	}
 	_ = mustReadString(t, filepath.Join(out, LinkEnrichmentDirName, "generated-input", "sources", "slack-source-1", "source.md"))
+}
+
+func TestLinkEnrichmentNonGeneralizableRuntimeMarksPrivateRuntimePaths(t *testing.T) {
+	if !linkEnrichmentNonGeneralizableRuntime("/private/tmp/mindline-runtime/intake") {
+		t.Fatalf("expected private runtime path to be non-generalizable")
+	}
+	if linkEnrichmentNonGeneralizableRuntime("testdata/documents/link-enrichment-loop/corpus-pressure-manifest.json") {
+		t.Fatalf("expected committed fixture path to remain generalizable")
+	}
 }
 
 func TestBuildLinkEnrichmentLoopReportsPartialCoverageAndStaleArtifacts(t *testing.T) {

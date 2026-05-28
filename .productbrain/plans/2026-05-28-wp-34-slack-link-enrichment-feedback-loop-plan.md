@@ -2,7 +2,7 @@
 
 **Spec:** `.productbrain/specs/2026-05-28-wp-34-slack-link-enrichment-feedback-loop.md`
 **Stop mode:** Full Delivery
-**Plan status:** signed-plan candidate V2
+**Plan status:** signed-plan candidate V3
 **Implementation rule:** orchestrate existing primitives; do not create a live fetcher or second enrichment engine.
 
 ## 1. Chain Authority
@@ -71,6 +71,8 @@ link-enrichment/
   comparison/
     comparison-summary.json
     comparison-report.md
+  posthog/
+    eval-projection.json
 baseline-pressure/
 baseline-meaning/
 enrichment/
@@ -144,7 +146,31 @@ Verdict:
 - `unchanged`: comparable, safe, but no meaningful missingness movement.
 - `blocked`: invalid comparison, unsafe output, missing artifacts, or guardrail violation.
 
-## 5. CLI Shape
+## 5. PostHog Eval Projection
+
+Add a dedicated projection in `internal/observability`:
+
+- `LinkEnrichmentSafeEvents(summary, telemetrySalt)`;
+- event name: `$ai_evaluation`;
+- `$ai_evaluation_name`: `mindline.link_enrichment.covered_missingness_reduction`;
+- `$ai_evaluation_result`: derived from KR pass/fail;
+- `$ai_evaluation_reasoning`: stable reason codes only;
+- metadata only: counts, ratios, guardrails, verdict, salted IDs, KR booleans, and `non_generalizable_runtime`.
+
+The projection must write `link-enrichment/posthog/eval-projection.json` on every loop run. When telemetry is enabled, the CLI exports the same event through the existing PostHog exporter. The event must pass the existing deny-by-default `ValidateSafeEvent` allowlist and must not contain source text, URLs, prompts, completions, excerpts, file paths, Slack permalinks, or private IDs.
+
+The KR pass condition is intentionally stricter than the original V2 plan:
+
+- comparable basis is valid;
+- URL accounting coverage is 100%;
+- artifact match coverage is 100% for the covered proof set;
+- `missing_link_enrichment` reduction is >= 98%;
+- `needs_enrichment` reduction is >= 98%;
+- all safety counters are zero except the explicit PostHog capture call itself.
+
+If hosted inference is nonzero, the local eval result fails. If telemetry config is unsafe (`raw` trace mode), the command fails closed before export.
+
+## 6. CLI Shape
 
 Add:
 
@@ -156,11 +182,13 @@ CLI requirements:
 
 - use existing protected-root output validation;
 - print summary JSON to stdout;
+- write the PostHog eval projection before stdout;
+- export exactly one metadata-only `$ai_evaluation` event when telemetry is enabled;
 - return usage on missing args;
 - return artifact-write on containment/write failures;
 - return process errors for invalid comparisons or missing manifest.
 
-## 6. Tests
+## 7. Tests
 
 Focused tests:
 
@@ -175,8 +203,11 @@ Focused tests:
 9. deterministic replay has stable request/comparison counters.
 10. output containment rejects protected roots/symlink escapes.
 11. CLI success and usage errors.
+12. PostHog projection writes locally when telemetry is disabled.
+13. PostHog projection exports one safe `$ai_evaluation` event when telemetry is enabled.
+14. Projection blocks unsafe/raw trace mode and fails eval on guardrail/KR regression.
 
-## 7. Runtime Proof
+## 8. Runtime Proof
 
 Synthetic proof:
 
@@ -190,13 +221,21 @@ Real Slack proof:
 2. Run `slack corpus-intake` into `/private/tmp/mindline-wp34-real-slack/intake`.
 3. Create local artifact manifest for at least five real safe links under `/private/tmp`.
 4. Run `documents link-enrichment-loop` with LLM classifier if OpenAI is available.
-5. Verify at least 80% reduction for artifact-covered links in `missing_link_enrichment` and `needs_enrichment`.
+5. Verify at least 98% reduction for artifact-covered links in `missing_link_enrichment` and `needs_enrichment`.
 6. Inspect at least three enriched previews for human-review usefulness.
+7. Run the same proof with telemetry enabled and configured.
+8. Verify `link-enrichment/posthog/eval-projection.json` has:
+   - `status: sent`;
+   - event `$ai_evaluation`;
+   - `$ai_evaluation_name: mindline.link_enrichment.covered_missingness_reduction`;
+   - `$ai_evaluation_result: true`;
+   - `metadata_only: true`;
+   - no unsafe raw values.
 
-## 8. Verification Commands
+## 9. Verification Commands
 
 ```bash
-go test ./internal/documents ./internal/cli
+go test ./internal/documents ./internal/cli ./internal/observability
 go test ./...
 git diff --check
 pb audit WP-34 --phase handoff --verbose
@@ -210,17 +249,17 @@ rg "xoxb-|sk_live_|sk-proj-|files-pri|workspace\\.slack\\.com/archives|PRIVATE_C
 
 The leak scan is expected to return no matches in generated top-level reports and committed fixtures. Private runtime source Markdown may contain user-approved source URLs but must not be committed.
 
-## 9. Review Gates
+## 10. Review Gates
 
 Before push:
 
 - Chain Steward: WP-34 captured, linked, audited, and WP-33 state reconciled.
 - Systems Architect: orchestration reuses WP-33/WP-29/WP-32 and does not fork semantics.
 - Domain/User Job: real Slack output is inspectable and materially more useful than link-only preview.
-- Risk/Safety: no fetch, no leakage, no hidden hosted telemetry, no destination writes.
+- Risk/Safety: no fetch, no leakage, PostHog export is explicit metadata-only `$ai_evaluation`, no destination writes.
 - Delivery Quality: tests, runtime proof, replay stability, and maintainability sign off.
 
-## 10. Non-Goals
+## 11. Non-Goals
 
 - Do not fetch live URLs.
 - Do not add browser automation.

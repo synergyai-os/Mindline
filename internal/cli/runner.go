@@ -445,6 +445,9 @@ func (r Runner) runDocumentsLinkEnrichmentLoop(args []string, stdout, stderr io.
 		fmt.Fprintf(stderr, "run link enrichment loop: %v\n", err)
 		return ExitProcess
 	}
+	if exit := r.writeAndExportLinkEnrichmentProjection(outDir, summary, stderr); exit != ExitOK {
+		return exit
+	}
 	encoder := json.NewEncoder(stdout)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(summary); err != nil {
@@ -2219,6 +2222,80 @@ func (r Runner) writeAndExportTrace(outDir string, summary observability.TraceSu
 		}
 	}
 	return nil
+}
+
+func (r Runner) writeAndExportLinkEnrichmentProjection(outDir string, summary documents.LinkEnrichmentLoopSummary, stderr io.Writer) int {
+	values := r.resolveEnvValues([]string{
+		"MINDLINE_TELEMETRY_ENABLED",
+		"MINDLINE_LLM_TRACE_MODE",
+		"MINDLINE_TELEMETRY_SALT",
+		"POSTHOG_PROJECT_API_KEY",
+		"POSTHOG_API_KEY",
+		"POSTHOG_HOST",
+	})
+	projection := observability.LinkEnrichmentProjection{
+		SchemaVersion: observability.LinkEnrichmentProjectionSchemaVersion,
+		Status:        "disabled",
+		Events:        observability.LinkEnrichmentSafeEvents(summary, values["MINDLINE_TELEMETRY_SALT"]),
+	}
+	if telemetryEnabled(values["MINDLINE_TELEMETRY_ENABLED"]) {
+		config, err := observability.ConfigFromValues(values)
+		if err != nil {
+			projection.Status = "failed"
+			projection.ErrorClass = "config_error"
+			exit := ExitOK
+			if strings.Contains(err.Error(), "unsupported LLM trace mode") {
+				projection.Status = "blocked"
+				exit = ExitArtifactWrite
+			}
+			if writeErr := r.writeLinkEnrichmentProjection(outDir, projection); writeErr != nil {
+				fmt.Fprintf(stderr, "write link enrichment PostHog projection: %v\n", writeErr)
+				return ExitArtifactWrite
+			}
+			fmt.Fprintf(stderr, "posthog link enrichment projection: %v\n", err)
+			return exit
+		}
+		projection.Events = observability.LinkEnrichmentSafeEvents(summary, config.TelemetrySalt)
+		projection.Status = "sent"
+		exporter := observability.NewPostHogExporter(config, r.postHogTransport)
+		for _, event := range projection.Events {
+			if err := exporter.Capture(event); err != nil {
+				if observability.IsSafeEventValidationError(err) {
+					projection.Status = "blocked"
+					projection.ErrorClass = "safety_validation_error"
+					if writeErr := r.writeLinkEnrichmentProjection(outDir, projection); writeErr != nil {
+						fmt.Fprintf(stderr, "write link enrichment PostHog projection: %v\n", writeErr)
+					}
+					return ExitArtifactWrite
+				}
+				projection.Status = "failed"
+				projection.ErrorClass = "network_error"
+				fmt.Fprintf(stderr, "posthog link enrichment projection: %v\n", err)
+				break
+			}
+		}
+	}
+	if err := r.writeLinkEnrichmentProjection(outDir, projection); err != nil {
+		fmt.Fprintf(stderr, "write link enrichment PostHog projection: %v\n", err)
+		return ExitArtifactWrite
+	}
+	return ExitOK
+}
+
+func (r Runner) writeLinkEnrichmentProjection(outDir string, projection observability.LinkEnrichmentProjection) error {
+	data, err := json.MarshalIndent(projection, "", "  ")
+	if err != nil {
+		return err
+	}
+	child := filepath.Join(documents.LinkEnrichmentDirName, "posthog")
+	if err := r.ensureOutputChildDir(outDir, child); err != nil {
+		return err
+	}
+	target := filepath.Join(outDir, child, "eval-projection.json")
+	if err := r.rejectUnsafeOutputFile(outDir, target); err != nil {
+		return err
+	}
+	return r.fs.WriteFile(target, append(data, '\n'))
 }
 
 func (r Runner) projectAutonomyReadiness(report documents.AutonomyReadinessReport, stderr io.Writer) (documents.AutonomyReadinessReport, int) {
