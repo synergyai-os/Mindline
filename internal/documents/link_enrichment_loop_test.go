@@ -206,6 +206,36 @@ func TestBuildLinkArtifactRequestPackUsesUniqueIDsForRepeatedURLMentions(t *test
 	}
 }
 
+func TestBuildLinkArtifactRequestPackUsesUniqueIDsForIdenticalRepeatedMentions(t *testing.T) {
+	root := t.TempDir()
+	repeatedToken := "<https://example.com/research|same label>"
+	sourcePath := writeSourceEnrichmentFixture(t, root, "slack-source-1", strings.Join([]string{
+		"# Slack captures",
+		repeatedToken,
+		repeatedToken,
+	}, "\n"))
+	manifestPath := writeSourceEnrichmentManifest(t, root, "corpus-link-loop-test", CorpusPressureManifestSource{
+		SourceID:   "slack-source-1",
+		SourceKind: SourceKindMarkdown,
+		Path:       sourcePath,
+	})
+	manifest, manifestRoot, err := readSourceEnrichmentManifest(manifestPath)
+	if err != nil {
+		t.Fatalf("readSourceEnrichmentManifest: %v", err)
+	}
+
+	pack, err := BuildLinkArtifactRequestPack(manifest, manifestRoot, localArtifactIndex{byURL: map[string]LocalSourceEnrichmentArtifact{}}, map[string]bool{})
+	if err != nil {
+		t.Fatalf("BuildLinkArtifactRequestPack: %v", err)
+	}
+	if pack.Summary.URLMentionCount != 2 || len(pack.Requests) != 2 {
+		t.Fatalf("expected identical repeated Slack mrkdwn mentions to be preserved: summary=%+v requests=%+v", pack.Summary, pack.Requests)
+	}
+	if pack.Requests[0].RequestID == pack.Requests[1].RequestID {
+		t.Fatalf("expected unique request IDs for identical repeated mentions: %+v", pack.Requests)
+	}
+}
+
 func TestBuildLinkEnrichmentComparisonBlocksHostedInferenceProof(t *testing.T) {
 	baselinePressure := CorpusPressureSummary{
 		CorpusID:                 "corpus-test",

@@ -128,6 +128,7 @@ type localArtifactIndex struct {
 type sourceEnrichmentURLMatch struct {
 	rawURL      string
 	sourceToken string
+	sourceStart int
 }
 
 var sourceEnrichmentURLPattern = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://[^\s<>"'|]+`)
@@ -414,7 +415,6 @@ func sourceEnrichmentArtifactEvidenceReady(record SourceEnrichmentURL) bool {
 }
 
 func extractSourceEnrichmentURLs(value string) []sourceEnrichmentURLMatch {
-	seen := map[string]bool{}
 	var out []sourceEnrichmentURLMatch
 	for _, loc := range sourceEnrichmentURLPattern.FindAllStringIndex(value, -1) {
 		match := value[loc[0]:loc[1]]
@@ -423,17 +423,17 @@ func extractSourceEnrichmentURLs(value string) []sourceEnrichmentURLMatch {
 			continue
 		}
 		token := sourceEnrichmentSourceToken(value, loc, clean)
-		if seen[token] {
-			continue
-		}
-		seen[token] = true
 		out = append(out, sourceEnrichmentURLMatch{
 			rawURL:      clean,
 			sourceToken: token,
+			sourceStart: loc[0],
 		})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].rawURL == out[j].rawURL {
+			if out[i].sourceToken == out[j].sourceToken {
+				return out[i].sourceStart < out[j].sourceStart
+			}
 			return out[i].sourceToken < out[j].sourceToken
 		}
 		return out[i].rawURL < out[j].rawURL

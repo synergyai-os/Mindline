@@ -371,7 +371,7 @@ func BuildLinkArtifactRequestPack(manifest CorpusPressureManifest, manifestRoot 
 func buildLinkArtifactRequest(source CorpusPressureManifestSource, urlMatch sourceEnrichmentURLMatch, artifacts localArtifactIndex) LinkArtifactRequest {
 	enriched := enrichSourceURL(urlMatch, artifacts)
 	request := LinkArtifactRequest{
-		RequestID:               "lreq-" + contentHash(strings.Join([]string{source.SourceID, enriched.NormalizedURL, urlMatch.rawURL, urlMatch.sourceToken}, "\n"))[:16],
+		RequestID:               "lreq-" + contentHash(strings.Join([]string{source.SourceID, enriched.NormalizedURL, urlMatch.rawURL, urlMatch.sourceToken, fmt.Sprintf("%d", urlMatch.sourceStart)}, "\n"))[:16],
 		SourceID:                source.SourceID,
 		SourceKind:              source.SourceKind,
 		SourceLabel:             filepath.ToSlash(source.Path),
