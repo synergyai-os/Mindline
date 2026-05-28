@@ -371,7 +371,9 @@ func rebuildClaimGates(summary *Summary) {
 		gates = append(gates, ClaimGate{Gate: "improvement_claim", Status: "blocked", ReasonCodes: []string{"missing_baseline"}, ClaimImpact: "blocks improvement claim until comparable baseline is supplied"})
 	}
 	gates = append(gates, ClaimGate{Gate: "dec64_no_human_claim", Status: "blocked", ReasonCodes: []string{"held_out_threshold_not_proven"}, ClaimImpact: "blocks no-human autonomy readiness claim"})
-	if summary.Guardrails.NetworkFetches == 0 && summary.Guardrails.HostedTelemetryExports == 0 && summary.Guardrails.HostedInferenceCalls == 0 && summary.Guardrails.DestinationWrites == 0 && summary.Guardrails.ProductBrainWrites == 0 && summary.Guardrails.TolariaWrites == 0 {
+	if !hasSideEffectEvidence(summary) {
+		gates = append(gates, ClaimGate{Gate: "side_effect_claim", Status: "blocked", ReasonCodes: []string{"missing_side_effect_evidence"}, ClaimImpact: "blocks safety claim until artifacts expose guardrail counters"})
+	} else if summary.Guardrails.NetworkFetches == 0 && summary.Guardrails.HostedTelemetryExports == 0 && summary.Guardrails.HostedInferenceCalls == 0 && summary.Guardrails.DestinationWrites == 0 && summary.Guardrails.ProductBrainWrites == 0 && summary.Guardrails.TolariaWrites == 0 {
 		gates = append(gates, ClaimGate{Gate: "side_effect_claim", Status: "pass", ClaimImpact: "readback found no prohibited side-effect counters"})
 	} else {
 		gates = append(gates, ClaimGate{Gate: "side_effect_claim", Status: "fail", ReasonCodes: []string{"guardrail_counter_nonzero"}, ClaimImpact: "blocks safety claim"})
@@ -395,6 +397,17 @@ func hasUnsupportedArtifact(summary *Summary) bool {
 	for _, artifact := range summary.Artifacts {
 		if artifact.Status == "unsupported_schema" {
 			return true
+		}
+	}
+	return false
+}
+
+func hasSideEffectEvidence(summary *Summary) bool {
+	for _, artifact := range summary.Artifacts {
+		for key := range artifact.Metrics {
+			if strings.HasPrefix(key, "guardrail_") || strings.HasPrefix(key, "safety_") {
+				return true
+			}
 		}
 	}
 	return false
@@ -544,18 +557,34 @@ func writeSummary(outRoot string, summary Summary, protectedRoots []string) erro
 	if err := rejectSymlinkEscape(root, dir, protectedRoots); err != nil {
 		return err
 	}
-	if err := writeJSON(filepath.Join(dir, "readback-summary.json"), summary); err != nil {
+	summaryPath := filepath.Join(dir, "readback-summary.json")
+	if err := rejectSymlinkEscape(root, summaryPath, protectedRoots); err != nil {
+		return err
+	}
+	if err := writeJSON(summaryPath, summary); err != nil {
 		return err
 	}
 	if summary.Comparison != nil {
-		if err := writeJSON(filepath.Join(dir, "comparison-summary.json"), summary.Comparison); err != nil {
+		comparisonPath := filepath.Join(dir, "comparison-summary.json")
+		if err := rejectSymlinkEscape(root, comparisonPath, protectedRoots); err != nil {
+			return err
+		}
+		if err := writeJSON(comparisonPath, summary.Comparison); err != nil {
 			return err
 		}
 	}
-	if err := os.WriteFile(filepath.Join(dir, "readback-report.md"), []byte(markdownReport(summary)), 0o644); err != nil {
+	reportPath := filepath.Join(dir, "readback-report.md")
+	if err := rejectSymlinkEscape(root, reportPath, protectedRoots); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "chain-capture-draft.md"), []byte(chainDraft(summary)), 0o644); err != nil {
+	if err := os.WriteFile(reportPath, []byte(markdownReport(summary)), 0o644); err != nil {
+		return err
+	}
+	chainPath := filepath.Join(dir, "chain-capture-draft.md")
+	if err := rejectSymlinkEscape(root, chainPath, protectedRoots); err != nil {
+		return err
+	}
+	if err := os.WriteFile(chainPath, []byte(chainDraft(summary)), 0o644); err != nil {
 		return err
 	}
 	return nil

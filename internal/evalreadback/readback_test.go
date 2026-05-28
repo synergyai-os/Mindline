@@ -235,6 +235,26 @@ func TestBuildHostedTelemetryBlocksSideEffectClaim(t *testing.T) {
 	}
 }
 
+func TestBuildBlocksSideEffectClaimWithoutGuardrailEvidence(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "trace", "trace-summary.json"), map[string]any{
+		"schema_version":            "mindline-trace-summary/v0.1",
+		"source_count":              1,
+		"evidence_ready_atom_ratio": 1,
+	})
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if gateStatus(summary, "side_effect_claim") != "blocked" {
+		t.Fatalf("expected side effect claim blocked without guardrail evidence, got %+v", summary.ClaimGates)
+	}
+	if gate := gateByName(summary, "side_effect_claim"); !containsString(gate.ReasonCodes, "missing_side_effect_evidence") {
+		t.Fatalf("expected missing_side_effect_evidence reason, got %+v", gate)
+	}
+}
+
 func TestBuildRecordsUnsupportedSchemaWithoutMetrics(t *testing.T) {
 	root := t.TempDir()
 	writeFixture(t, filepath.Join(root, "corpus-pressure", "pressure-summary.json"), map[string]any{
@@ -363,6 +383,36 @@ func TestBuildRejectsSymlinkEscapeOutput(t *testing.T) {
 	}
 }
 
+func TestBuildRejectsSymlinkEscapeOutputFile(t *testing.T) {
+	root := t.TempDir()
+	current := filepath.Join(root, "current")
+	writePressure(t, current, 0.9, 0.2)
+	out := filepath.Join(root, "out")
+	readbackDir := filepath.Join(out, DirName)
+	if err := os.MkdirAll(readbackDir, 0o755); err != nil {
+		t.Fatalf("mkdir readback dir: %v", err)
+	}
+	escaped := filepath.Join(root, "escaped")
+	if err := os.MkdirAll(escaped, 0o755); err != nil {
+		t.Fatalf("mkdir escaped: %v", err)
+	}
+	escapedFile := filepath.Join(escaped, "readback-summary.json")
+	if err := os.WriteFile(escapedFile, []byte("original"), 0o644); err != nil {
+		t.Fatalf("write escaped file: %v", err)
+	}
+	if err := os.Symlink(escapedFile, filepath.Join(readbackDir, "readback-summary.json")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	_, err := Build(current, out, Options{ProtectedRoots: []string{escaped}})
+	if err == nil || !strings.Contains(err.Error(), "escapes output root") {
+		t.Fatalf("expected symlinked output file rejection, got %v", err)
+	}
+	if got := readString(t, escapedFile); got != "original" {
+		t.Fatalf("escaped output file was overwritten: %q", got)
+	}
+}
+
 func containsString(values []string, expected string) bool {
 	for _, value := range values {
 		if value == expected {
@@ -456,6 +506,15 @@ func gateStatus(summary Summary, gateName string) string {
 		}
 	}
 	return ""
+}
+
+func gateByName(summary Summary, gateName string) ClaimGate {
+	for _, gate := range summary.ClaimGates {
+		if gate.Gate == gateName {
+			return gate
+		}
+	}
+	return ClaimGate{}
 }
 
 func readString(t *testing.T, path string) string {
