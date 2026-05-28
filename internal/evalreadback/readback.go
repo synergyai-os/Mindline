@@ -25,6 +25,8 @@ func Build(inputRoot, outRoot string, options Options) (Summary, error) {
 		}
 		comparison := compareModels(baseline, model)
 		summary.BaselineRootLabel = baseline.rootLabel
+		summary.BaselineArtifactRefs = prefixedArtifactRefs("baseline", artifactRefs(baseline.artifacts))
+		summary.BaselineArtifacts = baseline.artifacts
 		summary.Comparison = &comparison
 		summary.ImprovementStatus = comparison.Status
 		rebuildClaimGates(&summary)
@@ -382,11 +384,10 @@ func mergeModelEvidence(model *readbackModel, artifact ArtifactEvidence) {
 
 func summarize(model readbackModel) Summary {
 	typeCounts := map[string]int{}
-	refs := []string{}
 	for _, artifact := range model.artifacts {
 		typeCounts[artifact.Type]++
-		refs = append(refs, artifact.Ref)
 	}
+	refs := artifactRefs(model.artifacts)
 	sampleStatus := model.sampleStatus
 	if sampleStatus == "unknown" && model.flags["held_out"] {
 		sampleStatus = "held_out"
@@ -417,12 +418,12 @@ func summarize(model readbackModel) Summary {
 
 func rebuildClaimGates(summary *Summary) {
 	gates := []ClaimGate{
-		{Gate: "artifact_presence", Status: "pass", EvidenceRefs: firstRefs(summary.SafeArtifactRefs), ClaimImpact: "readback has local evidence to inspect"},
+		{Gate: "artifact_presence", Status: "pass", EvidenceRefs: proofArtifactRefs(summary), ClaimImpact: "readback has local evidence to inspect"},
 	}
 	unsafe := hasUnsafeArtifact(summary)
 	unsupported := hasUnsupportedArtifact(summary)
 	if unsafe {
-		gates = append(gates, ClaimGate{Gate: "privacy_safe_readback", Status: "fail", ReasonCodes: []string{"unsafe_or_leaky"}, EvidenceRefs: firstRefs(summary.SafeArtifactRefs), ClaimImpact: "blocks improvement and Chain proof claims until unsafe artifacts are removed or redacted"})
+		gates = append(gates, ClaimGate{Gate: "privacy_safe_readback", Status: "fail", ReasonCodes: []string{"unsafe_or_leaky"}, EvidenceRefs: unsafeArtifactRefs(summary), ClaimImpact: "blocks improvement and Chain proof claims until unsafe artifacts are removed or redacted"})
 	} else {
 		gates = append(gates, ClaimGate{Gate: "privacy_safe_readback", Status: "pass", ClaimImpact: "readback output did not detect unsafe supported artifacts"})
 	}
@@ -436,9 +437,9 @@ func rebuildClaimGates(summary *Summary) {
 	case "improved":
 		switch {
 		case unsafe:
-			gates = append(gates, ClaimGate{Gate: "improvement_claim", Status: "blocked", ReasonCodes: []string{"unsafe_or_leaky"}, EvidenceRefs: firstRefs(summary.SafeArtifactRefs), ClaimImpact: "blocks improvement claim until readback evidence is privacy-safe"})
+			gates = append(gates, ClaimGate{Gate: "improvement_claim", Status: "blocked", ReasonCodes: []string{"unsafe_or_leaky"}, EvidenceRefs: unsafeArtifactRefs(summary), ClaimImpact: "blocks improvement claim until readback evidence is privacy-safe"})
 		case unsupported:
-			gates = append(gates, ClaimGate{Gate: "improvement_claim", Status: "blocked", ReasonCodes: []string{"unsupported_schema"}, EvidenceRefs: firstRefs(summary.SafeArtifactRefs), ClaimImpact: "blocks improvement claim until supported-looking artifacts use known schemas"})
+			gates = append(gates, ClaimGate{Gate: "improvement_claim", Status: "blocked", ReasonCodes: []string{"unsupported_schema"}, EvidenceRefs: unsupportedArtifactRefs(summary), ClaimImpact: "blocks improvement claim until supported-looking artifacts use known schemas"})
 		default:
 			gates = append(gates, ClaimGate{Gate: "improvement_claim", Status: "pass", ClaimImpact: "current run improved against a comparable baseline"})
 		}
@@ -473,6 +474,11 @@ func hasUnsafeArtifact(summary *Summary) bool {
 			return true
 		}
 	}
+	for _, artifact := range summary.BaselineArtifacts {
+		if artifact.Status == "unsafe_or_leaky" {
+			return true
+		}
+	}
 	return false
 }
 
@@ -482,7 +488,66 @@ func hasUnsupportedArtifact(summary *Summary) bool {
 			return true
 		}
 	}
+	for _, artifact := range summary.BaselineArtifacts {
+		if artifact.Status == "unsupported_schema" {
+			return true
+		}
+	}
 	return false
+}
+
+func artifactRefs(artifacts []ArtifactEvidence) []string {
+	refs := make([]string, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		refs = append(refs, artifact.Ref)
+	}
+	sort.Strings(refs)
+	return refs
+}
+
+func prefixedArtifactRefs(prefix string, refs []string) []string {
+	out := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		out = append(out, filepath.ToSlash(filepath.Join(prefix, ref)))
+	}
+	sort.Strings(out)
+	return out
+}
+
+func proofArtifactRefs(summary *Summary) []string {
+	refs := append([]string{}, summary.SafeArtifactRefs...)
+	refs = append(refs, summary.BaselineArtifactRefs...)
+	return firstRefs(refs)
+}
+
+func unsafeArtifactRefs(summary *Summary) []string {
+	refs := []string{}
+	for _, artifact := range summary.Artifacts {
+		if artifact.Status == "unsafe_or_leaky" {
+			refs = append(refs, artifact.Ref)
+		}
+	}
+	for _, artifact := range summary.BaselineArtifacts {
+		if artifact.Status == "unsafe_or_leaky" {
+			refs = append(refs, filepath.ToSlash(filepath.Join("baseline", artifact.Ref)))
+		}
+	}
+	return firstRefs(refs)
+}
+
+func unsupportedArtifactRefs(summary *Summary) []string {
+	refs := []string{}
+	for _, artifact := range summary.Artifacts {
+		if artifact.Status == "unsupported_schema" {
+			refs = append(refs, artifact.Ref)
+		}
+	}
+	for _, artifact := range summary.BaselineArtifacts {
+		if artifact.Status == "unsupported_schema" {
+			refs = append(refs, filepath.ToSlash(filepath.Join("baseline", artifact.Ref)))
+		}
+	}
+	return firstRefs(refs)
 }
 
 func hasSideEffectEvidence(summary *Summary) bool {

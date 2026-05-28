@@ -27,6 +27,8 @@ type Summary struct {
 	RerunInstructions    []string           `json:"rerun_instructions"`
 	SafeArtifactRefs     []string           `json:"safe_artifact_refs"`
 	Artifacts            []ArtifactEvidence `json:"artifacts"`
+	BaselineArtifactRefs []string           `json:"baseline_artifact_refs,omitempty"`
+	BaselineArtifacts    []ArtifactEvidence `json:"baseline_artifacts,omitempty"`
 	Comparison           *ComparisonSummary `json:"comparison,omitempty"`
 }
 

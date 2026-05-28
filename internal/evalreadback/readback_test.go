@@ -277,6 +277,60 @@ func TestBuildUnsafeArtifactBlocksImprovementClaim(t *testing.T) {
 	}
 }
 
+func TestBuildBaselineUnsafeArtifactBlocksProofClaims(t *testing.T) {
+	root := t.TempDir()
+	baseline := filepath.Join(root, "baseline")
+	current := filepath.Join(root, "current")
+	writePressure(t, baseline, 0.4, 0.7)
+	writePressure(t, current, 0.9, 0.2)
+	writeRaw(t, filepath.Join(baseline, "link-enrichment", "loop-summary.json"), `{"schema_version":"link-enrichment-loop-summary/v0.1","input_path":"/private/tmp/source.json"}`)
+
+	summary, err := Build(current, filepath.Join(root, "out"), Options{BaselineRoot: baseline})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if summary.ImprovementStatus != "improved" {
+		t.Fatalf("expected metrics to remain improved, got %s", summary.ImprovementStatus)
+	}
+	if gateStatus(summary, "privacy_safe_readback") != "fail" {
+		t.Fatalf("expected baseline unsafe artifact to fail privacy gate: %+v", summary.ClaimGates)
+	}
+	if gateStatus(summary, "improvement_claim") != "blocked" {
+		t.Fatalf("expected baseline unsafe artifact to block improvement claim: %+v", summary.ClaimGates)
+	}
+	if len(summary.BaselineArtifacts) == 0 {
+		t.Fatalf("expected baseline artifacts to be retained as proof evidence")
+	}
+}
+
+func TestBuildBaselineUnsupportedArtifactBlocksImprovementClaim(t *testing.T) {
+	root := t.TempDir()
+	baseline := filepath.Join(root, "baseline")
+	current := filepath.Join(root, "current")
+	writePressure(t, baseline, 0.4, 0.7)
+	writePressure(t, current, 0.9, 0.2)
+	writeFixture(t, filepath.Join(baseline, "link-enrichment", "loop-summary.json"), map[string]any{
+		"schema_version": "link-enrichment-loop-summary/v9",
+	})
+
+	summary, err := Build(current, filepath.Join(root, "out"), Options{BaselineRoot: baseline})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if summary.ImprovementStatus != "improved" {
+		t.Fatalf("expected metrics to remain improved, got %s", summary.ImprovementStatus)
+	}
+	if gateStatus(summary, "privacy_safe_readback") != "pass" {
+		t.Fatalf("expected unsupported baseline artifact not to fail privacy gate: %+v", summary.ClaimGates)
+	}
+	if gateStatus(summary, "improvement_claim") != "blocked" {
+		t.Fatalf("expected baseline unsupported artifact to block improvement claim: %+v", summary.ClaimGates)
+	}
+	if !containsString(gateByName(summary, "improvement_claim").ReasonCodes, "unsupported_schema") {
+		t.Fatalf("expected unsupported_schema reason: %+v", summary.ClaimGates)
+	}
+}
+
 func TestBuildGuardrailRegressionBlocksImprovementClaim(t *testing.T) {
 	root := t.TempDir()
 	baseline := filepath.Join(root, "baseline")
