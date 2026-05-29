@@ -11,6 +11,8 @@ type Options struct {
 	ProtectedRoots []string
 }
 
+const ReadbackSummaryFile = "readback-summary.json"
+
 type Summary struct {
 	SchemaVersion        string             `json:"schema_version"`
 	RunID                string             `json:"run_id"`
