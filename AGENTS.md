@@ -96,7 +96,7 @@ Scale the protocol to risk. Mechanical changes inside a relevant work package do
 2. Challenge first-round specs or plans once for a tighter, leaner, more product-general version, then reconcile that challenge against Product Brain.
 3. Run against representative local fixtures or real private runtime data as allowed.
 4. Produce or reference local trace/eval artifacts for every run used as proof.
-5. Run readback or an equivalent claim gate to answer:
+5. Run readback and, when making a named proof claim, the local proof gate to answer:
    - what evidence exists;
    - what changed versus baseline;
    - what cannot be generalized;
@@ -105,7 +105,7 @@ Scale the protocol to risk. Mechanical changes inside a relevant work package do
 6. Compare before/after proof when claiming improvement.
 7. Capture reusable learning, decisions, standards, or blockers on Chain.
 
-Command success is not outcome success. A process exit code of `0` proves only that the command ran; product success requires the relevant eval/KR gates and guardrails to pass.
+Command success is not outcome success. A process exit code of `0` proves only that the command ran unless the command is an explicit proof gate for the named claim. Use `mindline eval readback` for inspection/reporting. Use `mindline eval proof-gate ... --claim safety|improvement|generalization|dec64` when a relevant PR/work package needs executable pass/fail proof. Improvement claims require a comparable baseline; generalization and DEC-64/no-human claims require the stricter held-out/generalization evidence the Chain demands.
 
 Eval projections for relevant proof must state intended users, input/source types, output or destination surfaces, workspace assumptions, provider/model assumptions, privacy boundary, sample status, held-out/generalization claim, KR thresholds, and guardrails.
 
@@ -233,6 +233,6 @@ Before opening, updating, or merging a PR that changes Mindline product behavior
 
 - Check PB authority first.
 - Check whether the work is source/destination/provider agnostic or explicitly adapter-scoped.
-- Run the relevant tests and readback/eval proof.
+- Run the relevant tests and readback/eval proof. For named claims, prefer `mindline eval proof-gate` over manual interpretation of readback JSON.
 - Capture durable learnings or corrections in PB.
 - Use LOOP reviewer sign-off when the change affects product direction, agent instructions, evaluation, trust, privacy, destination readiness, or autonomy claims.

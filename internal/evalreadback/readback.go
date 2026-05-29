@@ -13,6 +13,17 @@ import (
 )
 
 func Build(inputRoot, outRoot string, options Options) (Summary, error) {
+	summary, err := BuildSummary(inputRoot, options)
+	if err != nil {
+		return Summary{}, err
+	}
+	if err := Write(outRoot, summary, options.ProtectedRoots); err != nil {
+		return Summary{}, err
+	}
+	return summary, nil
+}
+
+func BuildSummary(inputRoot string, options Options) (Summary, error) {
 	model, err := buildModel(inputRoot)
 	if err != nil {
 		return Summary{}, err
@@ -31,10 +42,33 @@ func Build(inputRoot, outRoot string, options Options) (Summary, error) {
 		summary.ImprovementStatus = comparison.Status
 		rebuildClaimGates(&summary)
 	}
-	if err := writeSummary(outRoot, summary, options.ProtectedRoots); err != nil {
+	return summary, nil
+}
+
+func Write(outRoot string, summary Summary, protectedRoots []string) error {
+	return writeSummary(outRoot, summary, protectedRoots)
+}
+
+func LoadSummary(path string) (Summary, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
 		return Summary{}, err
 	}
+	if containsDeniedString(string(data)) {
+		return Summary{}, errors.New("readback summary contains unsafe private or secret pattern")
+	}
+	var summary Summary
+	if err := json.Unmarshal(data, &summary); err != nil {
+		return Summary{}, err
+	}
+	if summary.SchemaVersion != SummarySchemaVersion {
+		return Summary{}, fmt.Errorf("unsupported readback summary schema: %s", summary.SchemaVersion)
+	}
 	return summary, nil
+}
+
+func ValidateOutputPath(root, candidate string, protectedRoots []string) error {
+	return rejectSymlinkEscape(root, candidate, protectedRoots)
 }
 
 type readbackModel struct {
@@ -329,10 +363,15 @@ func extractEvidence(raw map[string]any, artifact *ArtifactEvidence) {
 }
 
 func extractGuardrails(guardrails map[string]any, artifact *ArtifactEvidence) {
-	for _, key := range []string{"network_fetches", "hosted_telemetry_exports", "hosted_inference_calls", "browser_calls", "slack_api_calls", "destination_writes", "product_brain_writes", "tolaria_writes"} {
+	for _, key := range []string{"network_fetches", "hosted_telemetry_exports", "hosted_inference_calls", "browser_calls", "slack_api_calls", "destination_writes", "product_brain_writes", "tolaria_writes", "auto_accepts", "committed_private_artifacts"} {
 		if value, ok := numberValue(guardrails[key]); ok {
 			artifact.Metrics["guardrail_"+key] = value
 		}
+	}
+	if value, ok := numberValue(guardrails["no_human_claims"]); ok {
+		artifact.Metrics["guardrail_no_human_claims"] = value
+	} else if value, ok := boolValue(guardrails["no_human_claims"]); ok {
+		artifact.Flags["guardrail_no_human_claims"] = value
 	}
 }
 
@@ -368,13 +407,13 @@ func mergeModelEvidence(model *readbackModel, artifact ArtifactEvidence) {
 			model.guardrails.ProductBrainWrites = maxInt(model.guardrails.ProductBrainWrites, int(value))
 		case "guardrail_tolaria_writes", "safety_tolaria_writes":
 			model.guardrails.TolariaWrites = maxInt(model.guardrails.TolariaWrites, int(value))
-		case "safety_auto_accepts":
+		case "guardrail_auto_accepts", "safety_auto_accepts":
 			model.guardrails.AutoAccepts = maxInt(model.guardrails.AutoAccepts, int(value))
-		case "safety_no_human_claims":
+		case "guardrail_no_human_claims", "safety_no_human_claims":
 			if value > 0 {
 				model.guardrails.NoHumanClaims = true
 			}
-		case "safety_committed_private_artifacts":
+		case "guardrail_committed_private_artifacts", "safety_committed_private_artifacts":
 			model.guardrails.CommittedPrivateArtifacts = maxInt(model.guardrails.CommittedPrivateArtifacts, int(value))
 		}
 	}
@@ -386,6 +425,9 @@ func mergeModelEvidence(model *readbackModel, artifact ArtifactEvidence) {
 			model.flags[key] = true
 		} else if _, exists := model.flags[key]; !exists {
 			model.flags[key] = false
+		}
+		if key == "guardrail_no_human_claims" && value {
+			model.guardrails.NoHumanClaims = true
 		}
 	}
 	for key, value := range artifact.Fingerprints {
@@ -592,9 +634,9 @@ func unsupportedArtifactRefs(summary *Summary) []string {
 
 func hasSideEffectEvidence(summary *Summary) bool {
 	present := map[string]bool{}
+	autonomyPresent := map[string]bool{}
 	hasAutonomyReport := false
 	hasLinkEnrichmentSafetyArtifact := false
-	hasCorpusPressureSafetyArtifact := false
 	for _, artifact := range summary.Artifacts {
 		if artifact.Type == "autonomy_readiness_report" {
 			hasAutonomyReport = true
@@ -602,23 +644,20 @@ func hasSideEffectEvidence(summary *Summary) bool {
 		if isLinkEnrichmentSafetyArtifact(artifact.Type) {
 			hasLinkEnrichmentSafetyArtifact = true
 		}
-		if isCorpusPressureSafetyArtifact(artifact.Type) {
-			hasCorpusPressureSafetyArtifact = true
-		}
 		for key := range artifact.Metrics {
 			if name, ok := sideEffectMetricName(key); ok {
 				present[name] = true
+				if artifact.Type == "autonomy_readiness_report" {
+					autonomyPresent[name] = true
+				}
 			}
 		}
 	}
-	hasAutonomySafetyEvidence := hasRequiredSideEffectEvidence(present, []string{"destination_writes", "auto_accepts", "no_human_claims", "committed_private_artifacts"})
-	hasBaseEvidence := hasRequiredSideEffectEvidence(present, []string{"network_fetches", "hosted_telemetry_exports", "hosted_inference_calls", "destination_writes", "product_brain_writes", "tolaria_writes"})
-	if hasAutonomyReport && hasAutonomySafetyEvidence {
-		hasBaseEvidence = true
-	}
-	if hasCorpusPressureSafetyArtifact && hasRequiredSideEffectEvidence(present, []string{"hosted_telemetry_exports", "hosted_inference_calls", "destination_writes"}) {
-		hasBaseEvidence = true
-	}
+	hasAutonomySafetyEvidence := hasRequiredSideEffectEvidence(autonomyPresent, []string{"destination_writes", "auto_accepts", "no_human_claims", "committed_private_artifacts"})
+	hasBaseEvidence := hasRequiredSideEffectEvidence(present, []string{
+		"network_fetches", "hosted_telemetry_exports", "hosted_inference_calls", "browser_calls", "slack_api_calls",
+		"destination_writes", "product_brain_writes", "tolaria_writes", "auto_accepts", "no_human_claims", "committed_private_artifacts",
+	})
 	if !hasBaseEvidence {
 		return false
 	}
@@ -904,7 +943,7 @@ func writeSummary(outRoot string, summary Summary, protectedRoots []string) erro
 	if err := rejectSymlinkEscape(root, dir, protectedRoots); err != nil {
 		return err
 	}
-	summaryPath := filepath.Join(dir, "readback-summary.json")
+	summaryPath := filepath.Join(dir, ReadbackSummaryFile)
 	if err := rejectSymlinkEscape(root, summaryPath, protectedRoots); err != nil {
 		return err
 	}
@@ -1132,13 +1171,17 @@ func firstRefs(refs []string) []string {
 
 func containsDeniedString(value string) bool {
 	lower := strings.ToLower(value)
-	denied := []string{"/private/tmp/", "/users/", "young human club dropbox", "slack.com/archives", "xoxb-", "xoxp-", "api_key=", "bearer "}
+	denied := []string{"/private/tmp/", "/users/", "young human club dropbox", "slack.com/archives", "xoxb-", "xoxp-", "api_key=", "bearer ", "sk-", "openai_api_key", "posthog_api_key"}
 	for _, item := range denied {
 		if strings.Contains(lower, item) {
 			return true
 		}
 	}
 	return false
+}
+
+func ContainsDeniedString(value string) bool {
+	return containsDeniedString(value)
 }
 
 func containsDeniedRefString(ref string) bool {
