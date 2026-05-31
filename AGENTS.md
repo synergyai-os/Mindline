@@ -236,3 +236,53 @@ Before opening, updating, or merging a PR that changes Mindline product behavior
 - Run the relevant tests and readback/eval proof.
 - Capture durable learnings or corrections in PB.
 - Use LOOP reviewer sign-off when the change affects product direction, agent instructions, evaluation, trust, privacy, destination readiness, or autonomy claims.
+
+## Cursor Cloud specific instructions
+
+Mindline in this repository is a **Go 1.26.3 CLI** with **no `package.json`, Docker Compose, or long-running API server** by default. Full dry-run development needs only the Go toolchain and local filesystem paths for `--out` artifacts.
+
+### Prerequisites
+
+- **Go ≥ 1.26.3** (matches `go.mod`). Cloud VMs may already ship this; verify with `go version`.
+- **Optional:** Node.js only for `node scripts/setup-tolaria-vault.mjs` (Tolaria vault scaffolding; not required for core CLI).
+- **Optional:** Copy `.env.local.example` → `.env.local` for OpenAI (`--classifier llm`) or PostHog telemetry. Dry-run flows do not need these.
+
+### Linux test gotcha (`TMPDIR`)
+
+`internal/documents` link-enrichment tests use `t.TempDir()`. On Linux, temp dirs live under `/tmp/`, which Mindline treats as **non-generalizable runtime** and one test fails unless temp is outside `/tmp/`.
+
+Before running tests, use a workspace temp dir:
+
+```bash
+mkdir -p /workspace/.gotmp
+export TMPDIR=/workspace/.gotmp
+go test -count=1 ./...
+```
+
+Cloud agent shells should already export `TMPDIR=/workspace/.gotmp` via `~/.bashrc` after initial setup.
+
+### Commands (see also `README.md`)
+
+| Task | Command |
+|------|---------|
+| All tests | `go test -count=1 ./...` (with `TMPDIR` as above on Linux) |
+| Format check | `gofmt -l .` (empty output = clean) |
+| Build CLI | `go build -o bin/mindline ./cmd/mindline` |
+| Single candidate | `go run ./cmd/mindline process examples/candidates/publish-ready.json` |
+| Pipeline dry-run E2E | `go run ./cmd/mindline pipeline dry-run testdata/pipeline/inputs/pipeline-text-only.json --method basb-para-code --destination tolaria --out /tmp/mindline-e2e` |
+| Documents path (deterministic) | `documents decompose` → `documents structure` → `documents semantics` on prior `--out` dirs |
+| Semantic review UI (optional) | `documents judge-serve <semantic-judgment-dir>` on **127.0.0.1:8787** (loopback only) |
+
+### Services
+
+| Service | Required for default dev? |
+|---------|---------------------------|
+| Mindline CLI (`go run` / `bin/mindline`) | Yes |
+| Product Brain / `pb` CLI / Convex | No (dry-run only in-repo) |
+| Tolaria vault | No (adapter is dry-run; real vault path is blocked by default) |
+| OpenAI API | No (only for `--classifier llm`) |
+| PostHog | No |
+
+### Product Brain in Cloud Agent VMs
+
+Randy’s Mac paths in **Non-Negotiable Paths** do not exist on Linux cloud VMs. Do not expect `pb profile list` or Dropbox paths to work here unless the VM is explicitly configured with Product Brain. In-repo work (tests, dry-run pipeline, documents) does not require PB runtime access.
