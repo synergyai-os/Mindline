@@ -44,26 +44,27 @@ type SourceMeaningPreviewGuardrails struct {
 }
 
 type SourceMeaningPreviewSummary struct {
-	SchemaVersion         string                                  `json:"schema_version"`
-	CorpusID              string                                  `json:"corpus_id"`
-	SourceCount           int                                     `json:"source_count"`
-	ProcessedSourceCount  int                                     `json:"processed_source_count"`
-	SkippedSourceCount    int                                     `json:"skipped_source_count"`
-	ExcludedSourceCount   int                                     `json:"excluded_source_count"`
-	BlockedSourceCount    int                                     `json:"blocked_source_count"`
-	PreviewedSourceCount  int                                     `json:"previewed_source_count"`
-	AtomCount             int                                     `json:"atom_count"`
-	RelationCount         int                                     `json:"relation_count"`
-	MissingnessCounts     map[SourceMeaningPreviewMissingness]int `json:"missingness_counts"`
-	RoutingHintCounts     map[SourceMeaningPreviewRoutingHint]int `json:"routing_hint_counts"`
-	CandidateKindCounts   map[SemanticCandidateKind]int           `json:"candidate_kind_counts"`
-	RelationTypeCounts    map[CorpusRelationType]int              `json:"relation_type_counts"`
-	PreviewCoverageRatio  float64                                 `json:"preview_coverage_ratio"`
-	EvidenceCoverageRatio float64                                 `json:"evidence_coverage_ratio"`
-	RoutingCoverageRatio  float64                                 `json:"routing_coverage_ratio"`
-	Guardrails            SourceMeaningPreviewGuardrails          `json:"guardrails"`
-	ReportPath            string                                  `json:"report_path"`
-	Items                 []SourceMeaningPreviewItemSummary       `json:"items"`
+	SchemaVersion              string                                  `json:"schema_version"`
+	CorpusID                   string                                  `json:"corpus_id"`
+	SourceCount                int                                     `json:"source_count"`
+	ProcessedSourceCount       int                                     `json:"processed_source_count"`
+	SkippedSourceCount         int                                     `json:"skipped_source_count"`
+	ExcludedSourceCount        int                                     `json:"excluded_source_count"`
+	BlockedSourceCount         int                                     `json:"blocked_source_count"`
+	PreviewedSourceCount       int                                     `json:"previewed_source_count"`
+	AtomCount                  int                                     `json:"atom_count"`
+	EvidenceOrBlockerAtomCount int                                     `json:"evidence_or_blocker_atom_count"`
+	RelationCount              int                                     `json:"relation_count"`
+	MissingnessCounts          map[SourceMeaningPreviewMissingness]int `json:"missingness_counts"`
+	RoutingHintCounts          map[SourceMeaningPreviewRoutingHint]int `json:"routing_hint_counts"`
+	CandidateKindCounts        map[SemanticCandidateKind]int           `json:"candidate_kind_counts"`
+	RelationTypeCounts         map[CorpusRelationType]int              `json:"relation_type_counts"`
+	PreviewCoverageRatio       float64                                 `json:"preview_coverage_ratio"`
+	EvidenceCoverageRatio      float64                                 `json:"evidence_coverage_ratio"`
+	RoutingCoverageRatio       float64                                 `json:"routing_coverage_ratio"`
+	Guardrails                 SourceMeaningPreviewGuardrails          `json:"guardrails"`
+	ReportPath                 string                                  `json:"report_path"`
+	Items                      []SourceMeaningPreviewItemSummary       `json:"items"`
 }
 
 type SourceMeaningPreviewItemSummary struct {
@@ -489,6 +490,7 @@ func buildSourceMeaningSummary(pressure CorpusPressureSummary, graph CorpusGraph
 		summary.PreviewCoverageRatio = float64(summary.PreviewedSourceCount) / float64(pressure.ProcessedSourceCount)
 	}
 	if graph.AtomCount > 0 {
+		summary.EvidenceOrBlockerAtomCount = evidenceReady
 		summary.EvidenceCoverageRatio = float64(evidenceReady) / float64(graph.AtomCount)
 		summary.RoutingCoverageRatio = float64(routedAtoms) / float64(graph.AtomCount)
 	}
