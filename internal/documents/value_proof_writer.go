@@ -136,9 +136,13 @@ func valueProofPRSafeMarkdown(summary ValueProofSummary) string {
 	writeValueProofClaimStatus(&b, summary)
 	b.WriteString("\n## Source accounting\n\n")
 	for _, source := range sortedValueProofSources(summary.Sources) {
-		b.WriteString(fmt.Sprintf("- `%s`: kind=%s state=%s reason=%s atoms=%d relations=%d\n", source.SourceID, source.SourceKind, source.State, source.ReasonCode, source.AtomCount, source.RelationCount))
+		b.WriteString(fmt.Sprintf("- source_ref=`%s`: kind=%s state=%s reason=%s atoms=%d relations=%d\n", valueProofPRSafeSourceRef(source.SourceID), source.SourceKind, source.State, source.ReasonCode, source.AtomCount, source.RelationCount))
 	}
 	return b.String()
+}
+
+func valueProofPRSafeSourceRef(sourceID string) string {
+	return "source-" + shortHash(sourceID)
 }
 
 func writeValueProofRelationCounts(b *strings.Builder, counts map[CorpusRelationType]int) {

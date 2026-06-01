@@ -2,6 +2,8 @@ package documents
 
 import (
 	"fmt"
+	"math"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -68,11 +70,12 @@ func BuildValueProof(inputPath, outDir string, options ValueProofOptions) (Value
 	if options.PressureOptions.SemanticOptions.Classifier == "" {
 		options.PressureOptions.SemanticOptions.Classifier = SemanticClassifierDeterministic
 	}
+	options.PressureOptions.skipPaths = appendValueProofOutputSkipPaths(inputPath, outDir, options.PressureOptions.skipPaths)
 	pressure, graph, err := BuildCorpusPressure(inputPath, outDir, options.PressureOptions)
 	if err != nil {
 		return ValueProofSummary{}, err
 	}
-	meaning, items, err := BuildSourceMeaningPreview(outDir, outDir)
+	meaning, items, err := BuildSourceMeaningPreview(filepath.Join(outDir, CorpusPressureDirName), outDir)
 	if err != nil {
 		return ValueProofSummary{}, err
 	}
@@ -98,7 +101,7 @@ func buildValueProofSummary(pressure CorpusPressureSummary, graph CorpusGraphSum
 		AtomCount:              graph.AtomCount,
 		EvidenceReadyAtomCount: graph.EvidenceReadyAtomCount,
 		EvidenceReadyAtomRatio: valueProofRatio(graph.EvidenceReadyAtomCount, graph.AtomCount),
-		EvidenceOrBlockerCount: int(meaning.EvidenceCoverageRatio * float64(graph.AtomCount)),
+		EvidenceOrBlockerCount: valueProofEvidenceOrBlockerCount(meaning, graph.AtomCount),
 		EvidenceOrBlockerRatio: meaning.EvidenceCoverageRatio,
 		RelationCount:          graph.RelationCount,
 		RelationTypeCounts:     cloneSourceMeaningRelationTypeCounts(graph.RelationTypeCounts),
@@ -135,6 +138,35 @@ func buildValueProofSummary(pressure CorpusPressureSummary, graph CorpusGraphSum
 		})
 	}
 	return summary
+}
+
+func appendValueProofOutputSkipPaths(inputPath, outDir string, skipPaths []string) []string {
+	info, err := os.Stat(inputPath)
+	if err != nil || !info.IsDir() {
+		return skipPaths
+	}
+	absInput, err := filepath.Abs(inputPath)
+	if err != nil {
+		return skipPaths
+	}
+	absOut, err := filepath.Abs(outDir)
+	if err != nil {
+		return skipPaths
+	}
+	if !isInside(absInput, absOut) {
+		return skipPaths
+	}
+	return append(skipPaths,
+		filepath.Join(absOut, SourceMeaningPreviewDirName),
+		filepath.Join(absOut, ValueProofDirName),
+	)
+}
+
+func valueProofEvidenceOrBlockerCount(meaning SourceMeaningPreviewSummary, atomCount int) int {
+	if meaning.EvidenceOrBlockerAtomCount > 0 || atomCount == 0 {
+		return meaning.EvidenceOrBlockerAtomCount
+	}
+	return int(math.Round(meaning.EvidenceCoverageRatio * float64(atomCount)))
 }
 
 func valueProofRatio(numerator, denominator int) float64 {
