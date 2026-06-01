@@ -116,7 +116,7 @@ func valueProofPRSafeMarkdown(summary ValueProofSummary) string {
 	b.WriteString("# WP-37 PR-safe value proof summary\n\n")
 	b.WriteString("This summary intentionally excludes raw source text, private paths, prompts, completions, and destination payloads.\n\n")
 	b.WriteString(fmt.Sprintf("- Schema: `%s`\n", summary.SchemaVersion))
-	b.WriteString(fmt.Sprintf("- Corpus id: `%s`\n", summary.CorpusID))
+	b.WriteString(fmt.Sprintf("- corpus_ref=`%s`\n", valueProofPRSafeCorpusRef(summary.CorpusID)))
 	b.WriteString(fmt.Sprintf("- Sources accounted: %d of %d (%.2f)\n", summary.AccountedSourceCount, summary.SourceCount, summary.SourceAccountingRatio))
 	b.WriteString(fmt.Sprintf("- Graph evidence-ready atoms: %d of %d (%.2f)\n", summary.EvidenceReadyAtomCount, summary.AtomCount, summary.EvidenceReadyAtomRatio))
 	b.WriteString(fmt.Sprintf("- Reviewable atoms with evidence or explicit blocker: %d of %d (%.2f)\n", summary.EvidenceOrBlockerCount, summary.AtomCount, summary.EvidenceOrBlockerRatio))
@@ -143,6 +143,10 @@ func valueProofPRSafeMarkdown(summary ValueProofSummary) string {
 
 func valueProofPRSafeSourceRef(sourceID string) string {
 	return "source-" + shortHash(sourceID)
+}
+
+func valueProofPRSafeCorpusRef(corpusID string) string {
+	return "corpus-" + shortHash(corpusID)
 }
 
 func writeValueProofRelationCounts(b *strings.Builder, counts map[CorpusRelationType]int) {

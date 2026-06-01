@@ -112,7 +112,7 @@ func buildValueProofSummary(pressure CorpusPressureSummary, graph CorpusGraphSum
 		LocalValuePacketPath:   filepath.ToSlash(filepath.Join(ValueProofDirName, "local-value-packet.md")),
 		PRSafeSummaryPath:      filepath.ToSlash(filepath.Join(ValueProofDirName, "pr-safe-summary.md")),
 		ClaimStatuses: ValueProofClaimStatuses{
-			Safety:         "ready_for_proof_gate",
+			Safety:         valueProofSafetyStatus(pressure.Guardrails),
 			Improvement:    "blocked_missing_comparable_baseline",
 			Generalization: "blocked_missing_held_out_evidence",
 			DEC64:          "blocked_missing_held_out_98_percent_no_human_proof",
@@ -167,6 +167,23 @@ func valueProofEvidenceOrBlockerCount(meaning SourceMeaningPreviewSummary, atomC
 		return meaning.EvidenceOrBlockerAtomCount
 	}
 	return int(math.Round(meaning.EvidenceCoverageRatio * float64(atomCount)))
+}
+
+func valueProofSafetyStatus(guardrails CorpusPressureGuardrailCounters) string {
+	if guardrails.NetworkFetches > 0 ||
+		guardrails.HostedTelemetryExports > 0 ||
+		guardrails.HostedInferenceCalls > 0 ||
+		guardrails.BrowserCalls > 0 ||
+		guardrails.SlackAPICalls > 0 ||
+		guardrails.DestinationWrites > 0 ||
+		guardrails.ProductBrainWrites > 0 ||
+		guardrails.TolariaWrites > 0 ||
+		guardrails.AutoAccepts > 0 ||
+		guardrails.NoHumanClaims > 0 ||
+		guardrails.CommittedPrivateArtifacts > 0 {
+		return "blocked_nonzero_guardrail_counters"
+	}
+	return "ready_for_proof_gate"
 }
 
 func valueProofRatio(numerator, denominator int) float64 {

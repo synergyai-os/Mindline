@@ -109,6 +109,51 @@ func TestValueProofPRSafeSummaryRedactsSourceIdentifiers(t *testing.T) {
 	}
 }
 
+func TestValueProofPRSafeSummaryRedactsCorpusID(t *testing.T) {
+	summary := ValueProofSummary{
+		SchemaVersion: ValueProofSchemaVersion,
+		CorpusID:      "customer-alpha-workspace",
+	}
+	markdown := valueProofPRSafeMarkdown(summary)
+	if strings.Contains(markdown, "customer-alpha-workspace") {
+		t.Fatalf("PR-safe summary leaked corpus id:\n%s", markdown)
+	}
+	if !strings.Contains(markdown, "corpus_ref=") {
+		t.Fatalf("PR-safe summary missing stable redacted corpus ref:\n%s", markdown)
+	}
+}
+
+func TestValueProofBlocksSafetyStatusWhenGuardrailsAreNonzero(t *testing.T) {
+	pressure := CorpusPressureSummary{
+		SourceCount:          1,
+		ProcessedSourceCount: 1,
+		Guardrails: CorpusPressureGuardrailCounters{
+			HostedInferenceCalls: 1,
+		},
+	}
+	summary := buildValueProofSummary(pressure, CorpusGraphSummary{}, SourceMeaningPreviewSummary{})
+	if summary.ClaimStatuses.Safety == "ready_for_proof_gate" {
+		t.Fatalf("expected safety to be blocked for nonzero guardrails: %+v", summary.ClaimStatuses)
+	}
+}
+
+func TestValueProofLocalPacketSeparatesMeaningReportFromFirstPreview(t *testing.T) {
+	summary := ValueProofSummary{
+		Sources: []ValueProofSourceSummary{{
+			SourceID:    "source-one",
+			State:       CorpusPressureSourceProcessed,
+			PreviewPath: "source-meaning-preview/sources/source-one.md",
+		}},
+	}
+	markdown := valueProofLocalMarkdown(summary, nil)
+	if strings.Contains(markdown, "meaning-report.md`- `source-one`") {
+		t.Fatalf("source preview was concatenated with meaning report bullet:\n%s", markdown)
+	}
+	if !strings.Contains(markdown, "meaning-report.md`\n- `source-one`") {
+		t.Fatalf("source preview did not start on its own line:\n%s", markdown)
+	}
+}
+
 func copyValueProofFixture(target string) error {
 	sourceRoot := filepath.Join("..", "..", "testdata", "documents", "value-proof")
 	return filepath.WalkDir(sourceRoot, func(path string, entry os.DirEntry, err error) error {
