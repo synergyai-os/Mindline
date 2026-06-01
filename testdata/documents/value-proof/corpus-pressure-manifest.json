@@ -1,0 +1,26 @@
+{
+  "schema_version": "corpus-pressure-manifest/v0.1",
+  "corpus_id": "wp37-mixed-source-value-proof",
+  "sources": [
+    {
+      "source_id": "markdown-source-note",
+      "source_kind": "markdown",
+      "path": "markdown-source-note.md"
+    },
+    {
+      "source_id": "meeting-transcript",
+      "source_kind": "markdown",
+      "path": "meeting-transcript.md"
+    },
+    {
+      "source_id": "notion-process-doc",
+      "source_kind": "markdown",
+      "path": "notion-process-doc.md"
+    },
+    {
+      "source_id": "slack-intake-thread",
+      "source_kind": "markdown",
+      "path": "slack-intake-thread.md"
+    }
+  ]
+}
