@@ -88,6 +88,10 @@ func readbackFor(inputRoot, proofDir string, options Options) (evalreadback.Summ
 		if err != nil {
 			return evalreadback.Summary{}, "", err
 		}
+		summary, err = evalreadback.ApplyBaseline(summary, options.BaselineRoot)
+		if err != nil {
+			return evalreadback.Summary{}, "", err
+		}
 		return summary, safeExistingReadbackRef(summaryPath), nil
 	}
 	readbackOut := filepath.Join(proofDir, "readback")

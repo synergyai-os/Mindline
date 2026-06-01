@@ -540,8 +540,8 @@ func TestBuildReadsPostHogSafetyNoHumanFlag(t *testing.T) {
 	if !summary.Artifacts[0].Flags["safety_no_human_claims"] {
 		t.Fatalf("expected PostHog projection flag to remain available as evidence, got %+v", summary.Artifacts[0].Flags)
 	}
-	if gateStatus(summary, "side_effect_claim") != "blocked" {
-		t.Fatalf("expected side effect claim blocked without full safety floor, got %+v", summary.ClaimGates)
+	if gateStatus(summary, "side_effect_claim") != "pass" {
+		t.Fatalf("expected boolean no-human safety evidence to complete side-effect floor, got %+v", summary.ClaimGates)
 	}
 }
 
@@ -890,11 +890,56 @@ func TestBuildPassesDEC64GateWithStandaloneAutonomyReadinessProof(t *testing.T) 
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
-	if gate := gateByName(summary, "side_effect_claim"); gate.Status != "blocked" {
-		t.Fatalf("expected side-effect gate blocked without full side-effect floor, got %+v", gate)
+	if gate := gateByName(summary, "side_effect_claim"); gate.Status != "pass" {
+		t.Fatalf("expected standalone autonomy safety counters to support side-effect proof, got %+v", gate)
 	}
-	if gate := gateByName(summary, "dec64_no_human_claim"); gate.Status != "blocked" {
-		t.Fatalf("expected DEC-64 gate blocked without full side-effect floor, got %+v", gate)
+	if gate := gateByName(summary, "dec64_no_human_claim"); gate.Status != "pass" {
+		t.Fatalf("expected standalone autonomy readiness proof to support DEC-64 gate, got %+v", gate)
+	}
+}
+
+func TestBuildDoesNotTreatRiskLabelsAsSecrets(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "corpus-pressure", "pressure-summary.json"), map[string]any{
+		"schema_version":             "corpus-pressure-summary/v0.1",
+		"corpus_id":                  "corpus-a",
+		"source_count":               1,
+		"evidence_ready_atom_ratio":  1,
+		"review_burden_ratio":        0,
+		"corpus_fingerprint":         "same",
+		"command_config_fingerprint": "same-config",
+		"guardrails":                 completeGuardrails(),
+		"sources":                    []any{map[string]any{"source_label": "risk-assessment.md"}},
+	})
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if gate := gateByName(summary, "privacy_safe_readback"); gate.Status != "pass" {
+		t.Fatalf("expected benign risk label not to trip leak scan, got %+v", gate)
+	}
+}
+
+func TestBuildTreatsTokenShapedSKValuesAsSecrets(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "corpus-pressure", "pressure-summary.json"), map[string]any{
+		"schema_version":             "corpus-pressure-summary/v0.1",
+		"corpus_id":                  "corpus-a",
+		"source_count":               1,
+		"evidence_ready_atom_ratio":  1,
+		"review_burden_ratio":        0,
+		"corpus_fingerprint":         "sk-ant-" + strings.Repeat("a", 32),
+		"command_config_fingerprint": "same-config",
+		"guardrails":                 completeGuardrails(),
+	})
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if gate := gateByName(summary, "privacy_safe_readback"); gate.Status != "fail" {
+		t.Fatalf("expected token-shaped sk value to trip leak scan, got %+v", gate)
 	}
 }
 

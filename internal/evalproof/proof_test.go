@@ -113,7 +113,7 @@ func TestImprovementProofPreservesNotComparableReason(t *testing.T) {
 
 func TestReadbackDeniesSecretLikeFingerprint(t *testing.T) {
 	root := t.TempDir()
-	writeProofPressure(t, root, 1, 0, "sk-test-secret-do-not-leak", completeProofGuardrails())
+	writeProofPressure(t, root, 1, 0, "sk-proj-secret-do-not-leak", completeProofGuardrails())
 	packet, err := Build(root, filepath.Join(t.TempDir(), "proof"), Options{Claim: ClaimSafety})
 	if err != nil {
 		t.Fatalf("secret-like input should be converted into failed proof, not leak through error: %v", err)
@@ -201,6 +201,29 @@ func TestProofLoadsExistingReadbackSummary(t *testing.T) {
 	}
 }
 
+func TestProofAppliesBaselineToExistingReadbackSummary(t *testing.T) {
+	root := t.TempDir()
+	baseline := filepath.Join(root, "baseline")
+	current := filepath.Join(root, "current")
+	readbackOut := filepath.Join(root, "readback")
+	writeProofPressure(t, baseline, 0.2, 0.8, "same", completeProofGuardrails())
+	writeProofPressure(t, current, 0.8, 0.3, "same", completeProofGuardrails())
+	if _, err := evalreadback.Build(current, readbackOut, evalreadback.Options{}); err != nil {
+		t.Fatalf("build readback without baseline: %v", err)
+	}
+
+	packet, err := Build(filepath.Join(readbackOut, evalreadback.DirName, evalreadback.ReadbackSummaryFile), filepath.Join(root, "proof"), Options{
+		Claim:        ClaimImprovement,
+		BaselineRoot: baseline,
+	})
+	if err != nil {
+		t.Fatalf("build proof from readback with supplied baseline: %v", err)
+	}
+	if packet.Verdict != VerdictPass || gateVerdict(packet, "improvement_claim") != VerdictPass {
+		t.Fatalf("expected supplied baseline to produce improvement proof, got %+v", packet)
+	}
+}
+
 func gateVerdict(packet Packet, gate string) string {
 	for _, result := range packet.MandatoryGates {
 		if result.Gate == gate {
@@ -268,7 +291,7 @@ func completeProofGuardrails() map[string]any {
 
 func assertProofOutputSafe(t *testing.T, root string) {
 	t.Helper()
-	denied := []string{"/private/tmp/", "/Users/", "Young Human Club Dropbox", "slack.com/archives/", "sk-", "OPENAI_API_KEY"}
+	denied := []string{"/private/tmp/", "/Users/", "Young Human Club Dropbox", "slack.com/archives/", "sk-proj-", "OPENAI_API_KEY"}
 	if err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err

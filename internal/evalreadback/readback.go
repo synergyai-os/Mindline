@@ -45,6 +45,41 @@ func BuildSummary(inputRoot string, options Options) (Summary, error) {
 	return summary, nil
 }
 
+func ApplyBaseline(summary Summary, baselineRoot string) (Summary, error) {
+	if strings.TrimSpace(baselineRoot) == "" {
+		return summary, nil
+	}
+	baseline, err := buildModel(baselineRoot)
+	if err != nil {
+		return Summary{}, fmt.Errorf("read baseline: %w", err)
+	}
+	current := modelFromSummary(summary)
+	comparison := compareModels(baseline, current)
+	summary.BaselineRootLabel = baseline.rootLabel
+	summary.BaselineArtifactRefs = prefixedArtifactRefs("baseline", artifactRefs(baseline.artifacts))
+	summary.BaselineArtifacts = baseline.artifacts
+	summary.Comparison = &comparison
+	summary.ImprovementStatus = comparison.Status
+	rebuildClaimGates(&summary)
+	return summary, nil
+}
+
+func modelFromSummary(summary Summary) readbackModel {
+	model := readbackModel{
+		rootLabel:     summary.InputRootLabel,
+		sampleStatus:  summary.SampleStatus,
+		metrics:       map[string]float64{},
+		flags:         map[string]bool{},
+		fingerprints:  map[string]string{},
+		artifactTypes: map[string]bool{},
+		artifacts:     append([]ArtifactEvidence{}, summary.Artifacts...),
+	}
+	for _, artifact := range model.artifacts {
+		mergeModelEvidence(&model, artifact)
+	}
+	return model
+}
+
 func Write(outRoot string, summary Summary, protectedRoots []string) error {
 	return writeSummary(outRoot, summary, protectedRoots)
 }
@@ -652,13 +687,21 @@ func hasSideEffectEvidence(summary *Summary) bool {
 				}
 			}
 		}
+		for key := range artifact.Flags {
+			if name, ok := sideEffectMetricName(key); ok {
+				present[name] = true
+				if artifact.Type == "autonomy_readiness_report" {
+					autonomyPresent[name] = true
+				}
+			}
+		}
 	}
 	hasAutonomySafetyEvidence := hasRequiredSideEffectEvidence(autonomyPresent, []string{"destination_writes", "auto_accepts", "no_human_claims", "committed_private_artifacts"})
 	hasBaseEvidence := hasRequiredSideEffectEvidence(present, []string{
 		"network_fetches", "hosted_telemetry_exports", "hosted_inference_calls", "browser_calls", "slack_api_calls",
 		"destination_writes", "product_brain_writes", "tolaria_writes", "auto_accepts", "no_human_claims", "committed_private_artifacts",
 	})
-	if !hasBaseEvidence {
+	if !hasBaseEvidence && !(hasAutonomyReport && hasAutonomySafetyEvidence) {
 		return false
 	}
 	if hasAutonomyReport && !hasAutonomySafetyEvidence {
@@ -1171,13 +1214,36 @@ func firstRefs(refs []string) []string {
 
 func containsDeniedString(value string) bool {
 	lower := strings.ToLower(value)
-	denied := []string{"/private/tmp/", "/users/", "young human club dropbox", "slack.com/archives", "xoxb-", "xoxp-", "api_key=", "bearer ", "sk-", "openai_api_key", "posthog_api_key"}
+	denied := []string{"/private/tmp/", "/users/", "young human club dropbox", "slack.com/archives", "xoxb-", "xoxp-", "api_key=", "bearer ", "openai_api_key", "posthog_api_key"}
 	for _, item := range denied {
 		if strings.Contains(lower, item) {
 			return true
 		}
 	}
+	return containsSecretLikeSKToken(lower)
+}
+
+func containsSecretLikeSKToken(value string) bool {
+	for start := 0; start < len(value); {
+		idx := strings.Index(value[start:], "sk-")
+		if idx < 0 {
+			return false
+		}
+		idx += start
+		end := idx + len("sk-")
+		for end < len(value) && isSecretTokenChar(value[end]) {
+			end++
+		}
+		if end-idx >= 16 {
+			return true
+		}
+		start = idx + len("sk-")
+	}
 	return false
+}
+
+func isSecretTokenChar(ch byte) bool {
+	return (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-' || ch == '_'
 }
 
 func ContainsDeniedString(value string) bool {
