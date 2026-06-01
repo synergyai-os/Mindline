@@ -8,8 +8,16 @@
   "corpus_fingerprint": "fixture-corpus-v1",
   "command_config_fingerprint": "deterministic-v1",
   "guardrails": {
+    "network_fetches": 0,
+    "browser_calls": 0,
+    "slack_api_calls": 0,
     "hosted_inference_calls": 0,
     "hosted_telemetry_exports": 0,
-    "destination_writes": 0
+    "destination_writes": 0,
+    "product_brain_writes": 0,
+    "tolaria_writes": 0,
+    "auto_accepts": 0,
+    "no_human_claims": 0,
+    "committed_private_artifacts": 0
   }
 }

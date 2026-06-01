@@ -187,7 +187,7 @@ func TestBuildHonorsHeldOutArtifactOutsideTestdata(t *testing.T) {
 		"corpus_fingerprint":         "held-out-corpus",
 		"command_config_fingerprint": "held-out-config",
 		"held_out":                   true,
-		"guardrails":                 map[string]any{"destination_writes": 0, "hosted_telemetry_exports": 0, "hosted_inference_calls": 0},
+		"guardrails":                 completeGuardrails(),
 	})
 
 	summary, err := Build(root, filepath.Join(root, "out"), Options{})
@@ -218,7 +218,7 @@ func TestBuildAcceptsCorpusAcceptanceGuardrailsAsCompleteSideEffectEvidence(t *t
 		"held_out":                   true,
 		"suite_valid":                true,
 		"dec64_eligible":             true,
-		"guardrails":                 map[string]any{"destination_writes": 0, "hosted_telemetry_exports": 0, "hosted_inference_calls": 0},
+		"guardrails":                 completeGuardrails(),
 	})
 
 	summary, err := Build(root, filepath.Join(root, "out"), Options{})
@@ -246,7 +246,7 @@ func TestBuildBlocksDEC64ClaimWhenReadbackEvidenceUnsafe(t *testing.T) {
 		"held_out":                   true,
 		"suite_valid":                true,
 		"dec64_eligible":             true,
-		"guardrails":                 map[string]any{"destination_writes": 0, "hosted_telemetry_exports": 0, "hosted_inference_calls": 0},
+		"guardrails":                 completeGuardrails(),
 	})
 	writeRaw(t, filepath.Join(root, "trace", "trace-summary.json"), `{"schema_version":"mindline-trace-summary/v0.1","input_path":"/private/tmp/source.json"}`)
 
@@ -278,7 +278,7 @@ func TestBuildAcceptsCorpusPressureGuardrailsAsCompleteSideEffectEvidence(t *tes
 		"review_burden_ratio":        0,
 		"corpus_fingerprint":         "corpus-a",
 		"command_config_fingerprint": "config-a",
-		"guardrails":                 map[string]any{"destination_writes": 0, "hosted_telemetry_exports": 0, "hosted_inference_calls": 0},
+		"guardrails":                 completeGuardrails(),
 	})
 
 	summary, err := Build(root, filepath.Join(root, "out"), Options{})
@@ -541,7 +541,7 @@ func TestBuildReadsPostHogSafetyNoHumanFlag(t *testing.T) {
 		t.Fatalf("expected PostHog projection flag to remain available as evidence, got %+v", summary.Artifacts[0].Flags)
 	}
 	if gateStatus(summary, "side_effect_claim") != "pass" {
-		t.Fatalf("expected side effect claim to pass on projection flag alone, got %+v", summary.ClaimGates)
+		t.Fatalf("expected boolean no-human safety evidence to complete side-effect floor, got %+v", summary.ClaimGates)
 	}
 }
 
@@ -891,10 +891,78 @@ func TestBuildPassesDEC64GateWithStandaloneAutonomyReadinessProof(t *testing.T) 
 		t.Fatalf("build: %v", err)
 	}
 	if gate := gateByName(summary, "side_effect_claim"); gate.Status != "pass" {
-		t.Fatalf("expected side-effect gate pass from standalone autonomy safety counters, got %+v", gate)
+		t.Fatalf("expected standalone autonomy safety counters to support side-effect proof, got %+v", gate)
 	}
 	if gate := gateByName(summary, "dec64_no_human_claim"); gate.Status != "pass" {
-		t.Fatalf("expected DEC-64 gate pass from standalone autonomy readiness proof, got %+v", gate)
+		t.Fatalf("expected standalone autonomy readiness proof to support DEC-64 gate, got %+v", gate)
+	}
+}
+
+func TestBuildDoesNotTreatRiskLabelsAsSecrets(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "corpus-pressure", "pressure-summary.json"), map[string]any{
+		"schema_version":             "corpus-pressure-summary/v0.1",
+		"corpus_id":                  "corpus-a",
+		"source_count":               1,
+		"evidence_ready_atom_ratio":  1,
+		"review_burden_ratio":        0,
+		"corpus_fingerprint":         "same",
+		"command_config_fingerprint": "same-config",
+		"guardrails":                 completeGuardrails(),
+		"sources":                    []any{map[string]any{"source_label": "risk-assessment.md"}},
+	})
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if gate := gateByName(summary, "privacy_safe_readback"); gate.Status != "pass" {
+		t.Fatalf("expected benign risk label not to trip leak scan, got %+v", gate)
+	}
+}
+
+func TestBuildDoesNotTreatLongRiskAssessmentLabelsAsSecrets(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "corpus-pressure", "pressure-summary.json"), map[string]any{
+		"schema_version":             "corpus-pressure-summary/v0.1",
+		"corpus_id":                  "corpus-a",
+		"source_count":               1,
+		"evidence_ready_atom_ratio":  1,
+		"review_burden_ratio":        0,
+		"corpus_fingerprint":         "same",
+		"command_config_fingerprint": "same-config",
+		"guardrails":                 completeGuardrails(),
+		"sources":                    []any{map[string]any{"source_label": "risk-assessment-framework.md"}},
+	})
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if gate := gateByName(summary, "privacy_safe_readback"); gate.Status != "pass" {
+		t.Fatalf("expected long benign risk label not to trip leak scan, got %+v", gate)
+	}
+}
+
+func TestBuildTreatsTokenShapedSKValuesAsSecrets(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "corpus-pressure", "pressure-summary.json"), map[string]any{
+		"schema_version":             "corpus-pressure-summary/v0.1",
+		"corpus_id":                  "corpus-a",
+		"source_count":               1,
+		"evidence_ready_atom_ratio":  1,
+		"review_burden_ratio":        0,
+		"corpus_fingerprint":         "sk-ant-" + strings.Repeat("a", 32),
+		"command_config_fingerprint": "same-config",
+		"guardrails":                 completeGuardrails(),
+	})
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if gate := gateByName(summary, "privacy_safe_readback"); gate.Status != "fail" {
+		t.Fatalf("expected token-shaped sk value to trip leak scan, got %+v", gate)
 	}
 }
 
@@ -1284,14 +1352,17 @@ func writePressureWithGuardrails(t *testing.T, root string, evidenceReady, revie
 
 func completeGuardrails() map[string]any {
 	return map[string]any{
-		"network_fetches":          0,
-		"hosted_telemetry_exports": 0,
-		"hosted_inference_calls":   0,
-		"browser_calls":            0,
-		"slack_api_calls":          0,
-		"destination_writes":       0,
-		"product_brain_writes":     0,
-		"tolaria_writes":           0,
+		"network_fetches":             0,
+		"hosted_telemetry_exports":    0,
+		"hosted_inference_calls":      0,
+		"browser_calls":               0,
+		"slack_api_calls":             0,
+		"destination_writes":          0,
+		"product_brain_writes":        0,
+		"tolaria_writes":              0,
+		"auto_accepts":                0,
+		"no_human_claims":             0,
+		"committed_private_artifacts": 0,
 	}
 }
 

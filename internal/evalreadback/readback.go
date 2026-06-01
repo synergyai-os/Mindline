@@ -13,6 +13,17 @@ import (
 )
 
 func Build(inputRoot, outRoot string, options Options) (Summary, error) {
+	summary, err := BuildSummary(inputRoot, options)
+	if err != nil {
+		return Summary{}, err
+	}
+	if err := Write(outRoot, summary, options.ProtectedRoots); err != nil {
+		return Summary{}, err
+	}
+	return summary, nil
+}
+
+func BuildSummary(inputRoot string, options Options) (Summary, error) {
 	model, err := buildModel(inputRoot)
 	if err != nil {
 		return Summary{}, err
@@ -31,10 +42,99 @@ func Build(inputRoot, outRoot string, options Options) (Summary, error) {
 		summary.ImprovementStatus = comparison.Status
 		rebuildClaimGates(&summary)
 	}
-	if err := writeSummary(outRoot, summary, options.ProtectedRoots); err != nil {
+	return summary, nil
+}
+
+func ApplyBaseline(summary Summary, baselineRoot string) (Summary, error) {
+	summary = RefreshSummary(summary)
+	if strings.TrimSpace(baselineRoot) == "" {
+		return summary, nil
+	}
+	baseline, err := buildModel(baselineRoot)
+	if err != nil {
+		return Summary{}, fmt.Errorf("read baseline: %w", err)
+	}
+	current := modelFromSummary(summary)
+	comparison := compareModels(baseline, current)
+	summary.BaselineRootLabel = baseline.rootLabel
+	summary.BaselineArtifactRefs = prefixedArtifactRefs("baseline", artifactRefs(baseline.artifacts))
+	summary.BaselineArtifacts = baseline.artifacts
+	summary.Comparison = &comparison
+	summary.ImprovementStatus = comparison.Status
+	rebuildClaimGates(&summary)
+	return summary, nil
+}
+
+func RefreshSummary(summary Summary) Summary {
+	current := modelFromSummary(summary)
+	refreshed := summarize(current)
+	if len(summary.BaselineArtifacts) == 0 {
+		if summary.Comparison != nil {
+			refreshed.BaselineRootLabel = summary.BaselineRootLabel
+			refreshed.BaselineArtifactRefs = append([]string{}, summary.BaselineArtifactRefs...)
+			refreshed.BaselineArtifacts = append([]ArtifactEvidence{}, summary.BaselineArtifacts...)
+			comparison := *summary.Comparison
+			refreshed.Comparison = &comparison
+			refreshed.ImprovementStatus = summary.ImprovementStatus
+			rebuildClaimGates(&refreshed)
+		}
+		return refreshed
+	}
+	baseline := modelFromArtifacts(summary.BaselineRootLabel, summary.SampleStatus, summary.BaselineArtifacts)
+	comparison := compareModels(baseline, current)
+	refreshed.BaselineRootLabel = summary.BaselineRootLabel
+	refreshed.BaselineArtifactRefs = prefixedArtifactRefs("baseline", artifactRefs(baseline.artifacts))
+	refreshed.BaselineArtifacts = baseline.artifacts
+	refreshed.Comparison = &comparison
+	refreshed.ImprovementStatus = comparison.Status
+	rebuildClaimGates(&refreshed)
+	return refreshed
+}
+
+func modelFromSummary(summary Summary) readbackModel {
+	return modelFromArtifacts(summary.InputRootLabel, summary.SampleStatus, summary.Artifacts)
+}
+
+func modelFromArtifacts(rootLabel, sampleStatus string, artifacts []ArtifactEvidence) readbackModel {
+	model := readbackModel{
+		rootLabel:     rootLabel,
+		sampleStatus:  sampleStatus,
+		metrics:       map[string]float64{},
+		flags:         map[string]bool{},
+		fingerprints:  map[string]string{},
+		artifactTypes: map[string]bool{},
+		artifacts:     append([]ArtifactEvidence{}, artifacts...),
+	}
+	for _, artifact := range model.artifacts {
+		mergeModelEvidence(&model, artifact)
+	}
+	return model
+}
+
+func Write(outRoot string, summary Summary, protectedRoots []string) error {
+	return writeSummary(outRoot, summary, protectedRoots)
+}
+
+func LoadSummary(path string) (Summary, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
 		return Summary{}, err
 	}
+	if containsDeniedString(string(data)) {
+		return Summary{}, errors.New("readback summary contains unsafe private or secret pattern")
+	}
+	var summary Summary
+	if err := json.Unmarshal(data, &summary); err != nil {
+		return Summary{}, err
+	}
+	if summary.SchemaVersion != SummarySchemaVersion {
+		return Summary{}, fmt.Errorf("unsupported readback summary schema: %s", summary.SchemaVersion)
+	}
 	return summary, nil
+}
+
+func ValidateOutputPath(root, candidate string, protectedRoots []string) error {
+	return rejectSymlinkEscape(root, candidate, protectedRoots)
 }
 
 type readbackModel struct {
@@ -329,10 +429,15 @@ func extractEvidence(raw map[string]any, artifact *ArtifactEvidence) {
 }
 
 func extractGuardrails(guardrails map[string]any, artifact *ArtifactEvidence) {
-	for _, key := range []string{"network_fetches", "hosted_telemetry_exports", "hosted_inference_calls", "browser_calls", "slack_api_calls", "destination_writes", "product_brain_writes", "tolaria_writes"} {
+	for _, key := range []string{"network_fetches", "hosted_telemetry_exports", "hosted_inference_calls", "browser_calls", "slack_api_calls", "destination_writes", "product_brain_writes", "tolaria_writes", "auto_accepts", "committed_private_artifacts"} {
 		if value, ok := numberValue(guardrails[key]); ok {
 			artifact.Metrics["guardrail_"+key] = value
 		}
+	}
+	if value, ok := numberValue(guardrails["no_human_claims"]); ok {
+		artifact.Metrics["guardrail_no_human_claims"] = value
+	} else if value, ok := boolValue(guardrails["no_human_claims"]); ok {
+		artifact.Flags["guardrail_no_human_claims"] = value
 	}
 }
 
@@ -368,13 +473,13 @@ func mergeModelEvidence(model *readbackModel, artifact ArtifactEvidence) {
 			model.guardrails.ProductBrainWrites = maxInt(model.guardrails.ProductBrainWrites, int(value))
 		case "guardrail_tolaria_writes", "safety_tolaria_writes":
 			model.guardrails.TolariaWrites = maxInt(model.guardrails.TolariaWrites, int(value))
-		case "safety_auto_accepts":
+		case "guardrail_auto_accepts", "safety_auto_accepts":
 			model.guardrails.AutoAccepts = maxInt(model.guardrails.AutoAccepts, int(value))
-		case "safety_no_human_claims":
+		case "guardrail_no_human_claims", "safety_no_human_claims":
 			if value > 0 {
 				model.guardrails.NoHumanClaims = true
 			}
-		case "safety_committed_private_artifacts":
+		case "guardrail_committed_private_artifacts", "safety_committed_private_artifacts":
 			model.guardrails.CommittedPrivateArtifacts = maxInt(model.guardrails.CommittedPrivateArtifacts, int(value))
 		}
 	}
@@ -386,6 +491,9 @@ func mergeModelEvidence(model *readbackModel, artifact ArtifactEvidence) {
 			model.flags[key] = true
 		} else if _, exists := model.flags[key]; !exists {
 			model.flags[key] = false
+		}
+		if key == "guardrail_no_human_claims" && value {
+			model.guardrails.NoHumanClaims = true
 		}
 	}
 	for key, value := range artifact.Fingerprints {
@@ -592,9 +700,9 @@ func unsupportedArtifactRefs(summary *Summary) []string {
 
 func hasSideEffectEvidence(summary *Summary) bool {
 	present := map[string]bool{}
+	autonomyPresent := map[string]bool{}
 	hasAutonomyReport := false
 	hasLinkEnrichmentSafetyArtifact := false
-	hasCorpusPressureSafetyArtifact := false
 	for _, artifact := range summary.Artifacts {
 		if artifact.Type == "autonomy_readiness_report" {
 			hasAutonomyReport = true
@@ -602,24 +710,29 @@ func hasSideEffectEvidence(summary *Summary) bool {
 		if isLinkEnrichmentSafetyArtifact(artifact.Type) {
 			hasLinkEnrichmentSafetyArtifact = true
 		}
-		if isCorpusPressureSafetyArtifact(artifact.Type) {
-			hasCorpusPressureSafetyArtifact = true
-		}
 		for key := range artifact.Metrics {
 			if name, ok := sideEffectMetricName(key); ok {
 				present[name] = true
+				if artifact.Type == "autonomy_readiness_report" {
+					autonomyPresent[name] = true
+				}
+			}
+		}
+		for key := range artifact.Flags {
+			if name, ok := sideEffectMetricName(key); ok {
+				present[name] = true
+				if artifact.Type == "autonomy_readiness_report" {
+					autonomyPresent[name] = true
+				}
 			}
 		}
 	}
-	hasAutonomySafetyEvidence := hasRequiredSideEffectEvidence(present, []string{"destination_writes", "auto_accepts", "no_human_claims", "committed_private_artifacts"})
-	hasBaseEvidence := hasRequiredSideEffectEvidence(present, []string{"network_fetches", "hosted_telemetry_exports", "hosted_inference_calls", "destination_writes", "product_brain_writes", "tolaria_writes"})
-	if hasAutonomyReport && hasAutonomySafetyEvidence {
-		hasBaseEvidence = true
-	}
-	if hasCorpusPressureSafetyArtifact && hasRequiredSideEffectEvidence(present, []string{"hosted_telemetry_exports", "hosted_inference_calls", "destination_writes"}) {
-		hasBaseEvidence = true
-	}
-	if !hasBaseEvidence {
+	hasAutonomySafetyEvidence := hasRequiredSideEffectEvidence(autonomyPresent, []string{"destination_writes", "auto_accepts", "no_human_claims", "committed_private_artifacts"})
+	hasBaseEvidence := hasRequiredSideEffectEvidence(present, []string{
+		"network_fetches", "hosted_telemetry_exports", "hosted_inference_calls", "browser_calls", "slack_api_calls",
+		"destination_writes", "product_brain_writes", "tolaria_writes", "auto_accepts", "no_human_claims", "committed_private_artifacts",
+	})
+	if !hasBaseEvidence && !(hasAutonomyReport && hasAutonomySafetyEvidence) {
 		return false
 	}
 	if hasAutonomyReport && !hasAutonomySafetyEvidence {
@@ -904,7 +1017,7 @@ func writeSummary(outRoot string, summary Summary, protectedRoots []string) erro
 	if err := rejectSymlinkEscape(root, dir, protectedRoots); err != nil {
 		return err
 	}
-	summaryPath := filepath.Join(dir, "readback-summary.json")
+	summaryPath := filepath.Join(dir, ReadbackSummaryFile)
 	if err := rejectSymlinkEscape(root, summaryPath, protectedRoots); err != nil {
 		return err
 	}
@@ -1132,13 +1245,48 @@ func firstRefs(refs []string) []string {
 
 func containsDeniedString(value string) bool {
 	lower := strings.ToLower(value)
-	denied := []string{"/private/tmp/", "/users/", "young human club dropbox", "slack.com/archives", "xoxb-", "xoxp-", "api_key=", "bearer "}
+	denied := []string{"/private/tmp/", "/users/", "young human club dropbox", "slack.com/archives", "xoxb-", "xoxp-", "api_key=", "bearer ", "openai_api_key", "posthog_api_key"}
 	for _, item := range denied {
 		if strings.Contains(lower, item) {
 			return true
 		}
 	}
+	return containsSecretLikeSKToken(lower)
+}
+
+func containsSecretLikeSKToken(value string) bool {
+	for start := 0; start < len(value); {
+		idx := strings.Index(value[start:], "sk-")
+		if idx < 0 {
+			return false
+		}
+		idx += start
+		if idx > 0 && isASCIIAlphaNumeric(value[idx-1]) {
+			start = idx + len("sk-")
+			continue
+		}
+		end := idx + len("sk-")
+		for end < len(value) && isSecretTokenChar(value[end]) {
+			end++
+		}
+		if end-idx >= 16 {
+			return true
+		}
+		start = idx + len("sk-")
+	}
 	return false
+}
+
+func isSecretTokenChar(ch byte) bool {
+	return (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-' || ch == '_'
+}
+
+func isASCIIAlphaNumeric(ch byte) bool {
+	return (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')
+}
+
+func ContainsDeniedString(value string) bool {
+	return containsDeniedString(value)
 }
 
 func containsDeniedRefString(ref string) bool {

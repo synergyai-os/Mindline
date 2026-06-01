@@ -72,6 +72,51 @@ func TestEvalReadbackCLIRejectsProtectedOutputRoot(t *testing.T) {
 	}
 }
 
+func TestEvalProofGateCLI(t *testing.T) {
+	root := t.TempDir()
+	writeCLIReadbackPressure(t, filepath.Join(root, "baseline"), 0.2, 0.8, "same")
+	writeCLIReadbackPressure(t, filepath.Join(root, "current"), 0.8, 0.3, "same")
+	out := filepath.Join(root, "out")
+
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{"eval", "proof-gate", filepath.Join(root, "current"), "--baseline", filepath.Join(root, "baseline"), "--out", out, "--claim", "improvement"}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected ok, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"schema_version": "mindline-eval-proof-packet/v0.1"`) ||
+		!strings.Contains(stdout.String(), `"claim": "improvement"`) ||
+		!strings.Contains(stdout.String(), `"verdict": "pass"`) {
+		t.Fatalf("unexpected stdout:\n%s", stdout.String())
+	}
+	for _, rel := range []string{"proof-packet.json", "proof-report.md", "chain-capture-draft.md"} {
+		if _, err := os.Stat(filepath.Join(out, "eval-proof", rel)); err != nil {
+			t.Fatalf("missing %s: %v", rel, err)
+		}
+	}
+}
+
+func TestEvalProofGateCLIBlockedClaimReturnsProcessErrorWithPacket(t *testing.T) {
+	root := t.TempDir()
+	writeCLIReadbackPressure(t, filepath.Join(root, "current"), 0.8, 0.3, "same")
+
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{"eval", "proof-gate", filepath.Join(root, "current"), "--out", filepath.Join(root, "out"), "--claim", "improvement"}, &stdout, &stderr)
+	if code != ExitProcess {
+		t.Fatalf("expected process error, got %d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"verdict": "blocked"`) || !strings.Contains(stdout.String(), `"missing_baseline"`) {
+		t.Fatalf("expected blocked proof packet, stdout=%s stderr=%s", stdout.String(), stderr.String())
+	}
+}
+
+func TestEvalProofGateCLIUsage(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{"eval", "proof-gate"}, &stdout, &stderr)
+	if code != ExitUsage || !strings.Contains(stderr.String(), "mindline eval proof-gate") {
+		t.Fatalf("expected usage, code=%d stderr=%s", code, stderr.String())
+	}
+}
+
 func writeCLIReadbackPressure(t *testing.T, root string, evidenceReady, reviewBurden float64, fingerprint string) {
 	t.Helper()
 	target := filepath.Join(root, "corpus-pressure", "pressure-summary.json")
@@ -85,6 +130,19 @@ func writeCLIReadbackPressure(t *testing.T, root string, evidenceReady, reviewBu
 		"review_burden_ratio":        reviewBurden,
 		"corpus_fingerprint":         fingerprint,
 		"command_config_fingerprint": "same-config",
+		"guardrails": map[string]any{
+			"network_fetches":             0,
+			"hosted_telemetry_exports":    0,
+			"hosted_inference_calls":      0,
+			"browser_calls":               0,
+			"slack_api_calls":             0,
+			"destination_writes":          0,
+			"product_brain_writes":        0,
+			"tolaria_writes":              0,
+			"auto_accepts":                0,
+			"no_human_claims":             0,
+			"committed_private_artifacts": 0,
+		},
 	}
 	data, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {

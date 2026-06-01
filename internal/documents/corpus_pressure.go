@@ -101,9 +101,17 @@ type CorpusPressureSourceCounters struct {
 }
 
 type CorpusPressureGuardrailCounters struct {
-	HostedInferenceCalls   int `json:"hosted_inference_calls"`
-	HostedTelemetryExports int `json:"hosted_telemetry_exports"`
-	DestinationWrites      int `json:"destination_writes"`
+	NetworkFetches            int `json:"network_fetches"`
+	HostedInferenceCalls      int `json:"hosted_inference_calls"`
+	HostedTelemetryExports    int `json:"hosted_telemetry_exports"`
+	BrowserCalls              int `json:"browser_calls"`
+	SlackAPICalls             int `json:"slack_api_calls"`
+	DestinationWrites         int `json:"destination_writes"`
+	ProductBrainWrites        int `json:"product_brain_writes"`
+	TolariaWrites             int `json:"tolaria_writes"`
+	AutoAccepts               int `json:"auto_accepts"`
+	NoHumanClaims             int `json:"no_human_claims"`
+	CommittedPrivateArtifacts int `json:"committed_private_artifacts"`
 }
 
 type CorpusPressureEvalInput struct {
