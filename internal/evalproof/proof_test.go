@@ -201,6 +201,23 @@ func TestProofLoadsExistingReadbackSummary(t *testing.T) {
 	}
 }
 
+func TestProofPreservesNestedExistingReadbackSummaryRef(t *testing.T) {
+	root := t.TempDir()
+	readbackOut := filepath.Join(root, "run")
+	if _, err := evalreadback.Build(filepath.Join("..", "..", "testdata", "eval-readback", "current"), readbackOut, evalreadback.Options{
+		BaselineRoot: filepath.Join("..", "..", "testdata", "eval-readback", "baseline"),
+	}); err != nil {
+		t.Fatalf("build readback: %v", err)
+	}
+	packet, err := Build(readbackOut, filepath.Join(root, "proof"), Options{Claim: ClaimImprovement})
+	if err != nil {
+		t.Fatalf("build proof from nested readback: %v", err)
+	}
+	if packet.Verdict != VerdictPass || packet.ReadbackSummaryRef != "input/eval-readback/readback-summary.json" {
+		t.Fatalf("unexpected nested proof ref: %+v", packet)
+	}
+}
+
 func TestProofAppliesBaselineToExistingReadbackSummary(t *testing.T) {
 	root := t.TempDir()
 	baseline := filepath.Join(root, "baseline")
@@ -221,6 +238,35 @@ func TestProofAppliesBaselineToExistingReadbackSummary(t *testing.T) {
 	}
 	if packet.Verdict != VerdictPass || gateVerdict(packet, "improvement_claim") != VerdictPass {
 		t.Fatalf("expected supplied baseline to produce improvement proof, got %+v", packet)
+	}
+}
+
+func TestProofReevaluatesCachedReadbackSummary(t *testing.T) {
+	root := t.TempDir()
+	run := filepath.Join(root, "run")
+	writeProofPressure(t, run, 1, 0, "same", map[string]any{
+		"hosted_telemetry_exports": 0,
+		"hosted_inference_calls":   0,
+		"destination_writes":       0,
+	})
+	summary, err := evalreadback.BuildSummary(run, evalreadback.Options{})
+	if err != nil {
+		t.Fatalf("build stale source summary: %v", err)
+	}
+	for i := range summary.ClaimGates {
+		if summary.ClaimGates[i].Gate == "side_effect_claim" {
+			summary.ClaimGates[i].Status = "pass"
+			summary.ClaimGates[i].ReasonCodes = nil
+		}
+	}
+	writeProofSummary(t, filepath.Join(run, evalreadback.DirName, evalreadback.ReadbackSummaryFile), summary)
+
+	packet, err := Build(run, filepath.Join(root, "proof"), Options{Claim: ClaimSafety})
+	if err != nil {
+		t.Fatalf("build proof from stale readback: %v", err)
+	}
+	if packet.Verdict != VerdictBlocked || !gateHasReason(packet, "side_effect_claim", "missing_side_effect_evidence") {
+		t.Fatalf("expected cached gates to be re-evaluated, got %+v", packet.MandatoryGates)
 	}
 }
 
@@ -270,6 +316,20 @@ func writeProofJSON(t *testing.T, path string, payload map[string]any) {
 	}
 	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
+	}
+}
+
+func writeProofSummary(t *testing.T, path string, summary evalreadback.Summary) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	data, err := json.MarshalIndent(summary, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal summary: %v", err)
+	}
+	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
+		t.Fatalf("write summary: %v", err)
 	}
 }
 

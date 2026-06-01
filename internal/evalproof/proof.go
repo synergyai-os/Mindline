@@ -92,7 +92,7 @@ func readbackFor(inputRoot, proofDir string, options Options) (evalreadback.Summ
 		if err != nil {
 			return evalreadback.Summary{}, "", err
 		}
-		return summary, safeExistingReadbackRef(summaryPath), nil
+		return summary, safeExistingReadbackRef(inputRoot, summaryPath), nil
 	}
 	readbackOut := filepath.Join(proofDir, "readback")
 	summary, err := evalreadback.Build(inputRoot, readbackOut, evalreadback.Options{
@@ -127,11 +127,16 @@ func existingReadbackSummaryPath(input string) string {
 	return ""
 }
 
-func safeExistingReadbackRef(path string) string {
-	if filepath.Base(path) == evalreadback.ReadbackSummaryFile {
+func safeExistingReadbackRef(inputRoot, summaryPath string) string {
+	info, err := os.Stat(inputRoot)
+	if err != nil || !info.IsDir() {
 		return "input/" + evalreadback.ReadbackSummaryFile
 	}
-	return "input/readback-summary"
+	rel, err := filepath.Rel(inputRoot, summaryPath)
+	if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
+		return "input/" + evalreadback.ReadbackSummaryFile
+	}
+	return filepath.ToSlash(filepath.Join("input", rel))
 }
 
 func mandatoryGates(summary evalreadback.Summary, claim string, options Options) []GateResult {

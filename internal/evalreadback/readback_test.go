@@ -921,6 +921,29 @@ func TestBuildDoesNotTreatRiskLabelsAsSecrets(t *testing.T) {
 	}
 }
 
+func TestBuildDoesNotTreatLongRiskAssessmentLabelsAsSecrets(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "corpus-pressure", "pressure-summary.json"), map[string]any{
+		"schema_version":             "corpus-pressure-summary/v0.1",
+		"corpus_id":                  "corpus-a",
+		"source_count":               1,
+		"evidence_ready_atom_ratio":  1,
+		"review_burden_ratio":        0,
+		"corpus_fingerprint":         "same",
+		"command_config_fingerprint": "same-config",
+		"guardrails":                 completeGuardrails(),
+		"sources":                    []any{map[string]any{"source_label": "risk-assessment-framework.md"}},
+	})
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if gate := gateByName(summary, "privacy_safe_readback"); gate.Status != "pass" {
+		t.Fatalf("expected long benign risk label not to trip leak scan, got %+v", gate)
+	}
+}
+
 func TestBuildTreatsTokenShapedSKValuesAsSecrets(t *testing.T) {
 	root := t.TempDir()
 	writeFixture(t, filepath.Join(root, "corpus-pressure", "pressure-summary.json"), map[string]any{

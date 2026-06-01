@@ -46,6 +46,7 @@ func BuildSummary(inputRoot string, options Options) (Summary, error) {
 }
 
 func ApplyBaseline(summary Summary, baselineRoot string) (Summary, error) {
+	summary = RefreshSummary(summary)
 	if strings.TrimSpace(baselineRoot) == "" {
 		return summary, nil
 	}
@@ -64,15 +65,45 @@ func ApplyBaseline(summary Summary, baselineRoot string) (Summary, error) {
 	return summary, nil
 }
 
+func RefreshSummary(summary Summary) Summary {
+	current := modelFromSummary(summary)
+	refreshed := summarize(current)
+	if len(summary.BaselineArtifacts) == 0 {
+		if summary.Comparison != nil {
+			refreshed.BaselineRootLabel = summary.BaselineRootLabel
+			refreshed.BaselineArtifactRefs = append([]string{}, summary.BaselineArtifactRefs...)
+			refreshed.BaselineArtifacts = append([]ArtifactEvidence{}, summary.BaselineArtifacts...)
+			comparison := *summary.Comparison
+			refreshed.Comparison = &comparison
+			refreshed.ImprovementStatus = summary.ImprovementStatus
+			rebuildClaimGates(&refreshed)
+		}
+		return refreshed
+	}
+	baseline := modelFromArtifacts(summary.BaselineRootLabel, summary.SampleStatus, summary.BaselineArtifacts)
+	comparison := compareModels(baseline, current)
+	refreshed.BaselineRootLabel = summary.BaselineRootLabel
+	refreshed.BaselineArtifactRefs = prefixedArtifactRefs("baseline", artifactRefs(baseline.artifacts))
+	refreshed.BaselineArtifacts = baseline.artifacts
+	refreshed.Comparison = &comparison
+	refreshed.ImprovementStatus = comparison.Status
+	rebuildClaimGates(&refreshed)
+	return refreshed
+}
+
 func modelFromSummary(summary Summary) readbackModel {
+	return modelFromArtifacts(summary.InputRootLabel, summary.SampleStatus, summary.Artifacts)
+}
+
+func modelFromArtifacts(rootLabel, sampleStatus string, artifacts []ArtifactEvidence) readbackModel {
 	model := readbackModel{
-		rootLabel:     summary.InputRootLabel,
-		sampleStatus:  summary.SampleStatus,
+		rootLabel:     rootLabel,
+		sampleStatus:  sampleStatus,
 		metrics:       map[string]float64{},
 		flags:         map[string]bool{},
 		fingerprints:  map[string]string{},
 		artifactTypes: map[string]bool{},
-		artifacts:     append([]ArtifactEvidence{}, summary.Artifacts...),
+		artifacts:     append([]ArtifactEvidence{}, artifacts...),
 	}
 	for _, artifact := range model.artifacts {
 		mergeModelEvidence(&model, artifact)
@@ -1230,6 +1261,10 @@ func containsSecretLikeSKToken(value string) bool {
 			return false
 		}
 		idx += start
+		if idx > 0 && isASCIIAlphaNumeric(value[idx-1]) {
+			start = idx + len("sk-")
+			continue
+		}
 		end := idx + len("sk-")
 		for end < len(value) && isSecretTokenChar(value[end]) {
 			end++
@@ -1244,6 +1279,10 @@ func containsSecretLikeSKToken(value string) bool {
 
 func isSecretTokenChar(ch byte) bool {
 	return (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-' || ch == '_'
+}
+
+func isASCIIAlphaNumeric(ch byte) bool {
+	return (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')
 }
 
 func ContainsDeniedString(value string) bool {
