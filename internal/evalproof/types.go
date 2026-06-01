@@ -29,13 +29,13 @@ type Packet struct {
 	Verdict              string                         `json:"verdict"`
 	ExitCode             int                            `json:"exit_code"`
 	InputRootLabel       string                         `json:"input_root_label"`
-	BaselineRootLabel    string                         `json:"baseline_root_label,omitempty"`
+	BaselineRootLabel    string                         `json:"baseline_root_label"`
 	ReadbackSummaryRef   string                         `json:"readback_summary_ref"`
 	EvalProjection       EvalProjection                 `json:"eval_projection"`
 	MandatoryGates       []GateResult                   `json:"mandatory_gates"`
-	BlockedClaims        []ClaimResult                  `json:"blocked_claims,omitempty"`
-	FailedClaims         []ClaimResult                  `json:"failed_claims,omitempty"`
-	PermittedClaims      []ClaimResult                  `json:"permitted_claims,omitempty"`
+	BlockedClaims        []ClaimResult                  `json:"blocked_claims"`
+	FailedClaims         []ClaimResult                  `json:"failed_claims"`
+	PermittedClaims      []ClaimResult                  `json:"permitted_claims"`
 	GeneralizationLimit  string                         `json:"generalization_limit"`
 	TopImprovementTarget evalreadback.ImprovementTarget `json:"top_improvement_target"`
 	RerunInstructions    []string                       `json:"rerun_instructions"`

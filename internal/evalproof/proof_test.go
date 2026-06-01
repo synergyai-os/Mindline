@@ -46,6 +46,31 @@ func TestSafetyProofPassesWithoutBaseline(t *testing.T) {
 	}
 }
 
+func TestProofPacketJSONIncludesRequiredEmptyFields(t *testing.T) {
+	packet, err := Build(filepath.Join("..", "..", "testdata", "eval-readback", "current"), t.TempDir(), Options{Claim: ClaimSafety})
+	if err != nil {
+		t.Fatalf("build proof: %v", err)
+	}
+	data, err := json.Marshal(packet)
+	if err != nil {
+		t.Fatalf("marshal packet: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal packet: %v", err)
+	}
+	for _, key := range []string{"baseline_root_label", "blocked_claims", "failed_claims", "permitted_claims"} {
+		if _, ok := raw[key]; !ok {
+			t.Fatalf("proof packet missing required field %q: %s", key, string(data))
+		}
+	}
+	for _, key := range []string{"blocked_claims", "failed_claims", "permitted_claims"} {
+		if _, ok := raw[key].([]any); !ok {
+			t.Fatalf("proof packet field %q must serialize as an array, got %#v in %s", key, raw[key], string(data))
+		}
+	}
+}
+
 func TestImprovementProofBlocksWithoutBaseline(t *testing.T) {
 	packet, err := Build(filepath.Join("..", "..", "testdata", "eval-readback", "current"), t.TempDir(), Options{Claim: ClaimImprovement})
 	if err != nil {

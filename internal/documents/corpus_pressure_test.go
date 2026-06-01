@@ -80,6 +80,34 @@ func TestCorpusPressureBuildsReadableReportAndReplay(t *testing.T) {
 	}
 }
 
+func TestCorpusPressureGuardrailsSerializeCompleteProofGateFloor(t *testing.T) {
+	data, err := json.Marshal(CorpusPressureGuardrailCounters{})
+	if err != nil {
+		t.Fatalf("marshal guardrails: %v", err)
+	}
+	var guardrails map[string]any
+	if err := json.Unmarshal(data, &guardrails); err != nil {
+		t.Fatalf("unmarshal guardrails: %v", err)
+	}
+	for _, key := range []string{
+		"network_fetches",
+		"hosted_telemetry_exports",
+		"hosted_inference_calls",
+		"browser_calls",
+		"slack_api_calls",
+		"destination_writes",
+		"product_brain_writes",
+		"tolaria_writes",
+		"auto_accepts",
+		"no_human_claims",
+		"committed_private_artifacts",
+	} {
+		if _, ok := guardrails[key]; !ok {
+			t.Fatalf("guardrails missing %q: %#v", key, guardrails)
+		}
+	}
+}
+
 func TestCorpusPressureDirectoryCorpusIDUsesCanonicalPath(t *testing.T) {
 	input := t.TempDir()
 	if err := os.WriteFile(filepath.Join(input, "source.md"), []byte("# Source\n- capability: keep corpus identity stable across path spellings\n"), 0o644); err != nil {

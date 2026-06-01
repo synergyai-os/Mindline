@@ -72,6 +72,9 @@ func Evaluate(summary evalreadback.Summary, claim string, readbackRef string, op
 
 	packet.MandatoryGates = mandatoryGates(summary, claim, options)
 	packet.PermittedClaims, packet.BlockedClaims, packet.FailedClaims = classifyClaims(summary)
+	packet.PermittedClaims = ensureClaimResults(packet.PermittedClaims)
+	packet.BlockedClaims = ensureClaimResults(packet.BlockedClaims)
+	packet.FailedClaims = ensureClaimResults(packet.FailedClaims)
 	packet.Verdict = verdictFor(packet.MandatoryGates)
 	if packet.Verdict != VerdictPass {
 		packet.ExitCode = 2
@@ -280,6 +283,13 @@ func classifyClaims(summary evalreadback.Summary) (permitted []ClaimResult, bloc
 		}
 	}
 	return permitted, blocked, failed
+}
+
+func ensureClaimResults(results []ClaimResult) []ClaimResult {
+	if results == nil {
+		return []ClaimResult{}
+	}
+	return results
 }
 
 func projectionFor(summary evalreadback.Summary, claim string) EvalProjection {
