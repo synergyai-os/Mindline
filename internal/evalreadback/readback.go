@@ -65,6 +65,21 @@ func ApplyBaseline(summary Summary, baselineRoot string) (Summary, error) {
 	return summary, nil
 }
 
+func ApplyBaselineSummary(summary Summary, baselineSummary Summary) Summary {
+	summary = RefreshSummary(summary)
+	baselineSummary = RefreshSummary(baselineSummary)
+	current := modelFromSummary(summary)
+	baseline := modelFromSummary(baselineSummary)
+	comparison := compareModels(baseline, current)
+	summary.BaselineRootLabel = baseline.rootLabel
+	summary.BaselineArtifactRefs = prefixedArtifactRefs("baseline", artifactRefs(baseline.artifacts))
+	summary.BaselineArtifacts = baseline.artifacts
+	summary.Comparison = &comparison
+	summary.ImprovementStatus = comparison.Status
+	rebuildClaimGates(&summary)
+	return summary
+}
+
 func RefreshSummary(summary Summary) Summary {
 	current := modelFromSummary(summary)
 	refreshed := summarize(current)
