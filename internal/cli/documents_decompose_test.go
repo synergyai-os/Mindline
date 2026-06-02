@@ -302,6 +302,65 @@ func TestDocumentsCorpusAcceptanceCLI(t *testing.T) {
 	}
 }
 
+func TestDocumentsCorpusAcceptanceLabelingCLI(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "corpus-pressure"), 0o755); err != nil {
+		t.Fatalf("mkdir pressure: %v", err)
+	}
+	writeCLITestJSON(t, filepath.Join(root, "corpus-pressure", "pressure-summary.json"), documents.CorpusPressureSummary{
+		SchemaVersion:            documents.CorpusPressureSummarySchemaVersion,
+		CorpusID:                 "corpus-labeling-cli",
+		CorpusFingerprint:        "corpus-labeling-cli-fingerprint",
+		CommandConfigFingerprint: "config-labeling-cli",
+		ReplayFingerprint:        "pressure-labeling-cli",
+		Sources:                  []documents.CorpusPressureSourceResult{},
+	})
+	out := filepath.Join(root, "labeling")
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "corpus-acceptance-labeling", root,
+		"--out", out,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+	var summary documents.CorpusAcceptanceLabelingOutputSummary
+	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
+		t.Fatalf("decode stdout: %v", err)
+	}
+	if summary.SchemaVersion != documents.CorpusAcceptanceLabelingPacketSchemaVersion || summary.HeldOutReady || summary.LabelingPacketPath == "" {
+		t.Fatalf("expected redacted labeling output summary, got %+v", summary)
+	}
+	var stdoutKeys map[string]json.RawMessage
+	if err := json.Unmarshal(stdout.Bytes(), &stdoutKeys); err != nil {
+		t.Fatalf("decode stdout keys: %v", err)
+	}
+	for _, key := range []string{
+		"packet_id",
+		"corpus_id",
+		"corpus_fingerprint",
+		"command_config_fingerprint",
+		"pressure_replay_fingerprint",
+		"relation_coverage",
+		"guardrails",
+		"instructions",
+		"sources",
+	} {
+		if _, ok := stdoutKeys[key]; ok {
+			t.Fatalf("stdout should not include full packet key %q: %s", key, stdout.String())
+		}
+	}
+	if strings.Contains(stdout.String(), "source_id") || strings.Contains(stdout.String(), "source_content_hash") || strings.Contains(stdout.String(), "candidate_id") || strings.Contains(stdout.String(), "evidence_nodes") {
+		t.Fatalf("stdout should not include private packet fields: %s", stdout.String())
+	}
+	if _, err := os.Stat(filepath.Join(out, "corpus-acceptance-labeling", "labeling-packet.json")); err != nil {
+		t.Fatalf("missing labeling packet: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(out, "corpus-acceptance-labeling", "answer-key-template.json")); err != nil {
+		t.Fatalf("missing answer-key template: %v", err)
+	}
+}
+
 func TestDocumentsCorpusPressureDoesNotWriteDestinationArtifacts(t *testing.T) {
 	out := t.TempDir()
 	var stdout, stderr bytes.Buffer

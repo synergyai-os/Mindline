@@ -17,6 +17,7 @@ const (
 	SemanticAcceptanceExpectedOutcomeLegacySchemaVersion = "semantic-acceptance-expected-outcome/v0.1"
 	SemanticAcceptanceItemSchemaVersion                  = "semantic-acceptance-item/v0.1"
 	CorpusAcceptanceAnswerKeySchemaVersion               = "corpus-acceptance-answer-key/v0.1"
+	CorpusAcceptanceLabelingPacketSchemaVersion          = "corpus-acceptance-labeling-packet/v0.1"
 	CorpusAcceptanceSummarySchemaVersion                 = "corpus-acceptance-summary/v0.1"
 	SemanticCalibrationSummarySchemaVersion              = "semantic-calibration-summary/v0.2"
 	SemanticCalibrationSummaryLegacySchemaVersion        = "semantic-calibration-summary/v0.1"
@@ -497,6 +498,69 @@ type CorpusAcceptanceAnswerKeySource struct {
 	SourceID         string                    `json:"source_id"`
 	SourceDocumentID string                    `json:"source_document_id,omitempty"`
 	ExpectedOutcomes []SemanticExpectedOutcome `json:"expected_outcomes"`
+}
+
+type CorpusAcceptanceLabelingPacket struct {
+	SchemaVersion             string                                   `json:"schema_version"`
+	PacketID                  string                                   `json:"packet_id"`
+	CorpusID                  string                                   `json:"corpus_id"`
+	CorpusFingerprint         string                                   `json:"corpus_fingerprint"`
+	CommandConfigFingerprint  string                                   `json:"command_config_fingerprint"`
+	PressureReplayFingerprint string                                   `json:"pressure_replay_fingerprint"`
+	LabelingStatus            string                                   `json:"labeling_status"`
+	HeldOutReady              bool                                     `json:"held_out_ready"`
+	SourceCount               int                                      `json:"source_count"`
+	CandidateCount            int                                      `json:"candidate_count"`
+	RelationCoverage          CorpusAcceptanceLabelingRelationCoverage `json:"relation_coverage"`
+	Guardrails                CorpusPressureGuardrailCounters          `json:"guardrails"`
+	ClaimBoundaries           []string                                 `json:"claim_boundaries"`
+	Instructions              []string                                 `json:"instructions"`
+	LabelingPacketPath        string                                   `json:"labeling_packet_path"`
+	AnswerKeyTemplatePath     string                                   `json:"answer_key_template_path"`
+	ReportPath                string                                   `json:"report_path"`
+	Sources                   []CorpusAcceptanceLabelingSource         `json:"sources"`
+}
+
+type CorpusAcceptanceLabelingOutputSummary struct {
+	SchemaVersion         string   `json:"schema_version"`
+	LabelingStatus        string   `json:"labeling_status"`
+	HeldOutReady          bool     `json:"held_out_ready"`
+	SourceCount           int      `json:"source_count"`
+	CandidateCount        int      `json:"candidate_count"`
+	RelationCoverageCount int      `json:"relation_coverage_count"`
+	LabelingPacketPath    string   `json:"labeling_packet_path"`
+	AnswerKeyTemplatePath string   `json:"answer_key_template_path"`
+	ReportPath            string   `json:"report_path"`
+	ClaimBoundaries       []string `json:"claim_boundaries"`
+}
+
+type CorpusAcceptanceLabelingRelationCoverage struct {
+	RelationCount        int                        `json:"relation_count"`
+	RelationTypeCounts   map[CorpusRelationType]int `json:"relation_type_counts"`
+	RelationStatusCounts map[ReviewStatus]int       `json:"relation_status_counts"`
+}
+
+type CorpusAcceptanceLabelingSource struct {
+	CaseID            string                                       `json:"case_id"`
+	SourceID          string                                       `json:"source_id"`
+	SourceContentHash string                                       `json:"source_content_hash"`
+	SourcePath        string                                       `json:"source_path"`
+	SemanticRunDir    string                                       `json:"semantic_run_dir,omitempty"`
+	SourceState       CorpusPressureSourceState                    `json:"source_state"`
+	ReasonCode        CorpusPressureReason                         `json:"reason_code"`
+	CandidateCount    int                                          `json:"candidate_count"`
+	CandidateKinds    map[SemanticCandidateKind]int                `json:"candidate_kinds"`
+	Candidates        []CorpusAcceptanceLabelingCandidateReference `json:"candidates"`
+}
+
+type CorpusAcceptanceLabelingCandidateReference struct {
+	CandidateID      string                  `json:"candidate_id"`
+	SourceDocumentID string                  `json:"source_document_id,omitempty"`
+	CandidateKind    SemanticCandidateKind   `json:"candidate_kind"`
+	ReviewStatus     ReviewStatus            `json:"review_status"`
+	Confidence       Confidence              `json:"confidence"`
+	EvidenceNodes    []string                `json:"evidence_nodes"`
+	EvidenceRanges   []SemanticEvidenceRange `json:"evidence_ranges"`
 }
 
 type CorpusAcceptanceBenchmarkOptions struct {
