@@ -361,6 +361,87 @@ func TestDocumentsCorpusAcceptanceLabelingCLI(t *testing.T) {
 	}
 }
 
+func TestDocumentsCorpusAcceptanceLabelApplyCLI(t *testing.T) {
+	root := t.TempDir()
+	labelingDir := filepath.Join(root, "labeling", "corpus-acceptance-labeling")
+	if err := os.MkdirAll(labelingDir, 0o755); err != nil {
+		t.Fatalf("mkdir labeling: %v", err)
+	}
+	writeCLITestJSON(t, filepath.Join(labelingDir, "labeling-packet.json"), documents.CorpusAcceptanceLabelingPacket{
+		SchemaVersion:            documents.CorpusAcceptanceLabelingPacketSchemaVersion,
+		PacketID:                 "labeling-pressure-cli",
+		CorpusID:                 "corpus-label-apply-cli",
+		CorpusFingerprint:        "corpus-label-apply-fingerprint",
+		CommandConfigFingerprint: "config-label-apply-cli",
+		LabelingStatus:           "labeling_required",
+		SourceCount:              1,
+		LabelingPacketPath:       "corpus-acceptance-labeling/labeling-packet.json",
+		AnswerKeyTemplatePath:    "corpus-acceptance-labeling/answer-key-template.json",
+		ReportPath:               "corpus-acceptance-labeling/labeling-report.md",
+		Sources: []documents.CorpusAcceptanceLabelingSource{{
+			CaseID:            "case-001",
+			SourceID:          "slack-team-d05h529m32n-1780127914236669",
+			SourceContentHash: "sha256:fixture",
+			SourcePath:        "sources/source-demo/source.md",
+			SourceState:       documents.CorpusPressureSourceProcessed,
+			ReasonCode:        documents.CorpusPressureReasonNone,
+			CandidateKinds:    map[documents.SemanticCandidateKind]int{},
+		}},
+	})
+	recordsPath := filepath.Join(root, "records.json")
+	writeCLITestJSON(t, recordsPath, documents.CorpusAcceptanceLabelRecords{
+		SchemaVersion: documents.CorpusAcceptanceLabelRecordsSchemaVersion,
+		SuiteID:       "heldout-label-apply-cli",
+		SuiteKind:     documents.CorpusAcceptanceSuiteHeldOut,
+		Provenance:    documents.CorpusAcceptanceProvenance{Labeler: "fixture-human", Independence: "not_generated_from_evaluated_run"},
+		MinEvalCount:  1,
+		Records: []documents.CorpusAcceptanceLabelRecordItem{{
+			RecordID: "rec-uncertain",
+			CaseID:   "case-001",
+			Decision: documents.CorpusAcceptanceLabelUncertain,
+			Notes:    "needs review",
+		}},
+	})
+
+	out := filepath.Join(root, "recording")
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "corpus-acceptance-label-apply", filepath.Join(root, "labeling"),
+		"--records", recordsPath,
+		"--out", out,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+	var summary documents.CorpusAcceptanceLabelRecordingOutputSummary
+	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
+		t.Fatalf("decode stdout: %v", err)
+	}
+	if summary.SchemaVersion != documents.CorpusAcceptanceLabelRecordingSummarySchemaVersion || summary.RecordCount != 1 || summary.UncertainCount != 1 || summary.BenchmarkReady {
+		t.Fatalf("unexpected redacted label apply summary: %+v", summary)
+	}
+	if strings.Contains(stdout.String(), "slack-") || strings.Contains(stdout.String(), "source_id") || strings.Contains(stdout.String(), "candidate_id") || strings.Contains(stdout.String(), "corpus-label-apply") {
+		t.Fatalf("stdout leaked local packet identifiers: %s", stdout.String())
+	}
+	if _, err := os.Stat(filepath.Join(out, "corpus-acceptance-label-recording", "answer-key.json")); err != nil {
+		t.Fatalf("missing answer key artifact: %v", err)
+	}
+}
+
+func TestDocumentsCorpusAcceptanceLabelApplyUsageIncludesCommand(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "corpus-acceptance-label-apply", "labeling-dir",
+		"--out", t.TempDir(),
+	}, &stdout, &stderr)
+	if code != ExitUsage {
+		t.Fatalf("expected usage exit, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "usage: mindline documents corpus-acceptance-label-apply <corpus-acceptance-labeling-out-or-parent> --records <label-records.json> --out <dir>") {
+		t.Fatalf("expected label-apply usage, got %q", stderr.String())
+	}
+}
+
 func TestDocumentsCorpusPressureDoesNotWriteDestinationArtifacts(t *testing.T) {
 	out := t.TempDir()
 	var stdout, stderr bytes.Buffer

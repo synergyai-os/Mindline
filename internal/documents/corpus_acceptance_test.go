@@ -33,6 +33,32 @@ func TestCorpusAcceptanceTinyHeldOutSuiteCannotPassEligibility(t *testing.T) {
 	}
 }
 
+func TestCorpusAcceptanceRedactsInvalidCoverageValuesInBenchmarkBlockers(t *testing.T) {
+	root, _, answerKey := writeCorpusAcceptanceFixture(t, []SemanticCandidate{corpusAcceptanceCandidate(t, SemanticCandidateKindAction, ReviewStatusReady)}, nil)
+	privateCoverageValue := SemanticCandidateKind("https://slack.com/archives/C012345")
+	answerKey.CoverageRequirements.CandidateKinds = append(answerKey.CoverageRequirements.CandidateKinds, privateCoverageValue)
+	writeDocumentsTestJSON(t, filepath.Join(root, "answer-key.json"), answerKey)
+
+	summary, err := BuildCorpusAcceptanceBenchmark(root, filepath.Join(root, "answer-key.json"), filepath.Join(root, "benchmark"), CorpusAcceptanceBenchmarkOptions{Threshold: 0.98, HeldOut: true})
+	if err != nil {
+		t.Fatalf("build corpus acceptance benchmark: %v", err)
+	}
+	if summary.SuiteValid || !stringListContains(summary.SuiteValidityBlockers, "invalid_candidate_kind_coverage") {
+		t.Fatalf("expected invalid coverage blocker, summary=%+v", summary)
+	}
+	joined := strings.Join(summary.SuiteValidityBlockers, "\n") + "\n" + strings.Join(summary.EligibilityBlockers, "\n")
+	if strings.Contains(joined, string(privateCoverageValue)) || strings.Contains(joined, "slack.com") {
+		t.Fatalf("benchmark blockers leaked private coverage value: suite=%v eligibility=%v", summary.SuiteValidityBlockers, summary.EligibilityBlockers)
+	}
+	reportData, err := os.ReadFile(filepath.Join(root, "benchmark", corpusAcceptanceDirName, "benchmark-report.md"))
+	if err != nil {
+		t.Fatalf("read benchmark report: %v", err)
+	}
+	if strings.Contains(string(reportData), string(privateCoverageValue)) || strings.Contains(string(reportData), "slack.com") {
+		t.Fatalf("benchmark report leaked private coverage value: %s", string(reportData))
+	}
+}
+
 func TestCorpusAcceptanceExpectedAbsentCountsAsCorrect(t *testing.T) {
 	root, _, answerKey := writeCorpusAcceptanceFixture(t, nil, nil)
 	answerKey.MinEvalCount = 1
