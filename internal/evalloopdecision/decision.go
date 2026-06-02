@@ -176,12 +176,10 @@ func applyBaseline(summary evalreadback.Summary, baselineRoot string) (evalreadb
 	if strings.TrimSpace(baselineRoot) == "" {
 		return evalreadback.ApplyBaseline(summary, "")
 	}
-	if baselineSummaryPath := existingReadbackSummaryPath(baselineRoot); baselineSummaryPath != "" {
-		baselineSummary, err := evalreadback.LoadSummary(baselineSummaryPath)
-		if err != nil {
-			return evalreadback.Summary{}, err
-		}
+	if baselineSummary, _, err := evalreadback.LoadSummaryFromRoot(baselineRoot); err == nil {
 		return evalreadback.ApplyBaselineSummary(summary, baselineSummary), nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return evalreadback.Summary{}, err
 	}
 	if proofPath := existingProofPacketPath(baselineRoot); proofPath != "" {
 		baselineSummaryPath := proofReadbackSummaryPath(baselineRoot, proofPath)
@@ -518,7 +516,23 @@ func claimStatuses(summary evalreadback.Summary, options Options) ClaimStatuses 
 	if statuses.DEC64 == "" {
 		statuses.DEC64 = DEC64Blocked
 	}
+	if comparisonHasReason(summary, "replay_baseline_blocked") {
+		statuses.Generalization = GeneralizationBlocked
+		statuses.DEC64 = DEC64Blocked
+	}
 	return statuses
+}
+
+func comparisonHasReason(summary evalreadback.Summary, reason string) bool {
+	if summary.Comparison == nil {
+		return false
+	}
+	for _, actual := range summary.Comparison.ReasonCodes {
+		if actual == reason {
+			return true
+		}
+	}
+	return false
 }
 
 func hasUnsupportedArtifact(summary evalreadback.Summary) bool {

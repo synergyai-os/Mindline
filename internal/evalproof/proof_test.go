@@ -33,6 +33,62 @@ func TestImprovementProofPassesWithComparableBaseline(t *testing.T) {
 	assertProofOutputSafe(t, filepath.Join(out, DirName))
 }
 
+func TestImprovementProofUsesReadbackOutputAsBaseline(t *testing.T) {
+	root := t.TempDir()
+	baseline := filepath.Join(root, "baseline")
+	current := filepath.Join(root, "current")
+	writeProofPressure(t, baseline, 0.4, 0.7, "same", completeProofGuardrails())
+	writeProofPressure(t, current, 0.9, 0.2, "same", completeProofGuardrails())
+
+	baselineReadback := filepath.Join(root, "baseline-readback")
+	if _, err := evalreadback.Build(baseline, baselineReadback, evalreadback.Options{}); err != nil {
+		t.Fatalf("baseline readback: %v", err)
+	}
+
+	packet, err := Build(current, filepath.Join(root, "proof"), Options{
+		BaselineRoot: baselineReadback,
+		Claim:        ClaimImprovement,
+	})
+	if err != nil {
+		t.Fatalf("build proof: %v", err)
+	}
+	if packet.Verdict != VerdictPass || gateVerdict(packet, "improvement_claim") != VerdictPass {
+		t.Fatalf("expected improvement proof to pass with readback baseline, got %+v", packet)
+	}
+}
+
+func TestImprovementProofBlocksReadbackBaselineThatIsNotReplayReady(t *testing.T) {
+	root := t.TempDir()
+	baseline := filepath.Join(root, "baseline")
+	current := filepath.Join(root, "current")
+	writeProofJSON(t, filepath.Join(baseline, "corpus-pressure", "pressure-summary.json"), map[string]any{
+		"schema_version":            "corpus-pressure-summary/v0.1",
+		"evidence_ready_atom_ratio": 0.4,
+		"review_burden_ratio":       0.7,
+		"corpus_fingerprint":        "same",
+		"guardrails":                completeProofGuardrails(),
+	})
+	writeProofPressure(t, current, 0.9, 0.2, "same", completeProofGuardrails())
+
+	baselineReadback := filepath.Join(root, "baseline-readback")
+	if _, err := evalreadback.Build(baseline, baselineReadback, evalreadback.Options{}); err != nil {
+		t.Fatalf("baseline readback: %v", err)
+	}
+
+	packet, err := Build(current, filepath.Join(root, "proof"), Options{
+		BaselineRoot: baselineReadback,
+		Claim:        ClaimImprovement,
+	})
+	if err != nil {
+		t.Fatalf("build proof: %v", err)
+	}
+	if packet.Verdict != VerdictBlocked ||
+		!gateHasReason(packet, "improvement_claim", "replay_baseline_blocked") ||
+		!gateHasReason(packet, "improvement_claim", "missing_command_config_fingerprint") {
+		t.Fatalf("expected blocked replay baseline reasons, got %+v", packet.MandatoryGates)
+	}
+}
+
 func TestSafetyProofPassesWithoutBaseline(t *testing.T) {
 	packet, err := Build(filepath.Join("..", "..", "testdata", "eval-readback", "current"), t.TempDir(), Options{Claim: ClaimSafety})
 	if err != nil {

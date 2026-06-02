@@ -30,7 +30,7 @@ func BuildSummary(inputRoot string, options Options) (Summary, error) {
 	}
 	summary := summarize(model)
 	if strings.TrimSpace(options.BaselineRoot) != "" {
-		baseline, err := buildModel(options.BaselineRoot)
+		baseline, err := buildBaselineModel(options.BaselineRoot)
 		if err != nil {
 			return Summary{}, fmt.Errorf("read baseline: %w", err)
 		}
@@ -50,7 +50,7 @@ func ApplyBaseline(summary Summary, baselineRoot string) (Summary, error) {
 	if strings.TrimSpace(baselineRoot) == "" {
 		return summary, nil
 	}
-	baseline, err := buildModel(baselineRoot)
+	baseline, err := buildBaselineModel(baselineRoot)
 	if err != nil {
 		return Summary{}, fmt.Errorf("read baseline: %w", err)
 	}
@@ -107,7 +107,12 @@ func RefreshSummary(summary Summary) Summary {
 }
 
 func modelFromSummary(summary Summary) readbackModel {
-	return modelFromArtifacts(summary.InputRootLabel, summary.SampleStatus, summary.Artifacts)
+	model := modelFromArtifacts(summary.InputRootLabel, summary.SampleStatus, summary.Artifacts)
+	if summary.ReplayBaseline.Status == "blocked" {
+		model.flags["replay_baseline_blocked"] = true
+		model.replayBaselineReasonCodes = append([]string{}, summary.ReplayBaseline.ReasonCodes...)
+	}
+	return model
 }
 
 func modelFromArtifacts(rootLabel, sampleStatus string, artifacts []ArtifactEvidence) readbackModel {
@@ -153,15 +158,66 @@ func ValidateOutputPath(root, candidate string, protectedRoots []string) error {
 }
 
 type readbackModel struct {
-	root          string
-	rootLabel     string
-	sampleStatus  string
-	artifacts     []ArtifactEvidence
-	guardrails    Guardrails
-	metrics       map[string]float64
-	flags         map[string]bool
-	fingerprints  map[string]string
-	artifactTypes map[string]bool
+	root                      string
+	rootLabel                 string
+	sampleStatus              string
+	artifacts                 []ArtifactEvidence
+	guardrails                Guardrails
+	metrics                   map[string]float64
+	flags                     map[string]bool
+	fingerprints              map[string]string
+	artifactTypes             map[string]bool
+	replayBaselineReasonCodes []string
+}
+
+func buildBaselineModel(inputRoot string) (readbackModel, error) {
+	summary, _, err := LoadSummaryFromRoot(inputRoot)
+	if err == nil {
+		return modelFromSummary(summary), nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return readbackModel{}, err
+	}
+	return buildModel(inputRoot)
+}
+
+func LoadSummaryFromRoot(input string) (Summary, string, error) {
+	info, err := os.Stat(input)
+	if err != nil {
+		return Summary{}, "", err
+	}
+	candidates := []string{}
+	if !info.IsDir() {
+		if filepath.Base(input) == ReadbackSummaryFile {
+			summary, err := LoadSummary(input)
+			return summary, filepath.ToSlash(filepath.Base(input)), err
+		}
+		return Summary{}, "", os.ErrNotExist
+	}
+	for _, rel := range []string{
+		ReadbackSummaryFile,
+		filepath.Join(DirName, ReadbackSummaryFile),
+		filepath.Join("readback", DirName, ReadbackSummaryFile),
+		filepath.Join("eval-proof", "readback", DirName, ReadbackSummaryFile),
+		filepath.Join("eval-loop-decision", "readback", DirName, ReadbackSummaryFile),
+		filepath.Join("eval-loop-decision", DirName, "readback", DirName, ReadbackSummaryFile),
+	} {
+		candidates = append(candidates, filepath.Join(input, rel))
+	}
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			summary, err := LoadSummary(candidate)
+			if err != nil {
+				return Summary{}, "", err
+			}
+			rel, err := filepath.Rel(input, candidate)
+			if err != nil {
+				return summary, filepath.ToSlash(candidate), nil
+			}
+			return summary, filepath.ToSlash(rel), nil
+		}
+	}
+	return Summary{}, "", os.ErrNotExist
 }
 
 func buildModel(inputRoot string) (readbackModel, error) {
@@ -556,8 +612,88 @@ func summarize(model readbackModel) Summary {
 	}
 	summary.TopImprovementTarget = chooseTarget(model, summary.GeneralizationStatus)
 	summary.RerunInstructions = []string{"rerun the source command after addressing " + summary.TopImprovementTarget.Code + ", then run eval readback with --baseline pointing to this run"}
+	summary.ReplayBaseline = replayBaselineForSummary(summary)
 	rebuildClaimGates(&summary)
 	return summary
+}
+
+func replayBaselineForSummary(summary Summary) ReplayBaseline {
+	artifactTypes := make([]string, 0, len(summary.ArtifactTypeCounts))
+	for artifactType := range summary.ArtifactTypeCounts {
+		artifactTypes = append(artifactTypes, artifactType)
+	}
+	sort.Strings(artifactTypes)
+	baseline := ReplayBaseline{
+		Status:           "ready",
+		ArtifactTypes:    artifactTypes,
+		SafeArtifactRefs: append([]string{}, summary.SafeArtifactRefs...),
+		RerunInstruction: "rerun the same source command with the same corpus and command configuration, then use this readback output as --baseline for eval proof-gate or eval loop-decision",
+	}
+	corpus := map[string]bool{}
+	config := map[string]bool{}
+	for _, artifact := range summary.Artifacts {
+		if artifact.Status == "unsupported_schema" {
+			baseline.ReasonCodes = appendUnique(baseline.ReasonCodes, "unsupported_schema")
+		}
+		if artifact.Status == "unsafe_or_leaky" {
+			baseline.ReasonCodes = appendUnique(baseline.ReasonCodes, "unsafe_or_leaky")
+		}
+		if value := artifact.Fingerprints["corpus_fingerprint"]; value != "" {
+			corpus[value] = true
+		}
+		if value := artifact.Fingerprints["command_config_fingerprint"]; value != "" {
+			config[value] = true
+		}
+	}
+	switch len(corpus) {
+	case 0:
+		baseline.ReasonCodes = appendUnique(baseline.ReasonCodes, "missing_corpus_fingerprint")
+	case 1:
+		for value := range corpus {
+			baseline.CorpusFingerprint = value
+		}
+	default:
+		baseline.ReasonCodes = appendUnique(baseline.ReasonCodes, "conflicting_corpus_fingerprints")
+	}
+	switch len(config) {
+	case 0:
+		baseline.ReasonCodes = appendUnique(baseline.ReasonCodes, "missing_command_config_fingerprint")
+	case 1:
+		for value := range config {
+			baseline.CommandConfigFingerprint = value
+		}
+	default:
+		baseline.ReasonCodes = appendUnique(baseline.ReasonCodes, "conflicting_command_config_fingerprints")
+	}
+	hasSupportedArtifact := false
+	for _, artifact := range summary.Artifacts {
+		if artifact.Status == "detected" {
+			hasSupportedArtifact = true
+			break
+		}
+	}
+	if !hasSupportedArtifact {
+		baseline.ReasonCodes = appendUnique(baseline.ReasonCodes, "missing_supported_artifacts")
+	}
+	if !hasSideEffectEvidence(&summary) {
+		baseline.ReasonCodes = appendUnique(baseline.ReasonCodes, "missing_side_effect_evidence")
+	}
+	if hasSideEffectCounter(&summary) {
+		baseline.ReasonCodes = appendUnique(baseline.ReasonCodes, "side_effect_counter_nonzero")
+	}
+	if len(baseline.ReasonCodes) > 0 {
+		baseline.Status = "blocked"
+	}
+	return baseline
+}
+
+func appendUnique(values []string, value string) []string {
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
 }
 
 func rebuildClaimGates(summary *Summary) {
@@ -590,7 +726,11 @@ func rebuildClaimGates(summary *Summary) {
 	case "unchanged", "regressed":
 		gates = append(gates, ClaimGate{Gate: "improvement_claim", Status: "fail", ReasonCodes: []string{improvementStatus}, ClaimImpact: "blocks improvement claim"})
 	case "not_comparable":
-		gates = append(gates, ClaimGate{Gate: "improvement_claim", Status: "blocked", ReasonCodes: []string{"not_comparable"}, ClaimImpact: "blocks improvement claim"})
+		reasons := []string{"not_comparable"}
+		if summary.Comparison != nil {
+			reasons = append(reasons, summary.Comparison.ReasonCodes...)
+		}
+		gates = append(gates, ClaimGate{Gate: "improvement_claim", Status: "blocked", ReasonCodes: reasons, ClaimImpact: "blocks improvement claim"})
 	default:
 		gates = append(gates, ClaimGate{Gate: "improvement_claim", Status: "blocked", ReasonCodes: []string{"missing_baseline"}, ClaimImpact: "blocks improvement claim until comparable baseline is supplied"})
 	}
@@ -945,6 +1085,9 @@ func maxInt(a, b int) int {
 }
 
 func comparableModels(a, b readbackModel) (bool, []string) {
+	if a.flags["replay_baseline_blocked"] {
+		return false, append([]string{"replay_baseline_blocked"}, a.replayBaselineReasonCodes...)
+	}
 	if a.flags["artifact_not_comparable"] || b.flags["artifact_not_comparable"] {
 		return false, []string{"artifact_not_comparable"}
 	}
@@ -1194,6 +1337,21 @@ func markdownReport(summary Summary) string {
 	} else {
 		b.WriteString("## Comparison\n\nNo baseline was supplied, so improvement is not evaluated and the improvement claim remains blocked.\n\n")
 	}
+	b.WriteString("## Replay Baseline\n\n")
+	b.WriteString(fmt.Sprintf("- Status: %s\n", summary.ReplayBaseline.Status))
+	if len(summary.ReplayBaseline.ReasonCodes) > 0 {
+		b.WriteString(fmt.Sprintf("- Reasons: %s\n", strings.Join(summary.ReplayBaseline.ReasonCodes, ", ")))
+	}
+	if summary.ReplayBaseline.CorpusFingerprint != "" {
+		b.WriteString(fmt.Sprintf("- Corpus fingerprint: `%s`\n", summary.ReplayBaseline.CorpusFingerprint))
+	}
+	if summary.ReplayBaseline.CommandConfigFingerprint != "" {
+		b.WriteString(fmt.Sprintf("- Command config fingerprint: `%s`\n", summary.ReplayBaseline.CommandConfigFingerprint))
+	}
+	if summary.ReplayBaseline.RerunInstruction != "" {
+		b.WriteString(fmt.Sprintf("- Rerun: %s\n", summary.ReplayBaseline.RerunInstruction))
+	}
+	b.WriteString("\n")
 	b.WriteString("## Top improvement target\n\n")
 	b.WriteString(fmt.Sprintf("`%s`: %s\n\n", summary.TopImprovementTarget.Code, summary.TopImprovementTarget.Rationale))
 	b.WriteString("## Claim gates\n\n")
@@ -1213,6 +1371,13 @@ func chainDraft(summary Summary) string {
 	b.WriteString(summary.ImprovementStatus)
 	b.WriteString(". Generalization: ")
 	b.WriteString(summary.GeneralizationStatus)
+	b.WriteString(". Replay baseline: ")
+	b.WriteString(summary.ReplayBaseline.Status)
+	if len(summary.ReplayBaseline.ReasonCodes) > 0 {
+		b.WriteString(" (")
+		b.WriteString(strings.Join(summary.ReplayBaseline.ReasonCodes, ", "))
+		b.WriteString(")")
+	}
 	b.WriteString(". Blocked claims: ")
 	blocked := []string{}
 	for _, gate := range summary.ClaimGates {

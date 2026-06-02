@@ -230,6 +230,56 @@ func TestDecisionAcceptsReadbackSummaryBaseline(t *testing.T) {
 	}
 }
 
+func TestDecisionBlocksReadbackBaselineThatIsNotReplayReady(t *testing.T) {
+	root := t.TempDir()
+	baseline := filepath.Join(root, "baseline")
+	current := filepath.Join(root, "current")
+	target := filepath.Join(baseline, "corpus-pressure", "pressure-summary.json")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	writeRawDecision(t, target, `{
+		"schema_version": "corpus-pressure-summary/v0.1",
+		"evidence_ready_atom_ratio": 0.4,
+		"review_burden_ratio": 0.7,
+		"corpus_fingerprint": "same",
+		"guardrails": {
+			"network_fetches": 0,
+			"hosted_telemetry_exports": 0,
+			"hosted_inference_calls": 0,
+			"browser_calls": 0,
+			"slack_api_calls": 0,
+			"destination_writes": 0,
+			"product_brain_writes": 0,
+			"tolaria_writes": 0,
+			"auto_accepts": 0,
+			"no_human_claims": 0,
+			"committed_private_artifacts": 0
+		}
+	}`)
+	writeDecisionAcceptance(t, current)
+
+	baselineReadback := filepath.Join(root, "baseline-readback")
+	if _, err := evalreadback.Build(baseline, baselineReadback, evalreadback.Options{}); err != nil {
+		t.Fatalf("baseline readback: %v", err)
+	}
+	packet, err := Build(current, filepath.Join(root, "decision"), Options{
+		BaselineRoot: baselineReadback,
+	})
+	if err != nil {
+		t.Fatalf("decision build: %v", err)
+	}
+	if packet.ImprovementState == ImprovementImproved || packet.ClaimStatuses.Improvement == ImprovementImproved {
+		t.Fatalf("must not claim improvement from blocked replay baseline: %#v", packet)
+	}
+	if packet.Comparison == nil || !containsDecisionReason(packet.Comparison.ReasonCodes, "replay_baseline_blocked") {
+		t.Fatalf("expected replay_baseline_blocked comparison reason, got %#v", packet.Comparison)
+	}
+	if packet.ClaimStatuses.Generalization != GeneralizationBlocked || packet.ClaimStatuses.DEC64 != DEC64Blocked {
+		t.Fatalf("blocked replay baseline must also block higher claim paths, got %#v", packet.ClaimStatuses)
+	}
+}
+
 func TestDecisionAcceptsProofPacketBaseline(t *testing.T) {
 	root := t.TempDir()
 	baselineProof := filepath.Join(root, "baseline-proof")
@@ -311,6 +361,50 @@ func writeDecisionPressure(t *testing.T, root string, evidenceReady, reviewBurde
 			"committed_private_artifacts": 0
 		}
 	}`)
+}
+
+func writeDecisionAcceptance(t *testing.T, root string) {
+	t.Helper()
+	target := filepath.Join(root, "corpus-acceptance", "benchmark-summary.json")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	writeRawDecision(t, target, `{
+		"schema_version": "corpus-acceptance-summary/v0.1",
+		"suite_kind": "held_out",
+		"held_out": true,
+		"suite_valid": true,
+		"dec64_eligible": true,
+		"threshold": 0.98,
+		"accuracy": 1,
+		"eval_count": 100,
+		"evidence_ready_atom_ratio": 1,
+		"review_burden_ratio": 0,
+		"corpus_fingerprint": "same",
+		"command_config_fingerprint": "same-config",
+		"guardrails": {
+			"network_fetches": 0,
+			"hosted_telemetry_exports": 0,
+			"hosted_inference_calls": 0,
+			"browser_calls": 0,
+			"slack_api_calls": 0,
+			"destination_writes": 0,
+			"product_brain_writes": 0,
+			"tolaria_writes": 0,
+			"auto_accepts": 0,
+			"no_human_claims": 0,
+			"committed_private_artifacts": 0
+		}
+	}`)
+}
+
+func containsDecisionReason(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func writeValueProofSummary(t *testing.T, path string, destinationWrites int) {
