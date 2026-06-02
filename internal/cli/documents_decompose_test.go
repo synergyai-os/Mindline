@@ -302,6 +302,43 @@ func TestDocumentsCorpusAcceptanceCLI(t *testing.T) {
 	}
 }
 
+func TestDocumentsCorpusAcceptanceLabelingCLI(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "corpus-pressure"), 0o755); err != nil {
+		t.Fatalf("mkdir pressure: %v", err)
+	}
+	writeCLITestJSON(t, filepath.Join(root, "corpus-pressure", "pressure-summary.json"), documents.CorpusPressureSummary{
+		SchemaVersion:            documents.CorpusPressureSummarySchemaVersion,
+		CorpusID:                 "corpus-labeling-cli",
+		CorpusFingerprint:        "corpus-labeling-cli-fingerprint",
+		CommandConfigFingerprint: "config-labeling-cli",
+		ReplayFingerprint:        "pressure-labeling-cli",
+		Sources:                  []documents.CorpusPressureSourceResult{},
+	})
+	out := filepath.Join(root, "labeling")
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "corpus-acceptance-labeling", root,
+		"--out", out,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+	var packet documents.CorpusAcceptanceLabelingPacket
+	if err := json.Unmarshal(stdout.Bytes(), &packet); err != nil {
+		t.Fatalf("decode stdout: %v", err)
+	}
+	if packet.SchemaVersion != documents.CorpusAcceptanceLabelingPacketSchemaVersion || packet.HeldOutReady {
+		t.Fatalf("expected labeling packet, got %+v", packet)
+	}
+	if _, err := os.Stat(filepath.Join(out, "corpus-acceptance-labeling", "labeling-packet.json")); err != nil {
+		t.Fatalf("missing labeling packet: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(out, "corpus-acceptance-labeling", "answer-key-template.json")); err != nil {
+		t.Fatalf("missing answer-key template: %v", err)
+	}
+}
+
 func TestDocumentsCorpusPressureDoesNotWriteDestinationArtifacts(t *testing.T) {
 	out := t.TempDir()
 	var stdout, stderr bytes.Buffer
