@@ -99,6 +99,23 @@ func TestCorpusAcceptanceLabelRecordingRejectsUnsupportedDecision(t *testing.T) 
 	}
 }
 
+func TestCorpusAcceptanceLabelRecordingRedactsUnsafeRecordIDFromFatalBlockerSuffixes(t *testing.T) {
+	root, _, _, recordsPath := writeCorpusAcceptanceLabelRecordingFixture(t, corpusAcceptanceIndependentProvenance)
+	records := readLabelRecordingFixtureRecords(t, recordsPath)
+	unsafeRecordID := "rec-" + unsafeTokenMarker()
+	records.Records[0].RecordID = unsafeRecordID
+	records.Records[0].Decision = CorpusAcceptanceLabelDecision("typo_present")
+	writeDocumentsTestJSON(t, recordsPath, records)
+
+	_, _, err := BuildCorpusAcceptanceLabelRecording(filepath.Join(root, "labeling"), recordsPath, filepath.Join(root, "recording"))
+	if err == nil || !strings.Contains(err.Error(), "unsupported_decision:unsafe_record_id") {
+		t.Fatalf("expected unsupported decision blocker with safe record fallback, got %v", err)
+	}
+	if strings.Contains(err.Error(), unsafeRecordID) || strings.Contains(err.Error(), unsafeTokenMarker()) {
+		t.Fatalf("fatal blocker leaked unsafe record id: %v", err)
+	}
+}
+
 func TestCorpusAcceptanceLabelRecordingRejectsOutcomeWithoutSourceID(t *testing.T) {
 	root, _, _, recordsPath := writeCorpusAcceptanceLabelRecordingFixture(t, corpusAcceptanceIndependentProvenance)
 	records := readLabelRecordingFixtureRecords(t, recordsPath)
@@ -123,6 +140,21 @@ func TestCorpusAcceptanceLabelRecordingRejectsDuplicateCandidateLabelRef(t *test
 	_, _, err := BuildCorpusAcceptanceLabelRecording(filepath.Join(root, "labeling"), recordsPath, filepath.Join(root, "recording"))
 	if err == nil || !strings.Contains(err.Error(), "duplicate_label_ref:rec-present-copy") {
 		t.Fatalf("expected duplicate label ref blocker, got %v", err)
+	}
+}
+
+func TestCorpusAcceptanceLabelRecordingRejectsDuplicateEvidenceLabelRef(t *testing.T) {
+	root, _, _, recordsPath := writeCorpusAcceptanceLabelRecordingFixture(t, corpusAcceptanceIndependentProvenance)
+	records := readLabelRecordingFixtureRecords(t, recordsPath)
+	records.Records[1].CandidateID = ""
+	records.Records[1].ExpectedKind = records.Records[0].ExpectedKind
+	records.Records[1].SourceDocumentID = records.Records[0].SourceDocumentID
+	records.Records[1].RequiredEvidence = append([]string{}, records.Records[0].RequiredEvidence...)
+	writeDocumentsTestJSON(t, recordsPath, records)
+
+	_, _, err := BuildCorpusAcceptanceLabelRecording(filepath.Join(root, "labeling"), recordsPath, filepath.Join(root, "recording"))
+	if err == nil || !strings.Contains(err.Error(), "duplicate_label_ref:rec-absent") {
+		t.Fatalf("expected duplicate evidence label ref blocker, got %v", err)
 	}
 }
 
@@ -156,6 +188,22 @@ func TestCorpusAcceptanceLabelRecordingDerivesEvidenceForCandidateScopedAbsent(t
 	}
 	if absent.ExpectedOutcomeID != "exp-absent" || !stringListContains(absent.RequiredEvidence, packet.Sources[0].Candidates[1].EvidenceNodes[0]) {
 		t.Fatalf("candidate-scoped absent outcome should preserve candidate evidence constraints, got %+v", absent)
+	}
+}
+
+func TestCorpusAcceptanceLabelRecordingIncludesGuardrailBlockersInReadiness(t *testing.T) {
+	root, _, _, recordsPath := writeCorpusAcceptanceLabelRecordingFixture(t, corpusAcceptanceIndependentProvenance)
+	packet := readCorpusAcceptanceLabelingPacketForTest(t, filepath.Join(root, "labeling"))
+	packet.Guardrails.HostedTelemetryExports = 1
+	packet.Guardrails.DestinationWrites = 1
+	writeDocumentsTestJSON(t, filepath.Join(root, "labeling", corpusAcceptanceLabelingDirName, "labeling-packet.json"), packet)
+
+	summary, _, err := BuildCorpusAcceptanceLabelRecording(filepath.Join(root, "labeling"), recordsPath, filepath.Join(root, "recording"))
+	if err != nil {
+		t.Fatalf("build label recording: %v", err)
+	}
+	if summary.BenchmarkReady || !stringListContains(summary.Blockers, "hosted_telemetry_export") || !stringListContains(summary.Blockers, "destination_write") {
+		t.Fatalf("expected guardrail blockers to block readiness, summary=%+v", summary)
 	}
 }
 
@@ -332,4 +380,13 @@ func readLabelRecordingFixtureRecords(t *testing.T, path string) CorpusAcceptanc
 		t.Fatalf("read records: %v", err)
 	}
 	return records
+}
+
+func readCorpusAcceptanceLabelingPacketForTest(t *testing.T, path string) CorpusAcceptanceLabelingPacket {
+	t.Helper()
+	packet, err := readCorpusAcceptanceLabelingPacket(path)
+	if err != nil {
+		t.Fatalf("read packet: %v", err)
+	}
+	return packet
 }

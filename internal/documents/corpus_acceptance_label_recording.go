@@ -184,6 +184,7 @@ func buildCorpusAcceptanceLabelRecording(packet CorpusAcceptanceLabelingPacket, 
 	if len(seenCasesWithOutcomes) < records.CoverageRequirements.MinSourceCount {
 		blockers = append(blockers, "below_min_source_count")
 	}
+	blockers = append(blockers, corpusAcceptanceLabelRecordingGuardrailBlockers(packet.Guardrails)...)
 	blockers = append(blockers, corpusAcceptanceLabelRecordingCoverageBlockers(answerKey)...)
 	summary.Blockers = uniqueStrings(blockers)
 	summary.BenchmarkReady = len(summary.Blockers) == 0
@@ -244,6 +245,7 @@ func validateCorpusAcceptanceLabelRecords(records CorpusAcceptanceLabelRecords, 
 	seenOutcomes := map[string]bool{}
 	seenCandidateLabelRefs := map[string]bool{}
 	for _, record := range records.Records {
+		recordRef := safeLabelRecordBlockerID(record.RecordID)
 		if strings.TrimSpace(record.RecordID) == "" || sanitizeID(record.RecordID) != record.RecordID || containsUnsafeMarker(record.RecordID) || containsGovernanceID(record.RecordID) {
 			blockers = append(blockers, "unsafe_record_id")
 		}
@@ -253,56 +255,57 @@ func validateCorpusAcceptanceLabelRecords(records CorpusAcceptanceLabelRecords, 
 		seenRecords[record.RecordID] = true
 		source, candidate, hasCandidate := index.lookup(record.CaseID, record.CandidateID)
 		if source == nil {
-			blockers = append(blockers, "unknown_case_id:"+safeLabelRecordBlockerID(record.RecordID))
+			blockers = append(blockers, "unknown_case_id:"+recordRef)
 			continue
 		}
 		if !validCorpusAcceptanceLabelDecision(record.Decision) {
-			blockers = append(blockers, "unsupported_decision:"+record.RecordID)
+			blockers = append(blockers, "unsupported_decision:"+recordRef)
 		}
 		outcomeRecord := record.Decision == CorpusAcceptanceLabelExpectedPresent || record.Decision == CorpusAcceptanceLabelExpectedAbsent
 		if outcomeRecord && strings.TrimSpace(record.SourceID) == "" {
-			blockers = append(blockers, "missing_source_id:"+record.RecordID)
+			blockers = append(blockers, "missing_source_id:"+recordRef)
 		}
 		if strings.TrimSpace(record.SourceID) != "" && record.SourceID != source.SourceID {
-			blockers = append(blockers, "source_id_mismatch:"+record.RecordID)
+			blockers = append(blockers, "source_id_mismatch:"+recordRef)
 		}
 		if record.Decision == CorpusAcceptanceLabelExpectedPresent && !hasCandidate {
-			blockers = append(blockers, "missing_candidate:"+record.RecordID)
+			blockers = append(blockers, "missing_candidate:"+recordRef)
 		}
 		if strings.TrimSpace(record.CandidateID) != "" && !hasCandidate {
-			blockers = append(blockers, "unknown_candidate_id:"+record.RecordID)
+			blockers = append(blockers, "unknown_candidate_id:"+recordRef)
 		}
 		if hasCandidate {
 			if record.SourceDocumentID != "" && record.SourceDocumentID != candidate.SourceDocumentID {
-				blockers = append(blockers, "source_document_id_mismatch:"+record.RecordID)
+				blockers = append(blockers, "source_document_id_mismatch:"+recordRef)
 			}
 		} else if record.SourceDocumentID != "" && !sourceHasDocumentID(source, record.SourceDocumentID) {
-			blockers = append(blockers, "source_document_id_mismatch:"+record.RecordID)
+			blockers = append(blockers, "source_document_id_mismatch:"+recordRef)
 		}
-		if outcomeRecord && hasCandidate && strings.TrimSpace(record.CandidateID) != "" {
-			refKey := source.SourceID + "\x00" + record.CandidateID
-			if seenCandidateLabelRefs[refKey] {
-				blockers = append(blockers, "duplicate_label_ref:"+record.RecordID)
+		if outcomeRecord {
+			for _, refKey := range labelRecordDuplicateRefKeys(record, source, candidate, hasCandidate) {
+				if seenCandidateLabelRefs[refKey] {
+					blockers = append(blockers, "duplicate_label_ref:"+recordRef)
+				}
+				seenCandidateLabelRefs[refKey] = true
 			}
-			seenCandidateLabelRefs[refKey] = true
 		}
 		if record.Decision == CorpusAcceptanceLabelExpectedAbsent && hasCandidate && !hasLabelRecordCandidateConstraints(record) && len(candidate.EvidenceNodes) == 0 {
-			blockers = append(blockers, "missing_candidate_constraints:"+record.RecordID)
+			blockers = append(blockers, "missing_candidate_constraints:"+recordRef)
 		}
 		for _, evidence := range labelRecordEvidenceRefs(record) {
 			if hasCandidate {
 				if !corpusLabelStringListContains(candidate.EvidenceNodes, evidence) {
-					blockers = append(blockers, "unknown_evidence_ref:"+record.RecordID)
+					blockers = append(blockers, "unknown_evidence_ref:"+recordRef)
 				}
 				continue
 			}
 			if !sourceHasEvidenceNode(source, evidence) {
-				blockers = append(blockers, "unknown_evidence_ref:"+record.RecordID)
+				blockers = append(blockers, "unknown_evidence_ref:"+recordRef)
 			}
 		}
 		if record.Decision == CorpusAcceptanceLabelExpectedPresent || record.Decision == CorpusAcceptanceLabelExpectedAbsent {
 			if strings.TrimSpace(record.ExpectedOutcomeID) == "" || sanitizeID(record.ExpectedOutcomeID) != record.ExpectedOutcomeID {
-				blockers = append(blockers, "unsafe_expected_outcome_id:"+record.RecordID)
+				blockers = append(blockers, "unsafe_expected_outcome_id:"+recordRef)
 			}
 			if seenOutcomes[record.ExpectedOutcomeID] {
 				blockers = append(blockers, "duplicate_expected_outcome_id")
@@ -316,11 +319,11 @@ func validateCorpusAcceptanceLabelRecords(records CorpusAcceptanceLabelRecords, 
 				ExpectedOutcomes: []SemanticExpectedOutcome{outcome},
 			}
 			if err := ValidateSemanticAcceptanceAnswerKey(sourceAnswerKey); err != nil {
-				blockers = append(blockers, "invalid_expected_outcome:"+record.RecordID)
+				blockers = append(blockers, "invalid_expected_outcome:"+recordRef)
 			}
 		}
 		if containsUnsafeLabelRecordMarker(record) {
-			blockers = append(blockers, "label_record_contains_private_marker:"+record.RecordID)
+			blockers = append(blockers, "label_record_contains_private_marker:"+recordRef)
 		}
 	}
 	return uniqueStrings(blockers)
@@ -399,6 +402,17 @@ func corpusAcceptanceLabelRecordingCoverageBlockers(answerKey CorpusAcceptanceAn
 	return blockers
 }
 
+func corpusAcceptanceLabelRecordingGuardrailBlockers(guardrails CorpusPressureGuardrailCounters) []string {
+	var blockers []string
+	if guardrails.HostedTelemetryExports > 0 {
+		blockers = append(blockers, "hosted_telemetry_export")
+	}
+	if guardrails.DestinationWrites > 0 {
+		blockers = append(blockers, "destination_write")
+	}
+	return blockers
+}
+
 func sourceDocumentIDForLabel(candidate *CorpusAcceptanceLabelingCandidateReference, hasCandidate bool) string {
 	if hasCandidate {
 		return candidate.SourceDocumentID
@@ -457,6 +471,29 @@ func labelRecordEvidenceRefs(record CorpusAcceptanceLabelRecordItem) []string {
 	refs := append([]string{}, record.RequiredEvidence...)
 	refs = append(refs, record.AcceptableAlternates...)
 	return refs
+}
+
+func labelRecordDuplicateRefKeys(record CorpusAcceptanceLabelRecordItem, source *CorpusAcceptanceLabelingSource, candidate *CorpusAcceptanceLabelingCandidateReference, hasCandidate bool) []string {
+	var keys []string
+	if hasCandidate && strings.TrimSpace(record.CandidateID) != "" {
+		keys = append(keys, source.SourceID+"\x00candidate\x00"+record.CandidateID)
+	}
+	evidenceRefs := nonBlankCorpusLabelStrings(labelRecordEvidenceRefs(record))
+	if len(evidenceRefs) > 0 {
+		sort.Strings(evidenceRefs)
+		keys = append(keys, source.SourceID+"\x00evidence\x00"+strings.Join(evidenceRefs, "\x00"))
+	}
+	return keys
+}
+
+func nonBlankCorpusLabelStrings(values []string) []string {
+	var out []string
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func sourceHasDocumentID(source *CorpusAcceptanceLabelingSource, sourceDocumentID string) bool {
