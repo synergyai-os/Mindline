@@ -70,6 +70,31 @@ func TestBuildComparesBaselineCurrent(t *testing.T) {
 	}
 }
 
+func TestBuildComparesValueProofCoreKRs(t *testing.T) {
+	root := t.TempDir()
+	baseline := filepath.Join(root, "baseline")
+	current := filepath.Join(root, "current")
+	writeValueProof(t, baseline, 1, 1)
+	writeValueProof(t, current, 0.5, 0.4)
+
+	summary, err := Build(current, filepath.Join(root, "out"), Options{BaselineRoot: baseline})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if summary.ImprovementStatus != "regressed" {
+		t.Fatalf("expected value-proof KR regression, got %s comparison=%+v", summary.ImprovementStatus, summary.Comparison)
+	}
+	if summary.Comparison == nil {
+		t.Fatalf("expected comparison")
+	}
+	if summary.Comparison.MetricDeltas["source_accounting_ratio"] >= 0 {
+		t.Fatalf("expected source accounting regression delta, got %+v", summary.Comparison.MetricDeltas)
+	}
+	if summary.Comparison.MetricDeltas["evidence_or_blocker_ratio"] >= 0 {
+		t.Fatalf("expected evidence-or-blocker regression delta, got %+v", summary.Comparison.MetricDeltas)
+	}
+}
+
 func TestBuildRemovesStaleComparisonWhenBaselineOmitted(t *testing.T) {
 	root := t.TempDir()
 	baseline := filepath.Join(root, "baseline")
@@ -1316,6 +1341,25 @@ func TestBuildRejectsNoArtifacts(t *testing.T) {
 func writePressure(t *testing.T, root string, evidenceReady, reviewBurden float64) {
 	t.Helper()
 	writePressureWithFingerprint(t, root, evidenceReady, reviewBurden, "same")
+}
+
+func writeValueProof(t *testing.T, root string, sourceAccountingRatio, evidenceOrBlockerRatio float64) {
+	t.Helper()
+	writeFixture(t, filepath.Join(root, "value-proof", "value-summary.json"), map[string]any{
+		"schema_version":                 "mindline-value-proof/v0.1",
+		"corpus_id":                      "corpus-a",
+		"source_count":                   2,
+		"accounted_source_count":         sourceAccountingRatio * 2,
+		"source_accounting_ratio":        sourceAccountingRatio,
+		"atom_count":                     10,
+		"evidence_or_blocker_atom_count": evidenceOrBlockerRatio * 10,
+		"evidence_or_blocker_ratio":      evidenceOrBlockerRatio,
+		"evidence_ready_atom_count":      10,
+		"evidence_ready_atom_ratio":      1,
+		"corpus_fingerprint":             "same",
+		"command_config_fingerprint":     "same-config",
+		"guardrails":                     completeGuardrails(),
+	})
 }
 
 func writePressureWithFingerprint(t *testing.T, root string, evidenceReady, reviewBurden float64, fingerprint string) {

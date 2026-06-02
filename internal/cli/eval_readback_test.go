@@ -117,6 +117,36 @@ func TestEvalProofGateCLIUsage(t *testing.T) {
 	}
 }
 
+func TestEvalLoopDecisionCLI(t *testing.T) {
+	root := t.TempDir()
+	writeCLIReadbackPressure(t, filepath.Join(root, "baseline"), 0.2, 0.8, "same")
+	writeCLIReadbackPressure(t, filepath.Join(root, "current"), 0.8, 0.3, "same")
+	out := filepath.Join(root, "out")
+
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{"eval", "loop-decision", filepath.Join(root, "current"), "--baseline", filepath.Join(root, "baseline"), "--out", out}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected ok, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"schema_version": "mindline-eval-loop-decision/v0.1"`) ||
+		!strings.Contains(stdout.String(), `"improvement_state": "improved"`) {
+		t.Fatalf("unexpected stdout:\n%s", stdout.String())
+	}
+	for _, rel := range []string{"decision-packet.json", "decision-report.md", "chain-capture-draft.md"} {
+		if _, err := os.Stat(filepath.Join(out, "eval-loop-decision", rel)); err != nil {
+			t.Fatalf("missing %s: %v", rel, err)
+		}
+	}
+}
+
+func TestEvalLoopDecisionCLIUsage(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{"eval", "loop-decision"}, &stdout, &stderr)
+	if code != ExitUsage || !strings.Contains(stderr.String(), "mindline eval loop-decision") {
+		t.Fatalf("expected usage, code=%d stderr=%s", code, stderr.String())
+	}
+}
+
 func writeCLIReadbackPressure(t *testing.T, root string, evidenceReady, reviewBurden float64, fingerprint string) {
 	t.Helper()
 	target := filepath.Join(root, "corpus-pressure", "pressure-summary.json")

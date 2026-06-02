@@ -65,6 +65,21 @@ func ApplyBaseline(summary Summary, baselineRoot string) (Summary, error) {
 	return summary, nil
 }
 
+func ApplyBaselineSummary(summary Summary, baselineSummary Summary) Summary {
+	summary = RefreshSummary(summary)
+	baselineSummary = RefreshSummary(baselineSummary)
+	current := modelFromSummary(summary)
+	baseline := modelFromSummary(baselineSummary)
+	comparison := compareModels(baseline, current)
+	summary.BaselineRootLabel = baseline.rootLabel
+	summary.BaselineArtifactRefs = prefixedArtifactRefs("baseline", artifactRefs(baseline.artifacts))
+	summary.BaselineArtifacts = baseline.artifacts
+	summary.Comparison = &comparison
+	summary.ImprovementStatus = comparison.Status
+	rebuildClaimGates(&summary)
+	return summary
+}
+
 func RefreshSummary(summary Summary) Summary {
 	current := modelFromSummary(summary)
 	refreshed := summarize(current)
@@ -230,7 +245,7 @@ func artifactTypeFor(root, ref string) string {
 func artifactRootPrefix(root string) string {
 	base := filepath.Base(root)
 	switch base {
-	case "trace", "corpus-pressure", "corpus-pressure-loop", "corpus-acceptance", "autonomy-readiness", "link-enrichment":
+	case "trace", "corpus-pressure", "corpus-pressure-loop", "corpus-acceptance", "autonomy-readiness", "link-enrichment", "value-proof":
 		return base
 	case "comparison", "requests", "posthog":
 		if filepath.Base(filepath.Dir(root)) == "link-enrichment" {
@@ -264,6 +279,8 @@ func artifactTypeForRef(ref string) string {
 		return "link_artifact_requests"
 	case strings.HasSuffix(ref, "link-enrichment/posthog/eval-projection.json"):
 		return "link_enrichment_eval_projection"
+	case strings.HasSuffix(ref, "value-proof/value-summary.json"):
+		return "value_proof_summary"
 	default:
 		return ""
 	}
@@ -322,6 +339,7 @@ func supportedSchema(artifactType, schemaVersion string) bool {
 		"link_enrichment_comparison_summary": "link-enrichment-comparison/v0.1",
 		"link_artifact_requests":             "local-link-artifact-requests/v0.1",
 		"link_enrichment_eval_projection":    "mindline-link-enrichment-eval-projection/v0.1",
+		"value_proof_summary":                "mindline-value-proof/v0.1",
 	}
 	return strings.TrimSpace(schemaVersion) == expected[artifactType]
 }
@@ -329,6 +347,7 @@ func supportedSchema(artifactType, schemaVersion string) bool {
 func extractEvidence(raw map[string]any, artifact *ArtifactEvidence) {
 	for _, key := range []string{
 		"source_count", "candidate_count", "semantic_candidate_count", "evidence_ready_atom_count",
+		"accounted_source_count", "atom_count", "evidence_or_blocker_atom_count", "relation_count",
 		"review_burden_count", "missing_link_reduction_ratio", "needs_enrichment_reduction_ratio",
 		"missing_link_enrichment_reduction_ratio",
 		"url_accounting_coverage", "artifact_match_coverage", "model_error_count",
@@ -341,7 +360,7 @@ func extractEvidence(raw map[string]any, artifact *ArtifactEvidence) {
 			artifact.Metrics[key] = value
 		}
 	}
-	for _, key := range []string{"processed_source_ratio", "evidence_ready_atom_ratio", "review_burden_ratio"} {
+	for _, key := range []string{"processed_source_ratio", "source_accounting_ratio", "evidence_ready_atom_ratio", "evidence_or_blocker_ratio", "review_burden_ratio"} {
 		if value, ok := numberValue(raw[key]); ok {
 			artifact.Metrics[key] = value
 		}
@@ -837,7 +856,7 @@ func compareModels(baseline, current readbackModel) ComparisonSummary {
 	}
 	comparison.ReasonCodes = reasons
 	improved, regressed := false, false
-	for _, metric := range []string{"evidence_ready_atom_ratio", "processed_source_ratio", "missing_link_reduction_ratio", "missing_link_enrichment_reduction_ratio", "needs_enrichment_reduction_ratio", "url_accounting_coverage", "artifact_match_coverage", "evidence_ready_count"} {
+	for _, metric := range []string{"evidence_ready_atom_ratio", "evidence_or_blocker_ratio", "source_accounting_ratio", "processed_source_ratio", "missing_link_reduction_ratio", "missing_link_enrichment_reduction_ratio", "needs_enrichment_reduction_ratio", "url_accounting_coverage", "artifact_match_coverage", "evidence_ready_count"} {
 		before, bok := baseline.metrics[metric]
 		after, aok := current.metrics[metric]
 		if !bok || !aok {
