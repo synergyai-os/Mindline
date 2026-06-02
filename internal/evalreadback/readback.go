@@ -245,7 +245,7 @@ func artifactTypeFor(root, ref string) string {
 func artifactRootPrefix(root string) string {
 	base := filepath.Base(root)
 	switch base {
-	case "trace", "corpus-pressure", "corpus-pressure-loop", "corpus-acceptance", "autonomy-readiness", "link-enrichment":
+	case "trace", "corpus-pressure", "corpus-pressure-loop", "corpus-acceptance", "autonomy-readiness", "link-enrichment", "value-proof":
 		return base
 	case "comparison", "requests", "posthog":
 		if filepath.Base(filepath.Dir(root)) == "link-enrichment" {
@@ -279,6 +279,8 @@ func artifactTypeForRef(ref string) string {
 		return "link_artifact_requests"
 	case strings.HasSuffix(ref, "link-enrichment/posthog/eval-projection.json"):
 		return "link_enrichment_eval_projection"
+	case strings.HasSuffix(ref, "value-proof/value-summary.json"):
+		return "value_proof_summary"
 	default:
 		return ""
 	}
@@ -337,6 +339,7 @@ func supportedSchema(artifactType, schemaVersion string) bool {
 		"link_enrichment_comparison_summary": "link-enrichment-comparison/v0.1",
 		"link_artifact_requests":             "local-link-artifact-requests/v0.1",
 		"link_enrichment_eval_projection":    "mindline-link-enrichment-eval-projection/v0.1",
+		"value_proof_summary":                "mindline-value-proof/v0.1",
 	}
 	return strings.TrimSpace(schemaVersion) == expected[artifactType]
 }

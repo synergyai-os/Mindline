@@ -196,8 +196,12 @@ func TestProofLoadsExistingReadbackSummary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build proof from readback: %v", err)
 	}
-	if packet.Verdict != VerdictPass || packet.ReadbackSummaryRef != "input/readback-summary.json" {
+	expectedRef := filepath.ToSlash(filepath.Join("readback", evalreadback.DirName, evalreadback.ReadbackSummaryFile))
+	if packet.Verdict != VerdictPass || packet.ReadbackSummaryRef != expectedRef {
 		t.Fatalf("unexpected proof from readback: %+v", packet)
+	}
+	if _, err := os.Stat(filepath.Join(root, "proof", DirName, "readback", evalreadback.DirName, evalreadback.ReadbackSummaryFile)); err != nil {
+		t.Fatalf("expected proof-local readback summary copy: %v", err)
 	}
 }
 
@@ -213,8 +217,12 @@ func TestProofPreservesNestedExistingReadbackSummaryRef(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build proof from nested readback: %v", err)
 	}
-	if packet.Verdict != VerdictPass || packet.ReadbackSummaryRef != "input/eval-readback/readback-summary.json" {
+	expectedRef := filepath.ToSlash(filepath.Join("readback", evalreadback.DirName, evalreadback.ReadbackSummaryFile))
+	if packet.Verdict != VerdictPass || packet.ReadbackSummaryRef != expectedRef {
 		t.Fatalf("unexpected nested proof ref: %+v", packet)
+	}
+	if _, err := os.Stat(filepath.Join(root, "proof", DirName, "readback", evalreadback.DirName, evalreadback.ReadbackSummaryFile)); err != nil {
+		t.Fatalf("expected nested proof-local readback summary copy: %v", err)
 	}
 }
 

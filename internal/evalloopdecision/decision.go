@@ -292,13 +292,18 @@ func improvementState(summary evalreadback.Summary, options Options) string {
 }
 
 func claimStatuses(summary evalreadback.Summary, options Options) ClaimStatuses {
+	safetyStatus := gateStatus(summary, "side_effect_claim")
+	privacyStatus := gateStatus(summary, "privacy_safe_readback")
 	statuses := ClaimStatuses{
-		Safety:         gateStatus(summary, "side_effect_claim"),
+		Safety:         safetyStatus,
 		Improvement:    improvementState(summary, options),
 		Generalization: gateStatus(summary, "generalization_claim"),
 		DEC64:          gateStatus(summary, "dec64_no_human_claim"),
 	}
-	if gateStatus(summary, "privacy_safe_readback") != "pass" || statuses.Safety != "pass" {
+	switch {
+	case privacyStatus == "fail" || safetyStatus == "fail":
+		statuses.Safety = "fail"
+	case privacyStatus != "pass" || safetyStatus != "pass":
 		statuses.Safety = SafetyBlocked
 	}
 	if statuses.Safety == "" {

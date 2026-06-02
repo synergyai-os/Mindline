@@ -72,6 +72,60 @@ func TestDecisionReadsProofPacketInput(t *testing.T) {
 	}
 }
 
+func TestDecisionReadsProofPacketGeneratedFromExistingReadback(t *testing.T) {
+	root := t.TempDir()
+	readbackOut := filepath.Join(root, "readback")
+	if _, err := evalreadback.Build(filepath.Join("..", "..", "testdata", "eval-readback", "current"), readbackOut, evalreadback.Options{}); err != nil {
+		t.Fatalf("readback build: %v", err)
+	}
+	proofOut := filepath.Join(root, "proof")
+	proofPacket, err := evalproof.Build(filepath.Join(readbackOut, evalreadback.DirName), proofOut, evalproof.Options{Claim: evalproof.ClaimSafety})
+	if err != nil {
+		t.Fatalf("proof build: %v", err)
+	}
+	if proofPacket.ReadbackSummaryRef != filepath.ToSlash(filepath.Join("readback", evalreadback.DirName, evalreadback.ReadbackSummaryFile)) {
+		t.Fatalf("expected proof packet to persist readback summary ref, got %s", proofPacket.ReadbackSummaryRef)
+	}
+	packet, err := Build(filepath.Join(proofOut, evalproof.DirName), filepath.Join(root, "decision"), Options{})
+	if err != nil {
+		t.Fatalf("decision build: %v", err)
+	}
+	if packet.ReadbackSummaryRef == "" {
+		t.Fatalf("expected readback summary ref")
+	}
+}
+
+func TestDecisionAcceptsValueProofSummaryDirectory(t *testing.T) {
+	root := t.TempDir()
+	valueProofDir := filepath.Join(root, "value-proof")
+	writeValueProofSummary(t, filepath.Join(valueProofDir, "value-summary.json"), 0)
+
+	packet, err := Build(valueProofDir, filepath.Join(root, "decision"), Options{})
+	if err != nil {
+		t.Fatalf("decision build: %v", err)
+	}
+	if packet.ClaimStatuses.Safety != SafetyPass {
+		t.Fatalf("expected value-proof safety pass, got %s", packet.ClaimStatuses.Safety)
+	}
+	if len(packet.SafeArtifactRefs) != 1 || packet.SafeArtifactRefs[0] != "value-summary.json" {
+		t.Fatalf("expected value-proof summary ref, got %#v", packet.SafeArtifactRefs)
+	}
+}
+
+func TestDecisionPreservesFailingSafetyStatus(t *testing.T) {
+	root := t.TempDir()
+	valueProofDir := filepath.Join(root, "value-proof")
+	writeValueProofSummary(t, filepath.Join(valueProofDir, "value-summary.json"), 1)
+
+	packet, err := Build(valueProofDir, filepath.Join(root, "decision"), Options{})
+	if err != nil {
+		t.Fatalf("decision build: %v", err)
+	}
+	if packet.ClaimStatuses.Safety != "fail" {
+		t.Fatalf("expected safety fail to be preserved, got %s", packet.ClaimStatuses.Safety)
+	}
+}
+
 func TestDecisionAcceptsReadbackSummaryBaseline(t *testing.T) {
 	root := t.TempDir()
 	baselineReadback := filepath.Join(root, "baseline-readback")
@@ -163,6 +217,34 @@ func writeDecisionPressure(t *testing.T, root string, evidenceReady, reviewBurde
 			"browser_calls": 0,
 			"slack_api_calls": 0,
 			"destination_writes": 0,
+			"product_brain_writes": 0,
+			"tolaria_writes": 0,
+			"auto_accepts": 0,
+			"no_human_claims": 0,
+			"committed_private_artifacts": 0
+		}
+	}`)
+}
+
+func writeValueProofSummary(t *testing.T, path string, destinationWrites int) {
+	t.Helper()
+	writeRawDecision(t, path, `{
+		"schema_version": "mindline-value-proof/v0.1",
+		"corpus_id": "corpus-decision",
+		"source_count": 1,
+		"accounted_source_count": 1,
+		"source_accounting_ratio": 1,
+		"processed_source_count": 1,
+		"atom_count": 2,
+		"evidence_ready_atom_count": 2,
+		"evidence_ready_atom_ratio": 1,
+		"guardrails": {
+			"network_fetches": 0,
+			"hosted_telemetry_exports": 0,
+			"hosted_inference_calls": 0,
+			"browser_calls": 0,
+			"slack_api_calls": 0,
+			"destination_writes": `+strconv.Itoa(destinationWrites)+`,
 			"product_brain_writes": 0,
 			"tolaria_writes": 0,
 			"auto_accepts": 0,

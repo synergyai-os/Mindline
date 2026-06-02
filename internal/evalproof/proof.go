@@ -92,7 +92,11 @@ func readbackFor(inputRoot, proofDir string, options Options) (evalreadback.Summ
 		if err != nil {
 			return evalreadback.Summary{}, "", err
 		}
-		return summary, safeExistingReadbackRef(inputRoot, summaryPath), nil
+		readbackOut := filepath.Join(proofDir, "readback")
+		if err := evalreadback.Write(readbackOut, summary, options.ProtectedRoots); err != nil {
+			return evalreadback.Summary{}, "", err
+		}
+		return summary, filepath.ToSlash(filepath.Join("readback", evalreadback.DirName, evalreadback.ReadbackSummaryFile)), nil
 	}
 	readbackOut := filepath.Join(proofDir, "readback")
 	summary, err := evalreadback.Build(inputRoot, readbackOut, evalreadback.Options{
