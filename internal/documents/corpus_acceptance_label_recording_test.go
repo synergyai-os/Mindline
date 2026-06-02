@@ -158,6 +158,22 @@ func TestCorpusAcceptanceLabelRecordingRejectsDuplicateEvidenceLabelRef(t *testi
 	}
 }
 
+func TestCorpusAcceptanceLabelRecordingAllowsDistinctLabelsToShareEvidence(t *testing.T) {
+	root, _, _, recordsPath := writeCorpusAcceptanceLabelRecordingFixture(t, corpusAcceptanceIndependentProvenance)
+	records := readLabelRecordingFixtureRecords(t, recordsPath)
+	sharedEvidence := records.Records[0].RequiredEvidence[0]
+	records.Records[1].RequiredEvidence = []string{sharedEvidence}
+	writeDocumentsTestJSON(t, recordsPath, records)
+
+	_, answerKey, err := BuildCorpusAcceptanceLabelRecording(filepath.Join(root, "labeling"), recordsPath, filepath.Join(root, "recording"))
+	if err != nil {
+		t.Fatalf("shared evidence on distinct candidate-scoped labels should be allowed: %v", err)
+	}
+	if len(answerKey.Sources) != 1 || len(answerKey.Sources[0].ExpectedOutcomes) != 2 {
+		t.Fatalf("expected both labels to survive shared evidence, answerKey=%+v", answerKey)
+	}
+}
+
 func TestCorpusAcceptanceLabelRecordingRejectsContradictoryCandidateLabelRef(t *testing.T) {
 	root, _, _, recordsPath := writeCorpusAcceptanceLabelRecordingFixture(t, corpusAcceptanceIndependentProvenance)
 	records := readLabelRecordingFixtureRecords(t, recordsPath)
@@ -194,16 +210,74 @@ func TestCorpusAcceptanceLabelRecordingDerivesEvidenceForCandidateScopedAbsent(t
 func TestCorpusAcceptanceLabelRecordingIncludesGuardrailBlockersInReadiness(t *testing.T) {
 	root, _, _, recordsPath := writeCorpusAcceptanceLabelRecordingFixture(t, corpusAcceptanceIndependentProvenance)
 	packet := readCorpusAcceptanceLabelingPacketForTest(t, filepath.Join(root, "labeling"))
+	packet.Guardrails.NetworkFetches = 1
+	packet.Guardrails.HostedInferenceCalls = 1
 	packet.Guardrails.HostedTelemetryExports = 1
+	packet.Guardrails.BrowserCalls = 1
+	packet.Guardrails.SlackAPICalls = 1
 	packet.Guardrails.DestinationWrites = 1
+	packet.Guardrails.ProductBrainWrites = 1
+	packet.Guardrails.TolariaWrites = 1
+	packet.Guardrails.AutoAccepts = 1
+	packet.Guardrails.NoHumanClaims = 1
+	packet.Guardrails.CommittedPrivateArtifacts = 1
 	writeDocumentsTestJSON(t, filepath.Join(root, "labeling", corpusAcceptanceLabelingDirName, "labeling-packet.json"), packet)
 
 	summary, _, err := BuildCorpusAcceptanceLabelRecording(filepath.Join(root, "labeling"), recordsPath, filepath.Join(root, "recording"))
 	if err != nil {
 		t.Fatalf("build label recording: %v", err)
 	}
-	if summary.BenchmarkReady || !stringListContains(summary.Blockers, "hosted_telemetry_export") || !stringListContains(summary.Blockers, "destination_write") {
+	for _, blocker := range []string{
+		"network_fetch",
+		"hosted_inference_call",
+		"hosted_telemetry_export",
+		"browser_call",
+		"slack_api_call",
+		"destination_write",
+		"product_brain_write",
+		"tolaria_write",
+		"auto_accept",
+		"no_human_claim",
+		"committed_private_artifact",
+	} {
+		if !stringListContains(summary.Blockers, blocker) {
+			t.Fatalf("expected guardrail blocker %q, summary=%+v", blocker, summary)
+		}
+	}
+	if summary.BenchmarkReady {
 		t.Fatalf("expected guardrail blockers to block readiness, summary=%+v", summary)
+	}
+}
+
+func TestCorpusAcceptanceLabelRecordingRedactsInvalidCoverageValues(t *testing.T) {
+	root, _, _, recordsPath := writeCorpusAcceptanceLabelRecordingFixture(t, corpusAcceptanceIndependentProvenance)
+	records := readLabelRecordingFixtureRecords(t, recordsPath)
+	privateCoverageValue := SemanticCandidateKind("https://slack.com/archives/C012345")
+	records.CoverageRequirements.CandidateKinds = append(records.CoverageRequirements.CandidateKinds, privateCoverageValue)
+	writeDocumentsTestJSON(t, recordsPath, records)
+
+	summary, answerKey, err := BuildCorpusAcceptanceLabelRecording(filepath.Join(root, "labeling"), recordsPath, filepath.Join(root, "recording"))
+	if err != nil {
+		t.Fatalf("build label recording: %v", err)
+	}
+	if summary.BenchmarkReady || !stringListContains(summary.Blockers, "invalid_candidate_kind_coverage") {
+		t.Fatalf("expected invalid coverage blocker to block readiness, summary=%+v", summary)
+	}
+	joined := strings.Join(summary.Blockers, "\n")
+	if strings.Contains(joined, string(privateCoverageValue)) || strings.Contains(joined, "slack.com") {
+		t.Fatalf("coverage blocker leaked private value: %v", summary.Blockers)
+	}
+	for _, kind := range answerKey.CoverageRequirements.CandidateKinds {
+		if kind == privateCoverageValue {
+			t.Fatalf("answer key retained invalid private coverage value: %+v", answerKey.CoverageRequirements)
+		}
+	}
+	answerKeyData, err := os.ReadFile(filepath.Join(root, "recording", corpusAcceptanceLabelRecordingDirName, "answer-key.json"))
+	if err != nil {
+		t.Fatalf("read persisted answer key: %v", err)
+	}
+	if strings.Contains(string(answerKeyData), string(privateCoverageValue)) || strings.Contains(string(answerKeyData), "slack.com") {
+		t.Fatalf("persisted answer key leaked invalid private coverage value: %s", string(answerKeyData))
 	}
 }
 
@@ -314,6 +388,29 @@ func TestCorpusAcceptanceLabelRecordingNonIndependentRecordsStayBlocked(t *testi
 	}
 	if benchmark.SuiteValid || !stringListContains(benchmark.SuiteValidityBlockers, "answer_key_not_independent") || answerKey.Provenance.Independence == corpusAcceptanceIndependentProvenance {
 		t.Fatalf("benchmark should reject non-independent answer key, benchmark=%+v answerKey=%+v", benchmark, answerKey)
+	}
+}
+
+func TestWriteCorpusAcceptanceLabelRecordingValidatesReportBeforeWritingArtifacts(t *testing.T) {
+	root, _, _, recordsPath := writeCorpusAcceptanceLabelRecordingFixture(t, corpusAcceptanceIndependentProvenance)
+	packet := readCorpusAcceptanceLabelingPacketForTest(t, filepath.Join(root, "labeling"))
+	records := readLabelRecordingFixtureRecords(t, recordsPath)
+	summary, answerKey, err := buildCorpusAcceptanceLabelRecording(packet, records)
+	if err != nil {
+		t.Fatalf("build in-memory label recording: %v", err)
+	}
+	summary.SuiteKind = CorpusAcceptanceSuiteKind("https://slack.com/archives/C012345")
+	out := filepath.Join(root, "report-validation")
+
+	err = WriteCorpusAcceptanceLabelRecording(out, summary, answerKey)
+	if err == nil || !strings.Contains(err.Error(), "report contains private marker") {
+		t.Fatalf("expected report privacy failure, got %v", err)
+	}
+	recordingRoot := filepath.Join(out, corpusAcceptanceLabelRecordingDirName)
+	for _, name := range []string{"answer-key.json", "label-recording-summary.json", "label-recording-report.md"} {
+		if _, statErr := os.Stat(filepath.Join(recordingRoot, name)); !os.IsNotExist(statErr) {
+			t.Fatalf("report validation failure should not leave %s behind, stat=%v", name, statErr)
+		}
 	}
 }
 

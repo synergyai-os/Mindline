@@ -14,6 +14,10 @@ func WriteCorpusAcceptanceLabelRecording(outDir string, summary CorpusAcceptance
 	if err := ValidateCorpusAcceptanceLabelRecordingSummary(summary); err != nil {
 		return ArtifactWriteError{Err: err}
 	}
+	report := corpusAcceptanceLabelRecordingMarkdown(summary)
+	if containsUnsafeMarker(report) || containsGovernanceID(report) || containsPrivateReportMarker(report) {
+		return ArtifactWriteError{Err: fmt.Errorf("corpus acceptance label recording report contains private marker")}
+	}
 	outRoot, err := filepath.Abs(outDir)
 	if err != nil {
 		return ArtifactWriteError{Err: err}
@@ -44,10 +48,6 @@ func WriteCorpusAcceptanceLabelRecording(outDir string, summary CorpusAcceptance
 	}
 	if err := writeJSON(realRoot, "label-recording-summary.json", summary); err != nil {
 		return ArtifactWriteError{Err: err}
-	}
-	report := corpusAcceptanceLabelRecordingMarkdown(summary)
-	if containsUnsafeMarker(report) || containsGovernanceID(report) || containsPrivateReportMarker(report) {
-		return ArtifactWriteError{Err: fmt.Errorf("corpus acceptance label recording report contains private marker")}
 	}
 	if err := writeFile(realRoot, "label-recording-report.md", []byte(report)); err != nil {
 		return ArtifactWriteError{Err: err}

@@ -88,7 +88,7 @@ func buildCorpusAcceptanceLabelRecording(packet CorpusAcceptanceLabelingPacket, 
 		CorpusFingerprint:        packet.CorpusFingerprint,
 		CommandConfigFingerprint: packet.CommandConfigFingerprint,
 		MinEvalCount:             records.MinEvalCount,
-		CoverageRequirements:     records.CoverageRequirements,
+		CoverageRequirements:     sanitizedCorpusAcceptanceCoverage(records.CoverageRequirements),
 		Sources:                  []CorpusAcceptanceAnswerKeySource{},
 	}
 	sourceKeys := map[string]*CorpusAcceptanceAnswerKeySource{}
@@ -185,7 +185,7 @@ func buildCorpusAcceptanceLabelRecording(packet CorpusAcceptanceLabelingPacket, 
 		blockers = append(blockers, "below_min_source_count")
 	}
 	blockers = append(blockers, corpusAcceptanceLabelRecordingGuardrailBlockers(packet.Guardrails)...)
-	blockers = append(blockers, corpusAcceptanceLabelRecordingCoverageBlockers(answerKey)...)
+	blockers = append(blockers, corpusAcceptanceLabelRecordingCoverageBlockers(answerKey, records.CoverageRequirements)...)
 	summary.Blockers = uniqueStrings(blockers)
 	summary.BenchmarkReady = len(summary.Blockers) == 0
 	summary.HeldOutReady = summary.BenchmarkReady &&
@@ -364,7 +364,7 @@ func hasLabelRecordCandidateConstraints(record CorpusAcceptanceLabelRecordItem) 
 		len(record.RelationRequirements) > 0
 }
 
-func corpusAcceptanceLabelRecordingCoverageBlockers(answerKey CorpusAcceptanceAnswerKey) []string {
+func corpusAcceptanceLabelRecordingCoverageBlockers(answerKey CorpusAcceptanceAnswerKey, coverage CorpusAcceptanceCoverage) []string {
 	kinds := map[SemanticCandidateKind]bool{}
 	relations := map[SemanticRelationshipType]bool{}
 	failures := map[SemanticAcceptanceReason]bool{}
@@ -384,17 +384,29 @@ func corpusAcceptanceLabelRecordingCoverageBlockers(answerKey CorpusAcceptanceAn
 		}
 	}
 	var blockers []string
-	for _, kind := range answerKey.CoverageRequirements.CandidateKinds {
+	for _, kind := range coverage.CandidateKinds {
+		if !validSemanticCandidateKind(kind) {
+			blockers = append(blockers, "invalid_candidate_kind_coverage")
+			continue
+		}
 		if !kinds[kind] {
 			blockers = append(blockers, "missing_candidate_kind_coverage:"+string(kind))
 		}
 	}
-	for _, relation := range answerKey.CoverageRequirements.RelationTypes {
+	for _, relation := range coverage.RelationTypes {
+		if !validSemanticRelationshipType(relation) {
+			blockers = append(blockers, "invalid_relation_coverage")
+			continue
+		}
 		if !relations[relation] {
 			blockers = append(blockers, "missing_relation_coverage:"+string(relation))
 		}
 	}
-	for _, failure := range answerKey.CoverageRequirements.FailureModes {
+	for _, failure := range coverage.FailureModes {
+		if !validSemanticAcceptanceReason(failure) {
+			blockers = append(blockers, "invalid_failure_mode_coverage")
+			continue
+		}
 		if !failures[failure] {
 			blockers = append(blockers, "missing_failure_mode_coverage:"+string(failure))
 		}
@@ -402,13 +414,60 @@ func corpusAcceptanceLabelRecordingCoverageBlockers(answerKey CorpusAcceptanceAn
 	return blockers
 }
 
+func sanitizedCorpusAcceptanceCoverage(coverage CorpusAcceptanceCoverage) CorpusAcceptanceCoverage {
+	sanitized := CorpusAcceptanceCoverage{MinSourceCount: coverage.MinSourceCount}
+	for _, kind := range coverage.CandidateKinds {
+		if validSemanticCandidateKind(kind) {
+			sanitized.CandidateKinds = append(sanitized.CandidateKinds, kind)
+		}
+	}
+	for _, relation := range coverage.RelationTypes {
+		if validSemanticRelationshipType(relation) {
+			sanitized.RelationTypes = append(sanitized.RelationTypes, relation)
+		}
+	}
+	for _, failure := range coverage.FailureModes {
+		if validSemanticAcceptanceReason(failure) {
+			sanitized.FailureModes = append(sanitized.FailureModes, failure)
+		}
+	}
+	return sanitized
+}
+
 func corpusAcceptanceLabelRecordingGuardrailBlockers(guardrails CorpusPressureGuardrailCounters) []string {
 	var blockers []string
+	if guardrails.NetworkFetches > 0 {
+		blockers = append(blockers, "network_fetch")
+	}
+	if guardrails.HostedInferenceCalls > 0 {
+		blockers = append(blockers, "hosted_inference_call")
+	}
 	if guardrails.HostedTelemetryExports > 0 {
 		blockers = append(blockers, "hosted_telemetry_export")
 	}
+	if guardrails.BrowserCalls > 0 {
+		blockers = append(blockers, "browser_call")
+	}
+	if guardrails.SlackAPICalls > 0 {
+		blockers = append(blockers, "slack_api_call")
+	}
 	if guardrails.DestinationWrites > 0 {
 		blockers = append(blockers, "destination_write")
+	}
+	if guardrails.ProductBrainWrites > 0 {
+		blockers = append(blockers, "product_brain_write")
+	}
+	if guardrails.TolariaWrites > 0 {
+		blockers = append(blockers, "tolaria_write")
+	}
+	if guardrails.AutoAccepts > 0 {
+		blockers = append(blockers, "auto_accept")
+	}
+	if guardrails.NoHumanClaims > 0 {
+		blockers = append(blockers, "no_human_claim")
+	}
+	if guardrails.CommittedPrivateArtifacts > 0 {
+		blockers = append(blockers, "committed_private_artifact")
 	}
 	return blockers
 }
@@ -467,6 +526,26 @@ func validCorpusAcceptanceLabelDecision(decision CorpusAcceptanceLabelDecision) 
 	}
 }
 
+func validSemanticAcceptanceReason(reason SemanticAcceptanceReason) bool {
+	switch reason {
+	case SemanticAcceptanceReasonCorrect,
+		SemanticAcceptanceReasonWrongKind,
+		SemanticAcceptanceReasonUnsupportedEvidence,
+		SemanticAcceptanceReasonMissingEvidence,
+		SemanticAcceptanceReasonUnsafeOrPrivate,
+		SemanticAcceptanceReasonDuplicate,
+		SemanticAcceptanceReasonTooBroad,
+		SemanticAcceptanceReasonTooNarrow,
+		SemanticAcceptanceReasonStaleOrContradicted,
+		SemanticAcceptanceReasonAmbiguous,
+		SemanticAcceptanceReasonMissingExpectedOutcome,
+		SemanticAcceptanceReasonUnexpectedCandidate:
+		return true
+	default:
+		return false
+	}
+}
+
 func labelRecordEvidenceRefs(record CorpusAcceptanceLabelRecordItem) []string {
 	refs := append([]string{}, record.RequiredEvidence...)
 	refs = append(refs, record.AcceptableAlternates...)
@@ -477,13 +556,43 @@ func labelRecordDuplicateRefKeys(record CorpusAcceptanceLabelRecordItem, source 
 	var keys []string
 	if hasCandidate && strings.TrimSpace(record.CandidateID) != "" {
 		keys = append(keys, source.SourceID+"\x00candidate\x00"+record.CandidateID)
+		return keys
 	}
-	evidenceRefs := nonBlankCorpusLabelStrings(labelRecordEvidenceRefs(record))
-	if len(evidenceRefs) > 0 {
-		sort.Strings(evidenceRefs)
-		keys = append(keys, source.SourceID+"\x00evidence\x00"+strings.Join(evidenceRefs, "\x00"))
+	if inferred := uniqueCandidateForLabelEvidence(source, record); inferred != nil {
+		keys = append(keys, source.SourceID+"\x00candidate\x00"+inferred.CandidateID)
 	}
 	return keys
+}
+
+func uniqueCandidateForLabelEvidence(source *CorpusAcceptanceLabelingSource, record CorpusAcceptanceLabelRecordItem) *CorpusAcceptanceLabelingCandidateReference {
+	evidenceRefs := nonBlankCorpusLabelStrings(labelRecordEvidenceRefs(record))
+	if source == nil || len(evidenceRefs) == 0 {
+		return nil
+	}
+	var match *CorpusAcceptanceLabelingCandidateReference
+	for i := range source.Candidates {
+		candidate := &source.Candidates[i]
+		if record.ExpectedKind != "" && candidate.CandidateKind != record.ExpectedKind {
+			continue
+		}
+		if !candidateHasAllEvidence(candidate, evidenceRefs) {
+			continue
+		}
+		if match != nil {
+			return nil
+		}
+		match = candidate
+	}
+	return match
+}
+
+func candidateHasAllEvidence(candidate *CorpusAcceptanceLabelingCandidateReference, evidenceRefs []string) bool {
+	for _, evidence := range evidenceRefs {
+		if !corpusLabelStringListContains(candidate.EvidenceNodes, evidence) {
+			return false
+		}
+	}
+	return true
 }
 
 func nonBlankCorpusLabelStrings(values []string) []string {

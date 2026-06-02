@@ -259,16 +259,28 @@ func validateCorpusAcceptanceAnswerKey(answerKey CorpusAcceptanceAnswerKey, pres
 		blockers = append(blockers, "below_min_source_count")
 	}
 	for _, kind := range answerKey.CoverageRequirements.CandidateKinds {
+		if !validSemanticCandidateKind(kind) {
+			blockers = append(blockers, "invalid_candidate_kind_coverage")
+			continue
+		}
 		if !kinds[kind] {
 			blockers = append(blockers, "missing_candidate_kind_coverage:"+string(kind))
 		}
 	}
 	for _, relation := range answerKey.CoverageRequirements.RelationTypes {
+		if !validSemanticRelationshipType(relation) {
+			blockers = append(blockers, "invalid_relation_coverage")
+			continue
+		}
 		if !relations[relation] {
 			blockers = append(blockers, "missing_relation_coverage:"+string(relation))
 		}
 	}
 	for _, failure := range answerKey.CoverageRequirements.FailureModes {
+		if !validSemanticAcceptanceReason(failure) {
+			blockers = append(blockers, "invalid_failure_mode_coverage")
+			continue
+		}
 		if !failures[failure] {
 			blockers = append(blockers, "missing_failure_mode_coverage:"+string(failure))
 		}
