@@ -9,6 +9,9 @@ import (
 
 func TestCorpusAcceptanceLabelRecordingBuildsAnswerKeyFromRecords(t *testing.T) {
 	root, _, packet, recordsPath := writeCorpusAcceptanceLabelRecordingFixture(t, corpusAcceptanceIndependentProvenance)
+	records := readLabelRecordingFixtureRecords(t, recordsPath)
+	records.SuiteKind = CorpusAcceptanceSuiteCalibration
+	writeDocumentsTestJSON(t, recordsPath, records)
 
 	summary, answerKey, err := BuildCorpusAcceptanceLabelRecording(filepath.Join(root, "labeling"), recordsPath, filepath.Join(root, "recording"))
 	if err != nil {
@@ -172,6 +175,76 @@ func TestCorpusAcceptanceLabelRecordingIncludesCoverageBlockersInReadiness(t *te
 		!stringListContains(summary.Blockers, "missing_relation_coverage:derived_from") ||
 		!stringListContains(summary.Blockers, "missing_failure_mode_coverage:missing_evidence") {
 		t.Fatalf("expected coverage blockers to block readiness, summary=%+v", summary)
+	}
+}
+
+func TestCorpusAcceptanceLabelRecordingIncludesDEC64HeldOutMinimumInReadiness(t *testing.T) {
+	root, _, _, recordsPath := writeCorpusAcceptanceLabelRecordingFixture(t, corpusAcceptanceIndependentProvenance)
+	records := readLabelRecordingFixtureRecords(t, recordsPath)
+	records.MinEvalCount = 1
+	writeDocumentsTestJSON(t, recordsPath, records)
+
+	summary, _, err := BuildCorpusAcceptanceLabelRecording(filepath.Join(root, "labeling"), recordsPath, filepath.Join(root, "recording"))
+	if err != nil {
+		t.Fatalf("build label recording: %v", err)
+	}
+	if summary.BenchmarkReady || summary.HeldOutReady || !stringListContains(summary.Blockers, "below_dec64_min_eval_count") {
+		t.Fatalf("expected DEC-64 held-out minimum blocker to block readiness, summary=%+v", summary)
+	}
+}
+
+func TestCorpusAcceptanceLabelRecordingRejectsSourceIDAsSourceDocumentID(t *testing.T) {
+	root, _, packet, recordsPath := writeCorpusAcceptanceLabelRecordingFixture(t, corpusAcceptanceIndependentProvenance)
+	records := readLabelRecordingFixtureRecords(t, recordsPath)
+	records.Records = []CorpusAcceptanceLabelRecordItem{{
+		RecordID:               "rec-absent-no-candidate",
+		CaseID:                 packet.Sources[0].CaseID,
+		Decision:               CorpusAcceptanceLabelExpectedAbsent,
+		ExpectedOutcomeID:      "exp-absent-no-candidate",
+		ExpectedKind:           SemanticCandidateKindReference,
+		SourceID:               packet.Sources[0].SourceID,
+		SourceDocumentID:       packet.Sources[0].SourceID,
+		RequiredEvidence:       []string{packet.Sources[0].Candidates[0].EvidenceNodes[0]},
+		MinimumConfidenceFloor: ConfidenceLow,
+	}}
+	writeDocumentsTestJSON(t, recordsPath, records)
+
+	_, _, err := BuildCorpusAcceptanceLabelRecording(filepath.Join(root, "labeling"), recordsPath, filepath.Join(root, "recording"))
+	if err == nil || !strings.Contains(err.Error(), "source_document_id_mismatch:rec-absent-no-candidate") {
+		t.Fatalf("expected source document id mismatch blocker, got %v", err)
+	}
+}
+
+func TestCorpusAcceptanceLabelRecordingRedactsUnknownCaseIDFromBlockers(t *testing.T) {
+	root, _, _, recordsPath := writeCorpusAcceptanceLabelRecordingFixture(t, corpusAcceptanceIndependentProvenance)
+	records := readLabelRecordingFixtureRecords(t, recordsPath)
+	unsafeCaseID := "https://slack.example/" + unsafeTokenMarker()
+	records.Records[0].CaseID = unsafeCaseID
+	writeDocumentsTestJSON(t, recordsPath, records)
+
+	_, _, err := BuildCorpusAcceptanceLabelRecording(filepath.Join(root, "labeling"), recordsPath, filepath.Join(root, "recording"))
+	if err == nil || !strings.Contains(err.Error(), "unknown_case_id:rec-present") {
+		t.Fatalf("expected unknown case blocker keyed by record id, got %v", err)
+	}
+	if strings.Contains(err.Error(), unsafeCaseID) || strings.Contains(err.Error(), unsafeTokenMarker()) {
+		t.Fatalf("unknown case blocker leaked raw case id: %v", err)
+	}
+}
+
+func TestCorpusAcceptanceLabelRecordingRedactsUnsafeRecordIDFromUnknownCaseBlocker(t *testing.T) {
+	root, _, _, recordsPath := writeCorpusAcceptanceLabelRecordingFixture(t, corpusAcceptanceIndependentProvenance)
+	records := readLabelRecordingFixtureRecords(t, recordsPath)
+	unsafeRecordID := "rec-" + unsafeTokenMarker()
+	records.Records[0].RecordID = unsafeRecordID
+	records.Records[0].CaseID = "case-does-not-exist"
+	writeDocumentsTestJSON(t, recordsPath, records)
+
+	_, _, err := BuildCorpusAcceptanceLabelRecording(filepath.Join(root, "labeling"), recordsPath, filepath.Join(root, "recording"))
+	if err == nil || !strings.Contains(err.Error(), "unknown_case_id:unsafe_record_id") {
+		t.Fatalf("expected unknown case blocker with safe fallback, got %v", err)
+	}
+	if strings.Contains(err.Error(), unsafeRecordID) || strings.Contains(err.Error(), unsafeTokenMarker()) {
+		t.Fatalf("unknown case blocker leaked unsafe record id: %v", err)
 	}
 }
 

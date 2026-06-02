@@ -175,6 +175,9 @@ func buildCorpusAcceptanceLabelRecording(packet CorpusAcceptanceLabelingPacket, 
 	if records.MinEvalCount <= 0 {
 		blockers = append(blockers, "missing_min_eval_count")
 	}
+	if records.SuiteKind == CorpusAcceptanceSuiteHeldOut && records.MinEvalCount < CorpusAcceptanceDEC64MinEvalCount {
+		blockers = append(blockers, "below_dec64_min_eval_count")
+	}
 	if summary.EvalCount < records.MinEvalCount {
 		blockers = append(blockers, "below_min_eval_count")
 	}
@@ -250,7 +253,7 @@ func validateCorpusAcceptanceLabelRecords(records CorpusAcceptanceLabelRecords, 
 		seenRecords[record.RecordID] = true
 		source, candidate, hasCandidate := index.lookup(record.CaseID, record.CandidateID)
 		if source == nil {
-			blockers = append(blockers, "unknown_case_id:"+record.CaseID)
+			blockers = append(blockers, "unknown_case_id:"+safeLabelRecordBlockerID(record.RecordID))
 			continue
 		}
 		if !validCorpusAcceptanceLabelDecision(record.Decision) {
@@ -457,9 +460,6 @@ func labelRecordEvidenceRefs(record CorpusAcceptanceLabelRecordItem) []string {
 }
 
 func sourceHasDocumentID(source *CorpusAcceptanceLabelingSource, sourceDocumentID string) bool {
-	if sourceDocumentID == source.SourceID {
-		return true
-	}
 	for _, candidate := range source.Candidates {
 		if candidate.SourceDocumentID == sourceDocumentID {
 			return true
@@ -475,6 +475,13 @@ func sourceHasEvidenceNode(source *CorpusAcceptanceLabelingSource, evidenceNode 
 		}
 	}
 	return false
+}
+
+func safeLabelRecordBlockerID(recordID string) string {
+	if strings.TrimSpace(recordID) == "" || sanitizeID(recordID) != recordID || containsUnsafeMarker(recordID) || containsGovernanceID(recordID) {
+		return "unsafe_record_id"
+	}
+	return recordID
 }
 
 func containsUnsafeLabelRecordMarker(record CorpusAcceptanceLabelRecordItem) bool {
