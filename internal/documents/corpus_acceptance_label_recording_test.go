@@ -96,6 +96,85 @@ func TestCorpusAcceptanceLabelRecordingRejectsUnsupportedDecision(t *testing.T) 
 	}
 }
 
+func TestCorpusAcceptanceLabelRecordingRejectsOutcomeWithoutSourceID(t *testing.T) {
+	root, _, _, recordsPath := writeCorpusAcceptanceLabelRecordingFixture(t, corpusAcceptanceIndependentProvenance)
+	records := readLabelRecordingFixtureRecords(t, recordsPath)
+	records.Records[0].SourceID = ""
+	writeDocumentsTestJSON(t, recordsPath, records)
+
+	_, _, err := BuildCorpusAcceptanceLabelRecording(filepath.Join(root, "labeling"), recordsPath, filepath.Join(root, "recording"))
+	if err == nil || !strings.Contains(err.Error(), "missing_source_id:rec-present") {
+		t.Fatalf("expected missing source id blocker, got %v", err)
+	}
+}
+
+func TestCorpusAcceptanceLabelRecordingRejectsDuplicateCandidateLabelRef(t *testing.T) {
+	root, _, _, recordsPath := writeCorpusAcceptanceLabelRecordingFixture(t, corpusAcceptanceIndependentProvenance)
+	records := readLabelRecordingFixtureRecords(t, recordsPath)
+	duplicate := records.Records[0]
+	duplicate.RecordID = "rec-present-copy"
+	duplicate.ExpectedOutcomeID = "exp-present-copy"
+	records.Records = append(records.Records, duplicate)
+	writeDocumentsTestJSON(t, recordsPath, records)
+
+	_, _, err := BuildCorpusAcceptanceLabelRecording(filepath.Join(root, "labeling"), recordsPath, filepath.Join(root, "recording"))
+	if err == nil || !strings.Contains(err.Error(), "duplicate_label_ref:rec-present-copy") {
+		t.Fatalf("expected duplicate label ref blocker, got %v", err)
+	}
+}
+
+func TestCorpusAcceptanceLabelRecordingRejectsContradictoryCandidateLabelRef(t *testing.T) {
+	root, _, _, recordsPath := writeCorpusAcceptanceLabelRecordingFixture(t, corpusAcceptanceIndependentProvenance)
+	records := readLabelRecordingFixtureRecords(t, recordsPath)
+	records.Records[1].CandidateID = records.Records[0].CandidateID
+	records.Records[1].ExpectedKind = records.Records[0].ExpectedKind
+	records.Records[1].SourceDocumentID = records.Records[0].SourceDocumentID
+	writeDocumentsTestJSON(t, recordsPath, records)
+
+	_, _, err := BuildCorpusAcceptanceLabelRecording(filepath.Join(root, "labeling"), recordsPath, filepath.Join(root, "recording"))
+	if err == nil || !strings.Contains(err.Error(), "duplicate_label_ref:rec-absent") {
+		t.Fatalf("expected contradictory candidate label ref blocker, got %v", err)
+	}
+}
+
+func TestCorpusAcceptanceLabelRecordingDerivesEvidenceForCandidateScopedAbsent(t *testing.T) {
+	root, _, packet, recordsPath := writeCorpusAcceptanceLabelRecordingFixture(t, corpusAcceptanceIndependentProvenance)
+
+	_, answerKey, err := BuildCorpusAcceptanceLabelRecording(filepath.Join(root, "labeling"), recordsPath, filepath.Join(root, "recording"))
+	if err != nil {
+		t.Fatalf("build label recording: %v", err)
+	}
+	var absent SemanticExpectedOutcome
+	for _, outcome := range answerKey.Sources[0].ExpectedOutcomes {
+		if outcome.ExpectedOutcomeID == "exp-absent" {
+			absent = outcome
+			break
+		}
+	}
+	if absent.ExpectedOutcomeID != "exp-absent" || !stringListContains(absent.RequiredEvidence, packet.Sources[0].Candidates[1].EvidenceNodes[0]) {
+		t.Fatalf("candidate-scoped absent outcome should preserve candidate evidence constraints, got %+v", absent)
+	}
+}
+
+func TestCorpusAcceptanceLabelRecordingIncludesCoverageBlockersInReadiness(t *testing.T) {
+	root, _, _, recordsPath := writeCorpusAcceptanceLabelRecordingFixture(t, corpusAcceptanceIndependentProvenance)
+	records := readLabelRecordingFixtureRecords(t, recordsPath)
+	records.CoverageRequirements.CandidateKinds = append(records.CoverageRequirements.CandidateKinds, SemanticCandidateKindDecision)
+	records.CoverageRequirements.RelationTypes = []SemanticRelationshipType{SemanticRelationshipDerivedFrom}
+	records.CoverageRequirements.FailureModes = []SemanticAcceptanceReason{SemanticAcceptanceReasonMissingEvidence}
+	writeDocumentsTestJSON(t, recordsPath, records)
+
+	summary, _, err := BuildCorpusAcceptanceLabelRecording(filepath.Join(root, "labeling"), recordsPath, filepath.Join(root, "recording"))
+	if err != nil {
+		t.Fatalf("build label recording: %v", err)
+	}
+	if summary.BenchmarkReady || !stringListContains(summary.Blockers, "missing_candidate_kind_coverage:decision_candidate") ||
+		!stringListContains(summary.Blockers, "missing_relation_coverage:derived_from") ||
+		!stringListContains(summary.Blockers, "missing_failure_mode_coverage:missing_evidence") {
+		t.Fatalf("expected coverage blockers to block readiness, summary=%+v", summary)
+	}
+}
+
 func TestCorpusAcceptanceLabelRecordingNonIndependentRecordsStayBlocked(t *testing.T) {
 	root, _, _, recordsPath := writeCorpusAcceptanceLabelRecordingFixture(t, "generated_from_packet")
 
@@ -119,12 +198,16 @@ func TestCorpusAcceptanceLabelRecordingNonIndependentRecordsStayBlocked(t *testi
 
 func writeCorpusAcceptanceLabelRecordingFixture(t *testing.T, independence string) (string, CorpusPressureSummary, CorpusAcceptanceLabelingPacket, string) {
 	t.Helper()
-	root, pressure, _ := writeCorpusAcceptanceFixture(t, []SemanticCandidate{corpusAcceptanceCandidate(t, SemanticCandidateKindReference, ReviewStatusReady)}, nil)
+	presentCandidate := corpusAcceptanceCandidate(t, SemanticCandidateKindReference, ReviewStatusReady)
+	absentCandidate := corpusAcceptanceCandidate(t, SemanticCandidateKindCapability, ReviewStatusReady)
+	absentCandidate.CandidateID = "cand-absent"
+	root, pressure, _ := writeCorpusAcceptanceFixture(t, []SemanticCandidate{presentCandidate, absentCandidate}, nil)
 	packet, _, err := BuildCorpusAcceptanceLabelingPacket(root, filepath.Join(root, "labeling"))
 	if err != nil {
 		t.Fatalf("build labeling packet: %v", err)
 	}
 	candidate := packet.Sources[0].Candidates[0]
+	absent := packet.Sources[0].Candidates[1]
 	records := CorpusAcceptanceLabelRecords{
 		SchemaVersion: CorpusAcceptanceLabelRecordsSchemaVersion,
 		SuiteID:       "heldout-recording-demo",
@@ -155,11 +238,11 @@ func writeCorpusAcceptanceLabelRecordingFixture(t *testing.T, independence strin
 				RecordID:               "rec-absent",
 				CaseID:                 packet.Sources[0].CaseID,
 				Decision:               CorpusAcceptanceLabelExpectedAbsent,
-				CandidateID:            candidate.CandidateID,
+				CandidateID:            absent.CandidateID,
 				ExpectedOutcomeID:      "exp-absent",
-				ExpectedKind:           candidate.CandidateKind,
+				ExpectedKind:           absent.CandidateKind,
 				SourceID:               packet.Sources[0].SourceID,
-				SourceDocumentID:       candidate.SourceDocumentID,
+				SourceDocumentID:       absent.SourceDocumentID,
 				MinimumConfidenceFloor: ConfidenceLow,
 			},
 		},

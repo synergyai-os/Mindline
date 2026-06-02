@@ -181,6 +181,7 @@ func buildCorpusAcceptanceLabelRecording(packet CorpusAcceptanceLabelingPacket, 
 	if len(seenCasesWithOutcomes) < records.CoverageRequirements.MinSourceCount {
 		blockers = append(blockers, "below_min_source_count")
 	}
+	blockers = append(blockers, corpusAcceptanceLabelRecordingCoverageBlockers(answerKey)...)
 	summary.Blockers = uniqueStrings(blockers)
 	summary.BenchmarkReady = len(summary.Blockers) == 0
 	summary.HeldOutReady = summary.BenchmarkReady &&
@@ -238,6 +239,7 @@ func validateCorpusAcceptanceLabelRecords(records CorpusAcceptanceLabelRecords, 
 	}
 	seenRecords := map[string]bool{}
 	seenOutcomes := map[string]bool{}
+	seenCandidateLabelRefs := map[string]bool{}
 	for _, record := range records.Records {
 		if strings.TrimSpace(record.RecordID) == "" || sanitizeID(record.RecordID) != record.RecordID || containsUnsafeMarker(record.RecordID) || containsGovernanceID(record.RecordID) {
 			blockers = append(blockers, "unsafe_record_id")
@@ -254,6 +256,10 @@ func validateCorpusAcceptanceLabelRecords(records CorpusAcceptanceLabelRecords, 
 		if !validCorpusAcceptanceLabelDecision(record.Decision) {
 			blockers = append(blockers, "unsupported_decision:"+record.RecordID)
 		}
+		outcomeRecord := record.Decision == CorpusAcceptanceLabelExpectedPresent || record.Decision == CorpusAcceptanceLabelExpectedAbsent
+		if outcomeRecord && strings.TrimSpace(record.SourceID) == "" {
+			blockers = append(blockers, "missing_source_id:"+record.RecordID)
+		}
 		if strings.TrimSpace(record.SourceID) != "" && record.SourceID != source.SourceID {
 			blockers = append(blockers, "source_id_mismatch:"+record.RecordID)
 		}
@@ -269,6 +275,16 @@ func validateCorpusAcceptanceLabelRecords(records CorpusAcceptanceLabelRecords, 
 			}
 		} else if record.SourceDocumentID != "" && !sourceHasDocumentID(source, record.SourceDocumentID) {
 			blockers = append(blockers, "source_document_id_mismatch:"+record.RecordID)
+		}
+		if outcomeRecord && hasCandidate && strings.TrimSpace(record.CandidateID) != "" {
+			refKey := source.SourceID + "\x00" + record.CandidateID
+			if seenCandidateLabelRefs[refKey] {
+				blockers = append(blockers, "duplicate_label_ref:"+record.RecordID)
+			}
+			seenCandidateLabelRefs[refKey] = true
+		}
+		if record.Decision == CorpusAcceptanceLabelExpectedAbsent && hasCandidate && !hasLabelRecordCandidateConstraints(record) && len(candidate.EvidenceNodes) == 0 {
+			blockers = append(blockers, "missing_candidate_constraints:"+record.RecordID)
 		}
 		for _, evidence := range labelRecordEvidenceRefs(record) {
 			if hasCandidate {
@@ -316,11 +332,15 @@ func labelRecordOutcome(record CorpusAcceptanceLabelRecordItem, candidate *Corpu
 	if confidence == "" && hasCandidate {
 		confidence = candidate.Confidence
 	}
+	requiredEvidence := append([]string{}, record.RequiredEvidence...)
+	if record.Decision == CorpusAcceptanceLabelExpectedAbsent && hasCandidate && !hasLabelRecordCandidateConstraints(record) {
+		requiredEvidence = append(requiredEvidence, candidate.EvidenceNodes...)
+	}
 	return SemanticExpectedOutcome{
 		ExpectedOutcomeID:      record.ExpectedOutcomeID,
 		ExpectedState:          SemanticExpectedOutcomeState(record.Decision),
 		ExpectedKind:           expectedKind,
-		RequiredEvidence:       append([]string{}, record.RequiredEvidence...),
+		RequiredEvidence:       requiredEvidence,
 		AcceptableAlternates:   append([]string{}, record.AcceptableAlternates...),
 		TitleSignals:           append([]string{}, record.TitleSignals...),
 		SummarySignals:         append([]string{}, record.SummarySignals...),
@@ -328,6 +348,52 @@ func labelRecordOutcome(record CorpusAcceptanceLabelRecordItem, candidate *Corpu
 		MinimumConfidenceFloor: confidence,
 		Notes:                  record.Notes,
 	}
+}
+
+func hasLabelRecordCandidateConstraints(record CorpusAcceptanceLabelRecordItem) bool {
+	return hasNonBlankString(record.RequiredEvidence) ||
+		hasNonBlankString(record.AcceptableAlternates) ||
+		hasNonBlankString(record.TitleSignals) ||
+		hasNonBlankString(record.SummarySignals) ||
+		len(record.RelationRequirements) > 0
+}
+
+func corpusAcceptanceLabelRecordingCoverageBlockers(answerKey CorpusAcceptanceAnswerKey) []string {
+	kinds := map[SemanticCandidateKind]bool{}
+	relations := map[SemanticRelationshipType]bool{}
+	failures := map[SemanticAcceptanceReason]bool{}
+	for _, source := range answerKey.Sources {
+		for _, outcome := range source.ExpectedOutcomes {
+			kinds[outcome.ExpectedKind] = true
+			for _, relation := range outcome.RelationRequirements {
+				relations[relation] = true
+			}
+			if outcome.ExpectedState == ExpectedOutcomeAbsent {
+				failures[SemanticAcceptanceReasonUnexpectedCandidate] = true
+			}
+			if outcome.ExpectedState == ExpectedOutcomePresent {
+				failures[SemanticAcceptanceReasonMissingExpectedOutcome] = true
+				failures[SemanticAcceptanceReasonWrongKind] = true
+			}
+		}
+	}
+	var blockers []string
+	for _, kind := range answerKey.CoverageRequirements.CandidateKinds {
+		if !kinds[kind] {
+			blockers = append(blockers, "missing_candidate_kind_coverage:"+string(kind))
+		}
+	}
+	for _, relation := range answerKey.CoverageRequirements.RelationTypes {
+		if !relations[relation] {
+			blockers = append(blockers, "missing_relation_coverage:"+string(relation))
+		}
+	}
+	for _, failure := range answerKey.CoverageRequirements.FailureModes {
+		if !failures[failure] {
+			blockers = append(blockers, "missing_failure_mode_coverage:"+string(failure))
+		}
+	}
+	return blockers
 }
 
 func sourceDocumentIDForLabel(candidate *CorpusAcceptanceLabelingCandidateReference, hasCandidate bool) string {
@@ -360,9 +426,12 @@ func hasFatalCorpusAcceptanceLabelRecordBlocker(blockers []string) bool {
 			return true
 		case strings.HasPrefix(blocker, "unknown_"),
 			strings.HasPrefix(blocker, "unsupported_decision:"),
+			strings.HasPrefix(blocker, "missing_source_id:"),
 			strings.HasPrefix(blocker, "source_id_mismatch:"),
 			strings.HasPrefix(blocker, "source_document_id_mismatch:"),
 			strings.HasPrefix(blocker, "missing_candidate:"),
+			strings.HasPrefix(blocker, "duplicate_label_ref:"),
+			strings.HasPrefix(blocker, "missing_candidate_constraints:"),
 			strings.HasPrefix(blocker, "unsafe_expected_outcome_id:"),
 			strings.HasPrefix(blocker, "invalid_expected_outcome:"),
 			strings.HasPrefix(blocker, "label_record_contains_private_marker:"):
