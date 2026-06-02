@@ -76,6 +76,9 @@ func Decide(summary evalreadback.Summary, readbackRef string, options Options) P
 }
 
 func topTarget(summary evalreadback.Summary, options Options) evalreadback.ImprovementTarget {
+	if summary.TopImprovementTarget.Code == "missing_proof" {
+		return summary.TopImprovementTarget
+	}
 	if strings.TrimSpace(options.BaselineRoot) == "" && summary.Comparison == nil {
 		return evalreadback.ImprovementTarget{
 			Code:         "establish_comparable_baseline",
@@ -103,12 +106,30 @@ func readbackFor(inputRoot, decisionDir string, options Options) (evalreadback.S
 		if err != nil {
 			return evalreadback.Summary{}, "", err
 		}
-		return summary, safeExistingReadbackRef(inputRoot, summaryPath), nil
+		readbackRef, err := persistReadbackSummary(decisionDir, summary, options.ProtectedRoots)
+		if err != nil {
+			return evalreadback.Summary{}, "", err
+		}
+		return summary, readbackRef, nil
 	}
 	if proofPath := existingProofPacketPath(inputRoot); proofPath != "" {
 		summaryPath := proofReadbackSummaryPath(inputRoot, proofPath)
 		if summaryPath == "" {
-			return evalreadback.Summary{}, "", errors.New("proof packet input missing readback summary")
+			summary, err := summaryFromProofPacket(inputRoot, proofPath)
+			if err != nil {
+				return evalreadback.Summary{}, "", err
+			}
+			if strings.TrimSpace(options.BaselineRoot) != "" {
+				summary, err = applyBaseline(summary, options.BaselineRoot)
+				if err != nil {
+					return evalreadback.Summary{}, "", err
+				}
+			}
+			readbackRef, err := persistReadbackSummary(decisionDir, summary, options.ProtectedRoots)
+			if err != nil {
+				return evalreadback.Summary{}, "", err
+			}
+			return summary, readbackRef, nil
 		}
 		summary, err := evalreadback.LoadSummary(summaryPath)
 		if err != nil {
@@ -118,7 +139,11 @@ func readbackFor(inputRoot, decisionDir string, options Options) (evalreadback.S
 		if err != nil {
 			return evalreadback.Summary{}, "", err
 		}
-		return summary, safeExistingReadbackRef(inputRoot, summaryPath), nil
+		readbackRef, err := persistReadbackSummary(decisionDir, summary, options.ProtectedRoots)
+		if err != nil {
+			return evalreadback.Summary{}, "", err
+		}
+		return summary, readbackRef, nil
 	}
 	readbackOut := filepath.Join(decisionDir, "readback")
 	summary, err := evalreadback.Build(inputRoot, readbackOut, evalreadback.Options{
@@ -137,6 +162,14 @@ func readbackFor(inputRoot, decisionDir string, options Options) (evalreadback.S
 		}
 	}
 	return summary, filepath.ToSlash(filepath.Join("readback", evalreadback.DirName, evalreadback.ReadbackSummaryFile)), nil
+}
+
+func persistReadbackSummary(decisionDir string, summary evalreadback.Summary, protectedRoots []string) (string, error) {
+	readbackOut := filepath.Join(decisionDir, "readback")
+	if err := evalreadback.Write(readbackOut, summary, protectedRoots); err != nil {
+		return "", err
+	}
+	return filepath.ToSlash(filepath.Join("readback", evalreadback.DirName, evalreadback.ReadbackSummaryFile)), nil
 }
 
 func applyBaseline(summary evalreadback.Summary, baselineRoot string) (evalreadback.Summary, error) {
@@ -211,6 +244,187 @@ func proofReadbackSummaryPath(inputRoot, proofPath string) string {
 	return ""
 }
 
+func summaryFromProofPacket(inputRoot, proofPath string) (evalreadback.Summary, error) {
+	data, err := os.ReadFile(proofPath)
+	if err != nil {
+		return evalreadback.Summary{}, err
+	}
+	var packet evalproof.Packet
+	if err := json.Unmarshal(data, &packet); err != nil {
+		return evalreadback.Summary{}, err
+	}
+	if packet.SchemaVersion != evalproof.PacketSchemaVersion {
+		return evalreadback.Summary{}, errors.New("unsupported proof packet schema")
+	}
+	typeCounts := map[string]int{}
+	for _, ref := range packet.SafeArtifactRefs {
+		if artifactType := artifactTypeFromProofRef(ref); artifactType != "" {
+			typeCounts[artifactType]++
+		}
+	}
+	summary := evalreadback.Summary{
+		SchemaVersion:        evalreadback.SummarySchemaVersion,
+		RunID:                stableID("proof-packet-summary", []string{packet.RunID, proofPath}),
+		InputRootLabel:       firstNonEmpty(packet.InputRootLabel, safeRootLabel(inputRoot)),
+		BaselineRootLabel:    packet.BaselineRootLabel,
+		ArtifactCount:        len(packet.SafeArtifactRefs),
+		ArtifactTypeCounts:   typeCounts,
+		SampleStatus:         firstNonEmpty(packet.EvalProjection.SampleStatus, sampleStatusFor(inputRoot)),
+		GeneralizationStatus: proofGeneralizationStatus(packet),
+		ImprovementStatus:    proofImprovementStatus(packet),
+		ClaimGates:           proofClaimGates(packet),
+		TopImprovementTarget: packet.TopImprovementTarget,
+		RerunInstructions:    append([]string{}, packet.RerunInstructions...),
+		SafeArtifactRefs:     append([]string{}, packet.SafeArtifactRefs...),
+	}
+	if strings.TrimSpace(summary.TopImprovementTarget.Code) == "" {
+		summary.TopImprovementTarget = evalreadback.ImprovementTarget{
+			Code:      "missing_proof",
+			Rationale: "Proof packet did not include readback-backed artifacts to inspect.",
+		}
+	}
+	if len(summary.RerunInstructions) == 0 {
+		summary.RerunInstructions = []string{"run the relevant Mindline eval command to produce local trace/eval artifacts, then rerun eval loop-decision"}
+	}
+	if summary.GeneralizationStatus == "" {
+		summary.GeneralizationStatus = "non_generalizable"
+	}
+	if summary.ImprovementStatus == "" {
+		summary.ImprovementStatus = "not_evaluated"
+	}
+	return summary, nil
+}
+
+func proofClaimGates(packet evalproof.Packet) []evalreadback.ClaimGate {
+	gates := []evalreadback.ClaimGate{}
+	seen := map[string]bool{}
+	for _, gate := range packet.MandatoryGates {
+		status := gate.ActualStatus
+		if status == "" && gate.Verdict == evalproof.VerdictPass {
+			status = "pass"
+		}
+		if status == "" {
+			status = "blocked"
+		}
+		gates = append(gates, evalreadback.ClaimGate{
+			Gate:        gate.Gate,
+			Status:      status,
+			ReasonCodes: append([]string{}, gate.ReasonCodes...),
+			ClaimImpact: gate.ClaimImpact,
+		})
+		seen[gate.Gate] = true
+	}
+	for _, claim := range append(append([]evalproof.ClaimResult{}, packet.PermittedClaims...), append(packet.BlockedClaims, packet.FailedClaims...)...) {
+		if seen[claim.Claim] {
+			continue
+		}
+		gates = append(gates, evalreadback.ClaimGate{
+			Gate:        claim.Claim,
+			Status:      claim.Status,
+			ReasonCodes: append([]string{}, claim.ReasonCodes...),
+			ClaimImpact: "carried from proof packet because no readback summary ref was available",
+		})
+		seen[claim.Claim] = true
+	}
+	return gates
+}
+
+func proofGeneralizationStatus(packet evalproof.Packet) string {
+	for _, claim := range packet.PermittedClaims {
+		if claim.Claim == "generalization_claim" || claim.Claim == evalproof.ClaimGeneralization {
+			return "generalizable"
+		}
+	}
+	if strings.Contains(packet.GeneralizationLimit, "supported") {
+		return "generalizable"
+	}
+	return "non_generalizable"
+}
+
+func proofImprovementStatus(packet evalproof.Packet) string {
+	for _, claim := range packet.PermittedClaims {
+		if claim.Claim == "improvement_claim" || claim.Claim == evalproof.ClaimImprovement {
+			return "improved"
+		}
+	}
+	for _, claim := range packet.FailedClaims {
+		if claim.Claim == "improvement_claim" || claim.Claim == evalproof.ClaimImprovement {
+			return "regressed"
+		}
+	}
+	for _, claim := range packet.BlockedClaims {
+		if claim.Claim == "improvement_claim" || claim.Claim == evalproof.ClaimImprovement {
+			return "not_evaluated"
+		}
+	}
+	return "not_evaluated"
+}
+
+func artifactTypeFromProofRef(ref string) string {
+	clean := strings.TrimPrefix(ref, "baseline/")
+	clean = strings.TrimPrefix(clean, "current/")
+	clean = strings.TrimPrefix(clean, "input/")
+	switch {
+	case strings.Contains(clean, "trace/trace-summary.json"):
+		return "generic_trace_summary"
+	case strings.Contains(clean, "corpus-pressure/pressure-summary.json"):
+		return "corpus_pressure_summary"
+	case strings.Contains(clean, "corpus-pressure/eval-input.json"):
+		return "corpus_pressure_eval_input"
+	case strings.Contains(clean, "corpus-pressure/trace-summary.json"):
+		return "corpus_pressure_trace_summary"
+	case strings.Contains(clean, "corpus-pressure-loop/loop-summary.json"):
+		return "corpus_pressure_loop_summary"
+	case strings.Contains(clean, "corpus-acceptance/benchmark-summary.json"):
+		return "corpus_acceptance_benchmark"
+	case strings.Contains(clean, "autonomy-readiness/readiness-report.json"):
+		return "autonomy_readiness_report"
+	case strings.Contains(clean, "link-enrichment/loop-summary.json"):
+		return "link_enrichment_loop_summary"
+	case strings.Contains(clean, "link-enrichment/comparison/comparison-summary.json"):
+		return "link_enrichment_comparison_summary"
+	case strings.Contains(clean, "link-enrichment/requests/link-artifact-requests.json"):
+		return "link_artifact_requests"
+	case strings.Contains(clean, "link-enrichment/posthog/eval-projection.json"):
+		return "link_enrichment_eval_projection"
+	case strings.Contains(clean, "value-proof/value-summary.json") || strings.HasSuffix(clean, "value-summary.json"):
+		return "value_proof_summary"
+	default:
+		return ""
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func safeRootLabel(root string) string {
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		abs = root
+	}
+	return stableID("root", []string{filepath.ToSlash(abs)})
+}
+
+func sampleStatusFor(root string) string {
+	clean := filepath.ToSlash(root)
+	switch {
+	case strings.Contains(clean, "/private/tmp/"):
+		return "private_runtime"
+	case strings.Contains(clean, "/temp/") || strings.HasSuffix(clean, "/temp"):
+		return "temp_runtime"
+	case strings.Contains(clean, "/testdata/"):
+		return "fixture"
+	default:
+		return "unknown"
+	}
+}
+
 func resolveProofReadbackRef(inputRoot, proofPath, ref string) string {
 	cleanRef := filepath.Clean(filepath.FromSlash(ref))
 	candidates := []string{
@@ -251,18 +465,6 @@ func existingReadbackSummaryPath(input string) string {
 	return ""
 }
 
-func safeExistingReadbackRef(inputRoot, summaryPath string) string {
-	info, err := os.Stat(inputRoot)
-	if err != nil || !info.IsDir() {
-		return "input/" + evalreadback.ReadbackSummaryFile
-	}
-	rel, err := filepath.Rel(inputRoot, summaryPath)
-	if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || rel == ".." {
-		return "input/" + evalreadback.ReadbackSummaryFile
-	}
-	return filepath.ToSlash(filepath.Join("input", rel))
-}
-
 func improvementState(summary evalreadback.Summary, options Options) string {
 	if strings.TrimSpace(options.BaselineRoot) == "" && summary.Comparison == nil {
 		return ImprovementBlockedMissingBaseline
@@ -294,6 +496,7 @@ func improvementState(summary evalreadback.Summary, options Options) string {
 func claimStatuses(summary evalreadback.Summary, options Options) ClaimStatuses {
 	safetyStatus := gateStatus(summary, "side_effect_claim")
 	privacyStatus := gateStatus(summary, "privacy_safe_readback")
+	schemaStatus := gateStatus(summary, "schema_supported")
 	statuses := ClaimStatuses{
 		Safety:         safetyStatus,
 		Improvement:    improvementState(summary, options),
@@ -301,7 +504,7 @@ func claimStatuses(summary evalreadback.Summary, options Options) ClaimStatuses 
 		DEC64:          gateStatus(summary, "dec64_no_human_claim"),
 	}
 	switch {
-	case privacyStatus == "fail" || safetyStatus == "fail":
+	case privacyStatus == "fail" || safetyStatus == "fail" || schemaStatus == "fail" || hasUnsupportedArtifact(summary):
 		statuses.Safety = "fail"
 	case privacyStatus != "pass" || safetyStatus != "pass":
 		statuses.Safety = SafetyBlocked
@@ -316,6 +519,20 @@ func claimStatuses(summary evalreadback.Summary, options Options) ClaimStatuses 
 		statuses.DEC64 = DEC64Blocked
 	}
 	return statuses
+}
+
+func hasUnsupportedArtifact(summary evalreadback.Summary) bool {
+	for _, artifact := range summary.Artifacts {
+		if artifact.Status == "unsupported_schema" {
+			return true
+		}
+	}
+	for _, artifact := range summary.BaselineArtifacts {
+		if artifact.Status == "unsupported_schema" {
+			return true
+		}
+	}
+	return false
 }
 
 func gateStatus(summary evalreadback.Summary, gate string) string {
@@ -335,6 +552,9 @@ func productGeneralTarget(summary evalreadback.Summary) string {
 }
 
 func rerunInstruction(summary evalreadback.Summary) string {
+	if summary.TopImprovementTarget.Code == "missing_proof" && len(summary.RerunInstructions) > 0 && strings.TrimSpace(summary.RerunInstructions[0]) != "" {
+		return summary.RerunInstructions[0]
+	}
 	if summary.Comparison == nil {
 		return "rerun the same source command as the next comparable current run, then run mindline eval loop-decision CURRENT --baseline BASELINE --out OUT"
 	}

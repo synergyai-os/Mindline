@@ -72,6 +72,43 @@ func TestDecisionReadsProofPacketInput(t *testing.T) {
 	}
 }
 
+func TestDecisionReadsProofPacketWithoutReadbackRef(t *testing.T) {
+	root := t.TempDir()
+	emptyInput := filepath.Join(root, "empty")
+	if err := os.MkdirAll(emptyInput, 0o755); err != nil {
+		t.Fatalf("mkdir empty input: %v", err)
+	}
+	proofOut := filepath.Join(root, "proof")
+	proofPacket, err := evalproof.Build(emptyInput, proofOut, evalproof.Options{Claim: evalproof.ClaimSafety})
+	if err != nil {
+		t.Fatalf("proof build: %v", err)
+	}
+	if proofPacket.ReadbackSummaryRef != "" {
+		t.Fatalf("expected missing-proof packet without readback ref, got %s", proofPacket.ReadbackSummaryRef)
+	}
+
+	decisionOut := filepath.Join(root, "decision")
+	packet, err := Build(filepath.Join(proofOut, evalproof.DirName), decisionOut, Options{})
+	if err != nil {
+		t.Fatalf("decision build: %v", err)
+	}
+	if packet.TopImprovementTarget.Code != "missing_proof" {
+		t.Fatalf("expected missing proof target, got %+v", packet.TopImprovementTarget)
+	}
+	if packet.ClaimStatuses.Safety != SafetyBlocked {
+		t.Fatalf("expected safety blocked from missing side-effect evidence, got %s", packet.ClaimStatuses.Safety)
+	}
+	if packet.RerunInstruction != "run the relevant Mindline eval command to produce local trace/eval artifacts, then rerun eval proof-gate" {
+		t.Fatalf("expected missing-proof rerun instruction, got %s", packet.RerunInstruction)
+	}
+	if packet.ReadbackSummaryRef != filepath.ToSlash(filepath.Join("readback", evalreadback.DirName, evalreadback.ReadbackSummaryFile)) {
+		t.Fatalf("expected persisted synthetic readback ref, got %s", packet.ReadbackSummaryRef)
+	}
+	if _, err := os.Stat(filepath.Join(decisionOut, DirName, "readback", evalreadback.DirName, evalreadback.ReadbackSummaryFile)); err != nil {
+		t.Fatalf("expected persisted synthetic readback summary: %v", err)
+	}
+}
+
 func TestDecisionReadsProofPacketGeneratedFromExistingReadback(t *testing.T) {
 	root := t.TempDir()
 	readbackOut := filepath.Join(root, "readback")
@@ -95,6 +132,37 @@ func TestDecisionReadsProofPacketGeneratedFromExistingReadback(t *testing.T) {
 	}
 }
 
+func TestDecisionPersistsBaselineAppliedExistingReadback(t *testing.T) {
+	root := t.TempDir()
+	currentReadback := filepath.Join(root, "current-readback")
+	if _, err := evalreadback.Build(filepath.Join("..", "..", "testdata", "eval-readback", "current"), currentReadback, evalreadback.Options{}); err != nil {
+		t.Fatalf("current readback: %v", err)
+	}
+	baselineReadback := filepath.Join(root, "baseline-readback")
+	if _, err := evalreadback.Build(filepath.Join("..", "..", "testdata", "eval-readback", "baseline"), baselineReadback, evalreadback.Options{}); err != nil {
+		t.Fatalf("baseline readback: %v", err)
+	}
+
+	decisionOut := filepath.Join(root, "decision")
+	packet, err := Build(filepath.Join(currentReadback, evalreadback.DirName), decisionOut, Options{
+		BaselineRoot: filepath.Join(baselineReadback, evalreadback.DirName),
+	})
+	if err != nil {
+		t.Fatalf("decision build: %v", err)
+	}
+	expectedRef := filepath.ToSlash(filepath.Join("readback", evalreadback.DirName, evalreadback.ReadbackSummaryFile))
+	if packet.ReadbackSummaryRef != expectedRef {
+		t.Fatalf("expected persisted decision readback ref %s, got %s", expectedRef, packet.ReadbackSummaryRef)
+	}
+	persisted, err := evalreadback.LoadSummary(filepath.Join(decisionOut, DirName, "readback", evalreadback.DirName, evalreadback.ReadbackSummaryFile))
+	if err != nil {
+		t.Fatalf("load persisted summary: %v", err)
+	}
+	if persisted.Comparison == nil || persisted.ImprovementStatus != "improved" {
+		t.Fatalf("expected persisted baseline-applied comparison, got status=%s comparison=%+v", persisted.ImprovementStatus, persisted.Comparison)
+	}
+}
+
 func TestDecisionAcceptsValueProofSummaryDirectory(t *testing.T) {
 	root := t.TempDir()
 	valueProofDir := filepath.Join(root, "value-proof")
@@ -109,6 +177,25 @@ func TestDecisionAcceptsValueProofSummaryDirectory(t *testing.T) {
 	}
 	if len(packet.SafeArtifactRefs) != 1 || packet.SafeArtifactRefs[0] != "value-summary.json" {
 		t.Fatalf("expected value-proof summary ref, got %#v", packet.SafeArtifactRefs)
+	}
+}
+
+func TestDecisionSafetyFailsWhenAnyArtifactSchemaUnsupported(t *testing.T) {
+	root := t.TempDir()
+	current := filepath.Join(root, "current")
+	writeValueProofSummary(t, filepath.Join(current, "value-proof", "value-summary.json"), 0)
+	writeRawDecision(t, filepath.Join(current, "corpus-pressure", "trace-summary.json"), `{
+		"schema_version": "corpus-pressure-trace-summary/v9",
+		"corpus_fingerprint": "same",
+		"command_config_fingerprint": "same-config"
+	}`)
+
+	packet, err := Build(current, filepath.Join(root, "decision"), Options{})
+	if err != nil {
+		t.Fatalf("decision build: %v", err)
+	}
+	if packet.ClaimStatuses.Safety != "fail" {
+		t.Fatalf("unsupported schemas must fail safety, got %s", packet.ClaimStatuses.Safety)
 	}
 }
 

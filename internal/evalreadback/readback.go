@@ -347,6 +347,7 @@ func supportedSchema(artifactType, schemaVersion string) bool {
 func extractEvidence(raw map[string]any, artifact *ArtifactEvidence) {
 	for _, key := range []string{
 		"source_count", "candidate_count", "semantic_candidate_count", "evidence_ready_atom_count",
+		"accounted_source_count", "atom_count", "evidence_or_blocker_atom_count", "relation_count",
 		"review_burden_count", "missing_link_reduction_ratio", "needs_enrichment_reduction_ratio",
 		"missing_link_enrichment_reduction_ratio",
 		"url_accounting_coverage", "artifact_match_coverage", "model_error_count",
@@ -359,7 +360,7 @@ func extractEvidence(raw map[string]any, artifact *ArtifactEvidence) {
 			artifact.Metrics[key] = value
 		}
 	}
-	for _, key := range []string{"processed_source_ratio", "evidence_ready_atom_ratio", "review_burden_ratio"} {
+	for _, key := range []string{"processed_source_ratio", "source_accounting_ratio", "evidence_ready_atom_ratio", "evidence_or_blocker_ratio", "review_burden_ratio"} {
 		if value, ok := numberValue(raw[key]); ok {
 			artifact.Metrics[key] = value
 		}
@@ -855,7 +856,7 @@ func compareModels(baseline, current readbackModel) ComparisonSummary {
 	}
 	comparison.ReasonCodes = reasons
 	improved, regressed := false, false
-	for _, metric := range []string{"evidence_ready_atom_ratio", "processed_source_ratio", "missing_link_reduction_ratio", "missing_link_enrichment_reduction_ratio", "needs_enrichment_reduction_ratio", "url_accounting_coverage", "artifact_match_coverage", "evidence_ready_count"} {
+	for _, metric := range []string{"evidence_ready_atom_ratio", "evidence_or_blocker_ratio", "source_accounting_ratio", "processed_source_ratio", "missing_link_reduction_ratio", "missing_link_enrichment_reduction_ratio", "needs_enrichment_reduction_ratio", "url_accounting_coverage", "artifact_match_coverage", "evidence_ready_count"} {
 		before, bok := baseline.metrics[metric]
 		after, aok := current.metrics[metric]
 		if !bok || !aok {
