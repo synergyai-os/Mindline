@@ -27,6 +27,7 @@ type Summary struct {
 	Guardrails           Guardrails         `json:"guardrails"`
 	TopImprovementTarget ImprovementTarget  `json:"top_improvement_target"`
 	RerunInstructions    []string           `json:"rerun_instructions"`
+	ReplayBaseline       ReplayBaseline     `json:"replay_baseline"`
 	SafeArtifactRefs     []string           `json:"safe_artifact_refs"`
 	Artifacts            []ArtifactEvidence `json:"artifacts"`
 	BaselineArtifactRefs []string           `json:"baseline_artifact_refs,omitempty"`
@@ -71,6 +72,16 @@ type ImprovementTarget struct {
 	Code         string   `json:"code"`
 	Rationale    string   `json:"rationale"`
 	EvidenceRefs []string `json:"evidence_refs,omitempty"`
+}
+
+type ReplayBaseline struct {
+	Status                   string   `json:"status"`
+	ReasonCodes              []string `json:"reason_codes,omitempty"`
+	CorpusFingerprint        string   `json:"corpus_fingerprint,omitempty"`
+	CommandConfigFingerprint string   `json:"command_config_fingerprint,omitempty"`
+	ArtifactTypes            []string `json:"artifact_types"`
+	SafeArtifactRefs         []string `json:"safe_artifact_refs"`
+	RerunInstruction         string   `json:"rerun_instruction"`
 }
 
 type ComparisonSummary struct {

@@ -70,6 +70,141 @@ func TestBuildComparesBaselineCurrent(t *testing.T) {
 	}
 }
 
+func TestBuildEmitsReplayBaselineReadyOnlyWithCorpusAndCommandFingerprints(t *testing.T) {
+	root := t.TempDir()
+	writePressure(t, root, 0.8, 0.2)
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if summary.ReplayBaseline.Status != "ready" {
+		t.Fatalf("expected replay baseline ready, got %+v", summary.ReplayBaseline)
+	}
+	if summary.ReplayBaseline.CorpusFingerprint != "same" {
+		t.Fatalf("expected corpus fingerprint, got %+v", summary.ReplayBaseline)
+	}
+	if summary.ReplayBaseline.CommandConfigFingerprint != "same-config" {
+		t.Fatalf("expected command config fingerprint, got %+v", summary.ReplayBaseline)
+	}
+	if len(summary.ReplayBaseline.ArtifactTypes) == 0 || len(summary.ReplayBaseline.SafeArtifactRefs) == 0 {
+		t.Fatalf("expected replay artifact evidence, got %+v", summary.ReplayBaseline)
+	}
+	report := readString(t, filepath.Join(root, "out", DirName, "readback-report.md"))
+	if !strings.Contains(report, "Replay Baseline") || !strings.Contains(report, "ready") {
+		t.Fatalf("expected replay baseline status in report, got %s", report)
+	}
+}
+
+func TestBuildBlocksReplayBaselineWithoutCommandFingerprint(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "corpus-pressure", "pressure-summary.json"), map[string]any{
+		"schema_version":            "corpus-pressure-summary/v0.1",
+		"corpus_id":                 "corpus-a",
+		"source_count":              2,
+		"evidence_ready_atom_ratio": 1,
+		"review_burden_ratio":       0,
+		"corpus_fingerprint":        "same",
+		"guardrails":                completeGuardrails(),
+	})
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if summary.ReplayBaseline.Status != "blocked" || !containsString(summary.ReplayBaseline.ReasonCodes, "missing_command_config_fingerprint") {
+		t.Fatalf("expected blocked missing command config fingerprint, got %+v", summary.ReplayBaseline)
+	}
+}
+
+func TestBuildBlocksReplayBaselineForConflictingCorpusFingerprints(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "corpus-pressure", "pressure-summary.json"), map[string]any{
+		"schema_version":             "corpus-pressure-summary/v0.1",
+		"evidence_ready_atom_ratio":  1,
+		"review_burden_ratio":        0,
+		"corpus_fingerprint":         "corpus-a",
+		"command_config_fingerprint": "config-a",
+		"guardrails":                 completeGuardrails(),
+	})
+	writeFixture(t, filepath.Join(root, "corpus-pressure", "trace-summary.json"), map[string]any{
+		"schema_version":             "corpus-pressure-trace-summary/v0.1",
+		"evidence_ready_atom_ratio":  1,
+		"review_burden_ratio":        0,
+		"corpus_fingerprint":         "corpus-b",
+		"command_config_fingerprint": "config-a",
+		"guardrails":                 completeGuardrails(),
+	})
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if summary.ReplayBaseline.Status != "blocked" || !containsString(summary.ReplayBaseline.ReasonCodes, "conflicting_corpus_fingerprints") {
+		t.Fatalf("expected conflicting corpus block, got %+v", summary.ReplayBaseline)
+	}
+}
+
+func TestBuildBlocksReplayBaselineForUnsupportedOnlyArtifacts(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "corpus-pressure", "pressure-summary.json"), map[string]any{
+		"schema_version":             "corpus-pressure-summary/v9",
+		"corpus_fingerprint":         "same",
+		"command_config_fingerprint": "same-config",
+		"guardrails":                 completeGuardrails(),
+	})
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if summary.ReplayBaseline.Status != "blocked" ||
+		!containsString(summary.ReplayBaseline.ReasonCodes, "unsupported_schema") ||
+		!containsString(summary.ReplayBaseline.ReasonCodes, "missing_supported_artifacts") {
+		t.Fatalf("expected unsupported-only replay block, got %+v", summary.ReplayBaseline)
+	}
+}
+
+func TestBuildBlocksReplayBaselineForNonzeroSideEffectCounter(t *testing.T) {
+	root := t.TempDir()
+	guardrails := completeGuardrails()
+	guardrails["destination_writes"] = 1
+	writePressureWithGuardrails(t, root, 1, 0, guardrails)
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if summary.ReplayBaseline.Status != "blocked" || !containsString(summary.ReplayBaseline.ReasonCodes, "side_effect_counter_nonzero") {
+		t.Fatalf("expected side-effect replay block, got %+v", summary.ReplayBaseline)
+	}
+}
+
+func TestLoadSummaryFromRootSupportsReplayBaselineShapes(t *testing.T) {
+	root := t.TempDir()
+	writePressure(t, filepath.Join(root, "run"), 1, 0)
+	out := filepath.Join(root, "out")
+	if _, err := Build(filepath.Join(root, "run"), out, Options{}); err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	sourceSummary := filepath.Join(out, DirName, ReadbackSummaryFile)
+	for _, candidate := range []string{
+		sourceSummary,
+		filepath.Join(out, DirName),
+		out,
+		copySummaryForResolverShape(t, sourceSummary, filepath.Join(root, "proof-root", "eval-proof", "readback", DirName, ReadbackSummaryFile)),
+		copySummaryForResolverShape(t, sourceSummary, filepath.Join(root, "decision-root", "eval-loop-decision", "readback", DirName, ReadbackSummaryFile)),
+	} {
+		summary, _, err := LoadSummaryFromRoot(candidate)
+		if err != nil {
+			t.Fatalf("load summary from %s: %v", candidate, err)
+		}
+		if summary.ReplayBaseline.Status != "ready" {
+			t.Fatalf("expected ready replay baseline from %s, got %+v", candidate, summary.ReplayBaseline)
+		}
+	}
+}
+
 func TestBuildComparesValueProofCoreKRs(t *testing.T) {
 	root := t.TempDir()
 	baseline := filepath.Join(root, "baseline")
@@ -1372,7 +1507,7 @@ func writePressureWithFingerprint(t *testing.T, root string, evidenceReady, revi
 		"review_burden_ratio":        reviewBurden,
 		"corpus_fingerprint":         fingerprint,
 		"command_config_fingerprint": "same-config",
-		"guardrails":                 map[string]any{"destination_writes": 0, "hosted_inference_calls": 0},
+		"guardrails":                 completeGuardrails(),
 	})
 }
 
@@ -1408,6 +1543,21 @@ func completeGuardrails() map[string]any {
 		"no_human_claims":             0,
 		"committed_private_artifacts": 0,
 	}
+}
+
+func copySummaryForResolverShape(t *testing.T, source, target string) string {
+	t.Helper()
+	data, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatalf("read source summary: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatalf("mkdir resolver shape: %v", err)
+	}
+	if err := os.WriteFile(target, data, 0o644); err != nil {
+		t.Fatalf("write resolver shape: %v", err)
+	}
+	return filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(target))))
 }
 
 func writePressureWithoutFingerprint(t *testing.T, root string, evidenceReady, reviewBurden float64) {
