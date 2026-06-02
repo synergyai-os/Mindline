@@ -428,6 +428,20 @@ func TestDocumentsCorpusAcceptanceLabelApplyCLI(t *testing.T) {
 	}
 }
 
+func TestDocumentsCorpusAcceptanceLabelApplyUsageIncludesCommand(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "corpus-acceptance-label-apply", "labeling-dir",
+		"--out", t.TempDir(),
+	}, &stdout, &stderr)
+	if code != ExitUsage {
+		t.Fatalf("expected usage exit, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "usage: mindline documents corpus-acceptance-label-apply <corpus-acceptance-labeling-out-or-parent> --records <label-records.json> --out <dir>") {
+		t.Fatalf("expected label-apply usage, got %q", stderr.String())
+	}
+}
+
 func TestDocumentsCorpusPressureDoesNotWriteDestinationArtifacts(t *testing.T) {
 	out := t.TempDir()
 	var stdout, stderr bytes.Buffer
