@@ -515,9 +515,23 @@ type CorpusAcceptanceLabelingPacket struct {
 	Guardrails                CorpusPressureGuardrailCounters          `json:"guardrails"`
 	ClaimBoundaries           []string                                 `json:"claim_boundaries"`
 	Instructions              []string                                 `json:"instructions"`
+	LabelingPacketPath        string                                   `json:"labeling_packet_path"`
 	AnswerKeyTemplatePath     string                                   `json:"answer_key_template_path"`
 	ReportPath                string                                   `json:"report_path"`
 	Sources                   []CorpusAcceptanceLabelingSource         `json:"sources"`
+}
+
+type CorpusAcceptanceLabelingOutputSummary struct {
+	SchemaVersion         string   `json:"schema_version"`
+	LabelingStatus        string   `json:"labeling_status"`
+	HeldOutReady          bool     `json:"held_out_ready"`
+	SourceCount           int      `json:"source_count"`
+	CandidateCount        int      `json:"candidate_count"`
+	RelationCoverageCount int      `json:"relation_coverage_count"`
+	LabelingPacketPath    string   `json:"labeling_packet_path"`
+	AnswerKeyTemplatePath string   `json:"answer_key_template_path"`
+	ReportPath            string   `json:"report_path"`
+	ClaimBoundaries       []string `json:"claim_boundaries"`
 }
 
 type CorpusAcceptanceLabelingRelationCoverage struct {
@@ -530,6 +544,8 @@ type CorpusAcceptanceLabelingSource struct {
 	CaseID            string                                       `json:"case_id"`
 	SourceID          string                                       `json:"source_id"`
 	SourceContentHash string                                       `json:"source_content_hash"`
+	SourcePath        string                                       `json:"source_path"`
+	SemanticRunDir    string                                       `json:"semantic_run_dir,omitempty"`
 	SourceState       CorpusPressureSourceState                    `json:"source_state"`
 	ReasonCode        CorpusPressureReason                         `json:"reason_code"`
 	CandidateCount    int                                          `json:"candidate_count"`

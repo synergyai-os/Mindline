@@ -82,6 +82,7 @@ func ValidateCorpusAcceptanceLabelingPacket(packet CorpusAcceptanceLabelingPacke
 		packet.CommandConfigFingerprint,
 		packet.PressureReplayFingerprint,
 		packet.LabelingStatus,
+		packet.LabelingPacketPath,
 		packet.AnswerKeyTemplatePath,
 		packet.ReportPath,
 		strings.Join(packet.ClaimBoundaries, "\n"),
@@ -94,7 +95,13 @@ func ValidateCorpusAcceptanceLabelingPacket(packet CorpusAcceptanceLabelingPacke
 		if strings.TrimSpace(source.SourceID) == "" || sanitizeID(source.SourceID) != source.SourceID {
 			return fmt.Errorf("unsafe source id")
 		}
-		body += "\n" + source.CaseID + "\n" + source.SourceID + "\n" + source.SourceContentHash
+		if strings.TrimSpace(source.SourcePath) != "" && unsafeRelativeArtifactPath(source.SourcePath) {
+			return fmt.Errorf("unsafe source path")
+		}
+		if strings.TrimSpace(source.SemanticRunDir) != "" && unsafeRelativeArtifactPath(source.SemanticRunDir) {
+			return fmt.Errorf("unsafe semantic run dir")
+		}
+		body += "\n" + source.CaseID + "\n" + source.SourceID + "\n" + source.SourceContentHash + "\n" + source.SourcePath + "\n" + source.SemanticRunDir
 		for _, candidate := range source.Candidates {
 			body += "\n" + candidate.CandidateID + "\n" + candidate.SourceDocumentID
 			body += "\n" + strings.Join(candidate.EvidenceNodes, "\n")
@@ -156,6 +163,14 @@ func formatCandidateKindCounts(values map[SemanticCandidateKind]int) string {
 		parts = append(parts, fmt.Sprintf("%s:%d", key, values[key]))
 	}
 	return strings.Join(parts, ",")
+}
+
+func unsafeRelativeArtifactPath(value string) bool {
+	if strings.TrimSpace(value) == "" || filepath.IsAbs(value) {
+		return true
+	}
+	clean := filepath.Clean(filepath.FromSlash(value))
+	return clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator))
 }
 
 func containsPrivateReportMarker(value string) bool {

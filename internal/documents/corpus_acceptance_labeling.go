@@ -58,6 +58,7 @@ func buildCorpusAcceptanceLabelingPacket(root string, summary CorpusPressureSumm
 			"Add expected_present outcomes for required candidates and expected_absent outcomes for negative controls.",
 			"Use notes for uncertain or abstained cases; do not convert uncertainty into a pass claim.",
 		},
+		LabelingPacketPath:    filepath.ToSlash(filepath.Join(corpusAcceptanceLabelingDirName, "labeling-packet.json")),
 		AnswerKeyTemplatePath: filepath.ToSlash(filepath.Join(corpusAcceptanceLabelingDirName, "answer-key-template.json")),
 		ReportPath:            filepath.ToSlash(filepath.Join(corpusAcceptanceLabelingDirName, "labeling-report.md")),
 	}
@@ -105,11 +106,36 @@ func buildCorpusAcceptanceLabelingPacket(root string, summary CorpusPressureSumm
 	return packet, template, nil
 }
 
+func CorpusAcceptanceLabelingOutputFor(packet CorpusAcceptanceLabelingPacket) CorpusAcceptanceLabelingOutputSummary {
+	return CorpusAcceptanceLabelingOutputSummary{
+		SchemaVersion:         packet.SchemaVersion,
+		LabelingStatus:        packet.LabelingStatus,
+		HeldOutReady:          packet.HeldOutReady,
+		SourceCount:           packet.SourceCount,
+		CandidateCount:        packet.CandidateCount,
+		RelationCoverageCount: packet.RelationCoverage.RelationCount,
+		LabelingPacketPath:    packet.LabelingPacketPath,
+		AnswerKeyTemplatePath: packet.AnswerKeyTemplatePath,
+		ReportPath:            packet.ReportPath,
+		ClaimBoundaries:       append([]string{}, packet.ClaimBoundaries...),
+	}
+}
+
 func buildCorpusAcceptanceLabelingSource(root string, source CorpusPressureSourceResult, ordinal int) (CorpusAcceptanceLabelingSource, string, error) {
+	sourcePath, err := cleanCorpusAcceptanceLabelingArtifactPath(root, source.SourcePath)
+	if err != nil {
+		return CorpusAcceptanceLabelingSource{}, "", err
+	}
+	semanticRunDir, err := cleanCorpusAcceptanceLabelingArtifactPath(root, source.SemanticRunDir)
+	if err != nil {
+		return CorpusAcceptanceLabelingSource{}, "", err
+	}
 	labelingSource := CorpusAcceptanceLabelingSource{
 		CaseID:            fmt.Sprintf("case-%03d", ordinal),
 		SourceID:          source.SourceID,
 		SourceContentHash: source.SourceContentHash,
+		SourcePath:        sourcePath,
+		SemanticRunDir:    semanticRunDir,
 		SourceState:       source.State,
 		ReasonCode:        source.ReasonCode,
 		CandidateKinds:    map[SemanticCandidateKind]int{},
@@ -143,6 +169,16 @@ func buildCorpusAcceptanceLabelingSource(root string, source CorpusPressureSourc
 	}
 	labelingSource.CandidateCount = len(labelingSource.Candidates)
 	return labelingSource, sourceDocumentID, nil
+}
+
+func cleanCorpusAcceptanceLabelingArtifactPath(root, relative string) (string, error) {
+	if strings.TrimSpace(relative) == "" {
+		return "", nil
+	}
+	if _, err := containedCorpusAcceptancePath(root, relative); err != nil {
+		return "", err
+	}
+	return filepath.ToSlash(filepath.Clean(filepath.FromSlash(relative))), nil
 }
 
 func mergeLabelingCoverage(coverage *CorpusAcceptanceCoverage, source CorpusAcceptanceLabelingSource) {

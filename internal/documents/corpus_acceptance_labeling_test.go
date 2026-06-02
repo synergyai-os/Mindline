@@ -25,6 +25,9 @@ func TestCorpusAcceptanceLabelingPacketWritesRedactedReportAndTemplate(t *testin
 	if packet.SourceCount != 1 || packet.CandidateCount != 1 || packet.Sources[0].CaseID != "case-001" || packet.Sources[0].SourceID != pressure.Sources[0].SourceID {
 		t.Fatalf("unexpected packet source accounting: %+v", packet)
 	}
+	if packet.Sources[0].SourcePath != pressure.Sources[0].SourcePath || packet.Sources[0].SemanticRunDir != pressure.Sources[0].SemanticRunDir {
+		t.Fatalf("labeling case should preserve artifact paths, got source=%q semantic=%q", packet.Sources[0].SourcePath, packet.Sources[0].SemanticRunDir)
+	}
 	if packet.Sources[0].CandidateKinds[SemanticCandidateKindReference] != 1 {
 		t.Fatalf("candidate kind count should come from semantic artifacts without double-counting, got %+v", packet.Sources[0].CandidateKinds)
 	}
@@ -57,5 +60,21 @@ func TestCorpusAcceptanceLabelingTemplateCannotPassHeldOutAcceptance(t *testing.
 	}
 	if summary.SuiteValid || summary.DEC64Eligible || !stringListContains(summary.SuiteValidityBlockers, "answer_key_not_independent") {
 		t.Fatalf("generated template must remain blocked for held-out acceptance, valid=%t eligible=%t blockers=%v", summary.SuiteValid, summary.DEC64Eligible, summary.SuiteValidityBlockers)
+	}
+}
+
+func TestCorpusAcceptanceLabelingPreservesSuffixedRunDirPaths(t *testing.T) {
+	root, _, _ := writeCorpusAcceptanceFixture(t, []SemanticCandidate{}, func(summary *CorpusPressureSummary) {
+		summary.Sources[0].SourceID = "source-demo"
+		summary.Sources[0].SourcePath = "sources/source-demo-pressure/source.md"
+		summary.Sources[0].SemanticRunDir = "sources/source-demo-pressure"
+	})
+
+	packet, _, err := BuildCorpusAcceptanceLabelingPacket(root, filepath.Join(root, "labeling"))
+	if err != nil {
+		t.Fatalf("build corpus acceptance labeling packet: %v", err)
+	}
+	if packet.Sources[0].SourcePath != "sources/source-demo-pressure/source.md" || packet.Sources[0].SemanticRunDir != "sources/source-demo-pressure" {
+		t.Fatalf("expected suffixed artifact paths, got source=%q semantic=%q", packet.Sources[0].SourcePath, packet.Sources[0].SemanticRunDir)
 	}
 }
