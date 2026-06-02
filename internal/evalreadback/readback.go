@@ -173,6 +173,7 @@ type readbackModel struct {
 func buildBaselineModel(inputRoot string) (readbackModel, error) {
 	summary, _, err := LoadSummaryFromRoot(inputRoot)
 	if err == nil {
+		summary = RefreshSummary(summary)
 		return modelFromSummary(summary), nil
 	}
 	if !errors.Is(err, os.ErrNotExist) {

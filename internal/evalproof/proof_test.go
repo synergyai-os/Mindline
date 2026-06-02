@@ -89,6 +89,47 @@ func TestImprovementProofBlocksReadbackBaselineThatIsNotReplayReady(t *testing.T
 	}
 }
 
+func TestImprovementProofRefreshesLegacyReadbackBaselineBeforeComparison(t *testing.T) {
+	root := t.TempDir()
+	baseline := filepath.Join(root, "baseline")
+	current := filepath.Join(root, "current")
+	writeProofJSON(t, filepath.Join(baseline, "corpus-pressure", "pressure-summary.json"), map[string]any{
+		"schema_version":            "corpus-pressure-summary/v0.1",
+		"evidence_ready_atom_ratio": 0.4,
+		"review_burden_ratio":       0.7,
+		"corpus_fingerprint":        "same",
+		"guardrails":                completeProofGuardrails(),
+	})
+	writeProofJSON(t, filepath.Join(current, "corpus-pressure", "pressure-summary.json"), map[string]any{
+		"schema_version":            "corpus-pressure-summary/v0.1",
+		"evidence_ready_atom_ratio": 0.9,
+		"review_burden_ratio":       0.2,
+		"corpus_fingerprint":        "same",
+		"guardrails":                completeProofGuardrails(),
+	})
+
+	legacySummary, err := evalreadback.BuildSummary(baseline, evalreadback.Options{})
+	if err != nil {
+		t.Fatalf("build baseline summary: %v", err)
+	}
+	legacySummary.ReplayBaseline = evalreadback.ReplayBaseline{}
+	legacyReadback := filepath.Join(root, "legacy-readback", evalreadback.DirName, evalreadback.ReadbackSummaryFile)
+	writeProofSummary(t, legacyReadback, legacySummary)
+
+	packet, err := Build(current, filepath.Join(root, "proof"), Options{
+		BaselineRoot: legacyReadback,
+		Claim:        ClaimImprovement,
+	})
+	if err != nil {
+		t.Fatalf("build proof: %v", err)
+	}
+	if packet.Verdict != VerdictBlocked ||
+		!gateHasReason(packet, "improvement_claim", "replay_baseline_blocked") ||
+		!gateHasReason(packet, "improvement_claim", "missing_command_config_fingerprint") {
+		t.Fatalf("expected stale readback baseline to be refreshed and blocked, got %+v", packet.MandatoryGates)
+	}
+}
+
 func TestSafetyProofPassesWithoutBaseline(t *testing.T) {
 	packet, err := Build(filepath.Join("..", "..", "testdata", "eval-readback", "current"), t.TempDir(), Options{Claim: ClaimSafety})
 	if err != nil {
