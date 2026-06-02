@@ -313,6 +313,9 @@ func (r Runner) runDocuments(args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "corpus-acceptance-labeling" {
 		return r.runDocumentsCorpusAcceptanceLabeling(args, stdout, stderr)
 	}
+	if len(args) > 0 && args[0] == "corpus-acceptance-label-apply" {
+		return r.runDocumentsCorpusAcceptanceLabelApply(args, stdout, stderr)
+	}
 	if len(args) > 0 && args[0] == "meaning-preview" {
 		return r.runDocumentsMeaningPreview(args, stdout, stderr)
 	}
@@ -644,6 +647,35 @@ func (r Runner) runDocumentsCorpusAcceptanceLabeling(args []string, stdout, stde
 	encoder := json.NewEncoder(stdout)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(documents.CorpusAcceptanceLabelingOutputFor(packet)); err != nil {
+		fmt.Fprintf(stderr, "write stdout: %v\n", err)
+		return ExitUsage
+	}
+	return ExitOK
+}
+
+func (r Runner) runDocumentsCorpusAcceptanceLabelApply(args []string, stdout, stderr io.Writer) int {
+	labelingPath, recordsPath, outDir, parseError := parseDocumentsCorpusAcceptanceLabelApplyArgs(args)
+	if parseError != parseErrorNone {
+		fmt.Fprint(stderr, usage)
+		return ExitUsage
+	}
+	if err := r.validateDestinationOutDir(outDir); err != nil {
+		fmt.Fprintf(stderr, "validate corpus acceptance label recording output: %v\n", err)
+		return ExitArtifactWrite
+	}
+	summary, _, err := documents.BuildCorpusAcceptanceLabelRecording(labelingPath, recordsPath, outDir)
+	if err != nil {
+		if documents.IsArtifactWriteError(err) {
+			fmt.Fprintf(stderr, "write corpus acceptance label recording: %v\n", err)
+			return ExitArtifactWrite
+		}
+		fmt.Fprintf(stderr, "build corpus acceptance label recording: %v\n", err)
+		return ExitProcess
+	}
+	output := documents.CorpusAcceptanceLabelRecordingOutputFor(summary)
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(output); err != nil {
 		fmt.Fprintf(stderr, "write stdout: %v\n", err)
 		return ExitUsage
 	}
@@ -2092,6 +2124,37 @@ func parseDocumentsCorpusAcceptanceLabelingArgs(args []string) (pressurePath str
 		return "", "", parseErrorUsage
 	}
 	return pressurePath, outDir, parseErrorNone
+}
+
+func parseDocumentsCorpusAcceptanceLabelApplyArgs(args []string) (labelingPath string, recordsPath string, outDir string, err parseError) {
+	if len(args) < 6 || args[0] != "corpus-acceptance-label-apply" || strings.TrimSpace(args[1]) == "" {
+		return "", "", "", parseErrorUsage
+	}
+	labelingPath = args[1]
+	for i := 2; i < len(args); {
+		switch args[i] {
+		case "--records":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", "", parseErrorUsage
+			}
+			recordsPath = args[i+1]
+			i += 2
+		case "--out":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", "", parseErrorUsage
+			}
+			outDir = args[i+1]
+			i += 2
+		case "--profile", "--destination", "--classifier", "--llm-provider", "--llm-model", "--answer-key", "--held-out", "--threshold":
+			return "", "", "", parseErrorUsage
+		default:
+			return "", "", "", parseErrorUsage
+		}
+	}
+	if recordsPath == "" || outDir == "" {
+		return "", "", "", parseErrorUsage
+	}
+	return labelingPath, recordsPath, outDir, parseErrorNone
 }
 
 func (r Runner) parseDocumentsJudgeArgs(args []string) (inputPath string, outDir string, options documents.SemanticJudgmentOptions, err parseError, configError string) {

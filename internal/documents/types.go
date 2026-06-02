@@ -18,6 +18,8 @@ const (
 	SemanticAcceptanceItemSchemaVersion                  = "semantic-acceptance-item/v0.1"
 	CorpusAcceptanceAnswerKeySchemaVersion               = "corpus-acceptance-answer-key/v0.1"
 	CorpusAcceptanceLabelingPacketSchemaVersion          = "corpus-acceptance-labeling-packet/v0.1"
+	CorpusAcceptanceLabelRecordsSchemaVersion            = "corpus-acceptance-label-records/v0.1"
+	CorpusAcceptanceLabelRecordingSummarySchemaVersion   = "corpus-acceptance-label-recording-summary/v0.1"
 	CorpusAcceptanceSummarySchemaVersion                 = "corpus-acceptance-summary/v0.1"
 	SemanticCalibrationSummarySchemaVersion              = "semantic-calibration-summary/v0.2"
 	SemanticCalibrationSummaryLegacySchemaVersion        = "semantic-calibration-summary/v0.1"
@@ -561,6 +563,83 @@ type CorpusAcceptanceLabelingCandidateReference struct {
 	Confidence       Confidence              `json:"confidence"`
 	EvidenceNodes    []string                `json:"evidence_nodes"`
 	EvidenceRanges   []SemanticEvidenceRange `json:"evidence_ranges"`
+}
+
+type CorpusAcceptanceLabelDecision string
+
+const (
+	CorpusAcceptanceLabelExpectedPresent CorpusAcceptanceLabelDecision = "expected_present"
+	CorpusAcceptanceLabelExpectedAbsent  CorpusAcceptanceLabelDecision = "expected_absent"
+	CorpusAcceptanceLabelUncertain       CorpusAcceptanceLabelDecision = "uncertain"
+	CorpusAcceptanceLabelAbstain         CorpusAcceptanceLabelDecision = "abstain"
+)
+
+type CorpusAcceptanceLabelRecords struct {
+	SchemaVersion        string                            `json:"schema_version"`
+	SuiteID              string                            `json:"suite_id"`
+	SuiteKind            CorpusAcceptanceSuiteKind         `json:"suite_kind"`
+	Provenance           CorpusAcceptanceProvenance        `json:"provenance"`
+	MinEvalCount         int                               `json:"min_eval_count"`
+	CoverageRequirements CorpusAcceptanceCoverage          `json:"coverage_requirements"`
+	Records              []CorpusAcceptanceLabelRecordItem `json:"records"`
+}
+
+type CorpusAcceptanceLabelRecordItem struct {
+	RecordID               string                        `json:"record_id"`
+	CaseID                 string                        `json:"case_id"`
+	Decision               CorpusAcceptanceLabelDecision `json:"decision"`
+	CandidateID            string                        `json:"candidate_id,omitempty"`
+	ExpectedOutcomeID      string                        `json:"expected_outcome_id,omitempty"`
+	ExpectedKind           SemanticCandidateKind         `json:"expected_kind,omitempty"`
+	SourceID               string                        `json:"source_id,omitempty"`
+	SourceDocumentID       string                        `json:"source_document_id,omitempty"`
+	RequiredEvidence       []string                      `json:"required_evidence,omitempty"`
+	AcceptableAlternates   []string                      `json:"acceptable_evidence_alternates,omitempty"`
+	TitleSignals           []string                      `json:"title_signals,omitempty"`
+	SummarySignals         []string                      `json:"summary_signals,omitempty"`
+	RelationRequirements   []SemanticRelationshipType    `json:"relation_requirements,omitempty"`
+	MinimumConfidenceFloor Confidence                    `json:"minimum_confidence_floor,omitempty"`
+	Notes                  string                        `json:"notes,omitempty"`
+}
+
+type CorpusAcceptanceLabelRecordingSummary struct {
+	SchemaVersion            string                          `json:"schema_version"`
+	SuiteID                  string                          `json:"suite_id"`
+	SuiteKind                CorpusAcceptanceSuiteKind       `json:"suite_kind"`
+	LabelingStatus           string                          `json:"labeling_status"`
+	CorpusID                 string                          `json:"corpus_id"`
+	CorpusFingerprint        string                          `json:"corpus_fingerprint"`
+	CommandConfigFingerprint string                          `json:"command_config_fingerprint"`
+	RecordCount              int                             `json:"record_count"`
+	EvalCount                int                             `json:"eval_count"`
+	ExpectedPresentCount     int                             `json:"expected_present_count"`
+	ExpectedAbsentCount      int                             `json:"expected_absent_count"`
+	UncertainCount           int                             `json:"uncertain_count"`
+	AbstainCount             int                             `json:"abstain_count"`
+	SourceCount              int                             `json:"source_count"`
+	HeldOutReady             bool                            `json:"held_out_ready"`
+	BenchmarkReady           bool                            `json:"benchmark_ready"`
+	Independence             string                          `json:"independence"`
+	Blockers                 []string                        `json:"blockers"`
+	Guardrails               CorpusPressureGuardrailCounters `json:"guardrails"`
+	AnswerKeyPath            string                          `json:"answer_key_path"`
+	ReportPath               string                          `json:"report_path"`
+	ClaimBoundaries          []string                        `json:"claim_boundaries"`
+}
+
+type CorpusAcceptanceLabelRecordingOutputSummary struct {
+	SchemaVersion   string   `json:"schema_version"`
+	LabelingStatus  string   `json:"labeling_status"`
+	RecordCount     int      `json:"record_count"`
+	EvalCount       int      `json:"eval_count"`
+	UncertainCount  int      `json:"uncertain_count"`
+	AbstainCount    int      `json:"abstain_count"`
+	HeldOutReady    bool     `json:"held_out_ready"`
+	BenchmarkReady  bool     `json:"benchmark_ready"`
+	Blockers        []string `json:"blockers"`
+	AnswerKeyPath   string   `json:"answer_key_path"`
+	ReportPath      string   `json:"report_path"`
+	ClaimBoundaries []string `json:"claim_boundaries"`
 }
 
 type CorpusAcceptanceBenchmarkOptions struct {

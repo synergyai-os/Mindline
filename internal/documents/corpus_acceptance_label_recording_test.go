@@ -1,0 +1,179 @@
+package documents
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestCorpusAcceptanceLabelRecordingBuildsAnswerKeyFromRecords(t *testing.T) {
+	root, _, packet, recordsPath := writeCorpusAcceptanceLabelRecordingFixture(t, corpusAcceptanceIndependentProvenance)
+
+	summary, answerKey, err := BuildCorpusAcceptanceLabelRecording(filepath.Join(root, "labeling"), recordsPath, filepath.Join(root, "recording"))
+	if err != nil {
+		t.Fatalf("build label recording: %v", err)
+	}
+	if !summary.BenchmarkReady || summary.HeldOutReady || summary.EvalCount != 2 || summary.ExpectedPresentCount != 1 || summary.ExpectedAbsentCount != 1 {
+		t.Fatalf("unexpected summary readiness/accounting: %+v", summary)
+	}
+	if len(summary.Blockers) != 0 {
+		t.Fatalf("expected no summary blockers, got %v", summary.Blockers)
+	}
+	if len(answerKey.Sources) != 1 || len(answerKey.Sources[0].ExpectedOutcomes) != 2 || answerKey.Sources[0].SourceID != packet.Sources[0].SourceID {
+		t.Fatalf("unexpected answer key: %+v", answerKey)
+	}
+	reportData, err := os.ReadFile(filepath.Join(root, "recording", corpusAcceptanceLabelRecordingDirName, "label-recording-report.md"))
+	if err != nil {
+		t.Fatalf("read recording report: %v", err)
+	}
+	report := string(reportData)
+	if strings.Contains(report, packet.Sources[0].SourceID) || strings.Contains(report, packet.Sources[0].Candidates[0].CandidateID) || strings.Contains(report, root) {
+		t.Fatalf("recording report leaked local identifiers: %s", report)
+	}
+}
+
+func TestCorpusAcceptanceLabelRecordingCountsUncertainAndAbstainOutsideOutcomes(t *testing.T) {
+	root, _, _, recordsPath := writeCorpusAcceptanceLabelRecordingFixture(t, corpusAcceptanceIndependentProvenance)
+	records := readLabelRecordingFixtureRecords(t, recordsPath)
+	records.Records = append(records.Records,
+		CorpusAcceptanceLabelRecordItem{RecordID: "rec-uncertain", CaseID: "case-001", Decision: CorpusAcceptanceLabelUncertain, Notes: "needs second reviewer"},
+		CorpusAcceptanceLabelRecordItem{RecordID: "rec-abstain", CaseID: "case-001", Decision: CorpusAcceptanceLabelAbstain, Notes: "insufficient context"},
+	)
+	writeDocumentsTestJSON(t, recordsPath, records)
+
+	summary, answerKey, err := BuildCorpusAcceptanceLabelRecording(filepath.Join(root, "labeling"), recordsPath, filepath.Join(root, "recording"))
+	if err != nil {
+		t.Fatalf("build label recording: %v", err)
+	}
+	if summary.UncertainCount != 1 || summary.AbstainCount != 1 || summary.EvalCount != 2 || len(answerKey.Sources[0].ExpectedOutcomes) != 2 {
+		t.Fatalf("uncertain/abstain should be counted but not outcomes, summary=%+v answerKey=%+v", summary, answerKey)
+	}
+}
+
+func TestCorpusAcceptanceLabelRecordingRejectsUnknownEvidence(t *testing.T) {
+	root, _, _, recordsPath := writeCorpusAcceptanceLabelRecordingFixture(t, corpusAcceptanceIndependentProvenance)
+	records := readLabelRecordingFixtureRecords(t, recordsPath)
+	records.Records[0].RequiredEvidence = []string{"node-does-not-exist"}
+	writeDocumentsTestJSON(t, recordsPath, records)
+
+	_, _, err := BuildCorpusAcceptanceLabelRecording(filepath.Join(root, "labeling"), recordsPath, filepath.Join(root, "recording"))
+	if err == nil || !strings.Contains(err.Error(), "unknown_evidence_ref:rec-present") {
+		t.Fatalf("expected unknown evidence blocker, got %v", err)
+	}
+}
+
+func TestCorpusAcceptanceLabelRecordingRejectsNoCandidateUnknownEvidence(t *testing.T) {
+	root, _, _, recordsPath := writeCorpusAcceptanceLabelRecordingFixture(t, corpusAcceptanceIndependentProvenance)
+	records := readLabelRecordingFixtureRecords(t, recordsPath)
+	records.Records = []CorpusAcceptanceLabelRecordItem{{
+		RecordID:               "rec-absent-no-candidate",
+		CaseID:                 "case-001",
+		Decision:               CorpusAcceptanceLabelExpectedAbsent,
+		ExpectedOutcomeID:      "exp-absent-no-candidate",
+		ExpectedKind:           SemanticCandidateKindReference,
+		SourceDocumentID:       "doc-source",
+		RequiredEvidence:       []string{"node-does-not-exist"},
+		MinimumConfidenceFloor: ConfidenceLow,
+	}}
+	writeDocumentsTestJSON(t, recordsPath, records)
+
+	_, _, err := BuildCorpusAcceptanceLabelRecording(filepath.Join(root, "labeling"), recordsPath, filepath.Join(root, "recording"))
+	if err == nil || !strings.Contains(err.Error(), "unknown_evidence_ref:rec-absent-no-candidate") {
+		t.Fatalf("expected no-candidate unknown evidence blocker, got %v", err)
+	}
+}
+
+func TestCorpusAcceptanceLabelRecordingRejectsUnsupportedDecision(t *testing.T) {
+	root, _, _, recordsPath := writeCorpusAcceptanceLabelRecordingFixture(t, corpusAcceptanceIndependentProvenance)
+	records := readLabelRecordingFixtureRecords(t, recordsPath)
+	records.Records[0].Decision = CorpusAcceptanceLabelDecision("typo_present")
+	writeDocumentsTestJSON(t, recordsPath, records)
+
+	_, _, err := BuildCorpusAcceptanceLabelRecording(filepath.Join(root, "labeling"), recordsPath, filepath.Join(root, "recording"))
+	if err == nil || !strings.Contains(err.Error(), "unsupported_decision:rec-present") {
+		t.Fatalf("expected unsupported decision blocker, got %v", err)
+	}
+}
+
+func TestCorpusAcceptanceLabelRecordingNonIndependentRecordsStayBlocked(t *testing.T) {
+	root, _, _, recordsPath := writeCorpusAcceptanceLabelRecordingFixture(t, "generated_from_packet")
+
+	summary, answerKey, err := BuildCorpusAcceptanceLabelRecording(filepath.Join(root, "labeling"), recordsPath, filepath.Join(root, "recording"))
+	if err != nil {
+		t.Fatalf("build label recording: %v", err)
+	}
+	if summary.BenchmarkReady || summary.HeldOutReady || !stringListContains(summary.Blockers, "label_records_not_independent") {
+		t.Fatalf("expected non-independent records to remain blocked, summary=%+v", summary)
+	}
+	pressureRoot := filepath.Dir(filepath.Join(root, "corpus-pressure", "pressure-summary.json"))
+	_ = pressureRoot
+	benchmark, err := BuildCorpusAcceptanceBenchmark(root, filepath.Join(root, "recording", corpusAcceptanceLabelRecordingDirName, "answer-key.json"), filepath.Join(root, "benchmark"), CorpusAcceptanceBenchmarkOptions{Threshold: 0.98, HeldOut: true})
+	if err != nil {
+		t.Fatalf("build benchmark from non-independent answer key: %v", err)
+	}
+	if benchmark.SuiteValid || !stringListContains(benchmark.SuiteValidityBlockers, "answer_key_not_independent") || answerKey.Provenance.Independence == corpusAcceptanceIndependentProvenance {
+		t.Fatalf("benchmark should reject non-independent answer key, benchmark=%+v answerKey=%+v", benchmark, answerKey)
+	}
+}
+
+func writeCorpusAcceptanceLabelRecordingFixture(t *testing.T, independence string) (string, CorpusPressureSummary, CorpusAcceptanceLabelingPacket, string) {
+	t.Helper()
+	root, pressure, _ := writeCorpusAcceptanceFixture(t, []SemanticCandidate{corpusAcceptanceCandidate(t, SemanticCandidateKindReference, ReviewStatusReady)}, nil)
+	packet, _, err := BuildCorpusAcceptanceLabelingPacket(root, filepath.Join(root, "labeling"))
+	if err != nil {
+		t.Fatalf("build labeling packet: %v", err)
+	}
+	candidate := packet.Sources[0].Candidates[0]
+	records := CorpusAcceptanceLabelRecords{
+		SchemaVersion: CorpusAcceptanceLabelRecordsSchemaVersion,
+		SuiteID:       "heldout-recording-demo",
+		SuiteKind:     CorpusAcceptanceSuiteHeldOut,
+		Provenance:    CorpusAcceptanceProvenance{Labeler: "fixture-human", Independence: independence},
+		MinEvalCount:  1,
+		CoverageRequirements: CorpusAcceptanceCoverage{
+			MinSourceCount: 1,
+			CandidateKinds: []SemanticCandidateKind{SemanticCandidateKindReference},
+			FailureModes:   []SemanticAcceptanceReason{SemanticAcceptanceReasonMissingExpectedOutcome, SemanticAcceptanceReasonUnexpectedCandidate},
+		},
+		Records: []CorpusAcceptanceLabelRecordItem{
+			{
+				RecordID:               "rec-present",
+				CaseID:                 packet.Sources[0].CaseID,
+				Decision:               CorpusAcceptanceLabelExpectedPresent,
+				CandidateID:            candidate.CandidateID,
+				ExpectedOutcomeID:      "exp-present",
+				ExpectedKind:           candidate.CandidateKind,
+				SourceID:               packet.Sources[0].SourceID,
+				SourceDocumentID:       candidate.SourceDocumentID,
+				RequiredEvidence:       []string{candidate.EvidenceNodes[0]},
+				TitleSignals:           []string{"checklist"},
+				SummarySignals:         []string{"prepare"},
+				MinimumConfidenceFloor: ConfidenceLow,
+			},
+			{
+				RecordID:               "rec-absent",
+				CaseID:                 packet.Sources[0].CaseID,
+				Decision:               CorpusAcceptanceLabelExpectedAbsent,
+				CandidateID:            candidate.CandidateID,
+				ExpectedOutcomeID:      "exp-absent",
+				ExpectedKind:           candidate.CandidateKind,
+				SourceID:               packet.Sources[0].SourceID,
+				SourceDocumentID:       candidate.SourceDocumentID,
+				MinimumConfidenceFloor: ConfidenceLow,
+			},
+		},
+	}
+	recordsPath := filepath.Join(root, "label-records.json")
+	writeDocumentsTestJSON(t, recordsPath, records)
+	return root, pressure, packet, recordsPath
+}
+
+func readLabelRecordingFixtureRecords(t *testing.T, path string) CorpusAcceptanceLabelRecords {
+	t.Helper()
+	records, err := readCorpusAcceptanceLabelRecords(path)
+	if err != nil {
+		t.Fatalf("read records: %v", err)
+	}
+	return records
+}
