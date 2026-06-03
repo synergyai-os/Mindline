@@ -1278,6 +1278,21 @@ func TestWriterRebuildsSummaryFromFinalizedSegments(t *testing.T) {
 	assertGeneratedTreeExcludes(t, filepath.Join(out, "document-segments"), "private_content", "secret", unsafeTokenMarker(), "doc-secret-"+unsafeTokenMarker())
 }
 
+func TestBuildSummaryUsesFinalizedSegments(t *testing.T) {
+	segment := validSegment()
+	segment.SemanticType = SemanticTypeUnknown
+	segment.ReviewStatus = ReviewStatusReady
+
+	summary := BuildSummary(segment.RunID, 1, []Segment{segment})
+
+	if summary.NeedsReviewCount != 1 {
+		t.Fatalf("summary must count finalized fallback segment as needs_review: %+v", summary)
+	}
+	if len(summary.Segments) != 1 || summary.Segments[0].ReviewStatus != ReviewStatusNeedsReview || summary.Segments[0].Confidence != ConfidenceLow {
+		t.Fatalf("summary must expose finalized fallback state: %+v", summary.Segments)
+	}
+}
+
 func TestWriterFinalizesInvalidReadySegmentsAsNeedsReview(t *testing.T) {
 	cases := []struct {
 		name   string
