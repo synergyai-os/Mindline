@@ -61,6 +61,7 @@ func DecomposePath(inputPath, outDir string) (Summary, error) {
 }
 
 func BuildSummary(runID string, sourceCount int, segments []Segment) Summary {
+	segments = finalizeSegments(segments)
 	summary := Summary{
 		SchemaVersion: SegmentSummarySchemaVersion,
 		RunID:         runID,

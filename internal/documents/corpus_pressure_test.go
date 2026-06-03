@@ -745,6 +745,32 @@ func TestCorpusPressureDoesNotPromoteReviewRequiredCandidatesWithEvidence(t *tes
 	}
 }
 
+func TestCorpusPressureFallbackReviewDoesNotBecomeSourceBlocker(t *testing.T) {
+	input := t.TempDir()
+	body := "# Fallback\n\nDecision:\n- Keep the rollout local until review evidence is ready.\n"
+	if err := os.WriteFile(filepath.Join(input, "fallback.md"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := t.TempDir()
+
+	summary, _, err := BuildCorpusPressure(input, out, CorpusPressureOptions{})
+	if err != nil {
+		t.Fatalf("build corpus pressure: %v", err)
+	}
+
+	if summary.BlockedSourceCount != 0 {
+		t.Fatalf("fallback review artifact must not block source processing: %+v", summary)
+	}
+	if len(summary.Sources) != 1 || summary.Sources[0].State == CorpusPressureSourceBlocked {
+		t.Fatalf("fallback source must be accounted without source-level block: %+v", summary.Sources)
+	}
+	var segmentSummary Summary
+	readCorpusPressureJSON(t, filepath.Join(out, filepath.FromSlash(summary.Sources[0].SemanticRunDir), "document-segments", "segment-summary.json"), &segmentSummary)
+	if segmentSummary.NeedsReviewCount == 0 {
+		t.Fatalf("fallback source must preserve visible segment review burden: %+v", segmentSummary)
+	}
+}
+
 func TestCorpusPressureEvalInputPropagatesGuardrails(t *testing.T) {
 	summary := CorpusPressureSummary{
 		CorpusID: "corpus-test",

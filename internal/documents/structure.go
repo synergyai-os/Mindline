@@ -389,9 +389,44 @@ func writeStructure(outDir, runID string, sourceCount int, nodes []StructureNode
 func finalizeStructureNodes(nodes []StructureNode) []StructureNode {
 	out := make([]StructureNode, 0, len(nodes))
 	for _, node := range nodes {
-		out = append(out, ClassifyUnsafeStructureMarkers(node))
+		out = append(out, finalizeStructureNode(ClassifyUnsafeStructureMarkers(node)))
 	}
 	return out
+}
+
+func finalizeStructureNode(node StructureNode) StructureNode {
+	if node.ReviewStatus == ReviewStatusBlocked {
+		if node.NodeType == StructureNodeTypeUnknown {
+			node.NodeType = StructureNodeTypeSection
+		}
+		return node
+	}
+	if node.ReviewStatus != ReviewStatusReady {
+		return node
+	}
+	var reasons []string
+	if node.NodeType == StructureNodeTypeUnknown {
+		reasons = append(reasons, "unknown structure node type")
+	}
+	if node.Confidence == ConfidenceLow {
+		reasons = append(reasons, "low confidence")
+	}
+	if strings.TrimSpace(node.Title) == "" {
+		reasons = append(reasons, "missing title")
+	}
+	if strings.TrimSpace(node.Summary) == "" {
+		reasons = append(reasons, "missing summary")
+	}
+	if node.Evidence.LineStart <= 0 {
+		reasons = append(reasons, "missing provenance")
+	}
+	if len(reasons) == 0 {
+		return node
+	}
+	node.ReviewStatus = ReviewStatusNeedsReview
+	node.Confidence = ConfidenceLow
+	node.Blockers = appendReviewBlocker(node.Blockers, "fallback_needs_review", "Structure node requires review before it can be treated as ready: "+strings.Join(reasons, ", ")+".")
+	return node
 }
 
 func ClassifyUnsafeStructureMarkers(node StructureNode) StructureNode {

@@ -96,9 +96,56 @@ func write(outDir string, summary Summary, segments []Segment) error {
 func finalizeSegments(segments []Segment) []Segment {
 	finalized := make([]Segment, 0, len(segments))
 	for _, segment := range segments {
-		finalized = append(finalized, ClassifyUnsafeMarkers(segment))
+		finalized = append(finalized, finalizeSegment(ClassifyUnsafeMarkers(segment)))
 	}
 	return finalized
+}
+
+func finalizeSegment(segment Segment) Segment {
+	if segment.ReviewStatus == ReviewStatusBlocked {
+		if segment.SemanticType == SemanticTypeUnknown {
+			segment.SemanticType = SemanticTypeSourceNote
+		}
+		return segment
+	}
+	if segment.ReviewStatus != ReviewStatusReady {
+		return segment
+	}
+	var reasons []string
+	if segment.SemanticType == SemanticTypeUnknown {
+		reasons = append(reasons, "unknown semantic type")
+	}
+	if segment.Confidence == ConfidenceLow {
+		reasons = append(reasons, "low confidence")
+	}
+	if strings.TrimSpace(segment.Title) == "" {
+		reasons = append(reasons, "missing title")
+	}
+	if strings.TrimSpace(segment.Summary) == "" {
+		reasons = append(reasons, "missing summary")
+	}
+	if strings.TrimSpace(segment.Evidence.ContentHash) == "" {
+		reasons = append(reasons, "missing content hash")
+	}
+	if segment.Evidence.LineStart <= 0 {
+		reasons = append(reasons, "missing provenance")
+	}
+	if len(reasons) == 0 {
+		return segment
+	}
+	segment.ReviewStatus = ReviewStatusNeedsReview
+	segment.Confidence = ConfidenceLow
+	segment.Blockers = appendReviewBlocker(segment.Blockers, "fallback_needs_review", "Segment requires review before it can be treated as ready: "+strings.Join(reasons, ", ")+".")
+	return segment
+}
+
+func appendReviewBlocker(blockers []Blocker, code, message string) []Blocker {
+	for _, blocker := range blockers {
+		if blocker.Code == code {
+			return blockers
+		}
+	}
+	return append(blockers, Blocker{Code: code, Message: message})
 }
 
 func rejectIfSymlink(path string) error {

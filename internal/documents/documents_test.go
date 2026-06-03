@@ -1086,6 +1086,90 @@ func TestStructureWriterSerializesEmptyRelatedSegmentLists(t *testing.T) {
 	}
 }
 
+func TestStructureWriterFinalizesInvalidReadyNodesAsNeedsReview(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*StructureNode)
+	}{
+		{
+			name: "unknown ready",
+			mutate: func(node *StructureNode) {
+				node.NodeType = StructureNodeTypeUnknown
+				node.ReviewStatus = ReviewStatusReady
+			},
+		},
+		{
+			name: "low confidence ready",
+			mutate: func(node *StructureNode) {
+				node.Confidence = ConfidenceLow
+				node.ReviewStatus = ReviewStatusReady
+			},
+		},
+		{
+			name: "missing title ready",
+			mutate: func(node *StructureNode) {
+				node.Title = ""
+				node.ReviewStatus = ReviewStatusReady
+			},
+		},
+		{
+			name: "missing summary ready",
+			mutate: func(node *StructureNode) {
+				node.Summary = ""
+				node.ReviewStatus = ReviewStatusReady
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := t.TempDir()
+			node := validStructureNode()
+			tc.mutate(&node)
+			if err := WriteStructure(out, node.RunID, 1, []StructureNode{node}); err != nil {
+				t.Fatalf("write finalized structure node: %v", err)
+			}
+			var summary StructureSummary
+			readCorpusPressureJSON(t, filepath.Join(out, "document-structure", "structure-summary.json"), &summary)
+			if summary.NeedsReviewCount != 1 {
+				t.Fatalf("finalized structure node must be counted as needs_review: %+v", summary)
+			}
+			if len(summary.Nodes) != 1 || strings.TrimSpace(summary.Nodes[0].NodePath) == "" {
+				t.Fatalf("finalized structure node must keep a stable path: %+v", summary.Nodes)
+			}
+			var loaded StructureNode
+			readCorpusPressureJSON(t, filepath.Join(out, "document-structure", StructureNodeJSONPath(node.NodeID)), &loaded)
+			if loaded.ReviewStatus != ReviewStatusNeedsReview || loaded.Confidence != ConfidenceLow {
+				t.Fatalf("finalized structure node must need review with low confidence: %+v", loaded)
+			}
+			if len(loaded.Blockers) == 0 || strings.TrimSpace(loaded.Blockers[0].Code) == "" || strings.TrimSpace(loaded.Blockers[0].Message) == "" {
+				t.Fatalf("finalized structure node must explain review blocker: %+v", loaded.Blockers)
+			}
+			if loaded.Evidence.LineStart != node.Evidence.LineStart || loaded.Evidence.ContentHash == "" {
+				t.Fatalf("finalized structure node must preserve evidence: %+v", loaded.Evidence)
+			}
+		})
+	}
+}
+
+func TestStructureWriterKeepsUnsafeNodePrecedenceOverFallbackReview(t *testing.T) {
+	out := t.TempDir()
+	node := validStructureNode()
+	node.NodeType = StructureNodeTypeUnknown
+	node.ReviewStatus = ReviewStatusReady
+	node.Title = "PRIVATE_CONTENT ready node"
+	node.Summary = "secret " + unsafeTokenMarker() + " body must not persist"
+	if err := WriteStructure(out, node.RunID, 1, []StructureNode{node}); err != nil {
+		t.Fatalf("write finalized unsafe structure node: %v", err)
+	}
+	var loaded StructureNode
+	readCorpusPressureJSON(t, filepath.Join(out, "document-structure", StructureNodeJSONPath(node.NodeID)), &loaded)
+	if loaded.ReviewStatus != ReviewStatusBlocked {
+		t.Fatalf("unsafe marker must remain blocked, got %+v", loaded)
+	}
+	assertGeneratedTreeExcludes(t, filepath.Join(out, "document-structure"), "private_content", "secret", unsafeTokenMarker())
+}
+
 func TestDocumentsDecomposeWritesCompleteArtifactTree(t *testing.T) {
 	out := t.TempDir()
 	summary, err := DecomposePath(fixturePath(t, "markdown", "mixed-thread-capture.md"), out)
@@ -1192,6 +1276,102 @@ func TestWriterRebuildsSummaryFromFinalizedSegments(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 	assertGeneratedTreeExcludes(t, filepath.Join(out, "document-segments"), "private_content", "secret", unsafeTokenMarker(), "doc-secret-"+unsafeTokenMarker())
+}
+
+func TestBuildSummaryUsesFinalizedSegments(t *testing.T) {
+	segment := validSegment()
+	segment.SemanticType = SemanticTypeUnknown
+	segment.ReviewStatus = ReviewStatusReady
+
+	summary := BuildSummary(segment.RunID, 1, []Segment{segment})
+
+	if summary.NeedsReviewCount != 1 {
+		t.Fatalf("summary must count finalized fallback segment as needs_review: %+v", summary)
+	}
+	if len(summary.Segments) != 1 || summary.Segments[0].ReviewStatus != ReviewStatusNeedsReview || summary.Segments[0].Confidence != ConfidenceLow {
+		t.Fatalf("summary must expose finalized fallback state: %+v", summary.Segments)
+	}
+}
+
+func TestWriterFinalizesInvalidReadySegmentsAsNeedsReview(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*Segment)
+	}{
+		{
+			name: "unknown ready",
+			mutate: func(segment *Segment) {
+				segment.SemanticType = SemanticTypeUnknown
+				segment.ReviewStatus = ReviewStatusReady
+			},
+		},
+		{
+			name: "low confidence ready",
+			mutate: func(segment *Segment) {
+				segment.Confidence = ConfidenceLow
+				segment.ReviewStatus = ReviewStatusReady
+			},
+		},
+		{
+			name: "missing title ready",
+			mutate: func(segment *Segment) {
+				segment.Title = ""
+				segment.ReviewStatus = ReviewStatusReady
+			},
+		},
+		{
+			name: "missing summary ready",
+			mutate: func(segment *Segment) {
+				segment.Summary = ""
+				segment.ReviewStatus = ReviewStatusReady
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out := t.TempDir()
+			segment := validSegment()
+			tc.mutate(&segment)
+			if err := Write(out, Summary{RunID: segment.RunID, SourceCount: 1}, []Segment{segment}); err != nil {
+				t.Fatalf("write finalized segment: %v", err)
+			}
+			var summary Summary
+			readCorpusPressureJSON(t, filepath.Join(out, "document-segments", "segment-summary.json"), &summary)
+			if summary.NeedsReviewCount != 1 {
+				t.Fatalf("finalized segment must be counted as needs_review: %+v", summary)
+			}
+			var loaded Segment
+			readCorpusPressureJSON(t, filepath.Join(out, "document-segments", SegmentJSONPath(segment.SegmentID)), &loaded)
+			if loaded.ReviewStatus != ReviewStatusNeedsReview || loaded.Confidence != ConfidenceLow {
+				t.Fatalf("finalized segment must need review with low confidence: %+v", loaded)
+			}
+			if len(loaded.Blockers) == 0 || strings.TrimSpace(loaded.Blockers[0].Code) == "" || strings.TrimSpace(loaded.Blockers[0].Message) == "" {
+				t.Fatalf("finalized segment must explain review blocker: %+v", loaded.Blockers)
+			}
+			if loaded.Evidence.LineStart != segment.Evidence.LineStart || loaded.Evidence.ContentHash == "" {
+				t.Fatalf("finalized segment must preserve evidence: %+v", loaded.Evidence)
+			}
+		})
+	}
+}
+
+func TestWriterKeepsUnsafeSegmentPrecedenceOverFallbackReview(t *testing.T) {
+	out := t.TempDir()
+	segment := validSegment()
+	segment.SemanticType = SemanticTypeUnknown
+	segment.ReviewStatus = ReviewStatusReady
+	segment.Title = "PRIVATE_CONTENT ready segment"
+	segment.Summary = "secret " + unsafeTokenMarker() + " body must not persist"
+	if err := Write(out, Summary{RunID: segment.RunID, SourceCount: 1}, []Segment{segment}); err != nil {
+		t.Fatalf("write finalized unsafe segment: %v", err)
+	}
+	var loaded Segment
+	readCorpusPressureJSON(t, filepath.Join(out, "document-segments", SegmentJSONPath(segment.SegmentID)), &loaded)
+	if loaded.ReviewStatus != ReviewStatusBlocked {
+		t.Fatalf("unsafe marker must remain blocked, got %+v", loaded)
+	}
+	assertGeneratedTreeExcludes(t, filepath.Join(out, "document-segments"), "private_content", "secret", unsafeTokenMarker())
 }
 
 func TestUnsupportedSchema(t *testing.T) {
