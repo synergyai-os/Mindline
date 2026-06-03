@@ -717,6 +717,7 @@ type CorpusAcceptanceLabelRecordInput struct {
 	Decision                CorpusAcceptanceLabelDecision
 	ExpectedOutcomeID       string
 	ExpectedKind            SemanticCandidateKind
+	MinimumConfidenceFloor  Confidence
 	RequiredEvidenceRefs    []string
 	Labeler                 string
 	IndependenceAttestation string

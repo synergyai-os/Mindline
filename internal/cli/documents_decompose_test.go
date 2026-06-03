@@ -595,6 +595,90 @@ func TestDocumentsCorpusAcceptanceLabelRecordsRejectProtectedRoot(t *testing.T) 
 	}
 }
 
+func TestDocumentsCorpusAcceptanceLabelRecordZeroCandidateExpectedAbsent(t *testing.T) {
+	root := t.TempDir()
+	labelingDir := filepath.Join(root, "labeling", "corpus-acceptance-labeling")
+	if err := os.MkdirAll(labelingDir, 0o755); err != nil {
+		t.Fatalf("mkdir labeling: %v", err)
+	}
+	writeCLITestJSON(t, filepath.Join(labelingDir, "labeling-packet.json"), documents.CorpusAcceptanceLabelingPacket{
+		SchemaVersion:            documents.CorpusAcceptanceLabelingPacketSchemaVersion,
+		PacketID:                 "labeling-guided-zero-candidate",
+		CorpusID:                 "corpus-guided-zero-candidate",
+		CorpusFingerprint:        "corpus-guided-zero-candidate-fingerprint",
+		CommandConfigFingerprint: "config-guided-zero-candidate",
+		LabelingStatus:           "labeling_required",
+		SourceCount:              1,
+		CandidateCount:           0,
+		LabelingPacketPath:       "corpus-acceptance-labeling/labeling-packet.json",
+		AnswerKeyTemplatePath:    "corpus-acceptance-labeling/answer-key-template.json",
+		ReportPath:               "corpus-acceptance-labeling/labeling-report.md",
+		Sources: []documents.CorpusAcceptanceLabelingSource{{
+			CaseID:            "case-001",
+			SourceID:          "source-zero-candidate",
+			SourceContentHash: "sha256:fixture",
+			SourcePath:        "sources/source-zero/source.md",
+			SourceState:       documents.CorpusPressureSourceProcessed,
+			ReasonCode:        documents.CorpusPressureReasonNone,
+		}},
+	})
+	recordsPath := filepath.Join(root, "guided-records.json")
+	nextOut := filepath.Join(root, "next")
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "corpus-acceptance-label-next", filepath.Join(root, "labeling"),
+		"--records", recordsPath,
+		"--out", nextOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected label-next exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "corpus-acceptance-label-record", filepath.Join(root, "labeling"),
+		"--records", recordsPath,
+		"--map", filepath.Join(nextOut, "corpus-acceptance-label-next", "label-next-map.json"),
+		"--case-ref", "case-001",
+		"--decision", "expected_absent",
+		"--expected-kind", string(documents.SemanticCandidateKindAction),
+		"--minimum-confidence-floor", string(documents.ConfidenceLow),
+		"--labeler", "fixture-human",
+		"--independence-attestation", "not_generated_from_evaluated_run",
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected zero-candidate label-record exit %d, got %d stdout=%s stderr=%s", ExitOK, code, stdout.String(), stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "corpus-acceptance-label-apply", filepath.Join(root, "labeling"),
+		"--records", recordsPath,
+		"--out", filepath.Join(root, "recording"),
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected label-apply exit %d, got %d stdout=%s stderr=%s", ExitOK, code, stdout.String(), stderr.String())
+	}
+	var applySummary documents.CorpusAcceptanceLabelRecordingOutputSummary
+	if err := json.Unmarshal(stdout.Bytes(), &applySummary); err != nil {
+		t.Fatalf("decode label-apply stdout: %v", err)
+	}
+	if applySummary.EvalCount != 1 || cliStringListContains(applySummary.Blockers, "invalid_expected_outcome:rec-case-001-expected-absent") {
+		t.Fatalf("expected apply-compatible absent record, got %+v", applySummary)
+	}
+}
+
+func cliStringListContains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestDocumentsCorpusPressureDoesNotWriteDestinationArtifacts(t *testing.T) {
 	out := t.TempDir()
 	var stdout, stderr bytes.Buffer

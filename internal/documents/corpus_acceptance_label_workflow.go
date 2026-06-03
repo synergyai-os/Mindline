@@ -63,6 +63,9 @@ func RecordCorpusAcceptanceLabel(labelingPath, recordsPath, mapPath string, inpu
 		if input.IndependenceAttestation != corpusAcceptanceIndependentProvenance {
 			return CorpusAcceptanceLabelRecords{}, fmt.Errorf("unsupported independence attestation")
 		}
+		if records.Provenance.Independence != corpusAcceptanceIndependentProvenance && len(records.Records) > 0 {
+			return CorpusAcceptanceLabelRecords{}, fmt.Errorf("cannot upgrade generated label records to independent provenance")
+		}
 		records.Provenance.Independence = input.IndependenceAttestation
 	}
 	recordID := deterministicCorpusAcceptanceLabelRecordID(input.CaseRef, input.CandidateRef, input.Decision)
@@ -74,16 +77,17 @@ func RecordCorpusAcceptanceLabel(labelingPath, recordsPath, mapPath string, inpu
 		return CorpusAcceptanceLabelRecords{}, err
 	}
 	record := CorpusAcceptanceLabelRecordItem{
-		RecordID:          recordID,
-		CaseID:            source.CaseID,
-		Decision:          input.Decision,
-		CandidateID:       candidateIDForLabelRecord(candidate, hasCandidate),
-		ExpectedOutcomeID: expectedOutcomeID,
-		ExpectedKind:      input.ExpectedKind,
-		SourceID:          source.SourceID,
-		SourceDocumentID:  sourceDocumentIDForLabel(candidate, hasCandidate),
-		RequiredEvidence:  evidenceNodes,
-		Notes:             input.Notes,
+		RecordID:               recordID,
+		CaseID:                 source.CaseID,
+		Decision:               input.Decision,
+		CandidateID:            candidateIDForLabelRecord(candidate, hasCandidate),
+		ExpectedOutcomeID:      expectedOutcomeID,
+		ExpectedKind:           input.ExpectedKind,
+		SourceID:               source.SourceID,
+		SourceDocumentID:       sourceDocumentIDForLabel(candidate, hasCandidate),
+		RequiredEvidence:       evidenceNodes,
+		MinimumConfidenceFloor: input.MinimumConfidenceFloor,
+		Notes:                  input.Notes,
 	}
 	if record.ExpectedKind == "" && hasCandidate {
 		record.ExpectedKind = candidate.CandidateKind
@@ -443,6 +447,17 @@ func validateCorpusAcceptanceLabelRecordInput(input CorpusAcceptanceLabelRecordI
 	}
 	if input.Decision == CorpusAcceptanceLabelExpectedPresent && !hasCandidate {
 		return fmt.Errorf("missing candidate")
+	}
+	if input.MinimumConfidenceFloor != "" && !validConfidence(input.MinimumConfidenceFloor) {
+		return fmt.Errorf("unsupported minimum confidence floor")
+	}
+	if input.Decision == CorpusAcceptanceLabelExpectedAbsent && !hasCandidate {
+		if input.ExpectedKind == "" {
+			return fmt.Errorf("missing expected kind")
+		}
+		if input.MinimumConfidenceFloor == "" {
+			return fmt.Errorf("missing minimum confidence floor")
+		}
 	}
 	if containsUnsafeMarker(input.Notes) || containsGovernanceID(input.Notes) || containsPrivateReportMarker(input.Notes) {
 		return fmt.Errorf("unsafe note")

@@ -210,6 +210,48 @@ func TestCorpusAcceptanceLabelRecordRejectsUnsupportedRecordsSchemaBeforeWrite(t
 	}
 }
 
+func TestCorpusAcceptanceLabelRecordRejectsIndependenceUpgradeForExistingGeneratedRecords(t *testing.T) {
+	root, _, _, _ := writeCorpusAcceptanceLabelRecordingFixture(t, corpusAcceptanceIndependentProvenance)
+	recordsPath := filepath.Join(root, "guided-records.json")
+	nextOut := filepath.Join(root, "next")
+	if _, _, err := BuildCorpusAcceptanceLabelNext(filepath.Join(root, "labeling"), recordsPath, nextOut); err != nil {
+		t.Fatalf("build label next: %v", err)
+	}
+	mapPath := filepath.Join(nextOut, corpusAcceptanceLabelNextDirName, "label-next-map.json")
+	if _, err := RecordCorpusAcceptanceLabel(filepath.Join(root, "labeling"), recordsPath, mapPath, CorpusAcceptanceLabelRecordInput{
+		CaseRef:      "case-001",
+		CandidateRef: "candidate-001",
+		Decision:     CorpusAcceptanceLabelUncertain,
+		Labeler:      "fixture-human",
+	}); err != nil {
+		t.Fatalf("record generated label: %v", err)
+	}
+	before, err := os.ReadFile(recordsPath)
+	if err != nil {
+		t.Fatalf("read records before upgrade: %v", err)
+	}
+
+	_, err = RecordCorpusAcceptanceLabel(filepath.Join(root, "labeling"), recordsPath, mapPath, CorpusAcceptanceLabelRecordInput{
+		CaseRef:                 "case-001",
+		CandidateRef:            "candidate-001",
+		Decision:                CorpusAcceptanceLabelExpectedPresent,
+		ExpectedKind:            SemanticCandidateKindReference,
+		RequiredEvidenceRefs:    []string{"evidence-001"},
+		Labeler:                 "fixture-human",
+		IndependenceAttestation: corpusAcceptanceIndependentProvenance,
+	})
+	if err == nil || !strings.Contains(err.Error(), "cannot upgrade generated label records") {
+		t.Fatalf("expected generated records upgrade rejection, got %v", err)
+	}
+	after, err := os.ReadFile(recordsPath)
+	if err != nil {
+		t.Fatalf("read records after upgrade: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("generated records were mutated by rejected upgrade:\nbefore=%s\nafter=%s", string(before), string(after))
+	}
+}
+
 func TestCorpusAcceptanceLabelRecordRejectsCorruptedCandidateRefMap(t *testing.T) {
 	root, _, packet, _ := writeCorpusAcceptanceLabelRecordingFixture(t, corpusAcceptanceIndependentProvenance)
 	packet.Sources[0].Candidates[1].SourceDocumentID = packet.Sources[0].Candidates[0].SourceDocumentID
