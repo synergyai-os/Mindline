@@ -34,7 +34,7 @@ const (
 	ExitArtifactWrite = 3
 )
 
-const usage = "usage: mindline process <candidate.json> [--out <dir>]\nusage: mindline slack normalize <slack-export.json> [--out <dir>]\nusage: mindline slack corpus-intake <slack-export.json> --out <dir>\nusage: mindline destination dry-run <sbos-result.json> --adapter tolaria --out <dir>\nusage: mindline pipeline dry-run <pipeline-input.json> --method basb-para-code --destination tolaria --out <dir>\nusage: mindline product-brain propose <run-dir> --profile <profile.json> --out <dir>\nusage: mindline documents decompose <markdown-path-or-dir> --out <dir>\nusage: mindline documents structure <markdown-path-or-dir> --out <dir>\nusage: mindline documents semantics <structure-run-dir-or-markdown-path-or-markdown-dir> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents accept <semantic-run-dir> --answer-key <answer-key.json> --out <dir>\nusage: mindline documents calibrate <semantic-acceptance-dir-or-parent> --out <dir> [--threshold 0.98] [--held-out] [--source-root <dir> --source <relative.md>]\nusage: mindline documents calibrate-next <semantic-calibration-dir-or-parent>\nusage: mindline documents judge <semantic-run-dir> --out <dir> [--source-root <dir> --source <relative.md>] [--agent-reviewer llm --llm-provider openai --llm-model <model>]\nusage: mindline documents judge-next <semantic-judgment-dir-or-parent>\nusage: mindline documents judge-record <semantic-judgment-dir-or-parent> --candidate <candidate-id> --choice accept|reject|unclear|duplicate|wrong-kind [--reason <failure-reason>] [--secondary-reason <failure-reason>] [--note <text>] [--reviewer <id>]\nusage: mindline documents judge-serve <semantic-judgment-dir-or-parent> [--addr 127.0.0.1:8787] [--reviewer <id>]\nusage: mindline documents readiness-report <semantic-judgment-dir-or-parent> --out <dir> [--threshold 0.98] [--held-out]\nusage: mindline documents corpus-graph <manifest.json> --out <dir>\nusage: mindline documents enrich-sources <corpus-pressure-manifest.json> --artifacts <local-enrichment-artifacts.json> --out <dir>\nusage: mindline documents link-enrichment-loop <corpus-pressure-manifest-or-intake-dir> --artifacts <local-enrichment-artifacts.json> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents corpus-pressure <markdown-dir-or-manifest> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents corpus-pressure-loop <markdown-dir-or-manifest> --out <dir> [--max-runs <n>] [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents corpus-acceptance <corpus-pressure-out-or-parent> --answer-key <corpus-answer-key.json> --out <dir> [--threshold 0.98] [--held-out]\nusage: mindline documents corpus-acceptance-labeling <corpus-pressure-out-or-parent> --out <dir>\nusage: mindline documents corpus-acceptance-label-apply <corpus-acceptance-labeling-out-or-parent> --records <label-records.json> --out <dir>\nusage: mindline documents meaning-preview <corpus-pressure-out-or-parent> --out <dir>\nusage: mindline documents value-proof <markdown-dir-or-manifest> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline eval readback <run-or-artifact-dir> --out <dir> [--baseline <run-or-artifact-dir>]\nusage: mindline eval proof-gate <run-or-readback-dir> --out <dir> --claim safety|improvement|generalization|dec64 [--baseline <run-or-artifact-dir>]\nusage: mindline eval loop-decision <run-or-readback-dir> --out <dir> [--baseline <run-or-artifact-dir>]\nusage: mindline observability posthog-test\n"
+const usage = "usage: mindline process <candidate.json> [--out <dir>]\nusage: mindline slack normalize <slack-export.json> [--out <dir>]\nusage: mindline slack corpus-intake <slack-export.json> --out <dir>\nusage: mindline destination dry-run <sbos-result.json> --adapter tolaria --out <dir>\nusage: mindline pipeline dry-run <pipeline-input.json> --method basb-para-code --destination tolaria --out <dir>\nusage: mindline product-brain propose <run-dir> --profile <profile.json> --out <dir>\nusage: mindline documents decompose <markdown-path-or-dir> --out <dir>\nusage: mindline documents structure <markdown-path-or-dir> --out <dir>\nusage: mindline documents semantics <structure-run-dir-or-markdown-path-or-markdown-dir> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents accept <semantic-run-dir> --answer-key <answer-key.json> --out <dir>\nusage: mindline documents calibrate <semantic-acceptance-dir-or-parent> --out <dir> [--threshold 0.98] [--held-out] [--source-root <dir> --source <relative.md>]\nusage: mindline documents calibrate-next <semantic-calibration-dir-or-parent>\nusage: mindline documents judge <semantic-run-dir> --out <dir> [--source-root <dir> --source <relative.md>] [--agent-reviewer llm --llm-provider openai --llm-model <model>]\nusage: mindline documents judge-next <semantic-judgment-dir-or-parent>\nusage: mindline documents judge-record <semantic-judgment-dir-or-parent> --candidate <candidate-id> --choice accept|reject|unclear|duplicate|wrong-kind [--reason <failure-reason>] [--secondary-reason <failure-reason>] [--note <text>] [--reviewer <id>]\nusage: mindline documents judge-serve <semantic-judgment-dir-or-parent> [--addr 127.0.0.1:8787] [--reviewer <id>]\nusage: mindline documents readiness-report <semantic-judgment-dir-or-parent> --out <dir> [--threshold 0.98] [--held-out]\nusage: mindline documents corpus-graph <manifest.json> --out <dir>\nusage: mindline documents enrich-sources <corpus-pressure-manifest.json> --artifacts <local-enrichment-artifacts.json> --out <dir>\nusage: mindline documents link-enrichment-loop <corpus-pressure-manifest-or-intake-dir> --artifacts <local-enrichment-artifacts.json> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents corpus-pressure <markdown-dir-or-manifest> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents corpus-pressure-loop <markdown-dir-or-manifest> --out <dir> [--max-runs <n>] [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents corpus-acceptance <corpus-pressure-out-or-parent> --answer-key <corpus-answer-key.json> --out <dir> [--threshold 0.98] [--held-out]\nusage: mindline documents corpus-acceptance-labeling <corpus-pressure-out-or-parent> --out <dir>\nusage: mindline documents corpus-acceptance-label-next <corpus-acceptance-labeling-out-or-parent> --records <label-records.json> --out <dir>\nusage: mindline documents corpus-acceptance-label-record <corpus-acceptance-labeling-out-or-parent> --records <label-records.json> --map <label-next-map.json> --case-ref <ref> --decision expected_present|expected_absent|uncertain|abstain [--candidate-ref <ref>] [--expected-outcome <id>] [--expected-kind <kind>] [--minimum-confidence-floor low|medium|high] [--required-evidence-ref <ref>] [--labeler <id>] [--independence-attestation not_generated_from_evaluated_run] [--note <text>]\nusage: mindline documents corpus-acceptance-label-apply <corpus-acceptance-labeling-out-or-parent> --records <label-records.json> --out <dir>\nusage: mindline documents meaning-preview <corpus-pressure-out-or-parent> --out <dir>\nusage: mindline documents value-proof <markdown-dir-or-manifest> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline eval readback <run-or-artifact-dir> --out <dir> [--baseline <run-or-artifact-dir>]\nusage: mindline eval proof-gate <run-or-readback-dir> --out <dir> --claim safety|improvement|generalization|dec64 [--baseline <run-or-artifact-dir>]\nusage: mindline eval loop-decision <run-or-readback-dir> --out <dir> [--baseline <run-or-artifact-dir>]\nusage: mindline observability posthog-test\n"
 
 const protectedRootsEnv = "MINDLINE_PROTECTED_ROOTS"
 const defaultTolariaProtectedRoot = "/Users/randyhereman/Young Human Club Dropbox/02. Areas/PKM - Tolaria"
@@ -107,6 +107,26 @@ type ObservabilityTestEnvelope struct {
 	Network      bool     `json:"network"`
 	Host         string   `json:"host,omitempty"`
 	AuthorityIDs []string `json:"authority_ids"`
+}
+
+func corpusAcceptanceLabelRecordCLIOutput(records documents.CorpusAcceptanceLabelRecords) documents.CorpusAcceptanceLabelRecordingOutputSummary {
+	output := documents.CorpusAcceptanceLabelRecordingOutputSummary{
+		SchemaVersion:  documents.CorpusAcceptanceLabelRecordingSummarySchemaVersion,
+		LabelingStatus: "labels_recorded",
+		RecordCount:    len(records.Records),
+		Blockers:       []string{},
+	}
+	for _, record := range records.Records {
+		switch record.Decision {
+		case documents.CorpusAcceptanceLabelExpectedPresent, documents.CorpusAcceptanceLabelExpectedAbsent:
+			output.EvalCount++
+		case documents.CorpusAcceptanceLabelUncertain:
+			output.UncertainCount++
+		case documents.CorpusAcceptanceLabelAbstain:
+			output.AbstainCount++
+		}
+	}
+	return output
 }
 
 type DestinationDryRunSummary struct {
@@ -312,6 +332,12 @@ func (r Runner) runDocuments(args []string, stdout, stderr io.Writer) int {
 	}
 	if len(args) > 0 && args[0] == "corpus-acceptance-labeling" {
 		return r.runDocumentsCorpusAcceptanceLabeling(args, stdout, stderr)
+	}
+	if len(args) > 0 && args[0] == "corpus-acceptance-label-next" {
+		return r.runDocumentsCorpusAcceptanceLabelNext(args, stdout, stderr)
+	}
+	if len(args) > 0 && args[0] == "corpus-acceptance-label-record" {
+		return r.runDocumentsCorpusAcceptanceLabelRecord(args, stdout, stderr)
 	}
 	if len(args) > 0 && args[0] == "corpus-acceptance-label-apply" {
 		return r.runDocumentsCorpusAcceptanceLabelApply(args, stdout, stderr)
@@ -647,6 +673,68 @@ func (r Runner) runDocumentsCorpusAcceptanceLabeling(args []string, stdout, stde
 	encoder := json.NewEncoder(stdout)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(documents.CorpusAcceptanceLabelingOutputFor(packet)); err != nil {
+		fmt.Fprintf(stderr, "write stdout: %v\n", err)
+		return ExitUsage
+	}
+	return ExitOK
+}
+
+func (r Runner) runDocumentsCorpusAcceptanceLabelNext(args []string, stdout, stderr io.Writer) int {
+	labelingPath, recordsPath, outDir, parseError := parseDocumentsCorpusAcceptanceLabelNextArgs(args)
+	if parseError != parseErrorNone {
+		fmt.Fprint(stderr, usage)
+		return ExitUsage
+	}
+	if err := r.validateDestinationOutDir(outDir); err != nil {
+		fmt.Fprintf(stderr, "validate corpus acceptance label next output: %v\n", err)
+		return ExitArtifactWrite
+	}
+	if err := r.validateDestinationOutputFileParent(recordsPath); err != nil {
+		fmt.Fprintf(stderr, "validate corpus acceptance label records: %v\n", err)
+		return ExitArtifactWrite
+	}
+	summary, _, err := documents.BuildCorpusAcceptanceLabelNext(labelingPath, recordsPath, outDir)
+	if err != nil {
+		if documents.IsArtifactWriteError(err) {
+			fmt.Fprintf(stderr, "write corpus acceptance label next: %v\n", err)
+			return ExitArtifactWrite
+		}
+		fmt.Fprintf(stderr, "build corpus acceptance label next: %v\n", err)
+		return ExitProcess
+	}
+	output := documents.CorpusAcceptanceLabelNextOutputFor(summary)
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(output); err != nil {
+		fmt.Fprintf(stderr, "write stdout: %v\n", err)
+		return ExitUsage
+	}
+	return ExitOK
+}
+
+func (r Runner) runDocumentsCorpusAcceptanceLabelRecord(args []string, stdout, stderr io.Writer) int {
+	labelingPath, recordsPath, mapPath, input, parseError := parseDocumentsCorpusAcceptanceLabelRecordArgs(args)
+	if parseError != parseErrorNone {
+		fmt.Fprint(stderr, usage)
+		return ExitUsage
+	}
+	if err := r.validateDestinationOutputFileParent(recordsPath); err != nil {
+		fmt.Fprintf(stderr, "validate corpus acceptance label records: %v\n", err)
+		return ExitArtifactWrite
+	}
+	records, err := documents.RecordCorpusAcceptanceLabel(labelingPath, recordsPath, mapPath, input)
+	if err != nil {
+		if documents.IsArtifactWriteError(err) {
+			fmt.Fprintf(stderr, "write corpus acceptance label record: %v\n", err)
+			return ExitArtifactWrite
+		}
+		fmt.Fprintf(stderr, "record corpus acceptance label: %v\n", err)
+		return ExitProcess
+	}
+	output := corpusAcceptanceLabelRecordCLIOutput(records)
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(output); err != nil {
 		fmt.Fprintf(stderr, "write stdout: %v\n", err)
 		return ExitUsage
 	}
@@ -2126,6 +2214,128 @@ func parseDocumentsCorpusAcceptanceLabelingArgs(args []string) (pressurePath str
 	return pressurePath, outDir, parseErrorNone
 }
 
+func parseDocumentsCorpusAcceptanceLabelNextArgs(args []string) (labelingPath string, recordsPath string, outDir string, err parseError) {
+	if len(args) < 6 || args[0] != "corpus-acceptance-label-next" || strings.TrimSpace(args[1]) == "" {
+		return "", "", "", parseErrorUsage
+	}
+	labelingPath = args[1]
+	for i := 2; i < len(args); {
+		switch args[i] {
+		case "--records":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", "", parseErrorUsage
+			}
+			recordsPath = args[i+1]
+			i += 2
+		case "--out":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", "", parseErrorUsage
+			}
+			outDir = args[i+1]
+			i += 2
+		case "--profile", "--destination", "--classifier", "--llm-provider", "--llm-model", "--answer-key", "--held-out", "--threshold":
+			return "", "", "", parseErrorUsage
+		default:
+			return "", "", "", parseErrorUsage
+		}
+	}
+	if recordsPath == "" || outDir == "" {
+		return "", "", "", parseErrorUsage
+	}
+	return labelingPath, recordsPath, outDir, parseErrorNone
+}
+
+func parseDocumentsCorpusAcceptanceLabelRecordArgs(args []string) (labelingPath string, recordsPath string, mapPath string, input documents.CorpusAcceptanceLabelRecordInput, err parseError) {
+	if len(args) < 10 || args[0] != "corpus-acceptance-label-record" || strings.TrimSpace(args[1]) == "" {
+		return "", "", "", input, parseErrorUsage
+	}
+	labelingPath = args[1]
+	for i := 2; i < len(args); {
+		switch args[i] {
+		case "--records":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", "", input, parseErrorUsage
+			}
+			recordsPath = args[i+1]
+			i += 2
+		case "--map":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", "", input, parseErrorUsage
+			}
+			mapPath = args[i+1]
+			i += 2
+		case "--case-ref":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", "", input, parseErrorUsage
+			}
+			input.CaseRef = args[i+1]
+			i += 2
+		case "--candidate-ref":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", "", input, parseErrorUsage
+			}
+			input.CandidateRef = args[i+1]
+			i += 2
+		case "--decision":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", "", input, parseErrorUsage
+			}
+			input.Decision = documents.CorpusAcceptanceLabelDecision(args[i+1])
+			i += 2
+		case "--expected-outcome":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", "", input, parseErrorUsage
+			}
+			input.ExpectedOutcomeID = args[i+1]
+			i += 2
+		case "--expected-kind":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", "", input, parseErrorUsage
+			}
+			input.ExpectedKind = documents.SemanticCandidateKind(args[i+1])
+			i += 2
+		case "--minimum-confidence-floor":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", "", input, parseErrorUsage
+			}
+			input.MinimumConfidenceFloor = documents.Confidence(args[i+1])
+			i += 2
+		case "--required-evidence-ref":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", "", input, parseErrorUsage
+			}
+			input.RequiredEvidenceRefs = append(input.RequiredEvidenceRefs, args[i+1])
+			i += 2
+		case "--labeler":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", "", input, parseErrorUsage
+			}
+			input.Labeler = args[i+1]
+			i += 2
+		case "--independence-attestation":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", "", input, parseErrorUsage
+			}
+			input.IndependenceAttestation = args[i+1]
+			i += 2
+		case "--note":
+			if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+				return "", "", "", input, parseErrorUsage
+			}
+			input.Notes = args[i+1]
+			i += 2
+		case "--profile", "--destination", "--classifier", "--llm-provider", "--llm-model", "--answer-key", "--held-out", "--threshold", "--out":
+			return "", "", "", input, parseErrorUsage
+		default:
+			return "", "", "", input, parseErrorUsage
+		}
+	}
+	if recordsPath == "" || mapPath == "" || input.CaseRef == "" || input.Decision == "" {
+		return "", "", "", input, parseErrorUsage
+	}
+	return labelingPath, recordsPath, mapPath, input, parseErrorNone
+}
+
 func parseDocumentsCorpusAcceptanceLabelApplyArgs(args []string) (labelingPath string, recordsPath string, outDir string, err parseError) {
 	if len(args) < 6 || args[0] != "corpus-acceptance-label-apply" || strings.TrimSpace(args[1]) == "" {
 		return "", "", "", parseErrorUsage
@@ -2363,6 +2573,21 @@ func (r Runner) rejectProtectedPath(realPath, displayPath string) error {
 		}
 	}
 	return nil
+}
+
+func (r Runner) validateDestinationOutputFileParent(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("missing output file path")
+	}
+	parent := filepath.Dir(path)
+	absParent, err := filepath.Abs(parent)
+	if err != nil {
+		return err
+	}
+	if realParent, err := r.fs.RealPath(parent); err == nil {
+		absParent = realParent
+	}
+	return r.rejectProtectedPath(absParent, parent)
 }
 
 func (r Runner) writeArtifact(outDir string, recordID string, artifact sbos.Artifact) (string, error) {
