@@ -689,6 +689,10 @@ func (r Runner) runDocumentsCorpusAcceptanceLabelNext(args []string, stdout, std
 		fmt.Fprintf(stderr, "validate corpus acceptance label next output: %v\n", err)
 		return ExitArtifactWrite
 	}
+	if err := r.validateDestinationOutputFileParent(recordsPath); err != nil {
+		fmt.Fprintf(stderr, "validate corpus acceptance label records: %v\n", err)
+		return ExitArtifactWrite
+	}
 	summary, _, err := documents.BuildCorpusAcceptanceLabelNext(labelingPath, recordsPath, outDir)
 	if err != nil {
 		if documents.IsArtifactWriteError(err) {
@@ -713,6 +717,10 @@ func (r Runner) runDocumentsCorpusAcceptanceLabelRecord(args []string, stdout, s
 	if parseError != parseErrorNone {
 		fmt.Fprint(stderr, usage)
 		return ExitUsage
+	}
+	if err := r.validateDestinationOutputFileParent(recordsPath); err != nil {
+		fmt.Fprintf(stderr, "validate corpus acceptance label records: %v\n", err)
+		return ExitArtifactWrite
 	}
 	records, err := documents.RecordCorpusAcceptanceLabel(labelingPath, recordsPath, mapPath, input)
 	if err != nil {
@@ -2559,6 +2567,21 @@ func (r Runner) rejectProtectedPath(realPath, displayPath string) error {
 		}
 	}
 	return nil
+}
+
+func (r Runner) validateDestinationOutputFileParent(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("missing output file path")
+	}
+	parent := filepath.Dir(path)
+	absParent, err := filepath.Abs(parent)
+	if err != nil {
+		return err
+	}
+	if realParent, err := r.fs.RealPath(parent); err == nil {
+		absParent = realParent
+	}
+	return r.rejectProtectedPath(absParent, parent)
 }
 
 func (r Runner) writeArtifact(outDir string, recordID string, artifact sbos.Artifact) (string, error) {

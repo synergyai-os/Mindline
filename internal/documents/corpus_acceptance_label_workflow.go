@@ -45,6 +45,9 @@ func RecordCorpusAcceptanceLabel(labelingPath, recordsPath, mapPath string, inpu
 	if err != nil {
 		return CorpusAcceptanceLabelRecords{}, err
 	}
+	if records.SchemaVersion != CorpusAcceptanceLabelRecordsSchemaVersion {
+		return CorpusAcceptanceLabelRecords{}, fmt.Errorf("invalid corpus acceptance label records: unsupported_records_schema")
+	}
 	labelMap, err := readCorpusAcceptanceLabelNextMap(mapPath)
 	if err != nil {
 		return CorpusAcceptanceLabelRecords{}, err
@@ -367,11 +370,15 @@ func resolveCorpusAcceptanceLabelRecordRefs(packet CorpusAcceptanceLabelingPacke
 			if mapCandidate.CandidateRef != input.CandidateRef {
 				continue
 			}
-			candidate := index.candidates[source.CaseID][mapCandidate.CandidateID]
-			if candidate == nil || candidate.SourceDocumentID != mapCandidate.SourceDocumentID {
+			candidate, evidenceRefs, ok := corpusAcceptanceLabelCandidateForRef(source, input.CandidateRef)
+			if !ok ||
+				candidate.CandidateID != mapCandidate.CandidateID ||
+				candidate.SourceDocumentID != mapCandidate.SourceDocumentID ||
+				!sameStrings(evidenceRefs, mapCandidate.EvidenceRefs) ||
+				!sameStrings(candidate.EvidenceNodes, mapCandidate.EvidenceNodeIDs) {
 				return nil, nil, false, nil, fmt.Errorf("label next map candidate does not match current packet")
 			}
-			evidenceNodes, err := resolveCorpusAcceptanceLabelEvidenceRefs(mapCandidate, input.RequiredEvidenceRefs)
+			evidenceNodes, err := resolveCorpusAcceptanceLabelEvidenceRefs(evidenceRefs, candidate.EvidenceNodes, input.RequiredEvidenceRefs)
 			if err != nil {
 				return nil, nil, false, nil, err
 			}
@@ -382,14 +389,29 @@ func resolveCorpusAcceptanceLabelRecordRefs(packet CorpusAcceptanceLabelingPacke
 	return nil, nil, false, nil, fmt.Errorf("unknown case ref")
 }
 
-func resolveCorpusAcceptanceLabelEvidenceRefs(candidate CorpusAcceptanceLabelNextMapCandidate, refs []string) ([]string, error) {
+func corpusAcceptanceLabelCandidateForRef(source *CorpusAcceptanceLabelingSource, candidateRef string) (*CorpusAcceptanceLabelingCandidateReference, []string, bool) {
+	for idx := range source.Candidates {
+		if fmt.Sprintf("candidate-%03d", idx+1) != candidateRef {
+			continue
+		}
+		candidate := &source.Candidates[idx]
+		evidenceRefs := make([]string, 0, len(candidate.EvidenceNodes))
+		for evidenceIdx := range candidate.EvidenceNodes {
+			evidenceRefs = append(evidenceRefs, fmt.Sprintf("evidence-%03d", evidenceIdx+1))
+		}
+		return candidate, evidenceRefs, true
+	}
+	return nil, nil, false
+}
+
+func resolveCorpusAcceptanceLabelEvidenceRefs(evidenceRefs, evidenceNodeIDs, refs []string) ([]string, error) {
 	if len(refs) == 0 {
 		return nil, nil
 	}
 	byRef := map[string]string{}
-	for idx, ref := range candidate.EvidenceRefs {
-		if idx < len(candidate.EvidenceNodeIDs) {
-			byRef[ref] = candidate.EvidenceNodeIDs[idx]
+	for idx, ref := range evidenceRefs {
+		if idx < len(evidenceNodeIDs) {
+			byRef[ref] = evidenceNodeIDs[idx]
 		}
 	}
 	out := make([]string, 0, len(refs))
@@ -464,6 +486,18 @@ func recordedCorpusAcceptanceLabelTargets(packet CorpusAcceptanceLabelingPacket,
 		}
 	}
 	return out
+}
+
+func sameStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for idx := range left {
+		if left[idx] != right[idx] {
+			return false
+		}
+	}
+	return true
 }
 
 func deterministicCorpusAcceptanceLabelRecordID(caseRef, candidateRef string, decision CorpusAcceptanceLabelDecision) string {

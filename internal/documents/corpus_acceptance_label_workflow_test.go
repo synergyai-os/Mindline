@@ -177,6 +177,73 @@ func TestCorpusAcceptanceLabelRecordRejectsUnknownRedactedRefs(t *testing.T) {
 	}
 }
 
+func TestCorpusAcceptanceLabelRecordRejectsUnsupportedRecordsSchemaBeforeWrite(t *testing.T) {
+	root, _, _, recordsPath := writeCorpusAcceptanceLabelRecordingFixture(t, corpusAcceptanceIndependentProvenance)
+	records := readLabelRecordingFixtureRecords(t, recordsPath)
+	records.SchemaVersion = "corpus-acceptance-label-records/v0.0"
+	writeDocumentsTestJSON(t, recordsPath, records)
+	before, err := os.ReadFile(recordsPath)
+	if err != nil {
+		t.Fatalf("read records before mutation: %v", err)
+	}
+	nextOut := filepath.Join(root, "next")
+	if _, _, err := BuildCorpusAcceptanceLabelNext(filepath.Join(root, "labeling"), recordsPath, nextOut); err != nil {
+		t.Fatalf("build label next: %v", err)
+	}
+
+	_, err = RecordCorpusAcceptanceLabel(filepath.Join(root, "labeling"), recordsPath, filepath.Join(nextOut, corpusAcceptanceLabelNextDirName, "label-next-map.json"), CorpusAcceptanceLabelRecordInput{
+		CaseRef:                 "case-001",
+		CandidateRef:            "candidate-001",
+		Decision:                CorpusAcceptanceLabelUncertain,
+		Labeler:                 "fixture-human",
+		IndependenceAttestation: corpusAcceptanceIndependentProvenance,
+	})
+	if err == nil || !strings.Contains(err.Error(), "unsupported_records_schema") {
+		t.Fatalf("expected unsupported schema error, got %v", err)
+	}
+	after, err := os.ReadFile(recordsPath)
+	if err != nil {
+		t.Fatalf("read records after mutation: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("unsupported schema records were mutated:\nbefore=%s\nafter=%s", string(before), string(after))
+	}
+}
+
+func TestCorpusAcceptanceLabelRecordRejectsCorruptedCandidateRefMap(t *testing.T) {
+	root, _, packet, _ := writeCorpusAcceptanceLabelRecordingFixture(t, corpusAcceptanceIndependentProvenance)
+	packet.Sources[0].Candidates[1].SourceDocumentID = packet.Sources[0].Candidates[0].SourceDocumentID
+	writeDocumentsTestJSON(t, filepath.Join(root, "labeling", "corpus-acceptance-labeling", "labeling-packet.json"), packet)
+	recordsPath := filepath.Join(root, "guided-records.json")
+	nextOut := filepath.Join(root, "next")
+	if _, _, err := BuildCorpusAcceptanceLabelNext(filepath.Join(root, "labeling"), recordsPath, nextOut); err != nil {
+		t.Fatalf("build label next: %v", err)
+	}
+	mapPath := filepath.Join(nextOut, corpusAcceptanceLabelNextDirName, "label-next-map.json")
+	var labelMap CorpusAcceptanceLabelNextMap
+	mapData, err := os.ReadFile(mapPath)
+	if err != nil {
+		t.Fatalf("read label map: %v", err)
+	}
+	if err := json.Unmarshal(mapData, &labelMap); err != nil {
+		t.Fatalf("decode label map: %v", err)
+	}
+	labelMap.Cases[0].Candidates[0].CandidateID = packet.Sources[0].Candidates[1].CandidateID
+	labelMap.Cases[0].Candidates[0].SourceDocumentID = packet.Sources[0].Candidates[1].SourceDocumentID
+	writeDocumentsTestJSON(t, mapPath, labelMap)
+
+	_, err = RecordCorpusAcceptanceLabel(filepath.Join(root, "labeling"), recordsPath, mapPath, CorpusAcceptanceLabelRecordInput{
+		CaseRef:                 "case-001",
+		CandidateRef:            "candidate-001",
+		Decision:                CorpusAcceptanceLabelUncertain,
+		Labeler:                 "fixture-human",
+		IndependenceAttestation: corpusAcceptanceIndependentProvenance,
+	})
+	if err == nil || !strings.Contains(err.Error(), "label next map candidate does not match current packet") {
+		t.Fatalf("expected corrupted candidate map error, got %v", err)
+	}
+}
+
 func TestCorpusAcceptanceLabelNextDoesNotSkipInvalidExistingRecords(t *testing.T) {
 	root, _, _, _ := writeCorpusAcceptanceLabelRecordingFixture(t, corpusAcceptanceIndependentProvenance)
 	recordsPath := filepath.Join(root, "guided-records.json")

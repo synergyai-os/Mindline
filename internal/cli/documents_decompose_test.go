@@ -545,6 +545,56 @@ func TestDocumentsCorpusAcceptanceLabelNextUsageIncludesCommand(t *testing.T) {
 	}
 }
 
+func TestDocumentsCorpusAcceptanceLabelRecordsRejectProtectedRoot(t *testing.T) {
+	root := t.TempDir()
+	labelingDir := filepath.Join(root, "labeling", "corpus-acceptance-labeling")
+	if err := os.MkdirAll(labelingDir, 0o755); err != nil {
+		t.Fatalf("mkdir labeling: %v", err)
+	}
+	writeCLITestJSON(t, filepath.Join(labelingDir, "labeling-packet.json"), documents.CorpusAcceptanceLabelingPacket{
+		SchemaVersion:            documents.CorpusAcceptanceLabelingPacketSchemaVersion,
+		PacketID:                 "labeling-guided-protected",
+		CorpusID:                 "corpus-guided-protected",
+		CorpusFingerprint:        "corpus-guided-protected-fingerprint",
+		CommandConfigFingerprint: "config-guided-protected",
+		LabelingStatus:           "labeling_required",
+		SourceCount:              1,
+		CandidateCount:           0,
+		LabelingPacketPath:       "corpus-acceptance-labeling/labeling-packet.json",
+		AnswerKeyTemplatePath:    "corpus-acceptance-labeling/answer-key-template.json",
+		ReportPath:               "corpus-acceptance-labeling/labeling-report.md",
+		Sources: []documents.CorpusAcceptanceLabelingSource{{
+			CaseID:            "case-001",
+			SourceID:          "source-private",
+			SourceContentHash: "sha256:fixture",
+			SourcePath:        "sources/source-demo/source.md",
+			SourceState:       documents.CorpusPressureSourceProcessed,
+			ReasonCode:        documents.CorpusPressureReasonNone,
+		}},
+	})
+	protected := filepath.Join(root, "protected")
+	if err := os.MkdirAll(protected, 0o755); err != nil {
+		t.Fatalf("mkdir protected root: %v", err)
+	}
+	recordsPath := filepath.Join(protected, "guided-records.json")
+	out := filepath.Join(root, "next")
+	var stdout, stderr bytes.Buffer
+	code := NewRunnerWithProtectedRoots(NewOSFileSystem(), []string{protected}).Run([]string{
+		"documents", "corpus-acceptance-label-next", filepath.Join(root, "labeling"),
+		"--records", recordsPath,
+		"--out", out,
+	}, &stdout, &stderr)
+	if code != ExitArtifactWrite {
+		t.Fatalf("expected protected records to fail with %d, got %d stdout=%s stderr=%s", ExitArtifactWrite, code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "protected output root") {
+		t.Fatalf("expected protected root error, got %q", stderr.String())
+	}
+	if _, err := os.Stat(recordsPath); err == nil {
+		t.Fatalf("protected label records file should not be created")
+	}
+}
+
 func TestDocumentsCorpusPressureDoesNotWriteDestinationArtifacts(t *testing.T) {
 	out := t.TempDir()
 	var stdout, stderr bytes.Buffer
