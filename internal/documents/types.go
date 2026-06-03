@@ -19,6 +19,8 @@ const (
 	CorpusAcceptanceAnswerKeySchemaVersion               = "corpus-acceptance-answer-key/v0.1"
 	CorpusAcceptanceLabelingPacketSchemaVersion          = "corpus-acceptance-labeling-packet/v0.1"
 	CorpusAcceptanceLabelRecordsSchemaVersion            = "corpus-acceptance-label-records/v0.1"
+	CorpusAcceptanceLabelNextSummarySchemaVersion        = "corpus-acceptance-label-next-summary/v0.1"
+	CorpusAcceptanceLabelNextMapSchemaVersion            = "corpus-acceptance-label-next-map/v0.1"
 	CorpusAcceptanceLabelRecordingSummarySchemaVersion   = "corpus-acceptance-label-recording-summary/v0.1"
 	CorpusAcceptanceSummarySchemaVersion                 = "corpus-acceptance-summary/v0.1"
 	SemanticCalibrationSummarySchemaVersion              = "semantic-calibration-summary/v0.2"
@@ -640,6 +642,85 @@ type CorpusAcceptanceLabelRecordingOutputSummary struct {
 	AnswerKeyPath   string   `json:"answer_key_path"`
 	ReportPath      string   `json:"report_path"`
 	ClaimBoundaries []string `json:"claim_boundaries"`
+}
+
+type CorpusAcceptanceLabelNextSummary struct {
+	SchemaVersion   string                              `json:"schema_version"`
+	QueueState      string                              `json:"queue_state"`
+	SuiteID         string                              `json:"suite_id"`
+	SuiteKind       CorpusAcceptanceSuiteKind           `json:"suite_kind"`
+	Independence    string                              `json:"independence"`
+	SourceCount     int                                 `json:"source_count"`
+	CandidateCount  int                                 `json:"candidate_count"`
+	RecordedCount   int                                 `json:"recorded_count"`
+	RemainingCount  int                                 `json:"remaining_count"`
+	NextItem        *CorpusAcceptanceLabelNextQueueItem `json:"next_item,omitempty"`
+	Blockers        []string                            `json:"blockers"`
+	MapPath         string                              `json:"map_path"`
+	ReportPath      string                              `json:"report_path"`
+	ClaimBoundaries []string                            `json:"claim_boundaries"`
+}
+
+type CorpusAcceptanceLabelNextQueueItem struct {
+	CaseRef            string                    `json:"case_ref"`
+	CandidateRef       string                    `json:"candidate_ref,omitempty"`
+	EvidenceRefs       []string                  `json:"evidence_refs,omitempty"`
+	CandidateKind      SemanticCandidateKind     `json:"candidate_kind,omitempty"`
+	ReviewStatus       ReviewStatus              `json:"review_status,omitempty"`
+	ConfidenceBucket   string                    `json:"confidence_bucket,omitempty"`
+	SourceState        CorpusPressureSourceState `json:"source_state"`
+	CandidateOrdinal   int                       `json:"candidate_ordinal,omitempty"`
+	EvidenceOrdinalMax int                       `json:"evidence_ordinal_max,omitempty"`
+	SourceID           string                    `json:"-"`
+	CandidateID        string                    `json:"-"`
+	EvidenceNodeIDs    []string                  `json:"-"`
+}
+
+type CorpusAcceptanceLabelNextOutputSummary struct {
+	SchemaVersion   string                              `json:"schema_version"`
+	QueueState      string                              `json:"queue_state"`
+	RecordedCount   int                                 `json:"recorded_count"`
+	RemainingCount  int                                 `json:"remaining_count"`
+	NextItem        *CorpusAcceptanceLabelNextQueueItem `json:"next_item,omitempty"`
+	Blockers        []string                            `json:"blockers"`
+	MapPath         string                              `json:"map_path"`
+	ReportPath      string                              `json:"report_path"`
+	ClaimBoundaries []string                            `json:"claim_boundaries"`
+}
+
+type CorpusAcceptanceLabelNextMap struct {
+	SchemaVersion            string                             `json:"schema_version"`
+	PacketID                 string                             `json:"packet_id"`
+	CorpusFingerprint        string                             `json:"corpus_fingerprint"`
+	CommandConfigFingerprint string                             `json:"command_config_fingerprint"`
+	Cases                    []CorpusAcceptanceLabelNextMapCase `json:"cases"`
+}
+
+type CorpusAcceptanceLabelNextMapCase struct {
+	CaseRef    string                                  `json:"case_ref"`
+	CaseID     string                                  `json:"case_id"`
+	SourceID   string                                  `json:"source_id"`
+	Candidates []CorpusAcceptanceLabelNextMapCandidate `json:"candidates"`
+}
+
+type CorpusAcceptanceLabelNextMapCandidate struct {
+	CandidateRef     string   `json:"candidate_ref"`
+	CandidateID      string   `json:"candidate_id"`
+	SourceDocumentID string   `json:"source_document_id,omitempty"`
+	EvidenceRefs     []string `json:"evidence_refs,omitempty"`
+	EvidenceNodeIDs  []string `json:"evidence_node_ids,omitempty"`
+}
+
+type CorpusAcceptanceLabelRecordInput struct {
+	CaseRef                 string
+	CandidateRef            string
+	Decision                CorpusAcceptanceLabelDecision
+	ExpectedOutcomeID       string
+	ExpectedKind            SemanticCandidateKind
+	RequiredEvidenceRefs    []string
+	Labeler                 string
+	IndependenceAttestation string
+	Notes                   string
 }
 
 type CorpusAcceptanceBenchmarkOptions struct {

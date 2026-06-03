@@ -442,6 +442,109 @@ func TestDocumentsCorpusAcceptanceLabelApplyUsageIncludesCommand(t *testing.T) {
 	}
 }
 
+func TestDocumentsCorpusAcceptanceLabelNextAndRecordCLI(t *testing.T) {
+	root := t.TempDir()
+	labelingDir := filepath.Join(root, "labeling", "corpus-acceptance-labeling")
+	if err := os.MkdirAll(labelingDir, 0o755); err != nil {
+		t.Fatalf("mkdir labeling: %v", err)
+	}
+	writeCLITestJSON(t, filepath.Join(labelingDir, "labeling-packet.json"), documents.CorpusAcceptanceLabelingPacket{
+		SchemaVersion:            documents.CorpusAcceptanceLabelingPacketSchemaVersion,
+		PacketID:                 "labeling-guided-cli",
+		CorpusID:                 "corpus-guided-cli",
+		CorpusFingerprint:        "corpus-guided-fingerprint",
+		CommandConfigFingerprint: "config-guided-cli",
+		LabelingStatus:           "labeling_required",
+		SourceCount:              1,
+		CandidateCount:           1,
+		LabelingPacketPath:       "corpus-acceptance-labeling/labeling-packet.json",
+		AnswerKeyTemplatePath:    "corpus-acceptance-labeling/answer-key-template.json",
+		ReportPath:               "corpus-acceptance-labeling/labeling-report.md",
+		Sources: []documents.CorpusAcceptanceLabelingSource{{
+			CaseID:            "case-001",
+			SourceID:          "slack-team-d05h529m32n-1780127914236669",
+			SourceContentHash: "sha256:fixture",
+			SourcePath:        "sources/source-demo/source.md",
+			SourceState:       documents.CorpusPressureSourceProcessed,
+			ReasonCode:        documents.CorpusPressureReasonNone,
+			CandidateCount:    1,
+			CandidateKinds:    map[documents.SemanticCandidateKind]int{documents.SemanticCandidateKindReference: 1},
+			Candidates: []documents.CorpusAcceptanceLabelingCandidateReference{{
+				CandidateID:      "semantic-candidate-private",
+				SourceDocumentID: "doc-demo",
+				CandidateKind:    documents.SemanticCandidateKindReference,
+				ReviewStatus:     documents.ReviewStatusReady,
+				Confidence:       documents.ConfidenceLow,
+				EvidenceNodes:    []string{"node-private"},
+			}},
+		}},
+	})
+	recordsPath := filepath.Join(root, "guided-records.json")
+	nextOut := filepath.Join(root, "next")
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "corpus-acceptance-label-next", filepath.Join(root, "labeling"),
+		"--records", recordsPath,
+		"--out", nextOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected label-next exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+	var nextSummary documents.CorpusAcceptanceLabelNextOutputSummary
+	if err := json.Unmarshal(stdout.Bytes(), &nextSummary); err != nil {
+		t.Fatalf("decode next stdout: %v", err)
+	}
+	if nextSummary.NextItem == nil || nextSummary.NextItem.CaseRef != "case-001" || nextSummary.NextItem.CandidateRef != "candidate-001" {
+		t.Fatalf("unexpected label-next stdout: %+v", nextSummary)
+	}
+	if strings.Contains(stdout.String(), "slack-") || strings.Contains(stdout.String(), "semantic-candidate-private") || strings.Contains(stdout.String(), "node-private") {
+		t.Fatalf("label-next stdout leaked private refs: %s", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "corpus-acceptance-label-record", filepath.Join(root, "labeling"),
+		"--records", recordsPath,
+		"--map", filepath.Join(nextOut, "corpus-acceptance-label-next", "label-next-map.json"),
+		"--case-ref", "case-001",
+		"--candidate-ref", "candidate-001",
+		"--decision", "expected_present",
+		"--expected-outcome", "exp-guided-cli",
+		"--expected-kind", string(documents.SemanticCandidateKindReference),
+		"--required-evidence-ref", "evidence-001",
+		"--labeler", "fixture-human",
+		"--independence-attestation", "not_generated_from_evaluated_run",
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected label-record exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+	var recordSummary documents.CorpusAcceptanceLabelRecordingOutputSummary
+	if err := json.Unmarshal(stdout.Bytes(), &recordSummary); err != nil {
+		t.Fatalf("decode record stdout: %v", err)
+	}
+	if recordSummary.RecordCount != 1 || recordSummary.EvalCount != 1 {
+		t.Fatalf("unexpected label-record stdout: %+v", recordSummary)
+	}
+	if strings.Contains(stdout.String(), "slack-") || strings.Contains(stdout.String(), "semantic-candidate-private") || strings.Contains(stdout.String(), "node-private") {
+		t.Fatalf("label-record stdout leaked private refs: %s", stdout.String())
+	}
+}
+
+func TestDocumentsCorpusAcceptanceLabelNextUsageIncludesCommand(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "corpus-acceptance-label-next", "labeling-dir",
+		"--out", t.TempDir(),
+	}, &stdout, &stderr)
+	if code != ExitUsage {
+		t.Fatalf("expected usage exit, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "usage: mindline documents corpus-acceptance-label-next <corpus-acceptance-labeling-out-or-parent> --records <label-records.json> --out <dir>") {
+		t.Fatalf("expected label-next usage, got %q", stderr.String())
+	}
+}
+
 func TestDocumentsCorpusPressureDoesNotWriteDestinationArtifacts(t *testing.T) {
 	out := t.TempDir()
 	var stdout, stderr bytes.Buffer
