@@ -361,6 +361,67 @@ func TestDocumentsCorpusAcceptanceLabelingCLI(t *testing.T) {
 	}
 }
 
+func TestDocumentsCorpusAcceptanceLabelingSeedCLI(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "corpus-pressure"), 0o755); err != nil {
+		t.Fatalf("mkdir pressure: %v", err)
+	}
+	writeCLITestJSON(t, filepath.Join(root, "corpus-pressure", "pressure-summary.json"), documents.CorpusPressureSummary{
+		SchemaVersion:            documents.CorpusPressureSummarySchemaVersion,
+		CorpusID:                 "corpus-labeling-seed-cli",
+		CorpusFingerprint:        "corpus-labeling-seed-cli-fingerprint",
+		CommandConfigFingerprint: "config-labeling-seed-cli",
+		ReplayFingerprint:        "pressure-labeling-seed-cli",
+		SourceCount:              1,
+		Sources: []documents.CorpusPressureSourceResult{{
+			SourceID:          "source-private",
+			SourceKind:        documents.SourceKindMarkdown,
+			State:             documents.CorpusPressureSourceProcessed,
+			ReasonCode:        documents.CorpusPressureReasonNoSemanticCandidates,
+			SourceContentHash: "sha256:fixture",
+			SourcePath:        "sources/source-private/WP-353-source.md",
+		}},
+	})
+	out := filepath.Join(root, "labeling-seed")
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "corpus-acceptance-labeling", root,
+		"--out", out,
+		"--seed",
+		"--max-cases", "1",
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+	var summary documents.CorpusAcceptanceLabelingOutputSummary
+	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
+		t.Fatalf("decode stdout: %v", err)
+	}
+	if !summary.SeedMode || summary.SeedSelectedCount != 1 || summary.SeedSummaryPath == "" || summary.SeedReportPath == "" {
+		t.Fatalf("expected seed stdout summary, got %+v", summary)
+	}
+	if strings.Contains(stdout.String(), "WP-353") || strings.Contains(stdout.String(), "source-private") || strings.Contains(stdout.String(), "seed-private-map") {
+		t.Fatalf("stdout leaked private or local-only refs: %s", stdout.String())
+	}
+	for _, name := range []string{"labeling-packet.json", "answer-key-template.json", "seed-summary.json", "seed-report.md", "seed-private-map.json"} {
+		if _, err := os.Stat(filepath.Join(out, "corpus-acceptance-labeling", name)); err != nil {
+			t.Fatalf("missing seed artifact %s: %v", name, err)
+		}
+	}
+}
+
+func TestDocumentsCorpusAcceptanceLabelingRejectsMaxCasesWithoutSeed(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{
+		"documents", "corpus-acceptance-labeling", "pressure-dir",
+		"--out", t.TempDir(),
+		"--max-cases", "10",
+	}, &stdout, &stderr)
+	if code != ExitUsage {
+		t.Fatalf("expected usage exit, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+}
+
 func TestDocumentsCorpusAcceptanceLabelApplyCLI(t *testing.T) {
 	root := t.TempDir()
 	labelingDir := filepath.Join(root, "labeling", "corpus-acceptance-labeling")

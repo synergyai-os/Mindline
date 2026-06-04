@@ -18,6 +18,8 @@ const (
 	SemanticAcceptanceItemSchemaVersion                  = "semantic-acceptance-item/v0.1"
 	CorpusAcceptanceAnswerKeySchemaVersion               = "corpus-acceptance-answer-key/v0.1"
 	CorpusAcceptanceLabelingPacketSchemaVersion          = "corpus-acceptance-labeling-packet/v0.1"
+	CorpusAcceptanceLabelSeedSummarySchemaVersion        = "corpus-acceptance-label-seed-summary/v0.1"
+	CorpusAcceptanceLabelSeedPrivateMapSchemaVersion     = "corpus-acceptance-label-seed-private-map/v0.1"
 	CorpusAcceptanceLabelRecordsSchemaVersion            = "corpus-acceptance-label-records/v0.1"
 	CorpusAcceptanceLabelNextSummarySchemaVersion        = "corpus-acceptance-label-next-summary/v0.1"
 	CorpusAcceptanceLabelNextMapSchemaVersion            = "corpus-acceptance-label-next-map/v0.1"
@@ -535,7 +537,82 @@ type CorpusAcceptanceLabelingOutputSummary struct {
 	LabelingPacketPath    string   `json:"labeling_packet_path"`
 	AnswerKeyTemplatePath string   `json:"answer_key_template_path"`
 	ReportPath            string   `json:"report_path"`
+	SeedMode              bool     `json:"seed_mode,omitempty"`
+	SeedSelectedCount     int      `json:"seed_selected_count,omitempty"`
+	SeedSummaryPath       string   `json:"seed_summary_path,omitempty"`
+	SeedReportPath        string   `json:"seed_report_path,omitempty"`
 	ClaimBoundaries       []string `json:"claim_boundaries"`
+}
+
+type CorpusAcceptanceLabelingOptions struct {
+	Seed     bool
+	MaxCases int
+}
+
+type CorpusAcceptanceLabelSeedSummary struct {
+	SchemaVersion             string                            `json:"schema_version"`
+	SelectionVersion          string                            `json:"selection_version"`
+	SeedMode                  bool                              `json:"seed_mode"`
+	MaxCases                  int                               `json:"max_cases"`
+	SelectedCaseCount         int                               `json:"selected_case_count"`
+	SelectedCandidateCount    int                               `json:"selected_candidate_count"`
+	EligibleCaseCount         int                               `json:"eligible_case_count"`
+	UnselectedCaseCount       int                               `json:"unselected_case_count"`
+	CorpusFingerprint         string                            `json:"corpus_fingerprint"`
+	CommandConfigFingerprint  string                            `json:"command_config_fingerprint"`
+	PressureReplayFingerprint string                            `json:"pressure_replay_fingerprint"`
+	SelectedCases             []CorpusAcceptanceLabelSeedCase   `json:"selected_cases"`
+	Coverage                  CorpusAcceptanceLabelSeedCoverage `json:"coverage"`
+	UnmetCoverage             []string                          `json:"unmet_coverage"`
+	Guardrails                CorpusPressureGuardrailCounters   `json:"guardrails"`
+	LabelingPacketPath        string                            `json:"labeling_packet_path"`
+	PrivateMapPath            string                            `json:"private_map_path"`
+	ReportPath                string                            `json:"report_path"`
+	ClaimBoundaries           []string                          `json:"claim_boundaries"`
+}
+
+type CorpusAcceptanceLabelSeedCase struct {
+	CaseRef          string                    `json:"case_ref"`
+	CandidateRef     string                    `json:"candidate_ref,omitempty"`
+	SourceGroupRef   string                    `json:"source_group_ref"`
+	CandidateKind    SemanticCandidateKind     `json:"candidate_kind,omitempty"`
+	ConfidenceBucket string                    `json:"confidence_bucket,omitempty"`
+	ReviewStatus     ReviewStatus              `json:"review_status,omitempty"`
+	SourceState      CorpusPressureSourceState `json:"source_state"`
+	RationaleBuckets []string                  `json:"rationale_buckets"`
+}
+
+type CorpusAcceptanceLabelSeedCoverage struct {
+	SourceGroupCounts   map[string]int                    `json:"source_group_counts"`
+	CandidateKindCounts map[SemanticCandidateKind]int     `json:"candidate_kind_counts"`
+	ConfidenceCounts    map[string]int                    `json:"confidence_counts"`
+	ReviewStatusCounts  map[ReviewStatus]int              `json:"review_status_counts"`
+	SourceStateCounts   map[CorpusPressureSourceState]int `json:"source_state_counts"`
+	RationaleCounts     map[string]int                    `json:"rationale_counts"`
+}
+
+type CorpusAcceptanceLabelSeedPrivateMap struct {
+	SchemaVersion            string                                    `json:"schema_version"`
+	PacketID                 string                                    `json:"packet_id"`
+	CorpusFingerprint        string                                    `json:"corpus_fingerprint"`
+	CommandConfigFingerprint string                                    `json:"command_config_fingerprint"`
+	Cases                    []CorpusAcceptanceLabelSeedPrivateMapCase `json:"cases"`
+}
+
+type CorpusAcceptanceLabelSeedPrivateMapCase struct {
+	CaseRef                string                                         `json:"case_ref"`
+	OriginalCaseID         string                                         `json:"original_case_id"`
+	OriginalSourceID       string                                         `json:"original_source_id"`
+	OriginalSourcePath     string                                         `json:"original_source_path,omitempty"`
+	OriginalSemanticRunDir string                                         `json:"original_semantic_run_dir,omitempty"`
+	Candidates             []CorpusAcceptanceLabelSeedPrivateMapCandidate `json:"candidates,omitempty"`
+}
+
+type CorpusAcceptanceLabelSeedPrivateMapCandidate struct {
+	CandidateRef             string   `json:"candidate_ref"`
+	OriginalCandidateID      string   `json:"original_candidate_id"`
+	OriginalSourceDocumentID string   `json:"original_source_document_id,omitempty"`
+	OriginalEvidenceNodes    []string `json:"original_evidence_nodes,omitempty"`
 }
 
 type CorpusAcceptanceLabelingRelationCoverage struct {
