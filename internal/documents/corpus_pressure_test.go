@@ -108,6 +108,124 @@ func TestCorpusPressureGuardrailsSerializeCompleteProofGateFloor(t *testing.T) {
 	}
 }
 
+func TestCorpusPressureBlocksReferenceOnlyOneCandidatePerSourceReadiness(t *testing.T) {
+	sources := make([]CorpusPressureSourceResult, 0, 50)
+	for i := 0; i < 50; i++ {
+		sources = append(sources, CorpusPressureSourceResult{
+			SourceID:         "source",
+			SourceKind:       SourceKindMarkdown,
+			State:            CorpusPressureSourceProcessed,
+			ReasonCode:       CorpusPressureReasonNone,
+			CandidateCount:   1,
+			ObservationCount: 1,
+			SegmentCount:     9,
+			CandidateKindCounts: map[SemanticCandidateKind]int{
+				SemanticCandidateKindReference: 1,
+			},
+		})
+	}
+	graph := CorpusGraphSummary{
+		AtomCount:              50,
+		EvidenceReadyAtomCount: 50,
+		RelationCount:          1225,
+		ReviewBurdenRatio:      0,
+		ReplayFingerprint:      "graph-ready",
+	}
+
+	summary := buildCorpusPressureSummary("collapse-corpus", sources, graph, "manifest.json", nil)
+
+	if summary.ReadyForFiftyFilePressure {
+		t.Fatalf("reference-only one-candidate-per-source collapse must block readiness: %+v", summary)
+	}
+	if summary.SemanticReadinessStatus != "blocked" {
+		t.Fatalf("expected blocked semantic readiness, got %+v", summary)
+	}
+	for _, reason := range []string{"reference_only_one_candidate_per_source", "low_observation_to_segment_density"} {
+		if !containsCorpusPressureString(summary.SemanticReadinessReasonCodes, reason) {
+			t.Fatalf("expected semantic readiness reason %q, got %+v", reason, summary.SemanticReadinessReasonCodes)
+		}
+	}
+	if summary.DocumentSegmentCount != 450 || summary.SemanticObservationCount != 50 || summary.ReferenceCandidateCount != 50 {
+		t.Fatalf("expected semantic density counters, got %+v", summary)
+	}
+	evalInput := corpusPressureEvalInput(summary)
+	if evalInput.OneCandidateSourceCount != 50 || evalInput.ReferenceOnlySourceCount != 50 {
+		t.Fatalf("eval input must project source-level collapse counters, got %+v", evalInput)
+	}
+	trace := CorpusPressureTraceSummaryFor(summary, CorpusPressureSourceCounters{})
+	if trace.OneCandidateSourceCount != 50 || trace.ReferenceOnlySourceCount != 50 {
+		t.Fatalf("trace summary must project source-level collapse counters, got %+v", trace)
+	}
+	if !containsCorpusPressureString(summary.NextImprovementTargets, "semantic_density") {
+		t.Fatalf("expected semantic density target, got %+v", summary.NextImprovementTargets)
+	}
+}
+
+func TestCorpusPressureDoesNotAddLowDensityReasonWithoutSegments(t *testing.T) {
+	sources := make([]CorpusPressureSourceResult, 0, 50)
+	for i := 0; i < 50; i++ {
+		sources = append(sources, CorpusPressureSourceResult{
+			SourceID:         "source",
+			SourceKind:       SourceKindMarkdown,
+			State:            CorpusPressureSourceProcessed,
+			ReasonCode:       CorpusPressureReasonNone,
+			CandidateCount:   1,
+			ObservationCount: 1,
+			CandidateKindCounts: map[SemanticCandidateKind]int{
+				SemanticCandidateKindReference: 1,
+			},
+		})
+	}
+	graph := CorpusGraphSummary{
+		AtomCount:              50,
+		EvidenceReadyAtomCount: 50,
+		RelationCount:          1225,
+		ReplayFingerprint:      "graph-ready",
+	}
+
+	summary := buildCorpusPressureSummary("collapse-corpus", sources, graph, "manifest.json", nil)
+
+	if summary.SemanticReadinessStatus != "blocked" {
+		t.Fatalf("expected reference-only collapse to remain blocked, got %+v", summary)
+	}
+	if !containsCorpusPressureString(summary.SemanticReadinessReasonCodes, "reference_only_one_candidate_per_source") {
+		t.Fatalf("expected reference-only reason, got %+v", summary.SemanticReadinessReasonCodes)
+	}
+	if containsCorpusPressureString(summary.SemanticReadinessReasonCodes, "low_observation_to_segment_density") {
+		t.Fatalf("zero segment denominator must not produce low-density reason: %+v", summary.SemanticReadinessReasonCodes)
+	}
+}
+
+func TestCorpusPressureFingerprintIncludesSemanticDensity(t *testing.T) {
+	source := CorpusPressureSourceResult{
+		SourceID:         "source",
+		SourceKind:       SourceKindMarkdown,
+		State:            CorpusPressureSourceProcessed,
+		ReasonCode:       CorpusPressureReasonNone,
+		CandidateCount:   1,
+		ObservationCount: 1,
+		SegmentCount:     1,
+		CandidateKindCounts: map[SemanticCandidateKind]int{
+			SemanticCandidateKindReference: 1,
+		},
+	}
+	graph := CorpusGraphSummary{
+		AtomCount:              1,
+		EvidenceReadyAtomCount: 1,
+		ReplayFingerprint:      "graph-ready",
+	}
+
+	summaryA := buildCorpusPressureSummary("density-corpus", []CorpusPressureSourceResult{source}, graph, "manifest.json", nil)
+	source.SegmentCount = 8
+	summaryB := buildCorpusPressureSummary("density-corpus", []CorpusPressureSourceResult{source}, graph, "manifest.json", nil)
+
+	fingerprintA := corpusPressureFingerprint(summaryA)
+	fingerprintB := corpusPressureFingerprint(summaryB)
+	if fingerprintA == fingerprintB {
+		t.Fatalf("semantic density changes must change replay fingerprint: %s", fingerprintA)
+	}
+}
+
 func TestCorpusPressureDirectoryCorpusIDUsesCanonicalPath(t *testing.T) {
 	input := t.TempDir()
 	if err := os.WriteFile(filepath.Join(input, "source.md"), []byte("# Source\n- capability: keep corpus identity stable across path spellings\n"), 0o644); err != nil {
@@ -873,6 +991,15 @@ func TestCorpusPressureRejectsOutputSourceSymlinkEscape(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(escaped, "source.md")); err == nil {
 		t.Fatalf("source copy escaped output root through symlink")
 	}
+}
+
+func containsCorpusPressureString(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func TestCorpusPressureRejectsPressureReportSymlinkEscape(t *testing.T) {

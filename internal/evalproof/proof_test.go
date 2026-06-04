@@ -2,6 +2,7 @@ package evalproof
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -178,6 +179,29 @@ func TestImprovementProofBlocksWithoutBaseline(t *testing.T) {
 	}
 	if !gateHasReason(packet, "improvement_claim", "missing_baseline") {
 		t.Fatalf("expected missing_baseline, got %+v", packet.MandatoryGates)
+	}
+}
+
+func TestImprovementProofBlocksSemanticReadinessCollapse(t *testing.T) {
+	root := t.TempDir()
+	baseline := filepath.Join(root, "baseline")
+	current := filepath.Join(root, "current")
+	writeProofReferenceOnlyCollapsePressure(t, baseline)
+	writeProofReferenceOnlyCollapsePressure(t, current)
+
+	packet, err := Build(current, filepath.Join(root, "proof"), Options{
+		Claim:        ClaimImprovement,
+		BaselineRoot: baseline,
+	})
+	if err != nil {
+		t.Fatalf("build proof: %v", err)
+	}
+	if packet.Verdict != VerdictBlocked {
+		t.Fatalf("expected blocked proof, got %+v", packet)
+	}
+	if !gateHasReason(packet, "improvement_claim", "semantic_readiness_blocked") ||
+		!gateHasReason(packet, "improvement_claim", "reference_only_one_candidate_per_source") {
+		t.Fatalf("expected semantic readiness block reasons, got %+v", packet.MandatoryGates)
 	}
 }
 
@@ -407,6 +431,56 @@ func writeProofPressure(t *testing.T, root string, evidenceReady, reviewBurden f
 		"corpus_fingerprint":         fingerprint,
 		"command_config_fingerprint": "same-config",
 		"guardrails":                 guardrails,
+	})
+}
+
+func writeProofReferenceOnlyCollapsePressure(t *testing.T, root string) {
+	t.Helper()
+	sources := make([]any, 0, 50)
+	for i := 0; i < 50; i++ {
+		sourceID := fmt.Sprintf("source-%02d", i)
+		sources = append(sources, map[string]any{
+			"source_id":       sourceID,
+			"source_kind":     "markdown",
+			"state":           "processed",
+			"reason_code":     "none",
+			"candidate_count": 1,
+			"candidate_kind_counts": map[string]any{
+				"reference_candidate": 1,
+			},
+			"semantic_run_dir": filepath.ToSlash(filepath.Join("sources", sourceID)),
+		})
+		writeProofJSON(t, filepath.Join(root, "sources", sourceID, "document-segments", "segment-summary.json"), map[string]any{
+			"schema_version": "document-segment-summary/v0.1",
+			"run_id":         "run",
+			"source_count":   1,
+			"segment_count":  8,
+			"segments":       []any{},
+			"type_counts":    map[string]any{"source_note": 8},
+		})
+		writeProofJSON(t, filepath.Join(root, "sources", sourceID, "semantic-candidates", "semantic-summary.json"), map[string]any{
+			"schema_version":    "semantic-candidate-summary/v0.1",
+			"run_id":            "run",
+			"source_count":      1,
+			"observation_count": 1,
+			"candidate_count":   1,
+			"candidate_kind_counts": map[string]any{
+				"reference_candidate": 1,
+			},
+		})
+	}
+	writeProofJSON(t, filepath.Join(root, "corpus-pressure", "pressure-summary.json"), map[string]any{
+		"schema_version":             "corpus-pressure-summary/v0.1",
+		"corpus_id":                  "corpus-a",
+		"source_count":               50,
+		"processed_source_count":     50,
+		"semantic_candidate_count":   50,
+		"evidence_ready_atom_ratio":  1,
+		"review_burden_ratio":        0,
+		"corpus_fingerprint":         "same",
+		"command_config_fingerprint": "same-config",
+		"guardrails":                 completeProofGuardrails(),
+		"sources":                    sources,
 	})
 }
 

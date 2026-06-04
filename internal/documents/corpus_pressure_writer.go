@@ -110,36 +110,58 @@ func corpusPressureLoopMarkdown(summary CorpusPressureLoopSummary) string {
 
 func corpusPressureEvalInput(summary CorpusPressureSummary) CorpusPressureEvalInput {
 	return CorpusPressureEvalInput{
-		SchemaVersion:             CorpusPressureEvalInputSchemaVersion,
-		CorpusID:                  summary.CorpusID,
-		CommandConfigFingerprint:  summary.CommandConfigFingerprint,
-		CorpusFingerprint:         summary.CorpusFingerprint,
-		PressureSummaryPath:       filepath.ToSlash(filepath.Join(CorpusPressureDirName, "pressure-summary.json")),
-		GraphSummaryPath:          summary.GraphSummaryPath,
-		SourceCounters:            corpusPressureSourceCounters(summary),
-		ProcessedSourceRatio:      summary.ProcessedSourceRatio,
-		EvidenceReadyAtomRatio:    summary.EvidenceReadyAtomRatio,
-		ReviewBurdenRatio:         summary.ReviewBurdenRatio,
-		ReadyForFiftyFilePressure: summary.ReadyForFiftyFilePressure,
-		Guardrails:                summary.Guardrails,
-		NextImprovementTargets:    append([]string{}, summary.NextImprovementTargets...),
+		SchemaVersion:                CorpusPressureEvalInputSchemaVersion,
+		CorpusID:                     summary.CorpusID,
+		CommandConfigFingerprint:     summary.CommandConfigFingerprint,
+		CorpusFingerprint:            summary.CorpusFingerprint,
+		PressureSummaryPath:          filepath.ToSlash(filepath.Join(CorpusPressureDirName, "pressure-summary.json")),
+		GraphSummaryPath:             summary.GraphSummaryPath,
+		SourceCounters:               corpusPressureSourceCounters(summary),
+		ProcessedSourceRatio:         summary.ProcessedSourceRatio,
+		SemanticReadinessStatus:      summary.SemanticReadinessStatus,
+		SemanticReadinessReasonCodes: append([]string{}, summary.SemanticReadinessReasonCodes...),
+		DocumentSegmentCount:         summary.DocumentSegmentCount,
+		SemanticObservationCount:     summary.SemanticObservationCount,
+		SemanticCandidateCount:       summary.SemanticCandidateCount,
+		ReferenceCandidateCount:      summary.ReferenceCandidateCount,
+		OneCandidateSourceCount:      summary.OneCandidateSourceCount,
+		ReferenceOnlySourceCount:     summary.ReferenceOnlySourceCount,
+		CandidatePerSourceRatio:      summary.CandidatePerSourceRatio,
+		ObservationPerSegmentRatio:   summary.ObservationPerSegmentRatio,
+		ReferenceCandidateRatio:      summary.ReferenceCandidateRatio,
+		EvidenceReadyAtomRatio:       summary.EvidenceReadyAtomRatio,
+		ReviewBurdenRatio:            summary.ReviewBurdenRatio,
+		ReadyForFiftyFilePressure:    summary.ReadyForFiftyFilePressure,
+		Guardrails:                   summary.Guardrails,
+		NextImprovementTargets:       append([]string{}, summary.NextImprovementTargets...),
 	}
 }
 
 func CorpusPressureTraceSummaryFor(summary CorpusPressureSummary, deltas CorpusPressureSourceCounters) CorpusPressureTraceSummary {
 	return CorpusPressureTraceSummary{
-		SchemaVersion:            CorpusPressureTraceSchemaVersion,
-		CorpusID:                 summary.CorpusID,
-		Stages:                   corpusPressureTraceStages(summary),
-		SourceCounters:           corpusPressureSourceCounters(summary),
-		SourceDeltas:             deltas,
-		ProcessedSourceRatio:     summary.ProcessedSourceRatio,
-		EvidenceReadyAtomRatio:   summary.EvidenceReadyAtomRatio,
-		CommandConfigFingerprint: summary.CommandConfigFingerprint,
-		CorpusFingerprint:        summary.CorpusFingerprint,
-		PressureFingerprint:      summary.ReplayFingerprint,
-		GraphReplayFingerprint:   summary.GraphReplayFingerprint,
-		Guardrails:               summary.Guardrails,
+		SchemaVersion:                CorpusPressureTraceSchemaVersion,
+		CorpusID:                     summary.CorpusID,
+		Stages:                       corpusPressureTraceStages(summary),
+		SourceCounters:               corpusPressureSourceCounters(summary),
+		SourceDeltas:                 deltas,
+		ProcessedSourceRatio:         summary.ProcessedSourceRatio,
+		SemanticReadinessStatus:      summary.SemanticReadinessStatus,
+		SemanticReadinessReasonCodes: append([]string{}, summary.SemanticReadinessReasonCodes...),
+		DocumentSegmentCount:         summary.DocumentSegmentCount,
+		SemanticObservationCount:     summary.SemanticObservationCount,
+		SemanticCandidateCount:       summary.SemanticCandidateCount,
+		ReferenceCandidateCount:      summary.ReferenceCandidateCount,
+		OneCandidateSourceCount:      summary.OneCandidateSourceCount,
+		ReferenceOnlySourceCount:     summary.ReferenceOnlySourceCount,
+		CandidatePerSourceRatio:      summary.CandidatePerSourceRatio,
+		ObservationPerSegmentRatio:   summary.ObservationPerSegmentRatio,
+		ReferenceCandidateRatio:      summary.ReferenceCandidateRatio,
+		EvidenceReadyAtomRatio:       summary.EvidenceReadyAtomRatio,
+		CommandConfigFingerprint:     summary.CommandConfigFingerprint,
+		CorpusFingerprint:            summary.CorpusFingerprint,
+		PressureFingerprint:          summary.ReplayFingerprint,
+		GraphReplayFingerprint:       summary.GraphReplayFingerprint,
+		Guardrails:                   summary.Guardrails,
 		ArtifactPaths: map[string]string{
 			"pressure_summary": filepath.ToSlash(filepath.Join(CorpusPressureDirName, "pressure-summary.json")),
 			"pressure_report":  filepath.ToSlash(filepath.Join(CorpusPressureDirName, "pressure-report.md")),
@@ -202,6 +224,15 @@ func corpusPressureMarkdown(summary CorpusPressureSummary, graph CorpusGraphSumm
 	b.WriteString(fmt.Sprintf("- Sources: %d processed, %d skipped, %d blocked, %d total\n", summary.ProcessedSourceCount, summary.SkippedSourceCount, summary.BlockedSourceCount, summary.SourceCount))
 	b.WriteString(fmt.Sprintf("- Source state detail: %.2f processed ratio, %d excluded, %d unexplained exclusions\n", summary.ProcessedSourceRatio, summary.ExcludedSourceCount, summary.UnexplainedExclusionCount))
 	b.WriteString(fmt.Sprintf("- Semantic candidates: %d\n", summary.SemanticCandidateCount))
+	b.WriteString(fmt.Sprintf("- Semantic readiness: %s", summary.SemanticReadinessStatus))
+	if len(summary.SemanticReadinessReasonCodes) > 0 {
+		b.WriteString(fmt.Sprintf(" (%s)", strings.Join(summary.SemanticReadinessReasonCodes, ", ")))
+	}
+	b.WriteString("\n")
+	b.WriteString(fmt.Sprintf("- Semantic density: %d observations / %d segments, %.2f candidates per processed source, %.2f reference candidate ratio\n", summary.SemanticObservationCount, summary.DocumentSegmentCount, summary.CandidatePerSourceRatio, summary.ReferenceCandidateRatio))
+	if summary.SemanticReadinessStatus == "blocked" {
+		b.WriteString("- Semantic value is not proven even if source intake succeeded.\n")
+	}
 	b.WriteString(fmt.Sprintf("- Graph atoms: %d\n", summary.GraphAtomCount))
 	b.WriteString(fmt.Sprintf("- Graph relations: %d\n", summary.GraphRelationCount))
 	b.WriteString(fmt.Sprintf("- Evidence-ready atoms: %d (%.2f)\n", summary.EvidenceReadyAtomCount, summary.EvidenceReadyAtomRatio))

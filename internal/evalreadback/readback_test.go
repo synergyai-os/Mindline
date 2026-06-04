@@ -2,6 +2,7 @@ package evalreadback
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -447,6 +448,163 @@ func TestBuildAcceptsCorpusPressureGuardrailsAsCompleteSideEffectEvidence(t *tes
 	}
 	if gateStatus(summary, "side_effect_claim") != "pass" {
 		t.Fatalf("expected corpus pressure guardrails to complete side-effect evidence, got %+v", summary.ClaimGates)
+	}
+}
+
+func TestBuildBlocksSemanticReadinessForReferenceOnlyCollapse(t *testing.T) {
+	root := t.TempDir()
+	writeReferenceOnlyCollapsePressure(t, root)
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if summary.SemanticReadiness.Status != "blocked" {
+		t.Fatalf("expected semantic readiness blocked, got %+v", summary.SemanticReadiness)
+	}
+	if !containsString(summary.SemanticReadiness.ReasonCodes, "reference_only_one_candidate_per_source") {
+		t.Fatalf("expected reference-only collapse reason, got %+v", summary.SemanticReadiness)
+	}
+	if gateStatus(summary, "semantic_readiness") != "blocked" {
+		t.Fatalf("expected semantic readiness gate blocked, got %+v", summary.ClaimGates)
+	}
+	if summary.TopImprovementTarget.Code != "needs_semantic_density" {
+		t.Fatalf("expected semantic density top target, got %+v", summary.TopImprovementTarget)
+	}
+	report := readString(t, filepath.Join(root, "out", DirName, "readback-report.md"))
+	if !strings.Contains(report, "Semantic Readiness") || !strings.Contains(report, "semantic value is not proven") {
+		t.Fatalf("expected semantic readiness explanation in report, got %s", report)
+	}
+}
+
+func TestBuildBlocksSemanticReadinessFromIndividualSummariesWithoutPressure(t *testing.T) {
+	root := t.TempDir()
+	writeReferenceOnlyCollapsePressure(t, root)
+	if err := os.Remove(filepath.Join(root, "corpus-pressure", "pressure-summary.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if summary.SemanticReadiness.Status != "blocked" {
+		t.Fatalf("expected semantic readiness blocked from individual summaries, got %+v", summary.SemanticReadiness)
+	}
+	if summary.SemanticReadiness.ProcessedSourceCount != 50 ||
+		summary.SemanticReadiness.OneCandidateSourceCount != 50 ||
+		summary.SemanticReadiness.ReferenceOnlySourceCount != 50 {
+		t.Fatalf("expected source-level summary aggregation, got %+v", summary.SemanticReadiness)
+	}
+	if !containsString(summary.SemanticReadiness.ReasonCodes, "reference_only_one_candidate_per_source") {
+		t.Fatalf("expected reference-only collapse reason, got %+v", summary.SemanticReadiness)
+	}
+}
+
+func TestBuildDoesNotAddLowDensityReasonWithoutSegments(t *testing.T) {
+	root := t.TempDir()
+	sources := make([]any, 0, 50)
+	for i := 0; i < 50; i++ {
+		sourceID := fmt.Sprintf("source-%02d", i)
+		sources = append(sources, map[string]any{
+			"source_id":       sourceID,
+			"source_kind":     "markdown",
+			"state":           "processed",
+			"reason_code":     "none",
+			"candidate_count": 1,
+			"candidate_kind_counts": map[string]any{
+				"reference_candidate": 1,
+			},
+		})
+	}
+	writeFixture(t, filepath.Join(root, "corpus-pressure", "pressure-summary.json"), map[string]any{
+		"schema_version":             "corpus-pressure-summary/v0.1",
+		"corpus_id":                  "corpus-a",
+		"source_count":               50,
+		"processed_source_count":     50,
+		"semantic_candidate_count":   50,
+		"semantic_observation_count": 50,
+		"evidence_ready_atom_ratio":  1,
+		"review_burden_ratio":        0,
+		"corpus_fingerprint":         "same",
+		"command_config_fingerprint": "same-config",
+		"guardrails":                 completeGuardrails(),
+		"sources":                    sources,
+	})
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if summary.SemanticReadiness.Status != "blocked" {
+		t.Fatalf("expected semantic readiness blocked, got %+v", summary.SemanticReadiness)
+	}
+	if !containsString(summary.SemanticReadiness.ReasonCodes, "reference_only_one_candidate_per_source") {
+		t.Fatalf("expected reference-only reason, got %+v", summary.SemanticReadiness)
+	}
+	if containsString(summary.SemanticReadiness.ReasonCodes, "low_observation_to_segment_density") {
+		t.Fatalf("zero segment denominator must not produce low-density reason: %+v", summary.SemanticReadiness)
+	}
+}
+
+func TestBuildBlocksImprovementWhenLargePressureLacksDensityCounters(t *testing.T) {
+	root := t.TempDir()
+	baseline := filepath.Join(root, "baseline")
+	current := filepath.Join(root, "current")
+	writeLegacyPressureWithoutDensityCounters(t, baseline, 0.50)
+	writeLegacyPressureWithoutDensityCounters(t, current, 1.00)
+
+	summary, err := Build(current, filepath.Join(root, "out"), Options{BaselineRoot: baseline})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if summary.ImprovementStatus != "improved" {
+		t.Fatalf("expected comparison metrics to be improved, got %s", summary.ImprovementStatus)
+	}
+	if summary.SemanticReadiness.Status != "not_evaluated" ||
+		!containsString(summary.SemanticReadiness.ReasonCodes, "missing_semantic_density_counters") {
+		t.Fatalf("expected missing density counters to leave semantic readiness unevaluated, got %+v", summary.SemanticReadiness)
+	}
+	improvementGate := gateByName(summary, "improvement_claim")
+	if improvementGate.Status != "blocked" ||
+		!containsString(improvementGate.ReasonCodes, "semantic_readiness_not_evaluated") {
+		t.Fatalf("expected semantic readiness to block improvement claim, got %+v", improvementGate)
+	}
+}
+
+func TestBuildPassesSemanticReadinessForRicherCorpusPressure(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "corpus-pressure", "pressure-summary.json"), map[string]any{
+		"schema_version":                       "corpus-pressure-summary/v0.1",
+		"corpus_id":                            "corpus-a",
+		"source_count":                         50,
+		"processed_source_count":               50,
+		"semantic_candidate_count":             140,
+		"semantic_observation_count":           180,
+		"document_segment_count":               425,
+		"reference_candidate_count":            10,
+		"one_candidate_source_count":           4,
+		"reference_only_source_count":          2,
+		"candidate_per_processed_source_ratio": 2.8,
+		"observation_per_segment_ratio":        0.4235,
+		"reference_candidate_ratio":            0.0714,
+		"semantic_readiness_status":            "ready",
+		"evidence_ready_atom_ratio":            1,
+		"review_burden_ratio":                  0,
+		"corpus_fingerprint":                   "same",
+		"command_config_fingerprint":           "same-config",
+		"guardrails":                           completeGuardrails(),
+	})
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if summary.SemanticReadiness.Status != "ready" {
+		t.Fatalf("expected semantic readiness ready, got %+v", summary.SemanticReadiness)
+	}
+	if gateStatus(summary, "semantic_readiness") != "pass" {
+		t.Fatalf("expected semantic readiness gate pass, got %+v", summary.ClaimGates)
 	}
 }
 
@@ -1478,6 +1636,22 @@ func writePressure(t *testing.T, root string, evidenceReady, reviewBurden float6
 	writePressureWithFingerprint(t, root, evidenceReady, reviewBurden, "same")
 }
 
+func writeLegacyPressureWithoutDensityCounters(t *testing.T, root string, evidenceReady float64) {
+	t.Helper()
+	writeFixture(t, filepath.Join(root, "corpus-pressure", "pressure-summary.json"), map[string]any{
+		"schema_version":             "corpus-pressure-summary/v0.1",
+		"corpus_id":                  "corpus-a",
+		"source_count":               50,
+		"processed_source_count":     50,
+		"semantic_candidate_count":   50,
+		"evidence_ready_atom_ratio":  evidenceReady,
+		"review_burden_ratio":        0,
+		"corpus_fingerprint":         "same",
+		"command_config_fingerprint": "same-config",
+		"guardrails":                 completeGuardrails(),
+	})
+}
+
 func writeValueProof(t *testing.T, root string, sourceAccountingRatio, evidenceOrBlockerRatio float64) {
 	t.Helper()
 	writeFixture(t, filepath.Join(root, "value-proof", "value-summary.json"), map[string]any{
@@ -1526,6 +1700,56 @@ func writePressureWithGuardrails(t *testing.T, root string, evidenceReady, revie
 		"corpus_fingerprint":         "same",
 		"command_config_fingerprint": "same-config",
 		"guardrails":                 allGuardrails,
+	})
+}
+
+func writeReferenceOnlyCollapsePressure(t *testing.T, root string) {
+	t.Helper()
+	sources := make([]any, 0, 50)
+	for i := 0; i < 50; i++ {
+		sourceID := fmt.Sprintf("source-%02d", i)
+		sources = append(sources, map[string]any{
+			"source_id":       sourceID,
+			"source_kind":     "markdown",
+			"state":           "processed",
+			"reason_code":     "none",
+			"candidate_count": 1,
+			"candidate_kind_counts": map[string]any{
+				"reference_candidate": 1,
+			},
+			"semantic_run_dir": filepath.ToSlash(filepath.Join("sources", sourceID)),
+		})
+		writeFixture(t, filepath.Join(root, "sources", sourceID, "document-segments", "segment-summary.json"), map[string]any{
+			"schema_version": "document-segment-summary/v0.1",
+			"run_id":         "run",
+			"source_count":   1,
+			"segment_count":  8,
+			"segments":       []any{},
+			"type_counts":    map[string]any{"source_note": 8},
+		})
+		writeFixture(t, filepath.Join(root, "sources", sourceID, "semantic-candidates", "semantic-summary.json"), map[string]any{
+			"schema_version":    "semantic-candidate-summary/v0.1",
+			"run_id":            "run",
+			"source_count":      1,
+			"observation_count": 1,
+			"candidate_count":   1,
+			"candidate_kind_counts": map[string]any{
+				"reference_candidate": 1,
+			},
+		})
+	}
+	writeFixture(t, filepath.Join(root, "corpus-pressure", "pressure-summary.json"), map[string]any{
+		"schema_version":             "corpus-pressure-summary/v0.1",
+		"corpus_id":                  "corpus-a",
+		"source_count":               50,
+		"processed_source_count":     50,
+		"semantic_candidate_count":   50,
+		"evidence_ready_atom_ratio":  1,
+		"review_burden_ratio":        0,
+		"corpus_fingerprint":         "same",
+		"command_config_fingerprint": "same-config",
+		"guardrails":                 completeGuardrails(),
+		"sources":                    sources,
 	})
 }
 
