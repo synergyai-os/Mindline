@@ -72,4 +72,3 @@ Expected:
 - Capture the WP, plan, final proof, blocked claims, and real-data limitation in PB.
 - Capture any durable learning about private-safe labeling artifacts and local-only operational maps.
 - Request LOOP delivery review before PR.
-

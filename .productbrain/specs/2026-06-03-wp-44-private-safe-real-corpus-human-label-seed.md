@@ -102,4 +102,3 @@ Provider/model assumptions: deterministic local classifier path only; no hosted 
 Privacy boundary: PB and PR receive metadata-only counts. Local-only map may contain operational refs and is not durable proof.
 
 Held-out/generalization status: blocked until independent human labels are recorded and accepted by corpus acceptance gates.
-
