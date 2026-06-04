@@ -1,0 +1,34 @@
+{
+  "schema_version": "semantic-candidate/v0.1",
+  "candidate_id": "cand-36fbca062846760e",
+  "run_id": "run-sem-712942e3ab499d31",
+  "source_document_id": "doc-process-capability-evidence",
+  "candidate_kind": "risk_candidate",
+  "review_status": "needs_review",
+  "confidence": "low",
+  "title": "risk candidate: PL-1 - Intake routing - Requirement: every source has provenance before review.",
+  "summary": "PL-1 - Intake routing - Requirement: every source has provenance before review. - Dependency: routing depends on source metadata. - Risk: missing source metadat",
+  "evidence_nodes": [
+    "node-332b000d88913479"
+  ],
+  "evidence_ranges": [
+    {
+      "structure_node_id": "node-332b000d88913479",
+      "line_start": 3,
+      "line_end": 12
+    }
+  ],
+  "observation_ids": [
+    "obs-16cc8c7ff105bed6"
+  ],
+  "relation_ids": [
+    "rel-acd861f83f5ed12a"
+  ],
+  "destination_status": "unresolved",
+  "blockers": [
+    {
+      "code": "semantic_review_required",
+      "message": "Candidate requires review because evidence is weak, contradicted, or ambiguous."
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "schema_version": "semantic-observation/v0.1",
+  "observation_id": "obs-702db12278c2d056",
+  "run_id": "run-sem-712942e3ab499d31",
+  "source_document_id": "doc-process-capability-evidence",
+  "observation_kind": "reference_statement",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "reference statement: Reference table: Intake Area Table records structured reference material fo",
+  "summary": "Reference table: Intake Area Table records structured reference material for this section.",
+  "evidence_nodes": [
+    "node-40596963c9438f4a"
+  ],
+  "evidence_ranges": [
+    {
+      "structure_node_id": "node-40596963c9438f4a",
+      "line_start": 10,
+      "line_end": 12
+    }
+  ],
+  "content_hash": "sha256:2ca26b2a44e753d37a774c72ec8016f8736ba3566d76f3bc4bd6a933dc4725dc",
+  "blockers": []
+}

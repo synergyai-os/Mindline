@@ -1,0 +1,29 @@
+{
+  "schema_version": "semantic-candidate/v0.1",
+  "candidate_id": "cand-81f8c236d26a6fb6",
+  "run_id": "run-sem-712942e3ab499d31",
+  "source_document_id": "doc-process-capability-evidence",
+  "candidate_kind": "action_candidate",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "action candidate: PL-2 - Evidence review PL-2 - Evidence review - Requirement evidence must stay",
+  "summary": "PL-2 - Evidence review PL-2 - Evidence review - Requirement evidence must stay linked to source nodes.",
+  "evidence_nodes": [
+    "node-40596963c9438f4a"
+  ],
+  "evidence_ranges": [
+    {
+      "structure_node_id": "node-40596963c9438f4a",
+      "line_start": 12,
+      "line_end": 12
+    }
+  ],
+  "observation_ids": [
+    "obs-2aec5b084e9cca00"
+  ],
+  "relation_ids": [
+    "rel-2e6799b0d587a846"
+  ],
+  "destination_status": "unresolved",
+  "blockers": []
+}

@@ -7,7 +7,7 @@
   "review_status": "needs_review",
   "confidence": "low",
   "title": "Import remains under review",
-  "summary": "10:02 - Operator Proposal: mark the import ready now. 10:00 - Facilitator Question: should we mark the import ready today? 10:04 - Reviewer Objection: the import is not ready because validation is incomplete. 10:06 - Facilitator Recap: keep",
+  "summary": "Question: should we mark the import ready today? Objection: the import is not ready because validation is incomplete Objection: the import is not ready because validation is incomplete. 10:02 - Operator Proposal: mark the import ready now.",
   "evidence_nodes": [
     "node-27d63def570fec36",
     "node-9fe582b1e14d82fc",
@@ -15,6 +15,16 @@
     "node-dece7bc306f624ae"
   ],
   "evidence_ranges": [
+    {
+      "structure_node_id": "node-9fe582b1e14d82fc",
+      "line_start": 4,
+      "line_end": 4
+    },
+    {
+      "structure_node_id": "node-dece7bc306f624ae",
+      "line_start": 10,
+      "line_end": 10
+    },
     {
       "structure_node_id": "node-c87e0b2d89043a83",
       "line_start": 6,
@@ -26,6 +36,11 @@
       "line_end": 4
     },
     {
+      "structure_node_id": "node-c87e0b2d89043a83",
+      "line_start": 7,
+      "line_end": 7
+    },
+    {
       "structure_node_id": "node-dece7bc306f624ae",
       "line_start": 9,
       "line_end": 10
@@ -34,20 +49,37 @@
       "structure_node_id": "node-27d63def570fec36",
       "line_start": 12,
       "line_end": 13
+    },
+    {
+      "structure_node_id": "node-27d63def570fec36",
+      "line_start": 13,
+      "line_end": 13
     }
   ],
   "observation_ids": [
+    "obs-11f8dd8fec3ea663",
+    "obs-3b95d5bd74cfcf84",
     "obs-437adbc72b53bcfc",
     "obs-7cee560f045f4b1b",
+    "obs-821821c590983daa",
+    "obs-d2e1b09095be63a2",
+    "obs-dae63bd843bffefb",
     "obs-de408453fea5d30e",
-    "obs-ead0e06d7bd3edc6"
+    "obs-ead0e06d7bd3edc6",
+    "obs-f413e1a735a1b8c0"
   ],
   "relation_ids": [
+    "rel-12b4e6fe83ed8c89",
+    "rel-3063449d80dc6c7a",
     "rel-97ca6f2d3792d6a5",
     "rel-55b2f2bd75f6c72f",
+    "rel-79baf85ca6308748",
+    "rel-06679e4fc37dbcc8",
+    "rel-a6d0ccf2b58ad43c",
     "rel-4f728175a127f4ec",
     "rel-692a63729faef3f5",
-    "rel-552613e2a48366a9"
+    "rel-a35a43f0cf983d6e",
+    "rel-be543474716915f9"
   ],
   "destination_status": "unresolved",
   "blockers": [

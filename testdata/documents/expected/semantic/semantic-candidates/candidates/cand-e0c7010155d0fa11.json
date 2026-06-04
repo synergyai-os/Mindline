@@ -1,0 +1,34 @@
+{
+  "schema_version": "semantic-candidate/v0.1",
+  "candidate_id": "cand-e0c7010155d0fa11",
+  "run_id": "run-sem-712942e3ab499d31",
+  "source_document_id": "doc-transcript-consolidated-action",
+  "candidate_kind": "question_candidate",
+  "review_status": "needs_review",
+  "confidence": "low",
+  "title": "question candidate: What information is missing from the intake checklist?",
+  "summary": "What information is missing from the intake checklist?",
+  "evidence_nodes": [
+    "node-067e324d52f25bff"
+  ],
+  "evidence_ranges": [
+    {
+      "structure_node_id": "node-067e324d52f25bff",
+      "line_start": 7,
+      "line_end": 7
+    }
+  ],
+  "observation_ids": [
+    "obs-6db116de7a70a36c"
+  ],
+  "relation_ids": [
+    "rel-62a8d4510c8327dc"
+  ],
+  "destination_status": "unresolved",
+  "blockers": [
+    {
+      "code": "semantic_review_required",
+      "message": "Candidate requires review because evidence is weak, contradicted, or ambiguous."
+    }
+  ]
+}

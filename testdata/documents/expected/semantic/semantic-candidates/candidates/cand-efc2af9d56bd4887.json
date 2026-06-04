@@ -1,0 +1,29 @@
+{
+  "schema_version": "semantic-candidate/v0.1",
+  "candidate_id": "cand-efc2af9d56bd4887",
+  "run_id": "run-sem-712942e3ab499d31",
+  "source_document_id": "doc-transcript-consolidated-action",
+  "candidate_kind": "action_candidate",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "action candidate: 09:15 - Facilitator Recap: Lead will prepare the checklist by Friday.",
+  "summary": "09:15 - Facilitator Recap: Lead will prepare the checklist by Friday.",
+  "evidence_nodes": [
+    "node-b89259969784f6ae"
+  ],
+  "evidence_ranges": [
+    {
+      "structure_node_id": "node-b89259969784f6ae",
+      "line_start": 18,
+      "line_end": 19
+    }
+  ],
+  "observation_ids": [
+    "obs-c8114feedec7b56b"
+  ],
+  "relation_ids": [
+    "rel-fce25cdded043cf5"
+  ],
+  "destination_status": "unresolved",
+  "blockers": []
+}

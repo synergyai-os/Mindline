@@ -1,0 +1,23 @@
+{
+  "schema_version": "semantic-observation/v0.1",
+  "observation_id": "obs-f63215ba659bb612",
+  "run_id": "run-sem-712942e3ab499d31",
+  "source_document_id": "doc-transcript-consolidated-action",
+  "observation_kind": "recap_signal",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "recap signal: Recap: Lead will prepare the checklist by Friday Recap: Lead will prepare the chec",
+  "summary": "Recap: Lead will prepare the checklist by Friday Recap: Lead will prepare the checklist by Friday.",
+  "evidence_nodes": [
+    "node-b89259969784f6ae"
+  ],
+  "evidence_ranges": [
+    {
+      "structure_node_id": "node-b89259969784f6ae",
+      "line_start": 19,
+      "line_end": 19
+    }
+  ],
+  "content_hash": "sha256:557a5ed4f3c3a11895d243417a1ebbf9329a7ab541f3077f4968c2f3f7168eeb",
+  "blockers": []
+}

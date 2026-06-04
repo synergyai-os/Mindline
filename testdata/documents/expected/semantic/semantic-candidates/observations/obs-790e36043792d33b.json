@@ -1,0 +1,23 @@
+{
+  "schema_version": "semantic-observation/v0.1",
+  "observation_id": "obs-790e36043792d33b",
+  "run_id": "run-sem-712942e3ab499d31",
+  "source_document_id": "doc-process-capability-evidence",
+  "observation_kind": "dependency_statement",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "dependency statement: Dependency: routing depends on source metadata Dependency: routing depends",
+  "summary": "Dependency: routing depends on source metadata Dependency: routing depends on source metadata.",
+  "evidence_nodes": [
+    "node-332b000d88913479"
+  ],
+  "evidence_ranges": [
+    {
+      "structure_node_id": "node-332b000d88913479",
+      "line_start": 7,
+      "line_end": 7
+    }
+  ],
+  "content_hash": "sha256:9ba8b05d6ebca730c722546bfa78edeac9f3ab0d86ef89fbef95c5ff2bd93761",
+  "blockers": []
+}

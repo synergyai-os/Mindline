@@ -1,0 +1,23 @@
+{
+  "schema_version": "semantic-observation/v0.1",
+  "observation_id": "obs-2aec5b084e9cca00",
+  "run_id": "run-sem-712942e3ab499d31",
+  "source_document_id": "doc-process-capability-evidence",
+  "observation_kind": "action_signal",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "action signal: PL-2 - Evidence review PL-2 - Evidence review - Requirement evidence must stay li",
+  "summary": "PL-2 - Evidence review PL-2 - Evidence review - Requirement evidence must stay linked to source nodes.",
+  "evidence_nodes": [
+    "node-40596963c9438f4a"
+  ],
+  "evidence_ranges": [
+    {
+      "structure_node_id": "node-40596963c9438f4a",
+      "line_start": 12,
+      "line_end": 12
+    }
+  ],
+  "content_hash": "sha256:091941bbc1c43e3d3c4035e38037dc556a5f869c461b6fccd22c370ae40893ac",
+  "blockers": []
+}

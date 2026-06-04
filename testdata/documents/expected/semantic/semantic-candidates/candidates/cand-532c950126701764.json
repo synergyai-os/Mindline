@@ -1,0 +1,34 @@
+{
+  "schema_version": "semantic-candidate/v0.1",
+  "candidate_id": "cand-532c950126701764",
+  "run_id": "run-sem-712942e3ab499d31",
+  "source_document_id": "doc-process-capability-evidence",
+  "candidate_kind": "risk_candidate",
+  "review_status": "needs_review",
+  "confidence": "low",
+  "title": "risk candidate: missing source metadata blocks review Risk: missing source metadata blocks revie",
+  "summary": "missing source metadata blocks review Risk: missing source metadata blocks review.",
+  "evidence_nodes": [
+    "node-332b000d88913479"
+  ],
+  "evidence_ranges": [
+    {
+      "structure_node_id": "node-332b000d88913479",
+      "line_start": 8,
+      "line_end": 8
+    }
+  ],
+  "observation_ids": [
+    "obs-8df7daa5549a1c12"
+  ],
+  "relation_ids": [
+    "rel-11ef8aea6250d6de"
+  ],
+  "destination_status": "unresolved",
+  "blockers": [
+    {
+      "code": "semantic_review_required",
+      "message": "Candidate requires review because evidence is weak, contradicted, or ambiguous."
+    }
+  ]
+}
