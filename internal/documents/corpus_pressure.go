@@ -57,37 +57,47 @@ const (
 )
 
 type CorpusPressureSummary struct {
-	SchemaVersion              string                          `json:"schema_version"`
-	CorpusID                   string                          `json:"corpus_id"`
-	SourceCount                int                             `json:"source_count"`
-	EligibleSourceCount        int                             `json:"eligible_source_count"`
-	ProcessedSourceCount       int                             `json:"processed_source_count"`
-	SkippedSourceCount         int                             `json:"skipped_source_count"`
-	ExcludedSourceCount        int                             `json:"excluded_source_count"`
-	BlockedSourceCount         int                             `json:"blocked_source_count"`
-	UnexplainedExclusionCount  int                             `json:"unexplained_exclusion_count"`
-	ProcessedSourceRatio       float64                         `json:"processed_source_ratio"`
-	SemanticCandidateCount     int                             `json:"semantic_candidate_count"`
-	GraphAtomCount             int                             `json:"graph_atom_count"`
-	GraphRelationCount         int                             `json:"graph_relation_count"`
-	RelationTypeCounts         map[CorpusRelationType]int      `json:"relation_type_counts"`
-	RelationStatusCounts       map[ReviewStatus]int            `json:"relation_status_counts"`
-	EvidenceReadyAtomCount     int                             `json:"evidence_ready_atom_count"`
-	EvidenceReadyAtomRatio     float64                         `json:"evidence_ready_atom_ratio"`
-	EvidenceReadyRelationCount int                             `json:"evidence_ready_relation_count"`
-	ReviewBurdenCount          int                             `json:"review_burden_count"`
-	ReviewBurdenRatio          float64                         `json:"review_burden_ratio"`
-	ReadyForFiftyFilePressure  bool                            `json:"ready_for_50_file_pressure"`
-	ReplayFingerprint          string                          `json:"replay_fingerprint"`
-	GraphReplayFingerprint     string                          `json:"graph_replay_fingerprint"`
-	CommandConfigFingerprint   string                          `json:"command_config_fingerprint"`
-	CorpusFingerprint          string                          `json:"corpus_fingerprint"`
-	Guardrails                 CorpusPressureGuardrailCounters `json:"guardrails"`
-	GraphManifestPath          string                          `json:"graph_manifest_path"`
-	GraphSummaryPath           string                          `json:"graph_summary_path"`
-	Blockers                   []string                        `json:"blockers"`
-	NextImprovementTargets     []string                        `json:"next_improvement_targets"`
-	Sources                    []CorpusPressureSourceResult    `json:"sources"`
+	SchemaVersion                string                          `json:"schema_version"`
+	CorpusID                     string                          `json:"corpus_id"`
+	SourceCount                  int                             `json:"source_count"`
+	EligibleSourceCount          int                             `json:"eligible_source_count"`
+	ProcessedSourceCount         int                             `json:"processed_source_count"`
+	SkippedSourceCount           int                             `json:"skipped_source_count"`
+	ExcludedSourceCount          int                             `json:"excluded_source_count"`
+	BlockedSourceCount           int                             `json:"blocked_source_count"`
+	UnexplainedExclusionCount    int                             `json:"unexplained_exclusion_count"`
+	ProcessedSourceRatio         float64                         `json:"processed_source_ratio"`
+	SemanticCandidateCount       int                             `json:"semantic_candidate_count"`
+	SemanticObservationCount     int                             `json:"semantic_observation_count"`
+	DocumentSegmentCount         int                             `json:"document_segment_count"`
+	ReferenceCandidateCount      int                             `json:"reference_candidate_count"`
+	OneCandidateSourceCount      int                             `json:"one_candidate_source_count"`
+	ReferenceOnlySourceCount     int                             `json:"reference_only_source_count"`
+	CandidatePerSourceRatio      float64                         `json:"candidate_per_processed_source_ratio"`
+	ObservationPerSegmentRatio   float64                         `json:"observation_per_segment_ratio"`
+	ReferenceCandidateRatio      float64                         `json:"reference_candidate_ratio"`
+	SemanticReadinessStatus      string                          `json:"semantic_readiness_status"`
+	SemanticReadinessReasonCodes []string                        `json:"semantic_readiness_reason_codes,omitempty"`
+	GraphAtomCount               int                             `json:"graph_atom_count"`
+	GraphRelationCount           int                             `json:"graph_relation_count"`
+	RelationTypeCounts           map[CorpusRelationType]int      `json:"relation_type_counts"`
+	RelationStatusCounts         map[ReviewStatus]int            `json:"relation_status_counts"`
+	EvidenceReadyAtomCount       int                             `json:"evidence_ready_atom_count"`
+	EvidenceReadyAtomRatio       float64                         `json:"evidence_ready_atom_ratio"`
+	EvidenceReadyRelationCount   int                             `json:"evidence_ready_relation_count"`
+	ReviewBurdenCount            int                             `json:"review_burden_count"`
+	ReviewBurdenRatio            float64                         `json:"review_burden_ratio"`
+	ReadyForFiftyFilePressure    bool                            `json:"ready_for_50_file_pressure"`
+	ReplayFingerprint            string                          `json:"replay_fingerprint"`
+	GraphReplayFingerprint       string                          `json:"graph_replay_fingerprint"`
+	CommandConfigFingerprint     string                          `json:"command_config_fingerprint"`
+	CorpusFingerprint            string                          `json:"corpus_fingerprint"`
+	Guardrails                   CorpusPressureGuardrailCounters `json:"guardrails"`
+	GraphManifestPath            string                          `json:"graph_manifest_path"`
+	GraphSummaryPath             string                          `json:"graph_summary_path"`
+	Blockers                     []string                        `json:"blockers"`
+	NextImprovementTargets       []string                        `json:"next_improvement_targets"`
+	Sources                      []CorpusPressureSourceResult    `json:"sources"`
 }
 
 type CorpusPressureSourceCounters struct {
@@ -115,35 +125,53 @@ type CorpusPressureGuardrailCounters struct {
 }
 
 type CorpusPressureEvalInput struct {
-	SchemaVersion             string                          `json:"schema_version"`
-	CorpusID                  string                          `json:"corpus_id"`
-	CommandConfigFingerprint  string                          `json:"command_config_fingerprint"`
-	CorpusFingerprint         string                          `json:"corpus_fingerprint"`
-	PressureSummaryPath       string                          `json:"pressure_summary_path"`
-	GraphSummaryPath          string                          `json:"graph_summary_path"`
-	SourceCounters            CorpusPressureSourceCounters    `json:"source_counters"`
-	ProcessedSourceRatio      float64                         `json:"processed_source_ratio"`
-	EvidenceReadyAtomRatio    float64                         `json:"evidence_ready_atom_ratio"`
-	ReviewBurdenRatio         float64                         `json:"review_burden_ratio"`
-	ReadyForFiftyFilePressure bool                            `json:"ready_for_50_file_pressure"`
-	Guardrails                CorpusPressureGuardrailCounters `json:"guardrails"`
-	NextImprovementTargets    []string                        `json:"next_improvement_targets"`
+	SchemaVersion                string                          `json:"schema_version"`
+	CorpusID                     string                          `json:"corpus_id"`
+	CommandConfigFingerprint     string                          `json:"command_config_fingerprint"`
+	CorpusFingerprint            string                          `json:"corpus_fingerprint"`
+	PressureSummaryPath          string                          `json:"pressure_summary_path"`
+	GraphSummaryPath             string                          `json:"graph_summary_path"`
+	SourceCounters               CorpusPressureSourceCounters    `json:"source_counters"`
+	ProcessedSourceRatio         float64                         `json:"processed_source_ratio"`
+	SemanticReadinessStatus      string                          `json:"semantic_readiness_status"`
+	SemanticReadinessReasonCodes []string                        `json:"semantic_readiness_reason_codes,omitempty"`
+	DocumentSegmentCount         int                             `json:"document_segment_count"`
+	SemanticObservationCount     int                             `json:"semantic_observation_count"`
+	SemanticCandidateCount       int                             `json:"semantic_candidate_count"`
+	ReferenceCandidateCount      int                             `json:"reference_candidate_count"`
+	CandidatePerSourceRatio      float64                         `json:"candidate_per_processed_source_ratio"`
+	ObservationPerSegmentRatio   float64                         `json:"observation_per_segment_ratio"`
+	ReferenceCandidateRatio      float64                         `json:"reference_candidate_ratio"`
+	EvidenceReadyAtomRatio       float64                         `json:"evidence_ready_atom_ratio"`
+	ReviewBurdenRatio            float64                         `json:"review_burden_ratio"`
+	ReadyForFiftyFilePressure    bool                            `json:"ready_for_50_file_pressure"`
+	Guardrails                   CorpusPressureGuardrailCounters `json:"guardrails"`
+	NextImprovementTargets       []string                        `json:"next_improvement_targets"`
 }
 
 type CorpusPressureTraceSummary struct {
-	SchemaVersion            string                          `json:"schema_version"`
-	CorpusID                 string                          `json:"corpus_id"`
-	Stages                   []CorpusPressureTraceStage      `json:"stages"`
-	SourceCounters           CorpusPressureSourceCounters    `json:"source_counters"`
-	SourceDeltas             CorpusPressureSourceCounters    `json:"source_deltas"`
-	ProcessedSourceRatio     float64                         `json:"processed_source_ratio"`
-	EvidenceReadyAtomRatio   float64                         `json:"evidence_ready_atom_ratio"`
-	CommandConfigFingerprint string                          `json:"command_config_fingerprint"`
-	CorpusFingerprint        string                          `json:"corpus_fingerprint"`
-	PressureFingerprint      string                          `json:"pressure_fingerprint"`
-	GraphReplayFingerprint   string                          `json:"graph_replay_fingerprint"`
-	Guardrails               CorpusPressureGuardrailCounters `json:"guardrails"`
-	ArtifactPaths            map[string]string               `json:"artifact_paths"`
+	SchemaVersion                string                          `json:"schema_version"`
+	CorpusID                     string                          `json:"corpus_id"`
+	Stages                       []CorpusPressureTraceStage      `json:"stages"`
+	SourceCounters               CorpusPressureSourceCounters    `json:"source_counters"`
+	SourceDeltas                 CorpusPressureSourceCounters    `json:"source_deltas"`
+	ProcessedSourceRatio         float64                         `json:"processed_source_ratio"`
+	SemanticReadinessStatus      string                          `json:"semantic_readiness_status"`
+	SemanticReadinessReasonCodes []string                        `json:"semantic_readiness_reason_codes,omitempty"`
+	DocumentSegmentCount         int                             `json:"document_segment_count"`
+	SemanticObservationCount     int                             `json:"semantic_observation_count"`
+	SemanticCandidateCount       int                             `json:"semantic_candidate_count"`
+	ReferenceCandidateCount      int                             `json:"reference_candidate_count"`
+	CandidatePerSourceRatio      float64                         `json:"candidate_per_processed_source_ratio"`
+	ObservationPerSegmentRatio   float64                         `json:"observation_per_segment_ratio"`
+	ReferenceCandidateRatio      float64                         `json:"reference_candidate_ratio"`
+	EvidenceReadyAtomRatio       float64                         `json:"evidence_ready_atom_ratio"`
+	CommandConfigFingerprint     string                          `json:"command_config_fingerprint"`
+	CorpusFingerprint            string                          `json:"corpus_fingerprint"`
+	PressureFingerprint          string                          `json:"pressure_fingerprint"`
+	GraphReplayFingerprint       string                          `json:"graph_replay_fingerprint"`
+	Guardrails                   CorpusPressureGuardrailCounters `json:"guardrails"`
+	ArtifactPaths                map[string]string               `json:"artifact_paths"`
 }
 
 type CorpusPressureTraceStage struct {
@@ -160,6 +188,8 @@ type CorpusPressureSourceResult struct {
 	ReasonCode          CorpusPressureReason          `json:"reason_code"`
 	Message             string                        `json:"message,omitempty"`
 	CandidateCount      int                           `json:"candidate_count"`
+	ObservationCount    int                           `json:"observation_count"`
+	SegmentCount        int                           `json:"segment_count"`
 	CandidateKindCounts map[SemanticCandidateKind]int `json:"candidate_kind_counts,omitempty"`
 	SemanticRunID       string                        `json:"semantic_run_id,omitempty"`
 	SourceContentHash   string                        `json:"source_content_hash,omitempty"`
@@ -647,6 +677,8 @@ func runCorpusPressureSource(root string, source corpusPressureSourceInput, opti
 	}
 	result.SemanticRunID = summary.RunID
 	result.CandidateCount = summary.CandidateCount
+	result.ObservationCount = summary.ObservationCount
+	result.SegmentCount = corpusPressureSegmentCount(sourceRoot)
 	result.CandidateKindCounts = cloneSemanticCandidateKindCounts(summary.CandidateKindCounts)
 	result.SemanticRunDir = runDir
 	if summary.SkippedReason != "" {
@@ -700,9 +732,18 @@ func buildCorpusPressureSummary(corpusID string, sources []CorpusPressureSourceR
 	}
 	for _, source := range sources {
 		summary.SemanticCandidateCount += source.CandidateCount
+		summary.SemanticObservationCount += source.ObservationCount
+		summary.DocumentSegmentCount += source.SegmentCount
+		summary.ReferenceCandidateCount += source.CandidateKindCounts[SemanticCandidateKindReference]
 		switch source.State {
 		case CorpusPressureSourceProcessed:
 			summary.ProcessedSourceCount++
+			if source.CandidateCount == 1 {
+				summary.OneCandidateSourceCount++
+			}
+			if source.CandidateCount > 0 && source.CandidateKindCounts[SemanticCandidateKindReference] == source.CandidateCount {
+				summary.ReferenceOnlySourceCount++
+			}
 		case CorpusPressureSourceSkipped:
 			summary.SkippedSourceCount++
 			summary.Blockers = append(summary.Blockers, fmt.Sprintf("source %s skipped: %s", source.SourceID, source.ReasonCode))
@@ -724,6 +765,16 @@ func buildCorpusPressureSummary(corpusID string, sources []CorpusPressureSourceR
 	if summary.GraphAtomCount > 0 {
 		summary.EvidenceReadyAtomRatio = float64(summary.EvidenceReadyAtomCount) / float64(summary.GraphAtomCount)
 	}
+	if summary.ProcessedSourceCount > 0 {
+		summary.CandidatePerSourceRatio = float64(summary.SemanticCandidateCount) / float64(summary.ProcessedSourceCount)
+	}
+	if summary.DocumentSegmentCount > 0 {
+		summary.ObservationPerSegmentRatio = float64(summary.SemanticObservationCount) / float64(summary.DocumentSegmentCount)
+	}
+	if summary.SemanticCandidateCount > 0 {
+		summary.ReferenceCandidateRatio = float64(summary.ReferenceCandidateCount) / float64(summary.SemanticCandidateCount)
+	}
+	summary.SemanticReadinessStatus, summary.SemanticReadinessReasonCodes = corpusPressureSemanticReadiness(summary)
 	if graphErr != nil {
 		summary.Blockers = append(summary.Blockers, "corpus graph failed: "+graphErr.Error())
 	}
@@ -746,6 +797,9 @@ func corpusPressureReady(summary CorpusPressureSummary) bool {
 		return false
 	}
 	if summary.ReviewBurdenRatio > 0.20 {
+		return false
+	}
+	if summary.SemanticReadinessStatus == "blocked" {
 		return false
 	}
 	return true
@@ -777,10 +831,32 @@ func corpusPressureTargets(summary CorpusPressureSummary) []string {
 	if summary.GraphRelationCount == 0 {
 		targets = append(targets, "relation_coverage")
 	}
+	if summary.SemanticReadinessStatus == "blocked" {
+		targets = append(targets, "semantic_density")
+	}
 	if len(targets) == 0 && !summary.ReadyForFiftyFilePressure {
 		targets = append(targets, "readiness_thresholds")
 	}
 	return targets
+}
+
+func corpusPressureSemanticReadiness(summary CorpusPressureSummary) (string, []string) {
+	if summary.ProcessedSourceCount < 10 {
+		return "not_evaluated", []string{"insufficient_processed_sources"}
+	}
+	reasons := []string{}
+	if summary.SemanticCandidateCount == summary.ProcessedSourceCount &&
+		summary.ReferenceCandidateCount == summary.SemanticCandidateCount &&
+		summary.OneCandidateSourceCount == summary.ProcessedSourceCount {
+		reasons = append(reasons, "reference_only_one_candidate_per_source")
+	}
+	if summary.DocumentSegmentCount > 0 && summary.DocumentSegmentCount >= summary.SemanticObservationCount*2 && summary.ObservationPerSegmentRatio < 0.25 {
+		reasons = append(reasons, "low_observation_to_segment_density")
+	}
+	if len(reasons) > 0 {
+		return "blocked", reasons
+	}
+	return "ready", nil
 }
 
 func corpusPressureFingerprint(summary CorpusPressureSummary) string {
@@ -938,6 +1014,21 @@ func promoteCorpusPressureEvidenceReadiness(sourceRoot string, summary SemanticS
 	promoted := BuildSemanticSummary(summary.RunID, summary.SourceCount, observations, candidates, relations)
 	_ = writeJSON(root, "semantic-summary.json", promoted)
 	return promoted
+}
+
+func corpusPressureSegmentCount(sourceRoot string) int {
+	data, err := os.ReadFile(filepath.Join(sourceRoot, "document-segments", "segment-summary.json"))
+	if err != nil {
+		return 0
+	}
+	var summary Summary
+	if err := json.Unmarshal(data, &summary); err != nil {
+		return 0
+	}
+	if summary.SchemaVersion != SegmentSummarySchemaVersion {
+		return 0
+	}
+	return summary.SegmentCount
 }
 
 func hasBlockerCode(blockers []Blocker, code string) bool {

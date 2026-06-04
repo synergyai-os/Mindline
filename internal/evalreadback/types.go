@@ -23,6 +23,7 @@ type Summary struct {
 	SampleStatus         string             `json:"sample_status"`
 	GeneralizationStatus string             `json:"generalization_status"`
 	ImprovementStatus    string             `json:"improvement_status"`
+	SemanticReadiness    SemanticReadiness  `json:"semantic_readiness"`
 	ClaimGates           []ClaimGate        `json:"claim_gates"`
 	Guardrails           Guardrails         `json:"guardrails"`
 	TopImprovementTarget ImprovementTarget  `json:"top_improvement_target"`
@@ -72,6 +73,21 @@ type ImprovementTarget struct {
 	Code         string   `json:"code"`
 	Rationale    string   `json:"rationale"`
 	EvidenceRefs []string `json:"evidence_refs,omitempty"`
+}
+
+type SemanticReadiness struct {
+	Status                     string   `json:"status"`
+	ReasonCodes                []string `json:"reason_codes,omitempty"`
+	ProcessedSourceCount       int      `json:"processed_source_count"`
+	DocumentSegmentCount       int      `json:"document_segment_count"`
+	SemanticObservationCount   int      `json:"semantic_observation_count"`
+	SemanticCandidateCount     int      `json:"semantic_candidate_count"`
+	ReferenceCandidateCount    int      `json:"reference_candidate_count"`
+	OneCandidateSourceCount    int      `json:"one_candidate_source_count"`
+	ReferenceOnlySourceCount   int      `json:"reference_only_source_count"`
+	CandidatePerSourceRatio    float64  `json:"candidate_per_processed_source_ratio"`
+	ObservationPerSegmentRatio float64  `json:"observation_per_segment_ratio"`
+	ReferenceCandidateRatio    float64  `json:"reference_candidate_ratio"`
 }
 
 type ReplayBaseline struct {

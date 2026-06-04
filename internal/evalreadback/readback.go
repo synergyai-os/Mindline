@@ -168,6 +168,8 @@ type readbackModel struct {
 	fingerprints              map[string]string
 	artifactTypes             map[string]bool
 	replayBaselineReasonCodes []string
+	segmentSummaryCount       int
+	segmentSummarySegments    int
 }
 
 func buildBaselineModel(inputRoot string) (readbackModel, error) {
@@ -322,6 +324,10 @@ func artifactTypeForRef(ref string) string {
 		return "corpus_pressure_eval_input"
 	case strings.HasSuffix(ref, "corpus-pressure/trace-summary.json"):
 		return "corpus_pressure_trace_summary"
+	case strings.HasSuffix(ref, "document-segments/segment-summary.json"):
+		return "document_segment_summary"
+	case strings.HasSuffix(ref, "semantic-candidates/semantic-summary.json"):
+		return "semantic_candidate_summary"
 	case strings.HasSuffix(ref, "corpus-pressure-loop/loop-summary.json"):
 		return "corpus_pressure_loop_summary"
 	case strings.HasSuffix(ref, "corpus-acceptance/benchmark-summary.json"):
@@ -389,6 +395,8 @@ func supportedSchema(artifactType, schemaVersion string) bool {
 		"corpus_pressure_summary":            "corpus-pressure-summary/v0.1",
 		"corpus_pressure_eval_input":         "corpus-pressure-eval-input/v0.1",
 		"corpus_pressure_trace_summary":      "corpus-pressure-trace-summary/v0.1",
+		"document_segment_summary":           "document-segment-summary/v0.1",
+		"semantic_candidate_summary":         "semantic-candidate-summary/v0.1",
 		"corpus_pressure_loop_summary":       "corpus-pressure-loop-summary/v0.1",
 		"corpus_acceptance_benchmark":        "corpus-acceptance-summary/v0.1",
 		"autonomy_readiness_report":          "autonomy-readiness-report/v0.1",
@@ -403,7 +411,9 @@ func supportedSchema(artifactType, schemaVersion string) bool {
 
 func extractEvidence(raw map[string]any, artifact *ArtifactEvidence) {
 	for _, key := range []string{
-		"source_count", "candidate_count", "semantic_candidate_count", "evidence_ready_atom_count",
+		"source_count", "candidate_count", "semantic_candidate_count", "observation_count", "evidence_ready_atom_count",
+		"processed_source_count", "semantic_observation_count", "document_segment_count", "segment_count",
+		"reference_candidate_count", "one_candidate_source_count", "reference_only_source_count",
 		"accounted_source_count", "atom_count", "evidence_or_blocker_atom_count", "relation_count",
 		"review_burden_count", "missing_link_reduction_ratio", "needs_enrichment_reduction_ratio",
 		"missing_link_enrichment_reduction_ratio",
@@ -417,11 +427,12 @@ func extractEvidence(raw map[string]any, artifact *ArtifactEvidence) {
 			artifact.Metrics[key] = value
 		}
 	}
-	for _, key := range []string{"processed_source_ratio", "source_accounting_ratio", "evidence_ready_atom_ratio", "evidence_or_blocker_ratio", "review_burden_ratio"} {
+	for _, key := range []string{"processed_source_ratio", "source_accounting_ratio", "evidence_ready_atom_ratio", "evidence_or_blocker_ratio", "review_burden_ratio", "candidate_per_processed_source_ratio", "observation_per_segment_ratio", "reference_candidate_ratio"} {
 		if value, ok := numberValue(raw[key]); ok {
 			artifact.Metrics[key] = value
 		}
 	}
+	extractSemanticReadinessEvidence(raw, artifact)
 	for _, key := range []string{"ready_for_50_file_pressure", "held_out", "non_generalizable_runtime", "comparable", "dec64_eligible", "no_human_eligible", "suite_valid"} {
 		if value, ok := boolValue(raw[key]); ok {
 			artifact.Flags[key] = value
@@ -517,6 +528,59 @@ func extractGuardrails(guardrails map[string]any, artifact *ArtifactEvidence) {
 	}
 }
 
+func extractSemanticReadinessEvidence(raw map[string]any, artifact *ArtifactEvidence) {
+	if status := stringValue(raw["semantic_readiness_status"]); status != "" {
+		artifact.Flags["semantic_readiness_"+status] = true
+	}
+	if sources, ok := raw["sources"].([]any); ok {
+		processed := 0
+		oneCandidate := 0
+		referenceOnly := 0
+		referenceCandidates := 0
+		for _, item := range sources {
+			source, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			if stringValue(source["state"]) != "processed" {
+				continue
+			}
+			processed++
+			candidates := intNumberValue(source["candidate_count"])
+			if candidates == 1 {
+				oneCandidate++
+			}
+			if counts, ok := source["candidate_kind_counts"].(map[string]any); ok {
+				reference := intNumberValue(counts["reference_candidate"])
+				referenceCandidates += reference
+				if candidates > 0 && reference == candidates {
+					referenceOnly++
+				}
+			}
+		}
+		if processed > 0 {
+			artifact.Metrics["processed_source_count"] = float64(processed)
+			artifact.Metrics["one_candidate_source_count"] = float64(oneCandidate)
+			artifact.Metrics["reference_only_source_count"] = float64(referenceOnly)
+		}
+		if referenceCandidates > 0 {
+			artifact.Metrics["reference_candidate_count"] = float64(referenceCandidates)
+		}
+	}
+	if counts, ok := raw["candidate_kind_counts"].(map[string]any); ok {
+		if reference := intNumberValue(counts["reference_candidate"]); reference > 0 {
+			artifact.Metrics["reference_candidate_count"] = float64(reference)
+		}
+	}
+}
+
+func intNumberValue(value any) int {
+	if number, ok := numberValue(value); ok {
+		return int(number)
+	}
+	return 0
+}
+
 func extractSafetyCounters(safetyCounters map[string]any, artifact *ArtifactEvidence) {
 	for _, key := range []string{"destination_writes", "auto_accepts", "no_human_claims", "committed_private_artifacts"} {
 		if value, ok := numberValue(safetyCounters[key]); ok {
@@ -529,6 +593,24 @@ func mergeModelEvidence(model *readbackModel, artifact ArtifactEvidence) {
 	model.artifactTypes[artifact.Type] = true
 	if artifact.Status == "unsafe_or_leaky" {
 		model.flags["unsafe_or_leaky"] = true
+	}
+	if artifact.Type == "document_segment_summary" {
+		model.segmentSummaryCount++
+		if value, ok := artifact.Metrics["segment_count"]; ok {
+			model.segmentSummarySegments += int(value)
+			model.metrics["document_segment_count_from_summaries"] = float64(model.segmentSummarySegments)
+		}
+	}
+	if artifact.Type == "semantic_candidate_summary" {
+		if value, ok := artifact.Metrics["observation_count"]; ok {
+			model.metrics["semantic_observation_count_from_summaries"] += value
+		}
+		if value, ok := artifact.Metrics["candidate_count"]; ok {
+			model.metrics["semantic_candidate_count_from_summaries"] += value
+		}
+		if value, ok := artifact.Metrics["reference_candidate_count"]; ok {
+			model.metrics["reference_candidate_count_from_summaries"] += value
+		}
 	}
 	for key, value := range artifact.Metrics {
 		model.metrics[key] = value
@@ -611,6 +693,7 @@ func summarize(model readbackModel) Summary {
 	} else {
 		summary.GeneralizationStatus = "generalizable"
 	}
+	summary.SemanticReadiness = semanticReadinessForModel(model)
 	summary.TopImprovementTarget = chooseTarget(model, summary.GeneralizationStatus)
 	summary.RerunInstructions = []string{"rerun the source command after addressing " + summary.TopImprovementTarget.Code + ", then run eval readback with --baseline pointing to this run"}
 	summary.ReplayBaseline = replayBaselineForSummary(summary)
@@ -713,27 +796,38 @@ func rebuildClaimGates(summary *Summary) {
 	} else {
 		gates = append(gates, ClaimGate{Gate: "generalization_claim", Status: "blocked", ReasonCodes: []string{"sample_bound_or_non_held_out"}, EvidenceRefs: firstRefs(summary.SafeArtifactRefs), ClaimImpact: "blocks broad product, DEC-64, or no-human claims"})
 	}
+	if summary.SemanticReadiness.Status == "blocked" {
+		gates = append(gates, ClaimGate{Gate: "semantic_readiness", Status: "blocked", ReasonCodes: append([]string{"semantic_readiness_blocked"}, summary.SemanticReadiness.ReasonCodes...), EvidenceRefs: firstRefs(summary.SafeArtifactRefs), ClaimImpact: "source intake may have succeeded, but semantic value is not proven"})
+	} else if summary.SemanticReadiness.Status == "ready" {
+		gates = append(gates, ClaimGate{Gate: "semantic_readiness", Status: "pass", EvidenceRefs: firstRefs(summary.SafeArtifactRefs), ClaimImpact: "semantic-density counters did not detect reference-only collapse"})
+	} else {
+		gates = append(gates, ClaimGate{Gate: "semantic_readiness", Status: "not_evaluated", ReasonCodes: summary.SemanticReadiness.ReasonCodes, EvidenceRefs: firstRefs(summary.SafeArtifactRefs), ClaimImpact: "semantic readiness was not evaluated for this artifact shape or sample size"})
+	}
 	improvementStatus := summary.ImprovementStatus
-	switch improvementStatus {
-	case "improved":
-		switch {
-		case unsafe:
-			gates = append(gates, ClaimGate{Gate: "improvement_claim", Status: "blocked", ReasonCodes: []string{"unsafe_or_leaky"}, EvidenceRefs: unsafeArtifactRefs(summary), ClaimImpact: "blocks improvement claim until readback evidence is privacy-safe"})
-		case unsupported:
-			gates = append(gates, ClaimGate{Gate: "improvement_claim", Status: "blocked", ReasonCodes: []string{"unsupported_schema"}, EvidenceRefs: unsupportedArtifactRefs(summary), ClaimImpact: "blocks improvement claim until supported-looking artifacts use known schemas"})
+	if summary.SemanticReadiness.Status == "blocked" {
+		gates = append(gates, ClaimGate{Gate: "improvement_claim", Status: "blocked", ReasonCodes: append([]string{"semantic_readiness_blocked"}, summary.SemanticReadiness.ReasonCodes...), EvidenceRefs: firstRefs(summary.SafeArtifactRefs), ClaimImpact: "blocks improvement claim until semantic extraction value is proven"})
+	} else {
+		switch improvementStatus {
+		case "improved":
+			switch {
+			case unsafe:
+				gates = append(gates, ClaimGate{Gate: "improvement_claim", Status: "blocked", ReasonCodes: []string{"unsafe_or_leaky"}, EvidenceRefs: unsafeArtifactRefs(summary), ClaimImpact: "blocks improvement claim until readback evidence is privacy-safe"})
+			case unsupported:
+				gates = append(gates, ClaimGate{Gate: "improvement_claim", Status: "blocked", ReasonCodes: []string{"unsupported_schema"}, EvidenceRefs: unsupportedArtifactRefs(summary), ClaimImpact: "blocks improvement claim until supported-looking artifacts use known schemas"})
+			default:
+				gates = append(gates, ClaimGate{Gate: "improvement_claim", Status: "pass", ClaimImpact: "current run improved against a comparable baseline"})
+			}
+		case "unchanged", "regressed":
+			gates = append(gates, ClaimGate{Gate: "improvement_claim", Status: "fail", ReasonCodes: []string{improvementStatus}, ClaimImpact: "blocks improvement claim"})
+		case "not_comparable":
+			reasons := []string{"not_comparable"}
+			if summary.Comparison != nil {
+				reasons = append(reasons, summary.Comparison.ReasonCodes...)
+			}
+			gates = append(gates, ClaimGate{Gate: "improvement_claim", Status: "blocked", ReasonCodes: reasons, ClaimImpact: "blocks improvement claim"})
 		default:
-			gates = append(gates, ClaimGate{Gate: "improvement_claim", Status: "pass", ClaimImpact: "current run improved against a comparable baseline"})
+			gates = append(gates, ClaimGate{Gate: "improvement_claim", Status: "blocked", ReasonCodes: []string{"missing_baseline"}, ClaimImpact: "blocks improvement claim until comparable baseline is supplied"})
 		}
-	case "unchanged", "regressed":
-		gates = append(gates, ClaimGate{Gate: "improvement_claim", Status: "fail", ReasonCodes: []string{improvementStatus}, ClaimImpact: "blocks improvement claim"})
-	case "not_comparable":
-		reasons := []string{"not_comparable"}
-		if summary.Comparison != nil {
-			reasons = append(reasons, summary.Comparison.ReasonCodes...)
-		}
-		gates = append(gates, ClaimGate{Gate: "improvement_claim", Status: "blocked", ReasonCodes: reasons, ClaimImpact: "blocks improvement claim"})
-	default:
-		gates = append(gates, ClaimGate{Gate: "improvement_claim", Status: "blocked", ReasonCodes: []string{"missing_baseline"}, ClaimImpact: "blocks improvement claim until comparable baseline is supplied"})
 	}
 	if hasDEC64ThresholdProof(summary) && hasSideEffectEvidence(summary) && !hasSideEffectCounter(summary) && !unsafe && !unsupported {
 		gates = append(gates, ClaimGate{Gate: "dec64_no_human_claim", Status: "pass", EvidenceRefs: firstRefs(summary.SafeArtifactRefs), ClaimImpact: "held-out threshold proof supports bounded no-human readiness claim"})
@@ -1139,6 +1233,9 @@ func chooseTarget(model readbackModel, generalization string) ImprovementTarget 
 	if model.flags["unsafe_or_leaky"] {
 		return ImprovementTarget{Code: "unsafe_or_leaky", Rationale: "Readback detected a denied private or secret-looking pattern in a supported artifact.", EvidenceRefs: refs}
 	}
+	if readiness := semanticReadinessForModel(model); readiness.Status == "blocked" {
+		return ImprovementTarget{Code: "needs_semantic_density", Rationale: "Source intake may have succeeded, but semantic value is not proven because extraction collapsed into shallow reference output.", EvidenceRefs: refs}
+	}
 	if generalization != "generalizable" {
 		return ImprovementTarget{Code: "needs_held_out_labels", Rationale: "The run is sample-bound, private, temp, unknown, or explicitly non-generalizable.", EvidenceRefs: refs}
 	}
@@ -1154,6 +1251,58 @@ func chooseTarget(model readbackModel, generalization string) ImprovementTarget 
 		}
 	}
 	return ImprovementTarget{Code: "ready_for_next_pressure_run", Rationale: "No higher-priority readback blocker was found; rerun the next pressure/eval slice with comparable baseline.", EvidenceRefs: refs}
+}
+
+func semanticReadinessForModel(model readbackModel) SemanticReadiness {
+	readiness := SemanticReadiness{
+		ProcessedSourceCount:       intMetric(model, "processed_source_count", "source_count"),
+		DocumentSegmentCount:       intMetric(model, "document_segment_count_from_summaries", "document_segment_count", "segment_count"),
+		SemanticObservationCount:   intMetric(model, "semantic_observation_count", "semantic_observation_count_from_summaries", "observation_count"),
+		SemanticCandidateCount:     intMetric(model, "semantic_candidate_count", "semantic_candidate_count_from_summaries", "candidate_count"),
+		ReferenceCandidateCount:    intMetric(model, "reference_candidate_count_from_summaries", "reference_candidate_count"),
+		OneCandidateSourceCount:    intMetric(model, "one_candidate_source_count"),
+		ReferenceOnlySourceCount:   intMetric(model, "reference_only_source_count"),
+		CandidatePerSourceRatio:    model.metrics["candidate_per_processed_source_ratio"],
+		ObservationPerSegmentRatio: model.metrics["observation_per_segment_ratio"],
+		ReferenceCandidateRatio:    model.metrics["reference_candidate_ratio"],
+	}
+	if readiness.ProcessedSourceCount > 0 && readiness.CandidatePerSourceRatio == 0 {
+		readiness.CandidatePerSourceRatio = float64(readiness.SemanticCandidateCount) / float64(readiness.ProcessedSourceCount)
+	}
+	if readiness.DocumentSegmentCount > 0 && readiness.ObservationPerSegmentRatio == 0 {
+		readiness.ObservationPerSegmentRatio = float64(readiness.SemanticObservationCount) / float64(readiness.DocumentSegmentCount)
+	}
+	if readiness.SemanticCandidateCount > 0 && readiness.ReferenceCandidateRatio == 0 {
+		readiness.ReferenceCandidateRatio = float64(readiness.ReferenceCandidateCount) / float64(readiness.SemanticCandidateCount)
+	}
+	if readiness.ProcessedSourceCount < 10 {
+		readiness.Status = "not_evaluated"
+		readiness.ReasonCodes = []string{"insufficient_processed_sources"}
+		return readiness
+	}
+	if readiness.SemanticCandidateCount == readiness.ProcessedSourceCount &&
+		readiness.ReferenceCandidateCount == readiness.SemanticCandidateCount &&
+		readiness.OneCandidateSourceCount == readiness.ProcessedSourceCount {
+		readiness.ReasonCodes = append(readiness.ReasonCodes, "reference_only_one_candidate_per_source")
+	}
+	if readiness.DocumentSegmentCount > 0 && readiness.DocumentSegmentCount >= readiness.SemanticObservationCount*2 && readiness.ObservationPerSegmentRatio < 0.25 {
+		readiness.ReasonCodes = append(readiness.ReasonCodes, "low_observation_to_segment_density")
+	}
+	if len(readiness.ReasonCodes) > 0 {
+		readiness.Status = "blocked"
+		return readiness
+	}
+	readiness.Status = "ready"
+	return readiness
+}
+
+func intMetric(model readbackModel, keys ...string) int {
+	for _, key := range keys {
+		if value, ok := model.metrics[key]; ok {
+			return int(value)
+		}
+	}
+	return 0
 }
 
 func writeSummary(outRoot string, summary Summary, protectedRoots []string) error {
@@ -1353,6 +1502,16 @@ func markdownReport(summary Summary) string {
 		b.WriteString(fmt.Sprintf("- Rerun: %s\n", summary.ReplayBaseline.RerunInstruction))
 	}
 	b.WriteString("\n")
+	b.WriteString("## Semantic Readiness\n\n")
+	b.WriteString(fmt.Sprintf("- Status: %s\n", summary.SemanticReadiness.Status))
+	if len(summary.SemanticReadiness.ReasonCodes) > 0 {
+		b.WriteString(fmt.Sprintf("- Reasons: %s\n", strings.Join(summary.SemanticReadiness.ReasonCodes, ", ")))
+	}
+	b.WriteString(fmt.Sprintf("- Density: %d observations / %d segments; %d candidates / %d processed sources; %d reference candidates\n", summary.SemanticReadiness.SemanticObservationCount, summary.SemanticReadiness.DocumentSegmentCount, summary.SemanticReadiness.SemanticCandidateCount, summary.SemanticReadiness.ProcessedSourceCount, summary.SemanticReadiness.ReferenceCandidateCount))
+	if summary.SemanticReadiness.Status == "blocked" {
+		b.WriteString("- Source intake may have succeeded, but semantic value is not proven.\n")
+	}
+	b.WriteString("\n")
 	b.WriteString("## Top improvement target\n\n")
 	b.WriteString(fmt.Sprintf("`%s`: %s\n\n", summary.TopImprovementTarget.Code, summary.TopImprovementTarget.Rationale))
 	b.WriteString("## Claim gates\n\n")
@@ -1377,6 +1536,13 @@ func chainDraft(summary Summary) string {
 	if len(summary.ReplayBaseline.ReasonCodes) > 0 {
 		b.WriteString(" (")
 		b.WriteString(strings.Join(summary.ReplayBaseline.ReasonCodes, ", "))
+		b.WriteString(")")
+	}
+	b.WriteString(". Semantic readiness: ")
+	b.WriteString(summary.SemanticReadiness.Status)
+	if len(summary.SemanticReadiness.ReasonCodes) > 0 {
+		b.WriteString(" (")
+		b.WriteString(strings.Join(summary.SemanticReadiness.ReasonCodes, ", "))
 		b.WriteString(")")
 	}
 	b.WriteString(". Blocked claims: ")
