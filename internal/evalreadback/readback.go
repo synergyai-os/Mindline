@@ -602,6 +602,18 @@ func mergeModelEvidence(model *readbackModel, artifact ArtifactEvidence) {
 		}
 	}
 	if artifact.Type == "semantic_candidate_summary" {
+		sourceCount, hasSourceCount := artifact.Metrics["source_count"]
+		candidateCount, hasCandidateCount := artifact.Metrics["candidate_count"]
+		referenceCandidateCount, hasReferenceCandidateCount := artifact.Metrics["reference_candidate_count"]
+		if hasSourceCount {
+			model.metrics["processed_source_count_from_summaries"] += sourceCount
+			if hasCandidateCount && candidateCount == sourceCount {
+				model.metrics["one_candidate_source_count_from_summaries"] += sourceCount
+			}
+			if hasCandidateCount && hasReferenceCandidateCount && referenceCandidateCount == candidateCount {
+				model.metrics["reference_only_source_count_from_summaries"] += sourceCount
+			}
+		}
 		if value, ok := artifact.Metrics["observation_count"]; ok {
 			model.metrics["semantic_observation_count_from_summaries"] += value
 		}
@@ -806,6 +818,8 @@ func rebuildClaimGates(summary *Summary) {
 	improvementStatus := summary.ImprovementStatus
 	if summary.SemanticReadiness.Status == "blocked" {
 		gates = append(gates, ClaimGate{Gate: "improvement_claim", Status: "blocked", ReasonCodes: append([]string{"semantic_readiness_blocked"}, summary.SemanticReadiness.ReasonCodes...), EvidenceRefs: firstRefs(summary.SafeArtifactRefs), ClaimImpact: "blocks improvement claim until semantic extraction value is proven"})
+	} else if summary.SemanticReadiness.Status == "not_evaluated" && !stringListContains(summary.SemanticReadiness.ReasonCodes, "insufficient_processed_sources") {
+		gates = append(gates, ClaimGate{Gate: "improvement_claim", Status: "blocked", ReasonCodes: append([]string{"semantic_readiness_not_evaluated"}, summary.SemanticReadiness.ReasonCodes...), EvidenceRefs: firstRefs(summary.SafeArtifactRefs), ClaimImpact: "blocks improvement claim until semantic-density evidence is present or reconstructable"})
 	} else {
 		switch improvementStatus {
 		case "improved":
@@ -1255,13 +1269,13 @@ func chooseTarget(model readbackModel, generalization string) ImprovementTarget 
 
 func semanticReadinessForModel(model readbackModel) SemanticReadiness {
 	readiness := SemanticReadiness{
-		ProcessedSourceCount:       intMetric(model, "processed_source_count", "source_count"),
+		ProcessedSourceCount:       intMetric(model, "processed_source_count", "processed_source_count_from_summaries", "source_count"),
 		DocumentSegmentCount:       intMetric(model, "document_segment_count_from_summaries", "document_segment_count", "segment_count"),
 		SemanticObservationCount:   intMetric(model, "semantic_observation_count", "semantic_observation_count_from_summaries", "observation_count"),
 		SemanticCandidateCount:     intMetric(model, "semantic_candidate_count", "semantic_candidate_count_from_summaries", "candidate_count"),
 		ReferenceCandidateCount:    intMetric(model, "reference_candidate_count_from_summaries", "reference_candidate_count"),
-		OneCandidateSourceCount:    intMetric(model, "one_candidate_source_count"),
-		ReferenceOnlySourceCount:   intMetric(model, "reference_only_source_count"),
+		OneCandidateSourceCount:    intMetric(model, "one_candidate_source_count", "one_candidate_source_count_from_summaries"),
+		ReferenceOnlySourceCount:   intMetric(model, "reference_only_source_count", "reference_only_source_count_from_summaries"),
 		CandidatePerSourceRatio:    model.metrics["candidate_per_processed_source_ratio"],
 		ObservationPerSegmentRatio: model.metrics["observation_per_segment_ratio"],
 		ReferenceCandidateRatio:    model.metrics["reference_candidate_ratio"],
@@ -1280,7 +1294,12 @@ func semanticReadinessForModel(model readbackModel) SemanticReadiness {
 		readiness.ReasonCodes = []string{"insufficient_processed_sources"}
 		return readiness
 	}
+	hasReferenceCandidateCount := metricPresent(model, "reference_candidate_count_from_summaries", "reference_candidate_count")
+	hasOneCandidateSourceCount := metricPresent(model, "one_candidate_source_count", "one_candidate_source_count_from_summaries")
+	hasDocumentSegmentCount := metricPresent(model, "document_segment_count_from_summaries", "document_segment_count", "segment_count")
 	if readiness.SemanticCandidateCount == readiness.ProcessedSourceCount &&
+		hasReferenceCandidateCount &&
+		hasOneCandidateSourceCount &&
 		readiness.ReferenceCandidateCount == readiness.SemanticCandidateCount &&
 		readiness.OneCandidateSourceCount == readiness.ProcessedSourceCount {
 		readiness.ReasonCodes = append(readiness.ReasonCodes, "reference_only_one_candidate_per_source")
@@ -1290,6 +1309,19 @@ func semanticReadinessForModel(model readbackModel) SemanticReadiness {
 	}
 	if len(readiness.ReasonCodes) > 0 {
 		readiness.Status = "blocked"
+		return readiness
+	}
+	referenceCollapseEvaluated := readiness.SemanticCandidateCount != readiness.ProcessedSourceCount || (hasReferenceCandidateCount && hasOneCandidateSourceCount)
+	lowDensityEvaluated := hasDocumentSegmentCount
+	if !referenceCollapseEvaluated || !lowDensityEvaluated {
+		readiness.Status = "not_evaluated"
+		readiness.ReasonCodes = []string{"missing_semantic_density_counters"}
+		if !referenceCollapseEvaluated {
+			readiness.ReasonCodes = append(readiness.ReasonCodes, "missing_reference_collapse_counters")
+		}
+		if !lowDensityEvaluated {
+			readiness.ReasonCodes = append(readiness.ReasonCodes, "missing_document_segment_count")
+		}
 		return readiness
 	}
 	readiness.Status = "ready"
@@ -1303,6 +1335,24 @@ func intMetric(model readbackModel, keys ...string) int {
 		}
 	}
 	return 0
+}
+
+func metricPresent(model readbackModel, keys ...string) bool {
+	for _, key := range keys {
+		if _, ok := model.metrics[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func stringListContains(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func writeSummary(outRoot string, summary Summary, protectedRoots []string) error {

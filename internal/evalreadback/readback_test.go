@@ -477,6 +477,30 @@ func TestBuildBlocksSemanticReadinessForReferenceOnlyCollapse(t *testing.T) {
 	}
 }
 
+func TestBuildBlocksSemanticReadinessFromIndividualSummariesWithoutPressure(t *testing.T) {
+	root := t.TempDir()
+	writeReferenceOnlyCollapsePressure(t, root)
+	if err := os.Remove(filepath.Join(root, "corpus-pressure", "pressure-summary.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if summary.SemanticReadiness.Status != "blocked" {
+		t.Fatalf("expected semantic readiness blocked from individual summaries, got %+v", summary.SemanticReadiness)
+	}
+	if summary.SemanticReadiness.ProcessedSourceCount != 50 ||
+		summary.SemanticReadiness.OneCandidateSourceCount != 50 ||
+		summary.SemanticReadiness.ReferenceOnlySourceCount != 50 {
+		t.Fatalf("expected source-level summary aggregation, got %+v", summary.SemanticReadiness)
+	}
+	if !containsString(summary.SemanticReadiness.ReasonCodes, "reference_only_one_candidate_per_source") {
+		t.Fatalf("expected reference-only collapse reason, got %+v", summary.SemanticReadiness)
+	}
+}
+
 func TestBuildDoesNotAddLowDensityReasonWithoutSegments(t *testing.T) {
 	root := t.TempDir()
 	sources := make([]any, 0, 50)
@@ -520,6 +544,31 @@ func TestBuildDoesNotAddLowDensityReasonWithoutSegments(t *testing.T) {
 	}
 	if containsString(summary.SemanticReadiness.ReasonCodes, "low_observation_to_segment_density") {
 		t.Fatalf("zero segment denominator must not produce low-density reason: %+v", summary.SemanticReadiness)
+	}
+}
+
+func TestBuildBlocksImprovementWhenLargePressureLacksDensityCounters(t *testing.T) {
+	root := t.TempDir()
+	baseline := filepath.Join(root, "baseline")
+	current := filepath.Join(root, "current")
+	writeLegacyPressureWithoutDensityCounters(t, baseline, 0.50)
+	writeLegacyPressureWithoutDensityCounters(t, current, 1.00)
+
+	summary, err := Build(current, filepath.Join(root, "out"), Options{BaselineRoot: baseline})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if summary.ImprovementStatus != "improved" {
+		t.Fatalf("expected comparison metrics to be improved, got %s", summary.ImprovementStatus)
+	}
+	if summary.SemanticReadiness.Status != "not_evaluated" ||
+		!containsString(summary.SemanticReadiness.ReasonCodes, "missing_semantic_density_counters") {
+		t.Fatalf("expected missing density counters to leave semantic readiness unevaluated, got %+v", summary.SemanticReadiness)
+	}
+	improvementGate := gateByName(summary, "improvement_claim")
+	if improvementGate.Status != "blocked" ||
+		!containsString(improvementGate.ReasonCodes, "semantic_readiness_not_evaluated") {
+		t.Fatalf("expected semantic readiness to block improvement claim, got %+v", improvementGate)
 	}
 }
 
@@ -1585,6 +1634,22 @@ func TestBuildRejectsNoArtifacts(t *testing.T) {
 func writePressure(t *testing.T, root string, evidenceReady, reviewBurden float64) {
 	t.Helper()
 	writePressureWithFingerprint(t, root, evidenceReady, reviewBurden, "same")
+}
+
+func writeLegacyPressureWithoutDensityCounters(t *testing.T, root string, evidenceReady float64) {
+	t.Helper()
+	writeFixture(t, filepath.Join(root, "corpus-pressure", "pressure-summary.json"), map[string]any{
+		"schema_version":             "corpus-pressure-summary/v0.1",
+		"corpus_id":                  "corpus-a",
+		"source_count":               50,
+		"processed_source_count":     50,
+		"semantic_candidate_count":   50,
+		"evidence_ready_atom_ratio":  evidenceReady,
+		"review_burden_ratio":        0,
+		"corpus_fingerprint":         "same",
+		"command_config_fingerprint": "same-config",
+		"guardrails":                 completeGuardrails(),
+	})
 }
 
 func writeValueProof(t *testing.T, root string, sourceAccountingRatio, evidenceOrBlockerRatio float64) {
