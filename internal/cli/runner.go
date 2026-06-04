@@ -14,6 +14,7 @@ import (
 	"strings"
 	"unicode"
 
+	gmailadapter "github.com/synergyai-os/Mindline/internal/adapters/gmail"
 	slackadapter "github.com/synergyai-os/Mindline/internal/adapters/slack"
 	"github.com/synergyai-os/Mindline/internal/destinations"
 	tolariadestination "github.com/synergyai-os/Mindline/internal/destinations/tolaria"
@@ -34,7 +35,7 @@ const (
 	ExitArtifactWrite = 3
 )
 
-const baseUsage = "usage: mindline process <candidate.json> [--out <dir>]\nusage: mindline slack normalize <slack-export.json> [--out <dir>]\nusage: mindline slack corpus-intake <slack-export.json> --out <dir>\nusage: mindline destination dry-run <sbos-result.json> --adapter tolaria --out <dir>\nusage: mindline pipeline dry-run <pipeline-input.json> --method basb-para-code --destination tolaria --out <dir>\nusage: mindline product-brain propose <run-dir> --profile <profile.json> --out <dir>\nusage: mindline documents decompose <markdown-path-or-dir> --out <dir>\nusage: mindline documents structure <markdown-path-or-dir> --out <dir>\nusage: mindline documents semantics <structure-run-dir-or-markdown-path-or-markdown-dir> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents accept <semantic-run-dir> --answer-key <answer-key.json> --out <dir>\nusage: mindline documents calibrate <semantic-acceptance-dir-or-parent> --out <dir> [--threshold 0.98] [--held-out] [--source-root <dir> --source <relative.md>]\nusage: mindline documents calibrate-next <semantic-calibration-dir-or-parent>\nusage: mindline documents judge <semantic-run-dir> --out <dir> [--source-root <dir> --source <relative.md>] [--agent-reviewer llm --llm-provider openai --llm-model <model>]\nusage: mindline documents judge-next <semantic-judgment-dir-or-parent>\nusage: mindline documents judge-record <semantic-judgment-dir-or-parent> --candidate <candidate-id> --choice accept|reject|unclear|duplicate|wrong-kind [--reason <failure-reason>] [--secondary-reason <failure-reason>] [--note <text>] [--reviewer <id>]\nusage: mindline documents judge-serve <semantic-judgment-dir-or-parent> [--addr 127.0.0.1:8787] [--reviewer <id>]\nusage: mindline documents readiness-report <semantic-judgment-dir-or-parent> --out <dir> [--threshold 0.98] [--held-out]\nusage: mindline documents corpus-graph <manifest.json> --out <dir>\nusage: mindline documents enrich-sources <corpus-pressure-manifest.json> --artifacts <local-enrichment-artifacts.json> --out <dir>\nusage: mindline documents link-enrichment-loop <corpus-pressure-manifest-or-intake-dir> --artifacts <local-enrichment-artifacts.json> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents corpus-pressure <markdown-dir-or-manifest> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents corpus-pressure-loop <markdown-dir-or-manifest> --out <dir> [--max-runs <n>] [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents corpus-acceptance <corpus-pressure-out-or-parent> --answer-key <corpus-answer-key.json> --out <dir> [--threshold 0.98] [--held-out]\nusage: mindline documents corpus-acceptance-labeling <corpus-pressure-out-or-parent> --out <dir>\nusage: mindline documents corpus-acceptance-label-next <corpus-acceptance-labeling-out-or-parent> --records <label-records.json> --out <dir>\nusage: mindline documents corpus-acceptance-label-record <corpus-acceptance-labeling-out-or-parent> --records <label-records.json> --map <label-next-map.json> --case-ref <ref> --decision expected_present|expected_absent|uncertain|abstain [--candidate-ref <ref>] [--expected-outcome <id>] [--expected-kind <kind>] [--minimum-confidence-floor low|medium|high] [--required-evidence-ref <ref>] [--labeler <id>] [--independence-attestation not_generated_from_evaluated_run] [--note <text>]\nusage: mindline documents corpus-acceptance-label-apply <corpus-acceptance-labeling-out-or-parent> --records <label-records.json> --out <dir>\nusage: mindline documents meaning-preview <corpus-pressure-out-or-parent> --out <dir>\nusage: mindline documents value-proof <markdown-dir-or-manifest> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline eval readback <run-or-artifact-dir> --out <dir> [--baseline <run-or-artifact-dir>]\nusage: mindline eval proof-gate <run-or-readback-dir> --out <dir> --claim safety|improvement|generalization|dec64 [--baseline <run-or-artifact-dir>]\nusage: mindline eval loop-decision <run-or-readback-dir> --out <dir> [--baseline <run-or-artifact-dir>]\nusage: mindline observability posthog-test\n"
+const baseUsage = "usage: mindline process <candidate.json> [--out <dir>]\nusage: mindline slack normalize <slack-export.json> [--out <dir>]\nusage: mindline slack corpus-intake <slack-export.json> --out <dir>\nusage: mindline gmail corpus-intake <gmail-export.json> --out <dir>\nusage: mindline destination dry-run <sbos-result.json> --adapter tolaria --out <dir>\nusage: mindline pipeline dry-run <pipeline-input.json> --method basb-para-code --destination tolaria --out <dir>\nusage: mindline product-brain propose <run-dir> --profile <profile.json> --out <dir>\nusage: mindline documents decompose <markdown-path-or-dir> --out <dir>\nusage: mindline documents structure <markdown-path-or-dir> --out <dir>\nusage: mindline documents semantics <structure-run-dir-or-markdown-path-or-markdown-dir> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents accept <semantic-run-dir> --answer-key <answer-key.json> --out <dir>\nusage: mindline documents calibrate <semantic-acceptance-dir-or-parent> --out <dir> [--threshold 0.98] [--held-out] [--source-root <dir> --source <relative.md>]\nusage: mindline documents calibrate-next <semantic-calibration-dir-or-parent>\nusage: mindline documents judge <semantic-run-dir> --out <dir> [--source-root <dir> --source <relative.md>] [--agent-reviewer llm --llm-provider openai --llm-model <model>]\nusage: mindline documents judge-next <semantic-judgment-dir-or-parent>\nusage: mindline documents judge-record <semantic-judgment-dir-or-parent> --candidate <candidate-id> --choice accept|reject|unclear|duplicate|wrong-kind [--reason <failure-reason>] [--secondary-reason <failure-reason>] [--note <text>] [--reviewer <id>]\nusage: mindline documents judge-serve <semantic-judgment-dir-or-parent> [--addr 127.0.0.1:8787] [--reviewer <id>]\nusage: mindline documents readiness-report <semantic-judgment-dir-or-parent> --out <dir> [--threshold 0.98] [--held-out]\nusage: mindline documents corpus-graph <manifest.json> --out <dir>\nusage: mindline documents enrich-sources <corpus-pressure-manifest.json> --artifacts <local-enrichment-artifacts.json> --out <dir>\nusage: mindline documents link-enrichment-loop <corpus-pressure-manifest-or-intake-dir> --artifacts <local-enrichment-artifacts.json> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents corpus-pressure <markdown-dir-or-manifest> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents corpus-pressure-loop <markdown-dir-or-manifest> --out <dir> [--max-runs <n>] [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents corpus-acceptance <corpus-pressure-out-or-parent> --answer-key <corpus-answer-key.json> --out <dir> [--threshold 0.98] [--held-out]\nusage: mindline documents corpus-acceptance-labeling <corpus-pressure-out-or-parent> --out <dir>\nusage: mindline documents corpus-acceptance-label-next <corpus-acceptance-labeling-out-or-parent> --records <label-records.json> --out <dir>\nusage: mindline documents corpus-acceptance-label-record <corpus-acceptance-labeling-out-or-parent> --records <label-records.json> --map <label-next-map.json> --case-ref <ref> --decision expected_present|expected_absent|uncertain|abstain [--candidate-ref <ref>] [--expected-outcome <id>] [--expected-kind <kind>] [--minimum-confidence-floor low|medium|high] [--required-evidence-ref <ref>] [--labeler <id>] [--independence-attestation not_generated_from_evaluated_run] [--note <text>]\nusage: mindline documents corpus-acceptance-label-apply <corpus-acceptance-labeling-out-or-parent> --records <label-records.json> --out <dir>\nusage: mindline documents meaning-preview <corpus-pressure-out-or-parent> --out <dir>\nusage: mindline documents value-proof <markdown-dir-or-manifest> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline eval readback <run-or-artifact-dir> --out <dir> [--baseline <run-or-artifact-dir>]\nusage: mindline eval proof-gate <run-or-readback-dir> --out <dir> --claim safety|improvement|generalization|dec64 [--baseline <run-or-artifact-dir>]\nusage: mindline eval loop-decision <run-or-readback-dir> --out <dir> [--baseline <run-or-artifact-dir>]\nusage: mindline observability posthog-test\n"
 
 var usage = strings.Replace(baseUsage, "usage: mindline documents corpus-acceptance-labeling <corpus-pressure-out-or-parent> --out <dir>\n", "usage: mindline documents corpus-acceptance-labeling <corpus-pressure-out-or-parent> --out <dir> [--seed --max-cases <n>]\n", 1)
 
@@ -195,6 +196,9 @@ func (r Runner) Run(args []string, stdout, stderr io.Writer) int {
 	}
 	if args[0] == "slack" {
 		return r.runSlack(args[1:], stdout, stderr)
+	}
+	if args[0] == "gmail" {
+		return r.runGmail(args[1:], stdout, stderr)
 	}
 	if args[0] == "destination" {
 		return r.runDestination(args[1:], stdout, stderr)
@@ -1367,6 +1371,44 @@ func (r Runner) runSlackCorpusIntake(args []string, stdout, stderr io.Writer) in
 	summary, err := slackadapter.BuildCorpusIntakeWithFileSystem(payload, outDir, r.fs)
 	if err != nil {
 		fmt.Fprintf(stderr, "build Slack corpus intake: %v\n", err)
+		return ExitArtifactWrite
+	}
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(summary); err != nil {
+		fmt.Fprintf(stderr, "write stdout: %v\n", err)
+		return ExitUsage
+	}
+	return ExitOK
+}
+
+func (r Runner) runGmail(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 || args[0] != "corpus-intake" {
+		fmt.Fprint(stderr, usage)
+		return ExitUsage
+	}
+	inputPath, outDir, parseError := parseDocumentsArgs(args, "corpus-intake")
+	if parseError != parseErrorNone {
+		fmt.Fprint(stderr, usage)
+		return ExitUsage
+	}
+	if err := r.validateDestinationOutDir(outDir); err != nil {
+		fmt.Fprintf(stderr, "invalid --out: %v\n", err)
+		return ExitUsage
+	}
+	input, err := r.fs.ReadFile(inputPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "read Gmail export: %v\n", err)
+		return ExitUsage
+	}
+	var payload gmailadapter.Payload
+	if err := json.Unmarshal(input, &payload); err != nil {
+		fmt.Fprintf(stderr, "build Gmail corpus intake: %v\n", err)
+		return ExitProcess
+	}
+	summary, err := gmailadapter.BuildCorpusIntakeWithFileSystem(payload, outDir, r.fs)
+	if err != nil {
+		fmt.Fprintf(stderr, "build Gmail corpus intake: %v\n", err)
 		return ExitArtifactWrite
 	}
 	encoder := json.NewEncoder(stdout)

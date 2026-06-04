@@ -1,4 +1,4 @@
-package slack
+package gmail
 
 import (
 	"crypto/sha256"
@@ -13,7 +13,7 @@ import (
 	"github.com/synergyai-os/Mindline/internal/sbos"
 )
 
-const CorpusIntakeDirName = "slack-corpus-intake"
+const CorpusIntakeDirName = "gmail-corpus-intake"
 
 type CorpusIntakeFileSystem = corpusintake.FileSystem
 
@@ -48,8 +48,7 @@ func buildCorpusIntake(payload Payload, root string, fileSystem CorpusIntakeFile
 		AdapterID:          result.AdapterID,
 		CorpusID:           corpusID(payload.Source),
 		Source:             sourceID(payload.Source),
-		ChannelID:          strings.TrimSpace(payload.Source.ChannelID),
-		ChannelName:        strings.TrimSpace(payload.Source.ChannelName),
+		Mailbox:            mailbox(payload.Source),
 		BatchOrder:         "old_to_new",
 		InputCount:         result.Checkpoint.InputCount,
 		ManifestPath:       "corpus-pressure-manifest.json",
@@ -64,7 +63,7 @@ func buildCorpusIntake(payload Payload, root string, fileSystem CorpusIntakeFile
 	sourceInputs := []corpusintake.SourceInput{}
 	processedSourceIDs := map[string]bool{}
 	for _, candidate := range result.Candidates {
-		item := corpusIntakeItem(candidate, payload.Source)
+		item := corpusIntakeItem(candidate)
 		switch item.State {
 		case CorpusIntakeItemProcessed:
 			if processedSourceIDs[item.SourceID] {
@@ -88,7 +87,6 @@ func buildCorpusIntake(payload Payload, root string, fileSystem CorpusIntakeFile
 			if output.Error != nil {
 				item.State = CorpusIntakeItemBlocked
 				item.ReasonCode = CorpusIntakeReasonArtifactWrite
-				item.SourcePath = ""
 			} else {
 				item.SourcePath = output.Path
 			}
@@ -103,7 +101,18 @@ func buildCorpusIntake(payload Payload, root string, fileSystem CorpusIntakeFile
 		}
 	}
 	sort.SliceStable(summary.Items, func(i, j int) bool {
-		return summary.Items[i].SlackTS < summary.Items[j].SlackTS
+		left, leftErr := parsedEmailTimestamp(summary.Items[i].EmailTS)
+		right, rightErr := parsedEmailTimestamp(summary.Items[j].EmailTS)
+		if leftErr == nil && rightErr == nil {
+			if left.Equal(right) {
+				return summary.Items[i].SourceID < summary.Items[j].SourceID
+			}
+			return left.Before(right)
+		}
+		if summary.Items[i].EmailTS == summary.Items[j].EmailTS {
+			return summary.Items[i].SourceID < summary.Items[j].SourceID
+		}
+		return summary.Items[i].EmailTS < summary.Items[j].EmailTS
 	})
 	summary.ProcessedCount = summary.StateCounts[CorpusIntakeItemProcessed]
 	summary.SkippedCount = summary.StateCounts[CorpusIntakeItemSkipped]
@@ -117,12 +126,10 @@ func buildCorpusIntake(payload Payload, root string, fileSystem CorpusIntakeFile
 	return summary, nil
 }
 
-func corpusIntakeItem(candidate sbos.Candidate, source Source) CorpusIntakeItem {
-	sourceID := corpusIntakeSourceID(source, candidate.Provenance.NativeTimestamp.Value)
+func corpusIntakeItem(candidate sbos.Candidate) CorpusIntakeItem {
 	item := CorpusIntakeItem{
-		SourceID:     sourceID,
-		ExternalID:   candidate.ExternalID,
-		SlackTS:      candidate.Provenance.NativeTimestamp.Value,
+		SourceID:     corpusIntakeSourceID(candidate),
+		EmailTS:      candidate.Provenance.NativeTimestamp.Value,
 		State:        CorpusIntakeItemProcessed,
 		ReasonCode:   CorpusIntakeReasonNone,
 		Private:      candidate.Safety.PrivateProvenance,
@@ -150,11 +157,11 @@ func writeCorpusIntakeReport(fileSystem CorpusIntakeFileSystem, root string, sum
 
 func corpusIntakeMarkdown(candidate sbos.Candidate) string {
 	var b strings.Builder
-	b.WriteString("# Slack capture\n\n")
+	b.WriteString("# Gmail message\n\n")
 	b.WriteString("## Source metadata\n\n")
 	b.WriteString(fmt.Sprintf("- Candidate ID: `%s`\n", candidate.CandidateID))
 	b.WriteString(fmt.Sprintf("- External ID: `%s`\n", candidate.ExternalID))
-	b.WriteString(fmt.Sprintf("- Slack timestamp: `%s`\n", candidate.Provenance.NativeTimestamp.Value))
+	b.WriteString(fmt.Sprintf("- Gmail timestamp: `%s`\n", candidate.Provenance.NativeTimestamp.Value))
 	b.WriteString(fmt.Sprintf("- Author: %s\n", candidate.Provenance.Author.Value))
 	b.WriteString(fmt.Sprintf("- Permalink: %s\n", candidate.Provenance.Permalink.Value))
 	b.WriteString(fmt.Sprintf("- Raw locator: `%s`\n\n", candidate.Provenance.RawLocator.Value))
@@ -178,7 +185,7 @@ func corpusIntakeMarkdown(candidate sbos.Candidate) string {
 
 func corpusIntakeReport(summary CorpusIntakeSummary) string {
 	var b strings.Builder
-	b.WriteString("# Slack corpus intake report\n\n")
+	b.WriteString("# Gmail corpus intake report\n\n")
 	b.WriteString("## Intake answer\n\n")
 	b.WriteString(fmt.Sprintf("- Corpus: `%s`\n", summary.CorpusID))
 	b.WriteString(fmt.Sprintf("- Source: `%s`\n", summary.Source))
@@ -200,21 +207,25 @@ func corpusIntakeReport(summary CorpusIntakeSummary) string {
 		if path == "" {
 			path = "-"
 		}
-		b.WriteString(fmt.Sprintf("- `%s` ts=%s state=%s reason=%s source=`%s`\n", item.SourceID, item.SlackTS, item.State, item.ReasonCode, path))
+		b.WriteString(fmt.Sprintf("- `%s` ts=%s state=%s reason=%s source=`%s`\n", item.SourceID, item.EmailTS, item.State, item.ReasonCode, path))
 	}
 	if len(summary.Items) == 0 {
-		b.WriteString("- No Slack messages were present.\n")
+		b.WriteString("- No Gmail messages were present.\n")
 	}
 	return b.String()
 }
 
-func corpusIntakeSourceID(source Source, ts string) string {
-	return sanitizeLocalID("slack-" + source.Workspace + "-" + source.ChannelID + "-" + normalizeTS(ts))
+func corpusIntakeSourceID(candidate sbos.Candidate) string {
+	return sanitizeLocalID(candidate.CandidateID)
 }
 
 func corpusID(source Source) string {
 	sum := sha256.Sum256([]byte(sourceID(source)))
-	return "corpus-slack-" + hex.EncodeToString(sum[:])[:16]
+	return "corpus-gmail-" + hex.EncodeToString(sum[:])[:16]
+}
+
+func mailbox(source Source) string {
+	return mailboxID(source)
 }
 
 func sanitizeLocalID(value string) string {
@@ -232,13 +243,13 @@ func sanitizeLocalID(value string) string {
 		clean = strings.ReplaceAll(clean, "--", "-")
 	}
 	if clean == "" {
-		return "slack-source"
+		return "gmail-source"
 	}
 	return clean
 }
 
 func corpusIntakeAuthorityIDs() []string {
 	ids := append([]string{}, authorityIDs()...)
-	ids = append(ids, "WP-31", "WP-29", "WP-30", "STR-3", "PRI-1", "BR-1")
+	ids = append(ids, "WP-46", "WP-31", "WP-30", "STR-3", "PRI-1", "BR-1")
 	return ids
 }
