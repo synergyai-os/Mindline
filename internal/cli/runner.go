@@ -113,10 +113,12 @@ type ObservabilityTestEnvelope struct {
 
 func corpusAcceptanceLabelRecordCLIOutput(records documents.CorpusAcceptanceLabelRecords) documents.CorpusAcceptanceLabelRecordingOutputSummary {
 	output := documents.CorpusAcceptanceLabelRecordingOutputSummary{
-		SchemaVersion:  documents.CorpusAcceptanceLabelRecordingSummarySchemaVersion,
-		LabelingStatus: "labels_recorded",
-		RecordCount:    len(records.Records),
-		Blockers:       []string{},
+		SchemaVersion:           documents.CorpusAcceptanceLabelRecordingSummarySchemaVersion,
+		LabelingStatus:          "labels_recorded",
+		RecordCount:             len(records.Records),
+		SeedPrivateMapStatus:    "not_applicable",
+		ArtifactConfidentiality: "private_safe_redacted",
+		Blockers:                []string{},
 	}
 	for _, record := range records.Records {
 		switch record.Decision {

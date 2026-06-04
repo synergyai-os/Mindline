@@ -731,6 +731,118 @@ func TestDocumentsCorpusAcceptanceLabelRecordZeroCandidateExpectedAbsent(t *test
 	}
 }
 
+func TestDocumentsCorpusAcceptanceSeedLabelApplyFeedsCorpusAcceptance(t *testing.T) {
+	root := t.TempDir()
+	runner := NewRunner(NewOSFileSystem())
+	pressureOut := filepath.Join(root, "pressure")
+	var stdout, stderr bytes.Buffer
+	code := runner.Run([]string{
+		"documents", "corpus-pressure", documentsFixture(t, "semantic"),
+		"--out", pressureOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected corpus-pressure exit %d, got %d stdout=%s stderr=%s", ExitOK, code, stdout.String(), stderr.String())
+	}
+
+	labelingOut := filepath.Join(root, "seed")
+	stdout.Reset()
+	stderr.Reset()
+	code = runner.Run([]string{
+		"documents", "corpus-acceptance-labeling", pressureOut,
+		"--out", labelingOut,
+		"--seed",
+		"--max-cases", "1",
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected seed labeling exit %d, got %d stdout=%s stderr=%s", ExitOK, code, stdout.String(), stderr.String())
+	}
+
+	recordsPath := filepath.Join(root, "records.json")
+	nextOut := filepath.Join(root, "next")
+	stdout.Reset()
+	stderr.Reset()
+	code = runner.Run([]string{
+		"documents", "corpus-acceptance-label-next", labelingOut,
+		"--records", recordsPath,
+		"--out", nextOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected label-next exit %d, got %d stdout=%s stderr=%s", ExitOK, code, stdout.String(), stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = runner.Run([]string{
+		"documents", "corpus-acceptance-label-record", labelingOut,
+		"--records", recordsPath,
+		"--map", filepath.Join(nextOut, "corpus-acceptance-label-next", "label-next-map.json"),
+		"--case-ref", "case-001",
+		"--candidate-ref", "candidate-001",
+		"--decision", "expected_present",
+		"--required-evidence-ref", "evidence-001",
+		"--labeler", "fixture-human",
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected label-record exit %d, got %d stdout=%s stderr=%s", ExitOK, code, stdout.String(), stderr.String())
+	}
+
+	recordingOut := filepath.Join(root, "recording")
+	stdout.Reset()
+	stderr.Reset()
+	code = runner.Run([]string{
+		"documents", "corpus-acceptance-label-apply", labelingOut,
+		"--records", recordsPath,
+		"--out", recordingOut,
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected label-apply exit %d, got %d stdout=%s stderr=%s", ExitOK, code, stdout.String(), stderr.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("expected empty label-apply stderr, got %q", stderr.String())
+	}
+	var applySummary documents.CorpusAcceptanceLabelRecordingOutputSummary
+	if err := json.Unmarshal(stdout.Bytes(), &applySummary); err != nil {
+		t.Fatalf("decode label-apply stdout: %v", err)
+	}
+	if !applySummary.SeedMode || applySummary.SeedPrivateMapStatus != "present" || !applySummary.OriginalCorpusCompatible || applySummary.ArtifactConfidentiality != "local_private_rehydrated" {
+		t.Fatalf("expected seed private-map status in label-apply stdout, got %+v", applySummary)
+	}
+	if applySummary.TranslatedSourceCount != 1 || applySummary.TranslatedExpectedOutcomeCount != 1 || applySummary.TranslatedEvidenceRefCount != 1 {
+		t.Fatalf("expected translated ref counts in label-apply stdout, got %+v", applySummary)
+	}
+	if strings.Contains(stdout.String(), "source_id") || strings.Contains(stdout.String(), "candidate_id") || strings.Contains(stdout.String(), "evidence_node") || strings.Contains(stdout.String(), root) {
+		t.Fatalf("label-apply stdout leaked private-local refs: %s", stdout.String())
+	}
+
+	acceptanceOut := filepath.Join(root, "acceptance")
+	stdout.Reset()
+	stderr.Reset()
+	code = runner.Run([]string{
+		"documents", "corpus-acceptance", pressureOut,
+		"--answer-key", filepath.Join(recordingOut, "corpus-acceptance-label-recording", "answer-key.json"),
+		"--out", acceptanceOut,
+		"--held-out",
+	}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected corpus-acceptance exit %d, got %d stdout=%s stderr=%s", ExitOK, code, stdout.String(), stderr.String())
+	}
+	var benchmark documents.CorpusAcceptanceBenchmarkSummary
+	if err := json.Unmarshal(stdout.Bytes(), &benchmark); err != nil {
+		t.Fatalf("decode corpus-acceptance stdout: %v", err)
+	}
+	if benchmark.EvalCount != 1 || benchmark.MatchedExpectedCount != 1 || benchmark.SuiteValid || benchmark.DEC64Eligible {
+		t.Fatalf("unexpected benchmark consumption state: %+v", benchmark)
+	}
+	for _, blocker := range []string{"answer_key_not_independent", "below_min_eval_count"} {
+		if !cliStringListContains(benchmark.SuiteValidityBlockers, blocker) {
+			t.Fatalf("expected suite blocker %q, got %+v", blocker, benchmark.SuiteValidityBlockers)
+		}
+	}
+	if !cliStringListContains(benchmark.EligibilityBlockers, "below_dec64_min_eval_count") || !cliStringListContains(benchmark.EligibilityBlockers, "suite_invalid") {
+		t.Fatalf("expected DEC64 eligibility blockers, got %+v", benchmark.EligibilityBlockers)
+	}
+}
+
 func cliStringListContains(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {

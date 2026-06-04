@@ -19,6 +19,32 @@ func WriteCorpusAcceptanceLabelingPacketWithSeed(outDir string, packet CorpusAcc
 	if err := ValidateCorpusAcceptanceLabelingPacket(packet); err != nil {
 		return ArtifactWriteError{Err: err}
 	}
+	report := corpusAcceptanceLabelingMarkdown(packet)
+	if containsUnsafeMarker(report) {
+		return ArtifactWriteError{Err: fmt.Errorf("corpus acceptance labeling report contains unsafe marker")}
+	}
+	if containsGovernanceID(report) {
+		return ArtifactWriteError{Err: fmt.Errorf("corpus acceptance labeling report contains governance marker")}
+	}
+	if containsPrivateReportMarker(report) {
+		return ArtifactWriteError{Err: fmt.Errorf("corpus acceptance labeling report contains private marker")}
+	}
+	var seedReport string
+	if seed != nil {
+		if privateMap == nil {
+			return ArtifactWriteError{Err: fmt.Errorf("missing seed private map")}
+		}
+		if err := ValidateCorpusAcceptanceLabelSeedSummary(*seed); err != nil {
+			return ArtifactWriteError{Err: err}
+		}
+		if err := ValidateCorpusAcceptanceLabelSeedPrivateMap(*privateMap, packet); err != nil {
+			return ArtifactWriteError{Err: err}
+		}
+		seedReport = corpusAcceptanceLabelSeedMarkdown(*seed)
+		if containsUnsafeMarker(seedReport) || containsGovernanceID(seedReport) || containsPrivateReportMarker(seedReport) {
+			return ArtifactWriteError{Err: fmt.Errorf("corpus acceptance label seed report contains private marker")}
+		}
+	}
 	outRoot, err := filepath.Abs(outDir)
 	if err != nil {
 		return ArtifactWriteError{Err: err}
@@ -60,33 +86,10 @@ func WriteCorpusAcceptanceLabelingPacketWithSeed(outDir string, packet CorpusAcc
 	if err := writeJSON(realRoot, "answer-key-template.json", template); err != nil {
 		return ArtifactWriteError{Err: err}
 	}
-	report := corpusAcceptanceLabelingMarkdown(packet)
-	if containsUnsafeMarker(report) {
-		return ArtifactWriteError{Err: fmt.Errorf("corpus acceptance labeling report contains unsafe marker")}
-	}
-	if containsGovernanceID(report) {
-		return ArtifactWriteError{Err: fmt.Errorf("corpus acceptance labeling report contains governance marker")}
-	}
-	if containsPrivateReportMarker(report) {
-		return ArtifactWriteError{Err: fmt.Errorf("corpus acceptance labeling report contains private marker")}
-	}
 	if err := writeFile(realRoot, "labeling-report.md", []byte(report)); err != nil {
 		return ArtifactWriteError{Err: err}
 	}
 	if seed != nil {
-		if privateMap == nil {
-			return ArtifactWriteError{Err: fmt.Errorf("missing seed private map")}
-		}
-		if err := ValidateCorpusAcceptanceLabelSeedSummary(*seed); err != nil {
-			return ArtifactWriteError{Err: err}
-		}
-		if err := ValidateCorpusAcceptanceLabelSeedPrivateMap(*privateMap, packet); err != nil {
-			return ArtifactWriteError{Err: err}
-		}
-		seedReport := corpusAcceptanceLabelSeedMarkdown(*seed)
-		if containsUnsafeMarker(seedReport) || containsGovernanceID(seedReport) || containsPrivateReportMarker(seedReport) {
-			return ArtifactWriteError{Err: fmt.Errorf("corpus acceptance label seed report contains private marker")}
-		}
 		if err := writeJSON(realRoot, "seed-summary.json", seed); err != nil {
 			return ArtifactWriteError{Err: err}
 		}
@@ -271,6 +274,9 @@ func ValidateCorpusAcceptanceLabelSeedPrivateMap(privateMap CorpusAcceptanceLabe
 		if mapCase.CaseRef != source.CaseID {
 			return fmt.Errorf("seed private map case ref mismatch")
 		}
+		if strings.TrimSpace(mapCase.OriginalCaseID) == "" {
+			return fmt.Errorf("seed private map missing original case id")
+		}
 		if strings.TrimSpace(mapCase.OriginalSourceID) == "" {
 			return fmt.Errorf("seed private map missing original source id")
 		}
@@ -284,6 +290,17 @@ func ValidateCorpusAcceptanceLabelSeedPrivateMap(privateMap CorpusAcceptanceLabe
 			}
 			if strings.TrimSpace(mapCandidate.OriginalCandidateID) == "" {
 				return fmt.Errorf("seed private map missing original candidate id")
+			}
+			if strings.TrimSpace(candidate.SourceDocumentID) != "" && strings.TrimSpace(mapCandidate.OriginalSourceDocumentID) == "" {
+				return fmt.Errorf("seed private map missing original source document id")
+			}
+			if len(mapCandidate.OriginalEvidenceNodes) != len(candidate.EvidenceNodes) {
+				return fmt.Errorf("seed private map evidence ref count mismatch")
+			}
+			for _, evidenceNode := range mapCandidate.OriginalEvidenceNodes {
+				if strings.TrimSpace(evidenceNode) == "" {
+					return fmt.Errorf("seed private map missing original evidence node")
+				}
 			}
 		}
 	}

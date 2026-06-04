@@ -10,8 +10,14 @@ import (
 )
 
 const (
-	corpusAcceptanceLabelRecordingDirName = "corpus-acceptance-label-recording"
-	corpusAcceptanceLabelsRecorded        = "labels_recorded"
+	corpusAcceptanceLabelRecordingDirName          = "corpus-acceptance-label-recording"
+	corpusAcceptanceLabelsRecorded                 = "labels_recorded"
+	corpusAcceptanceSeedMapPresent                 = "present"
+	corpusAcceptanceSeedMapNotApplicable           = "not_applicable"
+	corpusAcceptanceArtifactLocalPrivateRehydrated = "local_private_rehydrated"
+	corpusAcceptanceArtifactPrivateSafeRedacted    = "private_safe_redacted"
+	corpusAcceptanceArtifactNonSeedLocal           = "non_seed_local"
+	corpusAcceptanceArtifactBlocked                = "blocked"
 )
 
 func BuildCorpusAcceptanceLabelRecording(labelingPath, recordsPath, outDir string) (CorpusAcceptanceLabelRecordingSummary, CorpusAcceptanceAnswerKey, error) {
@@ -22,6 +28,9 @@ func BuildCorpusAcceptanceLabelRecording(labelingPath, recordsPath, outDir strin
 	seedMap, err := readOptionalCorpusAcceptanceLabelSeedPrivateMap(labelingPath, packet)
 	if err != nil {
 		return CorpusAcceptanceLabelRecordingSummary{}, CorpusAcceptanceAnswerKey{}, err
+	}
+	if corpusAcceptanceLabelingPacketSeedMode(packet) && seedMap == nil {
+		return CorpusAcceptanceLabelRecordingSummary{}, CorpusAcceptanceAnswerKey{}, fmt.Errorf("seed private map required for seed-mode label apply")
 	}
 	records, err := readCorpusAcceptanceLabelRecords(recordsPath)
 	if err != nil {
@@ -117,8 +126,20 @@ func readCorpusAcceptanceLabelRecords(path string) (CorpusAcceptanceLabelRecords
 }
 
 func buildCorpusAcceptanceLabelRecording(packet CorpusAcceptanceLabelingPacket, records CorpusAcceptanceLabelRecords, seedMap *CorpusAcceptanceLabelSeedPrivateMap) (CorpusAcceptanceLabelRecordingSummary, CorpusAcceptanceAnswerKey, error) {
+	seedMode := corpusAcceptanceLabelingPacketSeedMode(packet)
+	if seedMode && seedMap == nil {
+		return CorpusAcceptanceLabelRecordingSummary{}, CorpusAcceptanceAnswerKey{}, fmt.Errorf("seed private map required for seed-mode label apply")
+	}
 	index := corpusAcceptanceLabelingIndex(packet)
 	seedIndex := corpusAcceptanceLabelSeedPrivateMapIndexFor(seedMap)
+	seedPrivateMapStatus := corpusAcceptanceSeedMapNotApplicable
+	artifactConfidentiality := corpusAcceptanceArtifactNonSeedLocal
+	originalCorpusCompatible := false
+	if seedMode {
+		seedPrivateMapStatus = corpusAcceptanceSeedMapPresent
+		artifactConfidentiality = corpusAcceptanceArtifactLocalPrivateRehydrated
+		originalCorpusCompatible = true
+	}
 	answerKey := CorpusAcceptanceAnswerKey{
 		SchemaVersion:            CorpusAcceptanceAnswerKeySchemaVersion,
 		SuiteID:                  records.SuiteID,
@@ -142,6 +163,10 @@ func buildCorpusAcceptanceLabelRecording(packet CorpusAcceptanceLabelingPacket, 
 		CommandConfigFingerprint: packet.CommandConfigFingerprint,
 		RecordCount:              len(records.Records),
 		SourceCount:              packet.SourceCount,
+		SeedMode:                 seedMode,
+		SeedPrivateMapStatus:     seedPrivateMapStatus,
+		OriginalCorpusCompatible: originalCorpusCompatible,
+		ArtifactConfidentiality:  artifactConfidentiality,
 		Independence:             records.Provenance.Independence,
 		Guardrails:               packet.Guardrails,
 		AnswerKeyPath:            filepath.ToSlash(filepath.Join(corpusAcceptanceLabelRecordingDirName, "answer-key.json")),
@@ -163,6 +188,7 @@ func buildCorpusAcceptanceLabelRecording(packet CorpusAcceptanceLabelingPacket, 
 		return CorpusAcceptanceLabelRecordingSummary{}, CorpusAcceptanceAnswerKey{}, fmt.Errorf("invalid corpus acceptance label records: %s", strings.Join(uniqueStrings(blockers), ", "))
 	}
 	seenCasesWithOutcomes := map[string]bool{}
+	translatedSources := map[string]bool{}
 	for _, record := range records.Records {
 		source, candidate, hasCandidate := index.lookup(record.CaseID, record.CandidateID)
 		switch record.Decision {
@@ -179,11 +205,15 @@ func buildCorpusAcceptanceLabelRecording(packet CorpusAcceptanceLabelingPacket, 
 		if source == nil {
 			continue
 		}
-		sourceID := seedIndex.sourceIDFor(source.CaseID, source.SourceID)
+		sourceID, sourceTranslated := seedIndex.sourceIDFor(source.CaseID, source.SourceID)
+		if sourceTranslated && !translatedSources[sourceID] {
+			translatedSources[sourceID] = true
+			summary.TranslatedSourceCount++
+		}
 		sourceKey := sourceKeys[sourceID]
 		if sourceKey == nil {
 			sourceDocumentID := firstNonBlankCorpusString(record.SourceDocumentID, sourceDocumentIDForLabel(candidate, hasCandidate))
-			sourceDocumentID = seedIndex.sourceDocumentIDFor(source.CaseID, candidateIDForLabelRecord(candidate, hasCandidate), sourceDocumentID)
+			sourceDocumentID, _ = seedIndex.sourceDocumentIDFor(source.CaseID, candidateIDForLabelRecord(candidate, hasCandidate), sourceDocumentID)
 			sourceKey = &CorpusAcceptanceAnswerKeySource{
 				SourceID:         sourceID,
 				SourceDocumentID: sourceDocumentID,
@@ -192,7 +222,12 @@ func buildCorpusAcceptanceLabelRecording(packet CorpusAcceptanceLabelingPacket, 
 			sourceKeys[sourceID] = sourceKey
 		}
 		outcome := labelRecordOutcome(record, candidate, hasCandidate)
-		outcome.RequiredEvidence = seedIndex.evidenceNodesFor(source.CaseID, candidateIDForLabelRecord(candidate, hasCandidate), outcome.RequiredEvidence)
+		translatedEvidence, translatedEvidenceCount := seedIndex.evidenceNodesFor(source.CaseID, candidateIDForLabelRecord(candidate, hasCandidate), outcome.RequiredEvidence)
+		outcome.RequiredEvidence = translatedEvidence
+		if seedMode {
+			summary.TranslatedExpectedOutcomeCount++
+			summary.TranslatedEvidenceRefCount += translatedEvidenceCount
+		}
 		sourceKey.ExpectedOutcomes = append(sourceKey.ExpectedOutcomes, outcome)
 		seenCasesWithOutcomes[source.CaseID] = true
 		summary.EvalCount++
@@ -268,39 +303,43 @@ func corpusAcceptanceLabelSeedPrivateMapIndexFor(privateMap *CorpusAcceptanceLab
 	return index
 }
 
-func (index corpusAcceptanceLabelSeedPrivateMapIndex) sourceIDFor(caseID, fallback string) string {
+func (index corpusAcceptanceLabelSeedPrivateMapIndex) sourceIDFor(caseID, fallback string) (string, bool) {
 	mapCase, ok := index.cases[caseID]
 	if !ok || strings.TrimSpace(mapCase.OriginalSourceID) == "" {
-		return fallback
+		return fallback, false
 	}
-	return mapCase.OriginalSourceID
+	return mapCase.OriginalSourceID, mapCase.OriginalSourceID != fallback
 }
 
-func (index corpusAcceptanceLabelSeedPrivateMapIndex) sourceDocumentIDFor(caseID, candidateID, fallback string) string {
+func (index corpusAcceptanceLabelSeedPrivateMapIndex) sourceDocumentIDFor(caseID, candidateID, fallback string) (string, bool) {
 	mapCandidate := index.candidateFor(caseID, candidateID)
 	if strings.TrimSpace(mapCandidate.OriginalSourceDocumentID) == "" {
-		return fallback
+		return fallback, false
 	}
-	return mapCandidate.OriginalSourceDocumentID
+	return mapCandidate.OriginalSourceDocumentID, mapCandidate.OriginalSourceDocumentID != fallback
 }
 
-func (index corpusAcceptanceLabelSeedPrivateMapIndex) evidenceNodesFor(caseID, candidateID string, fallback []string) []string {
+func (index corpusAcceptanceLabelSeedPrivateMapIndex) evidenceNodesFor(caseID, candidateID string, fallback []string) ([]string, int) {
 	mapCandidate := index.candidateFor(caseID, candidateID)
 	if len(mapCandidate.OriginalEvidenceNodes) == 0 || len(fallback) == 0 {
-		return fallback
+		return fallback, 0
 	}
 	out := make([]string, 0, len(fallback))
+	translatedCount := 0
 	for _, evidence := range fallback {
 		translated := evidence
 		for idx, originalEvidence := range mapCandidate.OriginalEvidenceNodes {
 			if evidence == fmt.Sprintf("evidence-node-%03d", idx+1) {
 				translated = originalEvidence
+				if translated != evidence {
+					translatedCount++
+				}
 				break
 			}
 		}
 		out = append(out, translated)
 	}
-	return out
+	return out, translatedCount
 }
 
 func (index corpusAcceptanceLabelSeedPrivateMapIndex) candidateFor(caseID, candidateID string) CorpusAcceptanceLabelSeedPrivateMapCandidate {
@@ -655,6 +694,13 @@ func validSemanticAcceptanceReason(reason SemanticAcceptanceReason) bool {
 	}
 }
 
+func corpusAcceptanceLabelingPacketSeedMode(packet CorpusAcceptanceLabelingPacket) bool {
+	if strings.HasSuffix(packet.PacketID, "-seed") {
+		return true
+	}
+	return corpusLabelStringListContains(packet.ClaimBoundaries, "seed_mode_private_safe_label_queue_only")
+}
+
 func labelRecordEvidenceRefs(record CorpusAcceptanceLabelRecordItem) []string {
 	refs := append([]string{}, record.RequiredEvidence...)
 	refs = append(refs, record.AcceptableAlternates...)
@@ -751,17 +797,24 @@ func containsUnsafeLabelRecordMarker(record CorpusAcceptanceLabelRecordItem) boo
 
 func CorpusAcceptanceLabelRecordingOutputFor(summary CorpusAcceptanceLabelRecordingSummary) CorpusAcceptanceLabelRecordingOutputSummary {
 	return CorpusAcceptanceLabelRecordingOutputSummary{
-		SchemaVersion:   summary.SchemaVersion,
-		LabelingStatus:  summary.LabelingStatus,
-		RecordCount:     summary.RecordCount,
-		EvalCount:       summary.EvalCount,
-		UncertainCount:  summary.UncertainCount,
-		AbstainCount:    summary.AbstainCount,
-		HeldOutReady:    summary.HeldOutReady,
-		BenchmarkReady:  summary.BenchmarkReady,
-		Blockers:        append([]string{}, summary.Blockers...),
-		AnswerKeyPath:   summary.AnswerKeyPath,
-		ReportPath:      summary.ReportPath,
-		ClaimBoundaries: append([]string{}, summary.ClaimBoundaries...),
+		SchemaVersion:                  summary.SchemaVersion,
+		LabelingStatus:                 summary.LabelingStatus,
+		RecordCount:                    summary.RecordCount,
+		EvalCount:                      summary.EvalCount,
+		UncertainCount:                 summary.UncertainCount,
+		AbstainCount:                   summary.AbstainCount,
+		SeedMode:                       summary.SeedMode,
+		SeedPrivateMapStatus:           summary.SeedPrivateMapStatus,
+		OriginalCorpusCompatible:       summary.OriginalCorpusCompatible,
+		TranslatedSourceCount:          summary.TranslatedSourceCount,
+		TranslatedExpectedOutcomeCount: summary.TranslatedExpectedOutcomeCount,
+		TranslatedEvidenceRefCount:     summary.TranslatedEvidenceRefCount,
+		ArtifactConfidentiality:        summary.ArtifactConfidentiality,
+		HeldOutReady:                   summary.HeldOutReady,
+		BenchmarkReady:                 summary.BenchmarkReady,
+		Blockers:                       append([]string{}, summary.Blockers...),
+		AnswerKeyPath:                  summary.AnswerKeyPath,
+		ReportPath:                     summary.ReportPath,
+		ClaimBoundaries:                append([]string{}, summary.ClaimBoundaries...),
 	}
 }

@@ -32,6 +32,11 @@ func WriteCorpusAcceptanceLabelRecording(outDir string, summary CorpusAcceptance
 	if err := rejectIfSymlink(root); err != nil {
 		return ArtifactWriteError{Err: err}
 	}
+	if summary.ArtifactConfidentiality == corpusAcceptanceArtifactLocalPrivateRehydrated {
+		if err := rejectCorpusAcceptanceLocalPrivateRehydratedOutput(root); err != nil {
+			return ArtifactWriteError{Err: err}
+		}
+	}
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return ArtifactWriteError{Err: err}
 	}
@@ -62,6 +67,23 @@ func ValidateCorpusAcceptanceLabelRecordingSummary(summary CorpusAcceptanceLabel
 	if strings.TrimSpace(summary.SuiteID) == "" || sanitizeID(summary.SuiteID) != summary.SuiteID {
 		return fmt.Errorf("unsafe suite id")
 	}
+	if !validCorpusAcceptanceArtifactConfidentiality(summary.ArtifactConfidentiality) {
+		return fmt.Errorf("invalid artifact confidentiality")
+	}
+	seedHandoff := summary.SeedMode ||
+		summary.OriginalCorpusCompatible ||
+		summary.SeedPrivateMapStatus == corpusAcceptanceSeedMapPresent ||
+		summary.TranslatedSourceCount > 0 ||
+		summary.TranslatedExpectedOutcomeCount > 0 ||
+		summary.TranslatedEvidenceRefCount > 0
+	if seedHandoff {
+		if !summary.SeedMode || !summary.OriginalCorpusCompatible || summary.SeedPrivateMapStatus != corpusAcceptanceSeedMapPresent || summary.ArtifactConfidentiality != corpusAcceptanceArtifactLocalPrivateRehydrated {
+			return fmt.Errorf("seed recording must be local_private_rehydrated")
+		}
+	}
+	if !seedHandoff && summary.ArtifactConfidentiality == corpusAcceptanceArtifactLocalPrivateRehydrated {
+		return fmt.Errorf("local_private_rehydrated recording requires seed handoff")
+	}
 	body := strings.Join([]string{
 		summary.SuiteID,
 		string(summary.SuiteKind),
@@ -73,12 +95,80 @@ func ValidateCorpusAcceptanceLabelRecordingSummary(summary CorpusAcceptanceLabel
 		strings.Join(summary.Blockers, "\n"),
 		summary.AnswerKeyPath,
 		summary.ReportPath,
+		summary.SeedPrivateMapStatus,
+		summary.ArtifactConfidentiality,
 		strings.Join(summary.ClaimBoundaries, "\n"),
 	}, "\n")
 	if containsUnsafeMarker(body) || containsGovernanceID(body) {
 		return fmt.Errorf("corpus acceptance label recording summary contains private marker")
 	}
 	return nil
+}
+
+func validCorpusAcceptanceArtifactConfidentiality(value string) bool {
+	switch value {
+	case corpusAcceptanceArtifactLocalPrivateRehydrated,
+		corpusAcceptanceArtifactPrivateSafeRedacted,
+		corpusAcceptanceArtifactNonSeedLocal,
+		corpusAcceptanceArtifactBlocked:
+		return true
+	default:
+		return false
+	}
+}
+
+func rejectCorpusAcceptanceLocalPrivateRehydratedOutput(realRoot string) error {
+	clean, err := realPathForPossiblyMissing(realRoot)
+	if err != nil {
+		return err
+	}
+	for _, part := range strings.Split(clean, string(filepath.Separator)) {
+		switch part {
+		case ".productbrain", "testdata", ".git":
+			return fmt.Errorf("local private rehydrated output must be outside durable workspace artifacts")
+		}
+	}
+	gitVisible, err := hasGitVisibleAncestor(clean)
+	if err != nil {
+		return err
+	}
+	if gitVisible {
+		return fmt.Errorf("local private rehydrated output must be outside durable workspace artifacts")
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	absWD, err := filepath.Abs(wd)
+	if err != nil {
+		return err
+	}
+	realWD, err := filepath.EvalSymlinks(absWD)
+	if err != nil {
+		return err
+	}
+	if sameOrChildPath(realWD, clean) {
+		return fmt.Errorf("local private rehydrated output must be outside durable workspace artifacts")
+	}
+	return nil
+}
+
+func hasGitVisibleAncestor(path string) (bool, error) {
+	current := filepath.Clean(path)
+	for {
+		_, err := os.Lstat(filepath.Join(current, ".git"))
+		if err == nil {
+			return true, nil
+		}
+		if !os.IsNotExist(err) {
+			return false, err
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return false, nil
+		}
+		current = parent
+	}
 }
 
 func corpusAcceptanceLabelRecordingMarkdown(summary CorpusAcceptanceLabelRecordingSummary) string {
@@ -93,6 +183,13 @@ func corpusAcceptanceLabelRecordingMarkdown(summary CorpusAcceptanceLabelRecordi
 	b.WriteString(fmt.Sprintf("- Expected absent: %d\n", summary.ExpectedAbsentCount))
 	b.WriteString(fmt.Sprintf("- Uncertain: %d\n", summary.UncertainCount))
 	b.WriteString(fmt.Sprintf("- Abstain: %d\n", summary.AbstainCount))
+	b.WriteString(fmt.Sprintf("- Seed mode: %t\n", summary.SeedMode))
+	b.WriteString(fmt.Sprintf("- Seed private map status: %s\n", summary.SeedPrivateMapStatus))
+	b.WriteString(fmt.Sprintf("- Original corpus compatible: %t\n", summary.OriginalCorpusCompatible))
+	b.WriteString(fmt.Sprintf("- Translated sources: %d\n", summary.TranslatedSourceCount))
+	b.WriteString(fmt.Sprintf("- Translated expected outcomes: %d\n", summary.TranslatedExpectedOutcomeCount))
+	b.WriteString(fmt.Sprintf("- Translated evidence refs: %d\n", summary.TranslatedEvidenceRefCount))
+	b.WriteString(fmt.Sprintf("- Artifact confidentiality: %s\n", summary.ArtifactConfidentiality))
 	b.WriteString(fmt.Sprintf("- Held-out ready: %t\n", summary.HeldOutReady))
 	b.WriteString(fmt.Sprintf("- Benchmark ready: %t\n\n", summary.BenchmarkReady))
 	if len(summary.Blockers) > 0 {
