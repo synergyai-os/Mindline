@@ -124,7 +124,7 @@ func TestCorpusAcceptanceLabelingSeedRedactsPrivateMarkersAndKeepsPrivateMap(t *
 }
 
 func TestCorpusAcceptanceLabelingSeedWorksWithLabelWorkflow(t *testing.T) {
-	root, _, _ := writeCorpusAcceptanceFixture(t, []SemanticCandidate{corpusAcceptanceCandidate(t, SemanticCandidateKindAction, ReviewStatusReady)}, func(summary *CorpusPressureSummary) {
+	root, pressure, _ := writeCorpusAcceptanceFixture(t, []SemanticCandidate{corpusAcceptanceCandidate(t, SemanticCandidateKindAction, ReviewStatusReady)}, func(summary *CorpusPressureSummary) {
 		summary.Sources[0].SourcePath = "sources/source-demo/WP-353-source.md"
 	})
 	labelingOut := filepath.Join(root, "labeling-seed")
@@ -153,12 +153,25 @@ func TestCorpusAcceptanceLabelingSeedWorksWithLabelWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("record seed label: %v", err)
 	}
-	recording, _, err := BuildCorpusAcceptanceLabelRecording(labelingOut, recordsPath, filepath.Join(root, "recording"))
+	recording, answerKey, err := BuildCorpusAcceptanceLabelRecording(labelingOut, recordsPath, filepath.Join(root, "recording"))
 	if err != nil {
 		t.Fatalf("apply seed label records: %v", err)
 	}
 	if recording.RecordCount != 1 || recording.EvalCount != 1 {
 		t.Fatalf("unexpected recording summary: %+v", recording)
+	}
+	if len(answerKey.Sources) != 1 || answerKey.Sources[0].SourceID != pressure.Sources[0].SourceID || answerKey.Sources[0].SourceDocumentID != "doc-demo" {
+		t.Fatalf("seed label apply should translate source aliases back to original ids, got %+v", answerKey.Sources)
+	}
+	if len(answerKey.Sources[0].ExpectedOutcomes) != 1 || !stringListContains(answerKey.Sources[0].ExpectedOutcomes[0].RequiredEvidence, "node-demo") {
+		t.Fatalf("seed label apply should translate evidence aliases back to original ids, got %+v", answerKey.Sources[0].ExpectedOutcomes)
+	}
+	benchmark, err := BuildCorpusAcceptanceBenchmark(root, filepath.Join(root, "recording", corpusAcceptanceLabelRecordingDirName, "answer-key.json"), filepath.Join(root, "benchmark"), CorpusAcceptanceBenchmarkOptions{Threshold: 0.98, HeldOut: true})
+	if err != nil {
+		t.Fatalf("benchmark seed label recording: %v", err)
+	}
+	if len(benchmark.Sources) != 1 || benchmark.Sources[0].SourceID != pressure.Sources[0].SourceID || stringListContains(benchmark.Sources[0].Blockers, "missing_pressure_source") || benchmark.MatchedExpectedCount != 1 {
+		t.Fatalf("seed label recording should evaluate against original pressure source, got %+v", benchmark)
 	}
 }
 

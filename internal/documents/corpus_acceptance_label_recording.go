@@ -19,11 +19,15 @@ func BuildCorpusAcceptanceLabelRecording(labelingPath, recordsPath, outDir strin
 	if err != nil {
 		return CorpusAcceptanceLabelRecordingSummary{}, CorpusAcceptanceAnswerKey{}, err
 	}
+	seedMap, err := readOptionalCorpusAcceptanceLabelSeedPrivateMap(labelingPath, packet)
+	if err != nil {
+		return CorpusAcceptanceLabelRecordingSummary{}, CorpusAcceptanceAnswerKey{}, err
+	}
 	records, err := readCorpusAcceptanceLabelRecords(recordsPath)
 	if err != nil {
 		return CorpusAcceptanceLabelRecordingSummary{}, CorpusAcceptanceAnswerKey{}, err
 	}
-	summary, answerKey, err := buildCorpusAcceptanceLabelRecording(packet, records)
+	summary, answerKey, err := buildCorpusAcceptanceLabelRecording(packet, records, seedMap)
 	if err != nil {
 		return CorpusAcceptanceLabelRecordingSummary{}, CorpusAcceptanceAnswerKey{}, err
 	}
@@ -65,6 +69,41 @@ func readCorpusAcceptanceLabelingPacket(path string) (CorpusAcceptanceLabelingPa
 	return packet, nil
 }
 
+func readOptionalCorpusAcceptanceLabelSeedPrivateMap(path string, packet CorpusAcceptanceLabelingPacket) (*CorpusAcceptanceLabelSeedPrivateMap, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, nil
+	}
+	root, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := rejectSymlinkAncestors(root); err != nil {
+		return nil, err
+	}
+	mapPath := filepath.Join(root, corpusAcceptanceLabelingDirName, "seed-private-map.json")
+	if filepath.Base(root) == corpusAcceptanceLabelingDirName {
+		mapPath = filepath.Join(root, "seed-private-map.json")
+	}
+	if err := rejectIfSymlink(mapPath); err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(mapPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read corpus acceptance label seed private map: %w", err)
+	}
+	var privateMap CorpusAcceptanceLabelSeedPrivateMap
+	if err := json.Unmarshal(data, &privateMap); err != nil {
+		return nil, fmt.Errorf("decode corpus acceptance label seed private map: %w", err)
+	}
+	if err := ValidateCorpusAcceptanceLabelSeedPrivateMap(privateMap, packet); err != nil {
+		return nil, err
+	}
+	return &privateMap, nil
+}
+
 func readCorpusAcceptanceLabelRecords(path string) (CorpusAcceptanceLabelRecords, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -77,8 +116,9 @@ func readCorpusAcceptanceLabelRecords(path string) (CorpusAcceptanceLabelRecords
 	return records, nil
 }
 
-func buildCorpusAcceptanceLabelRecording(packet CorpusAcceptanceLabelingPacket, records CorpusAcceptanceLabelRecords) (CorpusAcceptanceLabelRecordingSummary, CorpusAcceptanceAnswerKey, error) {
+func buildCorpusAcceptanceLabelRecording(packet CorpusAcceptanceLabelingPacket, records CorpusAcceptanceLabelRecords, seedMap *CorpusAcceptanceLabelSeedPrivateMap) (CorpusAcceptanceLabelRecordingSummary, CorpusAcceptanceAnswerKey, error) {
 	index := corpusAcceptanceLabelingIndex(packet)
+	seedIndex := corpusAcceptanceLabelSeedPrivateMapIndexFor(seedMap)
 	answerKey := CorpusAcceptanceAnswerKey{
 		SchemaVersion:            CorpusAcceptanceAnswerKeySchemaVersion,
 		SuiteID:                  records.SuiteID,
@@ -139,16 +179,20 @@ func buildCorpusAcceptanceLabelRecording(packet CorpusAcceptanceLabelingPacket, 
 		if source == nil {
 			continue
 		}
-		sourceKey := sourceKeys[source.SourceID]
+		sourceID := seedIndex.sourceIDFor(source.CaseID, source.SourceID)
+		sourceKey := sourceKeys[sourceID]
 		if sourceKey == nil {
+			sourceDocumentID := firstNonBlankCorpusString(record.SourceDocumentID, sourceDocumentIDForLabel(candidate, hasCandidate))
+			sourceDocumentID = seedIndex.sourceDocumentIDFor(source.CaseID, candidateIDForLabelRecord(candidate, hasCandidate), sourceDocumentID)
 			sourceKey = &CorpusAcceptanceAnswerKeySource{
-				SourceID:         source.SourceID,
-				SourceDocumentID: firstNonBlankCorpusString(record.SourceDocumentID, sourceDocumentIDForLabel(candidate, hasCandidate)),
+				SourceID:         sourceID,
+				SourceDocumentID: sourceDocumentID,
 				ExpectedOutcomes: []SemanticExpectedOutcome{},
 			}
-			sourceKeys[source.SourceID] = sourceKey
+			sourceKeys[sourceID] = sourceKey
 		}
 		outcome := labelRecordOutcome(record, candidate, hasCandidate)
+		outcome.RequiredEvidence = seedIndex.evidenceNodesFor(source.CaseID, candidateIDForLabelRecord(candidate, hasCandidate), outcome.RequiredEvidence)
 		sourceKey.ExpectedOutcomes = append(sourceKey.ExpectedOutcomes, outcome)
 		seenCasesWithOutcomes[source.CaseID] = true
 		summary.EvalCount++
@@ -199,6 +243,71 @@ func buildCorpusAcceptanceLabelRecording(packet CorpusAcceptanceLabelingPacket, 
 type corpusAcceptanceLabelingPacketIndex struct {
 	sourcesByCase map[string]*CorpusAcceptanceLabelingSource
 	candidates    map[string]map[string]*CorpusAcceptanceLabelingCandidateReference
+}
+
+type corpusAcceptanceLabelSeedPrivateMapIndex struct {
+	cases      map[string]CorpusAcceptanceLabelSeedPrivateMapCase
+	candidates map[string]map[string]CorpusAcceptanceLabelSeedPrivateMapCandidate
+}
+
+func corpusAcceptanceLabelSeedPrivateMapIndexFor(privateMap *CorpusAcceptanceLabelSeedPrivateMap) corpusAcceptanceLabelSeedPrivateMapIndex {
+	index := corpusAcceptanceLabelSeedPrivateMapIndex{
+		cases:      map[string]CorpusAcceptanceLabelSeedPrivateMapCase{},
+		candidates: map[string]map[string]CorpusAcceptanceLabelSeedPrivateMapCandidate{},
+	}
+	if privateMap == nil {
+		return index
+	}
+	for _, mapCase := range privateMap.Cases {
+		index.cases[mapCase.CaseRef] = mapCase
+		index.candidates[mapCase.CaseRef] = map[string]CorpusAcceptanceLabelSeedPrivateMapCandidate{}
+		for _, candidate := range mapCase.Candidates {
+			index.candidates[mapCase.CaseRef][candidate.CandidateRef] = candidate
+		}
+	}
+	return index
+}
+
+func (index corpusAcceptanceLabelSeedPrivateMapIndex) sourceIDFor(caseID, fallback string) string {
+	mapCase, ok := index.cases[caseID]
+	if !ok || strings.TrimSpace(mapCase.OriginalSourceID) == "" {
+		return fallback
+	}
+	return mapCase.OriginalSourceID
+}
+
+func (index corpusAcceptanceLabelSeedPrivateMapIndex) sourceDocumentIDFor(caseID, candidateID, fallback string) string {
+	mapCandidate := index.candidateFor(caseID, candidateID)
+	if strings.TrimSpace(mapCandidate.OriginalSourceDocumentID) == "" {
+		return fallback
+	}
+	return mapCandidate.OriginalSourceDocumentID
+}
+
+func (index corpusAcceptanceLabelSeedPrivateMapIndex) evidenceNodesFor(caseID, candidateID string, fallback []string) []string {
+	mapCandidate := index.candidateFor(caseID, candidateID)
+	if len(mapCandidate.OriginalEvidenceNodes) == 0 || len(fallback) == 0 {
+		return fallback
+	}
+	out := make([]string, 0, len(fallback))
+	for _, evidence := range fallback {
+		translated := evidence
+		for idx, originalEvidence := range mapCandidate.OriginalEvidenceNodes {
+			if evidence == fmt.Sprintf("evidence-node-%03d", idx+1) {
+				translated = originalEvidence
+				break
+			}
+		}
+		out = append(out, translated)
+	}
+	return out
+}
+
+func (index corpusAcceptanceLabelSeedPrivateMapIndex) candidateFor(caseID, candidateID string) CorpusAcceptanceLabelSeedPrivateMapCandidate {
+	if strings.TrimSpace(candidateID) == "" {
+		return CorpusAcceptanceLabelSeedPrivateMapCandidate{}
+	}
+	return index.candidates[caseID][candidateID]
 }
 
 func corpusAcceptanceLabelingIndex(packet CorpusAcceptanceLabelingPacket) corpusAcceptanceLabelingPacketIndex {

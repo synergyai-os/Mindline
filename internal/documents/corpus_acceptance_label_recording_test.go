@@ -395,7 +395,7 @@ func TestWriteCorpusAcceptanceLabelRecordingValidatesReportBeforeWritingArtifact
 	root, _, _, recordsPath := writeCorpusAcceptanceLabelRecordingFixture(t, corpusAcceptanceIndependentProvenance)
 	packet := readCorpusAcceptanceLabelingPacketForTest(t, filepath.Join(root, "labeling"))
 	records := readLabelRecordingFixtureRecords(t, recordsPath)
-	summary, answerKey, err := buildCorpusAcceptanceLabelRecording(packet, records)
+	summary, answerKey, err := buildCorpusAcceptanceLabelRecording(packet, records, nil)
 	if err != nil {
 		t.Fatalf("build in-memory label recording: %v", err)
 	}
