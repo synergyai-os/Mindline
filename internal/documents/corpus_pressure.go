@@ -139,6 +139,8 @@ type CorpusPressureEvalInput struct {
 	SemanticObservationCount     int                             `json:"semantic_observation_count"`
 	SemanticCandidateCount       int                             `json:"semantic_candidate_count"`
 	ReferenceCandidateCount      int                             `json:"reference_candidate_count"`
+	OneCandidateSourceCount      int                             `json:"one_candidate_source_count"`
+	ReferenceOnlySourceCount     int                             `json:"reference_only_source_count"`
 	CandidatePerSourceRatio      float64                         `json:"candidate_per_processed_source_ratio"`
 	ObservationPerSegmentRatio   float64                         `json:"observation_per_segment_ratio"`
 	ReferenceCandidateRatio      float64                         `json:"reference_candidate_ratio"`
@@ -162,6 +164,8 @@ type CorpusPressureTraceSummary struct {
 	SemanticObservationCount     int                             `json:"semantic_observation_count"`
 	SemanticCandidateCount       int                             `json:"semantic_candidate_count"`
 	ReferenceCandidateCount      int                             `json:"reference_candidate_count"`
+	OneCandidateSourceCount      int                             `json:"one_candidate_source_count"`
+	ReferenceOnlySourceCount     int                             `json:"reference_only_source_count"`
 	CandidatePerSourceRatio      float64                         `json:"candidate_per_processed_source_ratio"`
 	ObservationPerSegmentRatio   float64                         `json:"observation_per_segment_ratio"`
 	ReferenceCandidateRatio      float64                         `json:"reference_candidate_ratio"`
@@ -863,13 +867,28 @@ func corpusPressureFingerprint(summary CorpusPressureSummary) string {
 	parts := []string{
 		summary.CorpusID,
 		fmt.Sprintf("sources:%d:%d:%d:%d", summary.SourceCount, summary.ProcessedSourceCount, summary.SkippedSourceCount, summary.BlockedSourceCount),
-		fmt.Sprintf("semantic:%d", summary.SemanticCandidateCount),
+		fmt.Sprintf("semantic:%d:%d:%d:%d:%d:%s:%s",
+			summary.SemanticCandidateCount,
+			summary.SemanticObservationCount,
+			summary.DocumentSegmentCount,
+			summary.ReferenceCandidateCount,
+			summary.OneCandidateSourceCount,
+			summary.SemanticReadinessStatus,
+			strings.Join(summary.SemanticReadinessReasonCodes, ",")),
 		"config:" + summary.CommandConfigFingerprint,
 		"corpus:" + summary.CorpusFingerprint,
 		fmt.Sprintf("graph:%d:%d:%s", summary.GraphAtomCount, summary.GraphRelationCount, summary.GraphReplayFingerprint),
 	}
 	for _, source := range summary.Sources {
-		parts = append(parts, strings.Join([]string{source.SourceID, string(source.State), string(source.ReasonCode), fmt.Sprintf("%d", source.CandidateCount)}, ":"))
+		parts = append(parts, strings.Join([]string{
+			source.SourceID,
+			string(source.State),
+			string(source.ReasonCode),
+			fmt.Sprintf("%d", source.CandidateCount),
+			fmt.Sprintf("%d", source.ObservationCount),
+			fmt.Sprintf("%d", source.SegmentCount),
+			candidateKindCountsText(source.CandidateKindCounts),
+		}, ":"))
 	}
 	sort.Strings(parts)
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\n")))

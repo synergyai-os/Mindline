@@ -148,6 +148,14 @@ func TestCorpusPressureBlocksReferenceOnlyOneCandidatePerSourceReadiness(t *test
 	if summary.DocumentSegmentCount != 450 || summary.SemanticObservationCount != 50 || summary.ReferenceCandidateCount != 50 {
 		t.Fatalf("expected semantic density counters, got %+v", summary)
 	}
+	evalInput := corpusPressureEvalInput(summary)
+	if evalInput.OneCandidateSourceCount != 50 || evalInput.ReferenceOnlySourceCount != 50 {
+		t.Fatalf("eval input must project source-level collapse counters, got %+v", evalInput)
+	}
+	trace := CorpusPressureTraceSummaryFor(summary, CorpusPressureSourceCounters{})
+	if trace.OneCandidateSourceCount != 50 || trace.ReferenceOnlySourceCount != 50 {
+		t.Fatalf("trace summary must project source-level collapse counters, got %+v", trace)
+	}
 	if !containsCorpusPressureString(summary.NextImprovementTargets, "semantic_density") {
 		t.Fatalf("expected semantic density target, got %+v", summary.NextImprovementTargets)
 	}
@@ -185,6 +193,36 @@ func TestCorpusPressureDoesNotAddLowDensityReasonWithoutSegments(t *testing.T) {
 	}
 	if containsCorpusPressureString(summary.SemanticReadinessReasonCodes, "low_observation_to_segment_density") {
 		t.Fatalf("zero segment denominator must not produce low-density reason: %+v", summary.SemanticReadinessReasonCodes)
+	}
+}
+
+func TestCorpusPressureFingerprintIncludesSemanticDensity(t *testing.T) {
+	source := CorpusPressureSourceResult{
+		SourceID:         "source",
+		SourceKind:       SourceKindMarkdown,
+		State:            CorpusPressureSourceProcessed,
+		ReasonCode:       CorpusPressureReasonNone,
+		CandidateCount:   1,
+		ObservationCount: 1,
+		SegmentCount:     1,
+		CandidateKindCounts: map[SemanticCandidateKind]int{
+			SemanticCandidateKindReference: 1,
+		},
+	}
+	graph := CorpusGraphSummary{
+		AtomCount:              1,
+		EvidenceReadyAtomCount: 1,
+		ReplayFingerprint:      "graph-ready",
+	}
+
+	summaryA := buildCorpusPressureSummary("density-corpus", []CorpusPressureSourceResult{source}, graph, "manifest.json", nil)
+	source.SegmentCount = 8
+	summaryB := buildCorpusPressureSummary("density-corpus", []CorpusPressureSourceResult{source}, graph, "manifest.json", nil)
+
+	fingerprintA := corpusPressureFingerprint(summaryA)
+	fingerprintB := corpusPressureFingerprint(summaryB)
+	if fingerprintA == fingerprintB {
+		t.Fatalf("semantic density changes must change replay fingerprint: %s", fingerprintA)
 	}
 }
 
