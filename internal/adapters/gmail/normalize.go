@@ -48,10 +48,12 @@ func Normalize(payload Payload) (Result, error) {
 	}
 
 	sort.SliceStable(messages, func(i, j int) bool {
-		if messages[i].EmailTS == messages[j].EmailTS {
+		left, _ := parsedEmailTime(messages[i])
+		right, _ := parsedEmailTime(messages[j])
+		if left.Equal(right) {
 			return messages[i].ID < messages[j].ID
 		}
-		return messages[i].EmailTS < messages[j].EmailTS
+		return left.Before(right)
 	})
 
 	result := Result{
@@ -120,10 +122,7 @@ func normalizeMessage(source Source, adapterID string, message Message) (sbos.Ca
 	if title == "" || secretLike {
 		title = "Gmail message"
 	}
-	permalink := strings.TrimSpace(message.DisplayURL)
-	if permalink == "" {
-		permalink = "gmail://missing-display-url/" + fingerprint(message.ID)
-	}
+	permalink := gmailPermalink(message)
 	attachments := attachmentLabels(message, secretLike)
 	candidateID := "gmail-" + fingerprint(sourceID(source)+"/"+message.ID)
 	return sbos.Candidate{
@@ -158,16 +157,24 @@ func normalizeMessage(source Source, adapterID string, message Message) (sbos.Ca
 			PrivateProvenance: true,
 		},
 		DesiredVisibility: "background",
-		IdempotencyKey:    "gmail:" + sourceID(source) + ":" + message.ID,
+		IdempotencyKey:    "gmail:" + fingerprint(sourceID(source)+"/"+message.ID),
 	}, nil
 }
 
 func capturedAt(message Message) (string, error) {
-	parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(message.EmailTS))
+	parsed, err := parsedEmailTime(message)
 	if err != nil {
 		return "", fmt.Errorf("invalid Gmail email_ts %q", message.EmailTS)
 	}
 	return parsed.UTC().Format(time.RFC3339), nil
+}
+
+func parsedEmailTime(message Message) (time.Time, error) {
+	return parsedEmailTimestamp(message.EmailTS)
+}
+
+func parsedEmailTimestamp(value string) (time.Time, error) {
+	return time.Parse(time.RFC3339, strings.TrimSpace(value))
 }
 
 func messageText(message Message) string {
@@ -258,11 +265,28 @@ func sourceID(source Source) string {
 	if account == "" {
 		account = "unknown-account"
 	}
+	return "gmail-account-" + fingerprint(account) + "/" + mailboxID(source)
+}
+
+func gmailPermalink(message Message) string {
+	displayURL := strings.TrimSpace(message.DisplayURL)
+	if displayURL == "" {
+		return "gmail://missing-display-url/" + fingerprint(message.ID)
+	}
+	return "gmail://display-url/" + fingerprint(displayURL)
+}
+
+func mailboxID(source Source) string {
 	mailbox := strings.TrimSpace(source.Mailbox)
 	if mailbox == "" {
-		mailbox = "all-mail"
+		return "all-mail"
 	}
-	return "gmail-account-" + fingerprint(account) + "/" + mailbox
+	switch strings.ToLower(mailbox) {
+	case "all-mail", "inbox":
+		return strings.ToLower(mailbox)
+	default:
+		return "gmail-mailbox-" + fingerprint(mailbox)
+	}
 }
 
 func fingerprint(value string) string {

@@ -101,6 +101,14 @@ func buildCorpusIntake(payload Payload, root string, fileSystem CorpusIntakeFile
 		}
 	}
 	sort.SliceStable(summary.Items, func(i, j int) bool {
+		left, leftErr := parsedEmailTimestamp(summary.Items[i].EmailTS)
+		right, rightErr := parsedEmailTimestamp(summary.Items[j].EmailTS)
+		if leftErr == nil && rightErr == nil {
+			if left.Equal(right) {
+				return summary.Items[i].SourceID < summary.Items[j].SourceID
+			}
+			return left.Before(right)
+		}
 		if summary.Items[i].EmailTS == summary.Items[j].EmailTS {
 			return summary.Items[i].SourceID < summary.Items[j].SourceID
 		}
@@ -217,11 +225,7 @@ func corpusID(source Source) string {
 }
 
 func mailbox(source Source) string {
-	value := strings.TrimSpace(source.Mailbox)
-	if value == "" {
-		return "all-mail"
-	}
-	return value
+	return mailboxID(source)
 }
 
 func sanitizeLocalID(value string) string {
