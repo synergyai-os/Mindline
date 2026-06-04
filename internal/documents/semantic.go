@@ -759,8 +759,33 @@ func newSemanticCandidate(runID, sourceID string, kind SemanticCandidateKind, st
 	if candidate.ReviewStatus == ReviewStatusNeedsReview {
 		candidate.Blockers = append(candidate.Blockers, Blocker{Code: "semantic_review_required", Message: "Candidate requires review because evidence is weak, contradicted, or ambiguous."})
 	}
+	if candidate.ReviewStatus == ReviewStatusBlocked {
+		candidate.Blockers = mergeSemanticObservationBlockers(candidate.Blockers, observations)
+	}
 	candidate.CandidateID = SemanticCandidateID(runID, kind, sourceID, title, evidenceNodes)
 	return candidate
+}
+
+func mergeSemanticObservationBlockers(blockers []Blocker, observations []SemanticObservation) []Blocker {
+	out := cloneBlockerList(blockers)
+	seen := map[string]bool{}
+	for _, blocker := range out {
+		seen[blocker.Code+"\x00"+blocker.Message] = true
+	}
+	for _, observation := range observations {
+		for _, blocker := range observation.Blockers {
+			key := blocker.Code + "\x00" + blocker.Message
+			if seen[key] {
+				continue
+			}
+			out = append(out, blocker)
+			seen[key] = true
+		}
+	}
+	if len(out) == 0 {
+		out = append(out, Blocker{Code: "blocked_semantic_candidate", Message: "Candidate is blocked because one or more supporting observations are blocked."})
+	}
+	return out
 }
 
 func newSemanticRelation(runID string, relationshipType SemanticRelationshipType, fromID string, fromType SemanticRelationEndpointType, toID string, toType SemanticRelationEndpointType, evidenceNodes []string, status ReviewStatus) SemanticRelation {

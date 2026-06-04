@@ -677,6 +677,27 @@ func TestConsolidateSemanticCandidatesKeepsRedactedCandidateRelationEndpoint(t *
 	}
 }
 
+func TestConsolidateSemanticCandidatesPropagatesBlockedObservationReason(t *testing.T) {
+	node := validStructureNode()
+	observation := validSemanticObservation(node)
+	observation.ObservationKind = SemanticObservationKindUnknown
+	observation.ReviewStatus = ReviewStatusBlocked
+	observation.Confidence = ConfidenceLow
+	observation.Blockers = []Blocker{{Code: "blocked_source_evidence", Message: "Semantic extraction stopped because source evidence was blocked before candidate publication."}}
+
+	candidates, _ := ConsolidateSemanticCandidates("run-sem-demo", []SemanticObservation{observation})
+	if len(candidates) != 1 {
+		t.Fatalf("candidate count = %d", len(candidates))
+	}
+	candidate := candidates[0]
+	if candidate.ReviewStatus != ReviewStatusBlocked {
+		t.Fatalf("candidate review status = %s", candidate.ReviewStatus)
+	}
+	if len(candidate.Blockers) == 0 || candidate.Blockers[0].Code != "blocked_source_evidence" {
+		t.Fatalf("blocked candidate must explain blocker, got %+v", candidate.Blockers)
+	}
+}
+
 func TestSemanticArtifactsReferenceInspectableStructureNodes(t *testing.T) {
 	out := t.TempDir()
 	summary, err := SemanticPath(fixturePath(t, "semantic"), out)
