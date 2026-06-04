@@ -70,6 +70,20 @@ func ValidateCorpusAcceptanceLabelRecordingSummary(summary CorpusAcceptanceLabel
 	if !validCorpusAcceptanceArtifactConfidentiality(summary.ArtifactConfidentiality) {
 		return fmt.Errorf("invalid artifact confidentiality")
 	}
+	seedHandoff := summary.SeedMode ||
+		summary.OriginalCorpusCompatible ||
+		summary.SeedPrivateMapStatus == corpusAcceptanceSeedMapPresent ||
+		summary.TranslatedSourceCount > 0 ||
+		summary.TranslatedExpectedOutcomeCount > 0 ||
+		summary.TranslatedEvidenceRefCount > 0
+	if seedHandoff {
+		if !summary.SeedMode || !summary.OriginalCorpusCompatible || summary.SeedPrivateMapStatus != corpusAcceptanceSeedMapPresent || summary.ArtifactConfidentiality != corpusAcceptanceArtifactLocalPrivateRehydrated {
+			return fmt.Errorf("seed recording must be local_private_rehydrated")
+		}
+	}
+	if !seedHandoff && summary.ArtifactConfidentiality == corpusAcceptanceArtifactLocalPrivateRehydrated {
+		return fmt.Errorf("local_private_rehydrated recording requires seed handoff")
+	}
 	body := strings.Join([]string{
 		summary.SuiteID,
 		string(summary.SuiteKind),
@@ -142,9 +156,9 @@ func rejectCorpusAcceptanceLocalPrivateRehydratedOutput(realRoot string) error {
 func hasGitVisibleAncestor(path string) (bool, error) {
 	current := filepath.Clean(path)
 	for {
-		info, err := os.Lstat(filepath.Join(current, ".git"))
+		_, err := os.Lstat(filepath.Join(current, ".git"))
 		if err == nil {
-			return info.Mode().IsDir() || info.Mode().IsRegular(), nil
+			return true, nil
 		}
 		if !os.IsNotExist(err) {
 			return false, err

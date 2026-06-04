@@ -268,6 +268,68 @@ func TestCorpusAcceptanceLabelingSeedApplyRejectsMismatchedPrivateMapBeforeWrite
 	}
 }
 
+func TestCorpusAcceptanceLabelingSeedApplyRejectsTruncatedPrivateMapBeforeWrite(t *testing.T) {
+	root, _, _ := writeCorpusAcceptanceFixture(t, []SemanticCandidate{corpusAcceptanceCandidate(t, SemanticCandidateKindAction, ReviewStatusReady)}, nil)
+	labelingOut := filepath.Join(root, "labeling-seed")
+	_, _, _, err := BuildCorpusAcceptanceLabelingPacketWithOptions(root, labelingOut, CorpusAcceptanceLabelingOptions{Seed: true, MaxCases: 1})
+	if err != nil {
+		t.Fatalf("build seed labeling packet: %v", err)
+	}
+	recordsPath := filepath.Join(root, "records.json")
+	nextOut := filepath.Join(root, "next")
+	if _, _, err := BuildCorpusAcceptanceLabelNext(labelingOut, recordsPath, nextOut); err != nil {
+		t.Fatalf("build label next: %v", err)
+	}
+	if _, err := RecordCorpusAcceptanceLabel(labelingOut, recordsPath, filepath.Join(nextOut, corpusAcceptanceLabelNextDirName, "label-next-map.json"), CorpusAcceptanceLabelRecordInput{
+		CaseRef:              "case-001",
+		CandidateRef:         "candidate-001",
+		Decision:             CorpusAcceptanceLabelExpectedPresent,
+		RequiredEvidenceRefs: []string{"evidence-001"},
+		Labeler:              "fixture-human",
+	}); err != nil {
+		t.Fatalf("record seed label: %v", err)
+	}
+	packet := readCorpusAcceptanceLabelingPacketForTest(t, labelingOut)
+	privateMap, err := readOptionalCorpusAcceptanceLabelSeedPrivateMap(labelingOut, packet)
+	if err != nil {
+		t.Fatalf("read seed private map: %v", err)
+	}
+	privateMap.Cases[0].Candidates[0].OriginalSourceDocumentID = ""
+	privateMap.Cases[0].Candidates[0].OriginalEvidenceNodes = nil
+	writeDocumentsTestJSON(t, filepath.Join(labelingOut, corpusAcceptanceLabelingDirName, "seed-private-map.json"), privateMap)
+	out := filepath.Join(root, "recording")
+
+	_, _, err = BuildCorpusAcceptanceLabelRecording(labelingOut, recordsPath, out)
+	if err == nil || !strings.Contains(err.Error(), "seed private map missing original source document id") {
+		t.Fatalf("expected truncated private map rejection, got %v", err)
+	}
+	for _, name := range []string{"answer-key.json", "label-recording-summary.json", "label-recording-report.md"} {
+		if _, statErr := os.Stat(filepath.Join(out, corpusAcceptanceLabelRecordingDirName, name)); !os.IsNotExist(statErr) {
+			t.Fatalf("truncated private map should not write %s, stat=%v", name, statErr)
+		}
+	}
+}
+
+func TestWriteCorpusAcceptanceLabelingPacketWithSeedRejectsMissingPrivateMapBeforeWrite(t *testing.T) {
+	root, _, _ := writeCorpusAcceptanceFixture(t, []SemanticCandidate{corpusAcceptanceCandidate(t, SemanticCandidateKindAction, ReviewStatusReady)}, nil)
+	validOut := filepath.Join(root, "labeling-seed")
+	packet, template, seed, err := BuildCorpusAcceptanceLabelingPacketWithOptions(root, validOut, CorpusAcceptanceLabelingOptions{Seed: true, MaxCases: 1})
+	if err != nil {
+		t.Fatalf("build seed labeling packet: %v", err)
+	}
+	out := filepath.Join(root, "missing-map")
+
+	err = WriteCorpusAcceptanceLabelingPacketWithSeed(out, packet, template, seed, nil)
+	if err == nil || !strings.Contains(err.Error(), "missing seed private map") {
+		t.Fatalf("expected missing private map rejection, got %v", err)
+	}
+	for _, name := range []string{"labeling-packet.json", "answer-key-template.json", "labeling-report.md", "seed-summary.json", "seed-report.md", "seed-private-map.json"} {
+		if _, statErr := os.Stat(filepath.Join(out, corpusAcceptanceLabelingDirName, name)); !os.IsNotExist(statErr) {
+			t.Fatalf("missing private map should not write %s, stat=%v", name, statErr)
+		}
+	}
+}
+
 func TestCorpusAcceptanceLabelingSeedApplyRejectsCurrentWorkspaceOutput(t *testing.T) {
 	root, _, _ := writeCorpusAcceptanceFixture(t, []SemanticCandidate{corpusAcceptanceCandidate(t, SemanticCandidateKindAction, ReviewStatusReady)}, nil)
 	labelingOut := filepath.Join(root, "labeling-seed")
@@ -358,6 +420,95 @@ func TestCorpusAcceptanceLabelingSeedApplyRejectsDurableArtifactRoots(t *testing
 	}
 }
 
+func TestCorpusAcceptanceLabelingSeedApplyRejectsInconsistentConfidentialityBeforeWrite(t *testing.T) {
+	root, _, _ := writeCorpusAcceptanceFixture(t, []SemanticCandidate{corpusAcceptanceCandidate(t, SemanticCandidateKindAction, ReviewStatusReady)}, nil)
+	labelingOut := filepath.Join(root, "labeling-seed")
+	_, _, _, err := BuildCorpusAcceptanceLabelingPacketWithOptions(root, labelingOut, CorpusAcceptanceLabelingOptions{Seed: true, MaxCases: 1})
+	if err != nil {
+		t.Fatalf("build seed labeling packet: %v", err)
+	}
+	recordsPath := filepath.Join(root, "records.json")
+	nextOut := filepath.Join(root, "next")
+	if _, _, err := BuildCorpusAcceptanceLabelNext(labelingOut, recordsPath, nextOut); err != nil {
+		t.Fatalf("build label next: %v", err)
+	}
+	if _, err := RecordCorpusAcceptanceLabel(labelingOut, recordsPath, filepath.Join(nextOut, corpusAcceptanceLabelNextDirName, "label-next-map.json"), CorpusAcceptanceLabelRecordInput{
+		CaseRef:              "case-001",
+		CandidateRef:         "candidate-001",
+		Decision:             CorpusAcceptanceLabelExpectedPresent,
+		RequiredEvidenceRefs: []string{"evidence-001"},
+		Labeler:              "fixture-human",
+	}); err != nil {
+		t.Fatalf("record seed label: %v", err)
+	}
+	packet := readCorpusAcceptanceLabelingPacketForTest(t, labelingOut)
+	privateMap, err := readOptionalCorpusAcceptanceLabelSeedPrivateMap(labelingOut, packet)
+	if err != nil {
+		t.Fatalf("read seed private map: %v", err)
+	}
+	records := readLabelRecordingFixtureRecords(t, recordsPath)
+	summary, answerKey, err := buildCorpusAcceptanceLabelRecording(packet, records, privateMap)
+	if err != nil {
+		t.Fatalf("build in-memory seed recording: %v", err)
+	}
+	summary.ArtifactConfidentiality = corpusAcceptanceArtifactNonSeedLocal
+	out := filepath.Join(root, "recording")
+
+	err = WriteCorpusAcceptanceLabelRecording(out, summary, answerKey)
+	if err == nil || !strings.Contains(err.Error(), "seed recording must be local_private_rehydrated") {
+		t.Fatalf("expected inconsistent seed confidentiality rejection, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(out, corpusAcceptanceLabelRecordingDirName, "answer-key.json")); !os.IsNotExist(statErr) {
+		t.Fatalf("inconsistent confidentiality should not write answer-key, stat=%v", statErr)
+	}
+}
+
+func TestCorpusAcceptanceLabelingSeedApplyRejectsTranslatedCountersWithoutSeedHandoff(t *testing.T) {
+	root, _, _ := writeCorpusAcceptanceFixture(t, []SemanticCandidate{corpusAcceptanceCandidate(t, SemanticCandidateKindAction, ReviewStatusReady)}, nil)
+	labelingOut := filepath.Join(root, "labeling-seed")
+	_, _, _, err := BuildCorpusAcceptanceLabelingPacketWithOptions(root, labelingOut, CorpusAcceptanceLabelingOptions{Seed: true, MaxCases: 1})
+	if err != nil {
+		t.Fatalf("build seed labeling packet: %v", err)
+	}
+	recordsPath := filepath.Join(root, "records.json")
+	nextOut := filepath.Join(root, "next")
+	if _, _, err := BuildCorpusAcceptanceLabelNext(labelingOut, recordsPath, nextOut); err != nil {
+		t.Fatalf("build label next: %v", err)
+	}
+	if _, err := RecordCorpusAcceptanceLabel(labelingOut, recordsPath, filepath.Join(nextOut, corpusAcceptanceLabelNextDirName, "label-next-map.json"), CorpusAcceptanceLabelRecordInput{
+		CaseRef:              "case-001",
+		CandidateRef:         "candidate-001",
+		Decision:             CorpusAcceptanceLabelExpectedPresent,
+		RequiredEvidenceRefs: []string{"evidence-001"},
+		Labeler:              "fixture-human",
+	}); err != nil {
+		t.Fatalf("record seed label: %v", err)
+	}
+	packet := readCorpusAcceptanceLabelingPacketForTest(t, labelingOut)
+	privateMap, err := readOptionalCorpusAcceptanceLabelSeedPrivateMap(labelingOut, packet)
+	if err != nil {
+		t.Fatalf("read seed private map: %v", err)
+	}
+	records := readLabelRecordingFixtureRecords(t, recordsPath)
+	summary, answerKey, err := buildCorpusAcceptanceLabelRecording(packet, records, privateMap)
+	if err != nil {
+		t.Fatalf("build in-memory seed recording: %v", err)
+	}
+	summary.SeedMode = false
+	summary.OriginalCorpusCompatible = false
+	summary.SeedPrivateMapStatus = corpusAcceptanceSeedMapNotApplicable
+	summary.ArtifactConfidentiality = corpusAcceptanceArtifactNonSeedLocal
+	out := filepath.Join(root, "recording")
+
+	err = WriteCorpusAcceptanceLabelRecording(out, summary, answerKey)
+	if err == nil || !strings.Contains(err.Error(), "seed recording must be local_private_rehydrated") {
+		t.Fatalf("expected translated counter handoff rejection, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(out, corpusAcceptanceLabelRecordingDirName, "answer-key.json")); !os.IsNotExist(statErr) {
+		t.Fatalf("translated counter handoff rejection should not write answer-key, stat=%v", statErr)
+	}
+}
+
 func TestCorpusAcceptanceLabelingSeedApplyRejectsGitVisibleSiblingOutput(t *testing.T) {
 	root, _, _ := writeCorpusAcceptanceFixture(t, []SemanticCandidate{corpusAcceptanceCandidate(t, SemanticCandidateKindAction, ReviewStatusReady)}, nil)
 	labelingOut := filepath.Join(root, "labeling-seed")
@@ -419,6 +570,56 @@ func TestCorpusAcceptanceLabelingSeedApplyRejectsGitVisibleSiblingOutput(t *test
 		if _, statErr := os.Stat(filepath.Join(out, corpusAcceptanceLabelRecordingDirName, name)); !os.IsNotExist(statErr) {
 			t.Fatalf("git-visible output rejection should not write %s, stat=%v", name, statErr)
 		}
+	}
+}
+
+func TestCorpusAcceptanceLabelingSeedApplyRejectsGitSymlinkMarkerAncestor(t *testing.T) {
+	root, _, _ := writeCorpusAcceptanceFixture(t, []SemanticCandidate{corpusAcceptanceCandidate(t, SemanticCandidateKindAction, ReviewStatusReady)}, nil)
+	labelingOut := filepath.Join(root, "labeling-seed")
+	_, _, _, err := BuildCorpusAcceptanceLabelingPacketWithOptions(root, labelingOut, CorpusAcceptanceLabelingOptions{Seed: true, MaxCases: 1})
+	if err != nil {
+		t.Fatalf("build seed labeling packet: %v", err)
+	}
+	recordsPath := filepath.Join(root, "records.json")
+	nextOut := filepath.Join(root, "next")
+	if _, _, err := BuildCorpusAcceptanceLabelNext(labelingOut, recordsPath, nextOut); err != nil {
+		t.Fatalf("build label next: %v", err)
+	}
+	if _, err := RecordCorpusAcceptanceLabel(labelingOut, recordsPath, filepath.Join(nextOut, corpusAcceptanceLabelNextDirName, "label-next-map.json"), CorpusAcceptanceLabelRecordInput{
+		CaseRef:              "case-001",
+		CandidateRef:         "candidate-001",
+		Decision:             CorpusAcceptanceLabelExpectedPresent,
+		RequiredEvidenceRefs: []string{"evidence-001"},
+		Labeler:              "fixture-human",
+	}); err != nil {
+		t.Fatalf("record seed label: %v", err)
+	}
+	packet := readCorpusAcceptanceLabelingPacketForTest(t, labelingOut)
+	privateMap, err := readOptionalCorpusAcceptanceLabelSeedPrivateMap(labelingOut, packet)
+	if err != nil {
+		t.Fatalf("read seed private map: %v", err)
+	}
+	records := readLabelRecordingFixtureRecords(t, recordsPath)
+	summary, answerKey, err := buildCorpusAcceptanceLabelRecording(packet, records, privateMap)
+	if err != nil {
+		t.Fatalf("build in-memory seed recording: %v", err)
+	}
+	repo := t.TempDir()
+	gitDir := filepath.Join(root, "actual-git-dir")
+	if err := os.Mkdir(gitDir, 0o755); err != nil {
+		t.Fatalf("mkdir git target: %v", err)
+	}
+	if err := os.Symlink(gitDir, filepath.Join(repo, ".git")); err != nil {
+		t.Fatalf("symlink fake git marker: %v", err)
+	}
+	out := filepath.Join(repo, "ordinary-output")
+
+	err = WriteCorpusAcceptanceLabelRecording(out, summary, answerKey)
+	if err == nil || !strings.Contains(err.Error(), "local private rehydrated output must be outside durable workspace artifacts") {
+		t.Fatalf("expected git symlink marker rejection, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(out, corpusAcceptanceLabelRecordingDirName, "answer-key.json")); !os.IsNotExist(statErr) {
+		t.Fatalf("git symlink marker rejection should not write answer-key, stat=%v", statErr)
 	}
 }
 
