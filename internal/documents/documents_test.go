@@ -278,6 +278,61 @@ func TestSemanticCandidateArtifactsFromMarkdownDirectory(t *testing.T) {
 	assertGeneratedTreeExcludes(t, filepath.Join(out, "semantic-candidates"), "productbrain", "product brain", "tolaria", "notion", "obsidian", "slack", "authority_ids", "wp-13", "dec-49", ": null")
 }
 
+func TestSemanticPathExtractsMultipleSegmentAtomsFromOneSource(t *testing.T) {
+	sourceRoot := t.TempDir()
+	source := filepath.Join(sourceRoot, "source.md")
+	if err := os.WriteFile(source, []byte(strings.Join([]string{
+		"# Mixed Source",
+		"",
+		"Decision: use the segment atomization path for the next proof run.",
+		"Action: prepare the runtime comparison packet before review.",
+		"Risk: shallow source-level candidates hide useful evidence.",
+		"The pressure run shows that meaningful source material can contain several independent atoms.",
+	}, "\n")), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	out := t.TempDir()
+	summary, err := SemanticPath(sourceRoot, out)
+	if err != nil {
+		t.Fatalf("semantic: %v", err)
+	}
+
+	if summary.SourceCount != 1 {
+		t.Fatalf("source count = %d", summary.SourceCount)
+	}
+	if summary.ObservationCount < 4 {
+		t.Fatalf("expected multiple observations, got %+v", summary.ObservationKindCounts)
+	}
+	if summary.CandidateCount < 3 {
+		t.Fatalf("expected multiple candidates, got %+v", summary.CandidateKindCounts)
+	}
+	if summary.CandidateKindCounts[SemanticCandidateKindReference] != 0 {
+		t.Fatalf("reference fallback should not be used when stronger atoms exist: %+v", summary.CandidateKindCounts)
+	}
+	for _, kind := range []SemanticCandidateKind{SemanticCandidateKindAction, SemanticCandidateKindRisk, SemanticCandidateKindTopic} {
+		if summary.CandidateKindCounts[kind] == 0 {
+			t.Fatalf("expected %s candidate in %+v", kind, summary.CandidateKindCounts)
+		}
+	}
+	for _, item := range summary.Candidates {
+		data, err := os.ReadFile(filepath.Join(out, "semantic-candidates", item.CandidatePath))
+		if err != nil {
+			t.Fatalf("read candidate: %v", err)
+		}
+		var candidate SemanticCandidate
+		if err := json.Unmarshal(data, &candidate); err != nil {
+			t.Fatalf("decode candidate: %v", err)
+		}
+		if candidate.DestinationStatus != SemanticDestinationUnresolved {
+			t.Fatalf("destination status must stay unresolved, got %+v", candidate)
+		}
+		if len(candidate.EvidenceNodes) == 0 || len(candidate.ObservationIDs) == 0 {
+			t.Fatalf("candidate missing evidence or observations: %+v", candidate)
+		}
+	}
+}
+
 func TestSemanticTranscriptConsolidationAndContradiction(t *testing.T) {
 	out := t.TempDir()
 	summary, err := SemanticPath(fixturePath(t, "semantic"), out)

@@ -7,7 +7,7 @@
   "review_status": "ready",
   "confidence": "medium",
   "title": "Prepare the checklist",
-  "summary": "09:12 - Lead Decision: use the lightweight checklist for the next intake run. 09:15 - Facilitator Recap: Lead will prepare the checklist by Friday. 09:09 - Analyst I support the checklist because it will make handoff evidence clearer. 09:00",
+  "summary": "Today we need to decide how the intake checklist moves forward Today we need to decide how the intake checklist moves forward. 09:15 - Facilitator Recap: Lead will prepare the checklist by Friday. 09:09 - Analyst I support the checklist bec",
   "evidence_nodes": [
     "node-0fe508dd044cf9a9",
     "node-262592341686a94b",
@@ -16,6 +16,11 @@
     "node-b89259969784f6ae"
   ],
   "evidence_ranges": [
+    {
+      "structure_node_id": "node-0fe508dd044cf9a9",
+      "line_start": 4,
+      "line_end": 4
+    },
     {
       "structure_node_id": "node-262592341686a94b",
       "line_start": 15,
@@ -32,6 +37,11 @@
       "line_end": 13
     },
     {
+      "structure_node_id": "node-64b6bb0de4aa3782",
+      "line_start": 10,
+      "line_end": 10
+    },
+    {
       "structure_node_id": "node-0fe508dd044cf9a9",
       "line_start": 3,
       "line_end": 4
@@ -40,23 +50,52 @@
       "structure_node_id": "node-64b6bb0de4aa3782",
       "line_start": 9,
       "line_end": 10
+    },
+    {
+      "structure_node_id": "node-b89259969784f6ae",
+      "line_start": 19,
+      "line_end": 19
+    },
+    {
+      "structure_node_id": "node-262592341686a94b",
+      "line_start": 16,
+      "line_end": 16
+    },
+    {
+      "structure_node_id": "node-68ef7b02f454e088",
+      "line_start": 13,
+      "line_end": 13
     }
   ],
   "observation_ids": [
+    "obs-00204a02205f3e8a",
+    "obs-23301a0e738353a9",
     "obs-2a27a985ae5c96c1",
     "obs-4161d4622d2c8daa",
     "obs-427393341d87411f",
+    "obs-57c67461552531fd",
     "obs-5e558bd7caf9a921",
     "obs-652a90a83fa5a45c",
-    "obs-8ea82a275007de36"
+    "obs-6df07dabde4dd682",
+    "obs-8ea82a275007de36",
+    "obs-b7cbdc2278e26542",
+    "obs-f00b8fa1ad1eb257",
+    "obs-f63215ba659bb612"
   ],
   "relation_ids": [
+    "rel-8bbbdaf50001ab50",
+    "rel-5ee3a514cb5b3606",
     "rel-42e4a5df8f3d764a",
     "rel-cee3beeaf1171098",
     "rel-bb54a875efe8e783",
+    "rel-690ccc60d590b6f8",
     "rel-1cc6c9b1fdede666",
     "rel-2d52d36270486036",
-    "rel-399958900f6b2098"
+    "rel-0e609420f192f63d",
+    "rel-399958900f6b2098",
+    "rel-2157ea9e5e81672b",
+    "rel-6b1ae5cfb5fd7664",
+    "rel-b0422f49337771de"
   ],
   "destination_status": "unresolved",
   "blockers": []

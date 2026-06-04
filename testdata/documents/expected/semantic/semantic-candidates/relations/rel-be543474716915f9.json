@@ -1,0 +1,17 @@
+{
+  "schema_version": "semantic-relation/v0.1",
+  "relation_id": "rel-be543474716915f9",
+  "run_id": "run-sem-712942e3ab499d31",
+  "relationship_type": "contradicts",
+  "from_id": "obs-d2e1b09095be63a2",
+  "from_type": "observation",
+  "to_id": "obs-437adbc72b53bcfc",
+  "to_type": "observation",
+  "evidence_nodes": [
+    "node-c87e0b2d89043a83",
+    "node-dece7bc306f624ae"
+  ],
+  "confidence": "low",
+  "review_status": "needs_review",
+  "blockers": []
+}

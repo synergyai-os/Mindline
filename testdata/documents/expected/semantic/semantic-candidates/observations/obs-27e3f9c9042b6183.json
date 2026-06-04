@@ -1,0 +1,23 @@
+{
+  "schema_version": "semantic-observation/v0.1",
+  "observation_id": "obs-27e3f9c9042b6183",
+  "run_id": "run-sem-712942e3ab499d31",
+  "source_document_id": "doc-transcript-consolidated-action",
+  "observation_kind": "claim",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "claim: I support the checklist because it will make handoff evidence clearer I support the check",
+  "summary": "I support the checklist because it will make handoff evidence clearer I support the checklist because it will make handoff evidence clearer.",
+  "evidence_nodes": [
+    "node-68ef7b02f454e088"
+  ],
+  "evidence_ranges": [
+    {
+      "structure_node_id": "node-68ef7b02f454e088",
+      "line_start": 13,
+      "line_end": 13
+    }
+  ],
+  "content_hash": "sha256:ea7c3834e5d8a1ee45253ec2dd459698332a57e4f18b57024a96d06ed0042ce2",
+  "blockers": []
+}

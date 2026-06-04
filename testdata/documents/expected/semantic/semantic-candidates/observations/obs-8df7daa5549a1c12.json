@@ -1,0 +1,23 @@
+{
+  "schema_version": "semantic-observation/v0.1",
+  "observation_id": "obs-8df7daa5549a1c12",
+  "run_id": "run-sem-712942e3ab499d31",
+  "source_document_id": "doc-process-capability-evidence",
+  "observation_kind": "risk_statement",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "risk statement: missing source metadata blocks review Risk: missing source metadata blocks revie",
+  "summary": "missing source metadata blocks review Risk: missing source metadata blocks review.",
+  "evidence_nodes": [
+    "node-332b000d88913479"
+  ],
+  "evidence_ranges": [
+    {
+      "structure_node_id": "node-332b000d88913479",
+      "line_start": 8,
+      "line_end": 8
+    }
+  ],
+  "content_hash": "sha256:b0f3d3bc56361460d9efa41eeeaf68a7ac7ad275d4b524795e59eed975214acc",
+  "blockers": []
+}

@@ -35,6 +35,10 @@ func SemanticPathWithOptions(inputPath, outDir string, options SemanticOptions) 
 	if err != nil {
 		return SemanticSummary{}, err
 	}
+	segments, err := readSemanticSegments(filepath.Join(filepath.Dir(structureRoot), "document-segments"))
+	if err != nil {
+		return SemanticSummary{}, err
+	}
 	nodeIDs := make([]string, 0, len(nodes))
 	for _, node := range nodes {
 		nodeIDs = append(nodeIDs, node.NodeID)
@@ -45,6 +49,8 @@ func SemanticPathWithOptions(inputPath, outDir string, options SemanticOptions) 
 	}
 	runID := SemanticRunID(structureSummary.RunID, runIDInputs)
 	observations := ExtractSemanticObservations(runID, nodes, sourceText)
+	observations = append(observations, ExtractSegmentSemanticObservations(runID, nodes, segments)...)
+	observations = orderSemanticObservations(finalizeSemanticObservations(observations))
 	candidates, relations := ConsolidateSemanticCandidates(runID, observations)
 	if options.Classifier == SemanticClassifierLLM {
 		request := buildLLMSemanticRequest(nodes, sourceText)
@@ -244,10 +250,39 @@ func readStructureArtifacts(root string) (StructureSummary, []StructureNode, err
 	return summary, nodes, nil
 }
 
+func readSemanticSegments(root string) ([]Segment, error) {
+	data, err := os.ReadFile(filepath.Join(root, "segment-summary.json"))
+	if err != nil {
+		return nil, fmt.Errorf("read sibling document-segments: %w", err)
+	}
+	var summary Summary
+	if err := json.Unmarshal(data, &summary); err != nil {
+		return nil, err
+	}
+	segments := make([]Segment, 0, len(summary.Segments))
+	for _, item := range summary.Segments {
+		segmentData, err := os.ReadFile(filepath.Join(root, item.SegmentPath))
+		if err != nil {
+			return nil, err
+		}
+		var segment Segment
+		if err := json.Unmarshal(segmentData, &segment); err != nil {
+			return nil, err
+		}
+		segments = append(segments, segment)
+	}
+	sort.SliceStable(segments, func(i, j int) bool {
+		left, right := segments[i], segments[j]
+		return strings.Join([]string{left.SourceDocumentID, fmt.Sprintf("%06d", left.Evidence.LineStart), left.SegmentID}, "\x00") < strings.Join([]string{right.SourceDocumentID, fmt.Sprintf("%06d", right.Evidence.LineStart), right.SegmentID}, "\x00")
+	})
+	return segments, nil
+}
+
 func ExtractSemanticObservations(runID string, nodes []StructureNode, sourceText semanticSourceText) []SemanticObservation {
 	var observations []SemanticObservation
 	for _, node := range nodes {
 		if node.ReviewStatus == ReviewStatusBlocked {
+			observations = append(observations, newBlockedSemanticObservation(runID, node))
 			continue
 		}
 		text := semanticNodeText(node, sourceText)
@@ -256,6 +291,71 @@ func ExtractSemanticObservations(runID string, nodes []StructureNode, sourceText
 		}
 	}
 	return orderSemanticObservations(finalizeSemanticObservations(observations))
+}
+
+func ExtractSegmentSemanticObservations(runID string, nodes []StructureNode, segments []Segment) []SemanticObservation {
+	nodeBySegment := semanticNodeBySegment(nodes)
+	blockedSources := blockedSemanticSources(nodes, segments)
+	var observations []SemanticObservation
+	for _, segment := range segments {
+		node, ok := nodeBySegment[segment.SegmentID]
+		if !ok {
+			continue
+		}
+		if segment.ReviewStatus == ReviewStatusBlocked {
+			observations = append(observations, newBlockedSegmentSemanticObservation(runID, node, segment))
+			continue
+		}
+		if blockedSources[segment.SourceDocumentID] {
+			continue
+		}
+		text := semanticSegmentText(segment)
+		for _, kind := range semanticSegmentObservationKinds(segment, text) {
+			observations = append(observations, newSegmentSemanticObservation(runID, node, segment, kind, text))
+		}
+	}
+	return orderSemanticObservations(finalizeSemanticObservations(observations))
+}
+
+func semanticNodeBySegment(nodes []StructureNode) map[string]StructureNode {
+	out := map[string]StructureNode{}
+	ordered := append([]StructureNode(nil), nodes...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		left, right := ordered[i], ordered[j]
+		leftSpan := left.Evidence.LineEnd - left.Evidence.LineStart
+		rightSpan := right.Evidence.LineEnd - right.Evidence.LineStart
+		if leftSpan != rightSpan {
+			return leftSpan < rightSpan
+		}
+		return strings.Join([]string{left.SourceDocumentID, fmt.Sprintf("%06d", left.Evidence.LineStart), left.NodeID}, "\x00") < strings.Join([]string{right.SourceDocumentID, fmt.Sprintf("%06d", right.Evidence.LineStart), right.NodeID}, "\x00")
+	})
+	for _, node := range ordered {
+		if node.ReviewStatus == ReviewStatusBlocked {
+			continue
+		}
+		for _, segmentID := range node.RelatedSegmentIDs {
+			if _, exists := out[segmentID]; exists {
+				continue
+			}
+			out[segmentID] = node
+		}
+	}
+	return out
+}
+
+func blockedSemanticSources(nodes []StructureNode, segments []Segment) map[string]bool {
+	out := map[string]bool{}
+	for _, node := range nodes {
+		if node.ReviewStatus == ReviewStatusBlocked {
+			out[node.SourceDocumentID] = true
+		}
+	}
+	for _, segment := range segments {
+		if segment.ReviewStatus == ReviewStatusBlocked {
+			out[segment.SourceDocumentID] = true
+		}
+	}
+	return out
 }
 
 func semanticNodeText(node StructureNode, sourceText semanticSourceText) string {
@@ -271,6 +371,17 @@ func semanticNodeText(node StructureNode, sourceText semanticSourceText) string 
 		}
 	}
 	return strings.TrimSpace(node.Title + " " + node.Summary)
+}
+
+func semanticSegmentText(segment Segment) string {
+	text := strings.TrimSpace(segment.Summary)
+	if text == "" {
+		text = strings.TrimSpace(segment.Title)
+	}
+	if text == "" || strings.EqualFold(text, segment.Title) {
+		return text
+	}
+	return strings.TrimSpace(segment.Title + " " + text)
 }
 
 func semanticObservationKinds(node StructureNode, text string) []SemanticObservationKind {
@@ -326,6 +437,108 @@ func semanticObservationKinds(node StructureNode, text string) []SemanticObserva
 	return dedupeObservationKinds(kinds)
 }
 
+func semanticSegmentObservationKinds(segment Segment, text string) []SemanticObservationKind {
+	if semanticTextIsMetadata(text) || semanticTextIsLinkOnly(text) {
+		return nil
+	}
+	kinds := semanticTextObservationKinds(text)
+	switch segment.SemanticType {
+	case SemanticTypeDecision:
+		kinds = append(kinds, SemanticObservationKindDecisionSignal)
+	case SemanticTypeAction, SemanticTypeCommitment, SemanticTypeWorkItem:
+		kinds = append(kinds, SemanticObservationKindActionSignal)
+	case SemanticTypeStandard:
+		kinds = append(kinds, SemanticObservationKindRequirementStatement)
+	case SemanticTypeInsight:
+		kinds = append(kinds, SemanticObservationKindClaim)
+	case SemanticTypeTension:
+		kinds = append(kinds, SemanticObservationKindRiskStatement)
+	case SemanticTypeReference:
+		if len(kinds) == 0 {
+			kinds = append(kinds, SemanticObservationKindReferenceStatement)
+		}
+	}
+	if len(kinds) == 0 && semanticTextIsSubstantive(text) {
+		kinds = append(kinds, SemanticObservationKindClaim)
+	}
+	return dedupeObservationKinds(kinds)
+}
+
+func semanticTextObservationKinds(text string) []SemanticObservationKind {
+	lower := strings.ToLower(text)
+	var kinds []SemanticObservationKind
+	if strings.Contains(lower, "?") || strings.Contains(lower, "question:") {
+		kinds = append(kinds, SemanticObservationKindQuestion)
+	}
+	if strings.Contains(lower, "proposal:") || strings.Contains(lower, "propose ") || strings.Contains(lower, "suggest ") {
+		kinds = append(kinds, SemanticObservationKindProposal)
+	}
+	if strings.Contains(lower, "objection:") || strings.Contains(lower, "not ready") {
+		kinds = append(kinds, SemanticObservationKindObjection)
+	}
+	if strings.Contains(lower, "decision:") || strings.Contains(lower, "decided") || strings.Contains(lower, "decide ") {
+		kinds = append(kinds, SemanticObservationKindDecisionSignal)
+	}
+	if strings.Contains(lower, "recap:") || strings.Contains(lower, "summary:") {
+		kinds = append(kinds, SemanticObservationKindRecapSignal)
+	}
+	if strings.Contains(lower, "action:") || strings.Contains(lower, "todo:") || strings.Contains(lower, "follow up") || strings.Contains(lower, "need to") || strings.Contains(lower, "needs to") || strings.Contains(lower, "must ") || strings.Contains(lower, "should ") || strings.Contains(lower, "please ") || strings.Contains(lower, "next step") || strings.Contains(lower, "will ") {
+		kinds = append(kinds, SemanticObservationKindActionSignal)
+	}
+	if strings.Contains(lower, "owner:") || strings.Contains(lower, "assigned to") {
+		kinds = append(kinds, SemanticObservationKindOwnerSignal)
+	}
+	if strings.Contains(lower, "deadline:") || strings.Contains(lower, " by ") || strings.Contains(lower, "friday") || strings.Contains(lower, "monday") || strings.Contains(lower, "tomorrow") {
+		kinds = append(kinds, SemanticObservationKindDeadlineSignal)
+	}
+	if strings.Contains(lower, "requirement:") || strings.Contains(lower, "requires ") || strings.Contains(lower, "required ") {
+		kinds = append(kinds, SemanticObservationKindRequirementStatement)
+	}
+	if strings.Contains(lower, "dependency:") || strings.Contains(lower, "depends on") {
+		kinds = append(kinds, SemanticObservationKindDependencyStatement)
+	}
+	if strings.Contains(lower, "risk:") || strings.Contains(lower, "blocked") || strings.Contains(lower, "blocker") || strings.Contains(lower, "concern") || strings.Contains(lower, "issue:") {
+		kinds = append(kinds, SemanticObservationKindRiskStatement)
+	}
+	if strings.Contains(lower, "insight:") || strings.Contains(lower, "learned ") || strings.Contains(lower, "because ") || strings.Contains(lower, "shows that") || strings.Contains(lower, "means that") {
+		kinds = append(kinds, SemanticObservationKindClaim)
+	}
+	return kinds
+}
+
+func semanticTextIsMetadata(text string) bool {
+	lower := strings.ToLower(strings.TrimSpace(text))
+	if lower == "" {
+		return true
+	}
+	for _, prefix := range []string{
+		"source kind:", "source id:", "source label:", "captured at:", "author:",
+		"timestamp:", "permalink:", "thread:", "files:", "urls:", "url:",
+		"message id:", "external id:", "from:", "to:", "cc:", "bcc:", "date:", "subject:",
+	} {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func semanticTextIsLinkOnly(text string) bool {
+	trimmed := strings.Trim(strings.TrimSpace(text), "<>()[]")
+	lower := strings.ToLower(trimmed)
+	if !(strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://")) {
+		return false
+	}
+	return !strings.Contains(strings.TrimPrefix(strings.TrimPrefix(lower, "https://"), "http://"), " ")
+}
+
+func semanticTextIsSubstantive(text string) bool {
+	if len(strings.TrimSpace(text)) < 24 {
+		return false
+	}
+	return len(readableWordPattern.FindAllString(text, -1)) >= 4
+}
+
 func newSemanticObservation(runID string, node StructureNode, kind SemanticObservationKind, text string) SemanticObservation {
 	title := semanticTitle(kind, text, node.Title)
 	observation := SemanticObservation{
@@ -352,6 +565,46 @@ func newSemanticObservation(runID string, node StructureNode, kind SemanticObser
 	}
 	observation.ObservationID = SemanticObservationID(runID, node.NodeID, kind, title)
 	return ClassifyUnsafeSemanticObservation(observation)
+}
+
+func newBlockedSemanticObservation(runID string, node StructureNode) SemanticObservation {
+	text := strings.TrimSpace(node.Title + " " + node.Summary)
+	if text == "" {
+		text = "Unsafe or blocked source evidence requires review."
+	}
+	observation := newSemanticObservation(runID, node, SemanticObservationKindUnknown, text)
+	observation.ReviewStatus = ReviewStatusBlocked
+	observation.Confidence = ConfidenceLow
+	observation.Blockers = appendReviewBlocker(observation.Blockers, "blocked_source_evidence", "Semantic extraction stopped because source evidence was blocked before candidate publication.")
+	return observation
+}
+
+func newSegmentSemanticObservation(runID string, node StructureNode, segment Segment, kind SemanticObservationKind, text string) SemanticObservation {
+	observation := newSemanticObservation(runID, node, kind, text)
+	observation.EvidenceRanges = []SemanticEvidenceRange{{
+		StructureNodeID: node.NodeID,
+		LineStart:       segment.Evidence.LineStart,
+		LineEnd:         segment.Evidence.LineEnd,
+	}}
+	observation.ContentHash = "sha256:" + contentHash(strings.Join([]string{node.NodeID, segment.SegmentID, string(kind), text}, "\n"))
+	observation.ObservationID = SemanticObservationID(runID, node.NodeID+"\x00"+segment.SegmentID, kind, observation.Title)
+	if segment.ReviewStatus == ReviewStatusNeedsReview && observation.ReviewStatus == ReviewStatusReady {
+		observation.ReviewStatus = ReviewStatusNeedsReview
+		observation.Confidence = ConfidenceLow
+	}
+	return ClassifyUnsafeSemanticObservation(observation)
+}
+
+func newBlockedSegmentSemanticObservation(runID string, node StructureNode, segment Segment) SemanticObservation {
+	text := strings.TrimSpace(segment.Title + " " + segment.Summary)
+	if text == "" {
+		text = "Unsafe or blocked segment evidence requires review."
+	}
+	observation := newSegmentSemanticObservation(runID, node, segment, SemanticObservationKindUnknown, text)
+	observation.ReviewStatus = ReviewStatusBlocked
+	observation.Confidence = ConfidenceLow
+	observation.Blockers = appendReviewBlocker(observation.Blockers, "blocked_source_evidence", "Semantic extraction stopped because segment evidence was blocked before candidate publication.")
+	return observation
 }
 
 func ConsolidateSemanticCandidates(runID string, observations []SemanticObservation) ([]SemanticCandidate, []SemanticRelation) {
@@ -393,19 +646,30 @@ func candidatesForSource(runID, sourceID string, observations []SemanticObservat
 		return []SemanticCandidate{newSemanticCandidate(runID, sourceID, SemanticCandidateKindIssue, ReviewStatusNeedsReview, ConfidenceLow, "Import remains under review", observationSummary(observations), observations)}
 	}
 	var out []SemanticCandidate
+	usedObservationIDs := map[string]bool{}
 	actionObs := filterObservations(observations, SemanticObservationKindActionSignal, SemanticObservationKindRecapSignal, SemanticObservationKindDecisionSignal, SemanticObservationKindProposal)
 	if len(actionObs) >= 2 {
-		status := ReviewStatusNeedsReview
-		confidence := ConfidenceLow
-		if hasObservationKind(observations, SemanticObservationKindRecapSignal) && hasObservationKind(observations, SemanticObservationKindActionSignal) && (hasObservationKind(observations, SemanticObservationKindDecisionSignal) || hasObservationKind(observations, SemanticObservationKindProposal)) {
-			status = ReviewStatusReady
-			confidence = ConfidenceMedium
-		}
-		out = append(out, newSemanticCandidate(runID, sourceID, SemanticCandidateKindAction, status, confidence, "Prepare the checklist", observationSummary(actionObs), actionObs))
+		status := ReviewStatusReady
+		confidence := ConfidenceMedium
+		out = append(out, newSemanticCandidate(runID, sourceID, SemanticCandidateKindAction, status, confidence, "Prepare the checklist", actionCandidateSummary(actionObs), actionObs))
+		markSemanticObservationsUsed(usedObservationIDs, actionObs)
 	}
-	capabilityObs := filterObservations(observations, SemanticObservationKindCapabilityStatement, SemanticObservationKindRequirementStatement, SemanticObservationKindDependencyStatement, SemanticObservationKindRiskStatement)
+	capabilityObs := filterObservations(observations, SemanticObservationKindCapabilityStatement, SemanticObservationKindRequirementStatement, SemanticObservationKindDependencyStatement)
 	if len(capabilityObs) > 0 {
 		out = append(out, newSemanticCandidate(runID, sourceID, SemanticCandidateKindCapability, ReviewStatusReady, ConfidenceMedium, capabilityCandidateTitle(capabilityObs), observationSummary(capabilityObs), capabilityObs))
+		markSemanticObservationsUsed(usedObservationIDs, capabilityObs)
+	}
+	for _, observation := range observations {
+		if usedObservationIDs[observation.ObservationID] {
+			continue
+		}
+		kind, ok := semanticCandidateKindForObservation(observation.ObservationKind)
+		if !ok || kind == SemanticCandidateKindReference {
+			continue
+		}
+		status, confidence := semanticCandidateReviewForObservation(observation)
+		title := semanticCandidateTitleForObservation(kind, observation)
+		out = append(out, newSemanticCandidate(runID, sourceID, kind, status, confidence, title, observation.Summary, []SemanticObservation{observation}))
 	}
 	referenceObs := filterObservations(observations, SemanticObservationKindReferenceStatement)
 	if len(out) == 0 && len(referenceObs) > 0 {
@@ -418,6 +682,60 @@ func candidatesForSource(runID, sourceID string, observations []SemanticObservat
 		}
 	}
 	return out
+}
+
+func markSemanticObservationsUsed(used map[string]bool, observations []SemanticObservation) {
+	for _, observation := range observations {
+		used[observation.ObservationID] = true
+	}
+}
+
+func semanticCandidateKindForObservation(kind SemanticObservationKind) (SemanticCandidateKind, bool) {
+	switch kind {
+	case SemanticObservationKindClaim, SemanticObservationKindAgendaFrame, SemanticObservationKindRecapSignal:
+		return SemanticCandidateKindTopic, true
+	case SemanticObservationKindQuestion:
+		return SemanticCandidateKindQuestion, true
+	case SemanticObservationKindProposal, SemanticObservationKindActionSignal, SemanticObservationKindOwnerSignal, SemanticObservationKindDeadlineSignal:
+		return SemanticCandidateKindAction, true
+	case SemanticObservationKindDecisionSignal:
+		return SemanticCandidateKindDecision, true
+	case SemanticObservationKindCapabilityStatement:
+		return SemanticCandidateKindCapability, true
+	case SemanticObservationKindRequirementStatement:
+		return SemanticCandidateKindRequirement, true
+	case SemanticObservationKindDependencyStatement:
+		return SemanticCandidateKindDependency, true
+	case SemanticObservationKindRiskStatement, SemanticObservationKindObjection:
+		return SemanticCandidateKindRisk, true
+	case SemanticObservationKindReferenceStatement:
+		return SemanticCandidateKindReference, true
+	case SemanticObservationKindUnknown:
+		return SemanticCandidateKindUnknown, true
+	default:
+		return "", false
+	}
+}
+
+func semanticCandidateReviewForObservation(observation SemanticObservation) (ReviewStatus, Confidence) {
+	if observation.ReviewStatus == ReviewStatusBlocked {
+		return ReviewStatusBlocked, ConfidenceLow
+	}
+	switch observation.ObservationKind {
+	case SemanticObservationKindQuestion, SemanticObservationKindRiskStatement, SemanticObservationKindObjection, SemanticObservationKindUnknown:
+		return ReviewStatusNeedsReview, ConfidenceLow
+	default:
+		return ReviewStatusReady, ConfidenceMedium
+	}
+}
+
+func semanticCandidateTitleForObservation(kind SemanticCandidateKind, observation SemanticObservation) string {
+	title := strings.TrimSpace(observation.Summary)
+	if title == "" {
+		title = strings.TrimSpace(observation.Title)
+	}
+	prefix := strings.ReplaceAll(string(kind), "_", " ")
+	return trimSemanticText(prefix+": "+title, 96)
 }
 
 func newSemanticCandidate(runID, sourceID string, kind SemanticCandidateKind, status ReviewStatus, confidence Confidence, title, summary string, observations []SemanticObservation) SemanticCandidate {
@@ -552,6 +870,25 @@ func observationSummary(observations []SemanticObservation) string {
 		}
 	}
 	return trimSemanticText(strings.Join(parts, " "), 240)
+}
+
+func actionCandidateSummary(observations []SemanticObservation) string {
+	ordered := make([]SemanticObservation, 0, len(observations))
+	seen := map[string]bool{}
+	for _, kind := range []SemanticObservationKind{SemanticObservationKindActionSignal, SemanticObservationKindRecapSignal, SemanticObservationKindDeadlineSignal, SemanticObservationKindOwnerSignal, SemanticObservationKindDecisionSignal, SemanticObservationKindProposal} {
+		for _, observation := range observations {
+			if observation.ObservationKind == kind && !seen[observation.ObservationID] {
+				ordered = append(ordered, observation)
+				seen[observation.ObservationID] = true
+			}
+		}
+	}
+	for _, observation := range observations {
+		if !seen[observation.ObservationID] {
+			ordered = append(ordered, observation)
+		}
+	}
+	return observationSummary(ordered)
 }
 
 func capabilityCandidateTitle(observations []SemanticObservation) string {

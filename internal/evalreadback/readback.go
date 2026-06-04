@@ -1105,7 +1105,12 @@ func compareModels(baseline, current readbackModel) ComparisonSummary {
 	}
 	comparison.ReasonCodes = reasons
 	improved, regressed := false, false
-	for _, metric := range []string{"evidence_ready_atom_ratio", "evidence_or_blocker_ratio", "source_accounting_ratio", "processed_source_ratio", "missing_link_reduction_ratio", "missing_link_enrichment_reduction_ratio", "needs_enrichment_reduction_ratio", "url_accounting_coverage", "artifact_match_coverage", "evidence_ready_count"} {
+	for _, metric := range []string{
+		"evidence_ready_atom_ratio", "evidence_or_blocker_ratio", "source_accounting_ratio", "processed_source_ratio",
+		"missing_link_reduction_ratio", "missing_link_enrichment_reduction_ratio", "needs_enrichment_reduction_ratio",
+		"url_accounting_coverage", "artifact_match_coverage", "evidence_ready_count",
+		"semantic_observation_count", "semantic_candidate_count", "candidate_per_processed_source_ratio", "observation_per_segment_ratio",
+	} {
 		before, bok := baseline.metrics[metric]
 		after, aok := current.metrics[metric]
 		if !bok || !aok {
@@ -1120,7 +1125,10 @@ func compareModels(baseline, current readbackModel) ComparisonSummary {
 			regressed = true
 		}
 	}
-	for _, metric := range []string{"review_burden_ratio", "review_burden_count", "human_review_required_count", "model_error_count"} {
+	for _, metric := range []string{
+		"review_burden_ratio", "review_burden_count", "human_review_required_count", "model_error_count",
+		"reference_candidate_ratio", "reference_candidate_count", "reference_only_source_count", "one_candidate_source_count",
+	} {
 		before, bok := baseline.metrics[metric]
 		after, aok := current.metrics[metric]
 		if !bok || !aok {

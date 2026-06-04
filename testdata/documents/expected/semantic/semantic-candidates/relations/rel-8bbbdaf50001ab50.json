@@ -1,14 +1,14 @@
 {
   "schema_version": "semantic-relation/v0.1",
-  "relation_id": "rel-711edfeb5c7db765",
+  "relation_id": "rel-8bbbdaf50001ab50",
   "run_id": "run-sem-712942e3ab499d31",
   "relationship_type": "derived_from",
-  "from_id": "cand-92ae8e8100a5eaac",
+  "from_id": "cand-f23dd194eb5bd946",
   "from_type": "candidate",
-  "to_id": "obs-f4779a2cfdd158b6",
+  "to_id": "obs-00204a02205f3e8a",
   "to_type": "observation",
   "evidence_nodes": [
-    "node-4f46b3bd0981f360"
+    "node-0fe508dd044cf9a9"
   ],
   "confidence": "medium",
   "review_status": "ready",

@@ -1,0 +1,23 @@
+{
+  "schema_version": "semantic-observation/v0.1",
+  "observation_id": "obs-b7cbdc2278e26542",
+  "run_id": "run-sem-712942e3ab499d31",
+  "source_document_id": "doc-transcript-consolidated-action",
+  "observation_kind": "decision_signal",
+  "review_status": "ready",
+  "confidence": "medium",
+  "title": "decision signal: use the lightweight checklist for the next intake run Decision: use the lightwe",
+  "summary": "use the lightweight checklist for the next intake run Decision: use the lightweight checklist for the next intake run.",
+  "evidence_nodes": [
+    "node-262592341686a94b"
+  ],
+  "evidence_ranges": [
+    {
+      "structure_node_id": "node-262592341686a94b",
+      "line_start": 16,
+      "line_end": 16
+    }
+  ],
+  "content_hash": "sha256:e9cf0f9bdb19418fbf3d94f379d0868541fb0599ce9afe697b0d7569df642335",
+  "blockers": []
+}

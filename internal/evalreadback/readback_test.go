@@ -608,6 +608,60 @@ func TestBuildPassesSemanticReadinessForRicherCorpusPressure(t *testing.T) {
 	}
 }
 
+func TestBuildSemanticDensityImprovementSupportsImprovementClaim(t *testing.T) {
+	root := t.TempDir()
+	baseline := filepath.Join(root, "baseline")
+	current := filepath.Join(root, "current")
+	common := map[string]any{
+		"schema_version":             "corpus-pressure-summary/v0.1",
+		"corpus_id":                  "corpus-a",
+		"source_count":               50,
+		"processed_source_count":     50,
+		"document_segment_count":     425,
+		"semantic_readiness_status":  "ready",
+		"evidence_ready_atom_ratio":  1,
+		"review_burden_ratio":        0,
+		"corpus_fingerprint":         "same",
+		"command_config_fingerprint": "same-config",
+		"guardrails":                 completeGuardrails(),
+	}
+	baselinePressure := cloneMap(common)
+	baselinePressure["semantic_candidate_count"] = 50
+	baselinePressure["semantic_observation_count"] = 50
+	baselinePressure["reference_candidate_count"] = 50
+	baselinePressure["reference_only_source_count"] = 50
+	baselinePressure["one_candidate_source_count"] = 50
+	baselinePressure["candidate_per_processed_source_ratio"] = 1
+	baselinePressure["observation_per_segment_ratio"] = 0.1176
+	baselinePressure["reference_candidate_ratio"] = 1
+	currentPressure := cloneMap(common)
+	currentPressure["semantic_candidate_count"] = 208
+	currentPressure["semantic_observation_count"] = 211
+	currentPressure["reference_candidate_count"] = 0
+	currentPressure["reference_only_source_count"] = 0
+	currentPressure["one_candidate_source_count"] = 0
+	currentPressure["candidate_per_processed_source_ratio"] = 4.16
+	currentPressure["observation_per_segment_ratio"] = 0.4964
+	currentPressure["reference_candidate_ratio"] = 0
+	writeFixture(t, filepath.Join(baseline, "corpus-pressure", "pressure-summary.json"), baselinePressure)
+	writeFixture(t, filepath.Join(current, "corpus-pressure", "pressure-summary.json"), currentPressure)
+
+	summary, err := Build(current, filepath.Join(root, "out"), Options{BaselineRoot: baseline})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if summary.ImprovementStatus != "improved" {
+		t.Fatalf("expected semantic density improvement, got %s comparison=%+v", summary.ImprovementStatus, summary.Comparison)
+	}
+	if gateStatus(summary, "improvement_claim") != "pass" {
+		t.Fatalf("expected improvement claim pass, got %+v", summary.ClaimGates)
+	}
+	if summary.Comparison == nil || summary.Comparison.MetricDeltas["semantic_candidate_count"] <= 0 ||
+		summary.Comparison.MetricDeltas["reference_candidate_count_reduction"] <= 0 {
+		t.Fatalf("expected semantic density deltas, got %+v", summary.Comparison)
+	}
+}
+
 func TestBuildCurrentOnlyDoesNotPassImprovementClaim(t *testing.T) {
 	out := t.TempDir()
 	summary, err := Build(filepath.Join("..", "..", "testdata", "eval-readback", "current"), out, Options{})
@@ -1767,6 +1821,14 @@ func completeGuardrails() map[string]any {
 		"no_human_claims":             0,
 		"committed_private_artifacts": 0,
 	}
+}
+
+func cloneMap(input map[string]any) map[string]any {
+	out := make(map[string]any, len(input))
+	for key, value := range input {
+		out[key] = value
+	}
+	return out
 }
 
 func copySummaryForResolverShape(t *testing.T, source, target string) string {
