@@ -178,9 +178,13 @@ func TestCorpusAcceptanceLabelingSeedRejectsCurrentWorkspaceOutput(t *testing.T)
 		}
 	}()
 
-	_, _, _, err = BuildCorpusAcceptanceLabelingPacketWithOptions(root, filepath.Join(workspace, "seed-out"), CorpusAcceptanceLabelingOptions{Seed: true, MaxCases: 1})
+	out := filepath.Join(workspace, "seed-out")
+	_, _, _, err = BuildCorpusAcceptanceLabelingPacketWithOptions(root, out, CorpusAcceptanceLabelingOptions{Seed: true, MaxCases: 1})
 	if err == nil || !strings.Contains(err.Error(), "outside the current workspace") {
 		t.Fatalf("expected seed output under workspace to fail closed, got %v", err)
+	}
+	if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
+		t.Fatalf("seed output under workspace should not create output tree, got %v", statErr)
 	}
 }
 

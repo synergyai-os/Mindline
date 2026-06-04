@@ -33,17 +33,17 @@ func WriteCorpusAcceptanceLabelingPacketWithSeed(outDir string, packet CorpusAcc
 	if err := rejectIfSymlink(root); err != nil {
 		return ArtifactWriteError{Err: err}
 	}
+	if seed != nil {
+		if err := rejectCorpusAcceptanceLabelSeedDurableOutput(root); err != nil {
+			return ArtifactWriteError{Err: err}
+		}
+	}
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return ArtifactWriteError{Err: err}
 	}
 	realRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		return ArtifactWriteError{Err: err}
-	}
-	if seed != nil {
-		if err := rejectCorpusAcceptanceLabelSeedDurableOutput(realRoot); err != nil {
-			return ArtifactWriteError{Err: err}
-		}
 	}
 	expected := map[string]bool{"labeling-packet.json": true, "answer-key-template.json": true, "labeling-report.md": true}
 	if seed != nil {
@@ -101,7 +101,10 @@ func WriteCorpusAcceptanceLabelingPacketWithSeed(outDir string, packet CorpusAcc
 }
 
 func rejectCorpusAcceptanceLabelSeedDurableOutput(realRoot string) error {
-	clean := filepath.Clean(realRoot)
+	clean, err := realPathForPossiblyMissing(realRoot)
+	if err != nil {
+		return err
+	}
 	for _, part := range strings.Split(clean, string(filepath.Separator)) {
 		if part == ".productbrain" {
 			return fmt.Errorf("seed private map output must not be under durable Product Brain artifacts")
@@ -123,6 +126,34 @@ func rejectCorpusAcceptanceLabelSeedDurableOutput(realRoot string) error {
 		return fmt.Errorf("seed private map output must be outside the current workspace")
 	}
 	return nil
+}
+
+func realPathForPossiblyMissing(path string) (string, error) {
+	clean, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	clean = filepath.Clean(clean)
+	current := clean
+	missing := []string{}
+	for {
+		realCurrent, err := filepath.EvalSymlinks(current)
+		if err == nil {
+			for idx := len(missing) - 1; idx >= 0; idx-- {
+				realCurrent = filepath.Join(realCurrent, missing[idx])
+			}
+			return filepath.Clean(realCurrent), nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", err
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+	}
 }
 
 func sameOrChildPath(parent, child string) bool {
