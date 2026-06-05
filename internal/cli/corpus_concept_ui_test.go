@@ -87,6 +87,9 @@ func TestCorpusConceptUIServesReviewStateAndRecordsDecision(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `name="mindline-review-token" content="test-token"`) {
 		t.Fatalf("expected review token meta tag")
 	}
+	if !strings.Contains(rec.Body.String(), "Copy concept") || !strings.Contains(rec.Body.String(), "Mindline concept review packet") {
+		t.Fatalf("expected concept copy affordance in UI")
+	}
 
 	state := getCorpusConceptUIState(t, handler)
 	if state.Progress.TotalConceptCount != 1 || state.Progress.ReviewedConceptCount != 0 {

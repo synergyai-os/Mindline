@@ -294,6 +294,17 @@ textarea {
   font: inherit;
   cursor: pointer;
 }
+.copy {
+  width: fit-content;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font: inherit;
+  cursor: pointer;
+}
+.actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .evidence { display: grid; gap: 10px; }
 .evidence-card {
   border: 1px solid var(--line);
@@ -475,6 +486,7 @@ function renderDetail(concept) {
   }).join("") || '<p class="muted">No representative evidence previews.</p>';
   detail.innerHTML = '<div class="detail-head"><h2>' + esc(concept.title) + '</h2><p class="muted">' + esc(concept.concept_id) + '</p></div>' +
     '<div class="detail-body">' +
+    '<div class="actions"><button class="copy" type="button" id="copy-concept">Copy concept</button><span class="muted" id="copy-status"></span></div>' +
     '<section class="question"><h3>Review Question</h3><p>' + esc(concept.review_prompt || "") + '</p><p class="muted">' + esc(concept.grouping_rationale || "") + '</p></section>' +
     '<div class="grid">' +
     '<div class="box"><span>Status</span><strong>' + esc(concept.review_status) + '</strong></div>' +
@@ -500,6 +512,74 @@ function renderDetail(concept) {
     });
   });
   document.getElementById("save-review").addEventListener("click", () => saveReview(concept.concept_id));
+  document.getElementById("copy-concept").addEventListener("click", () => copyConcept(concept));
+}
+
+function conceptCopyText(concept) {
+  const record = recordsByConcept()[concept.concept_id];
+  const lines = [
+    "Mindline concept review packet",
+    "",
+    "Concept: " + (concept.title || ""),
+    "Concept ID: " + concept.concept_id,
+    "Section: " + concept.section,
+    "Review status: " + concept.review_status,
+    "Decision: " + (record ? record.choice : "unreviewed"),
+    "Atoms: " + concept.atom_count,
+    "Sources: " + concept.source_count,
+    "Coverage: " + coverage(concept.source_kind_coverage),
+    "Reasons: " + ((concept.reason_codes || []).join(", ") || "none"),
+    "",
+    "Review question:",
+    concept.review_prompt || "",
+    "",
+    "Grouping rationale:",
+    concept.grouping_rationale || "",
+    ""
+  ];
+  if (record && record.note) {
+    lines.push("Reviewer note:", record.note, "");
+  }
+  lines.push("Representative evidence:");
+  (concept.representative_evidence || []).forEach((item, index) => {
+    lines.push(
+      "",
+      String(index + 1) + ". " + (item.source_kind || "source") + " " + (item.source_ref || "") + " lines " + item.line_start + "-" + item.line_end,
+      "Title: " + (item.title || ""),
+      "Summary: " + (item.summary || ""),
+      "Excerpt: " + (item.excerpt || ""),
+      "Trace: " + (item.evidence_ref_id || "") + " | " + (item.content_hash || "")
+    );
+  });
+  return lines.join("\n");
+}
+
+function copyConcept(concept) {
+  const text = conceptCopyText(concept);
+  const status = document.getElementById("copy-status");
+  const done = () => { status.textContent = "Copied"; };
+  const failed = () => { status.textContent = "Copy failed"; };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done, failed));
+    return;
+  }
+  fallbackCopy(text, done, failed);
+}
+
+function fallbackCopy(text, done, failed) {
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "readonly");
+  area.style.position = "fixed";
+  area.style.left = "-9999px";
+  document.body.appendChild(area);
+  area.select();
+  try {
+    document.execCommand("copy") ? done() : failed();
+  } catch (_) {
+    failed();
+  }
+  document.body.removeChild(area);
 }
 
 function saveReview(conceptID) {
