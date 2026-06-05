@@ -304,7 +304,7 @@ func artifactTypeFor(root, ref string) string {
 func artifactRootPrefix(root string) string {
 	base := filepath.Base(root)
 	switch base {
-	case "trace", "corpus-pressure", "corpus-pressure-loop", "corpus-acceptance", "autonomy-readiness", "link-enrichment", "value-proof", "source-meaning-packet":
+	case "trace", "corpus-pressure", "corpus-graph", "corpus-pressure-loop", "corpus-acceptance", "autonomy-readiness", "link-enrichment", "value-proof", "source-meaning-packet":
 		return base
 	case "comparison", "requests", "posthog":
 		if filepath.Base(filepath.Dir(root)) == "link-enrichment" {
@@ -324,6 +324,8 @@ func artifactTypeForRef(ref string) string {
 		return "corpus_pressure_eval_input"
 	case strings.HasSuffix(ref, "corpus-pressure/trace-summary.json"):
 		return "corpus_pressure_trace_summary"
+	case strings.HasSuffix(ref, "corpus-graph/graph-summary.json"):
+		return "corpus_graph_summary"
 	case strings.HasSuffix(ref, "document-segments/segment-summary.json"):
 		return "document_segment_summary"
 	case strings.HasSuffix(ref, "semantic-candidates/semantic-summary.json"):
@@ -397,6 +399,7 @@ func supportedSchema(artifactType, schemaVersion string) bool {
 		"corpus_pressure_summary":            "corpus-pressure-summary/v0.1",
 		"corpus_pressure_eval_input":         "corpus-pressure-eval-input/v0.1",
 		"corpus_pressure_trace_summary":      "corpus-pressure-trace-summary/v0.1",
+		"corpus_graph_summary":               "corpus-graph-summary/v0.1",
 		"document_segment_summary":           "document-segment-summary/v0.1",
 		"semantic_candidate_summary":         "semantic-candidate-summary/v0.1",
 		"corpus_pressure_loop_summary":       "corpus-pressure-loop-summary/v0.1",

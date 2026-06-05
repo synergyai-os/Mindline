@@ -521,12 +521,12 @@ func generateCorpusRelations(corpusID string, atoms []CorpusGraphAtom, options C
 			stats.PairComparisonCount++
 			for _, relation := range relationsForAtomPair(corpusID, atoms[i], atoms[j]) {
 				if !seen[relation.RelationID] {
-					seen[relation.RelationID] = true
-					out = append(out, relation)
 					if options.MaxRelationCandidates > 0 && len(out) >= options.MaxRelationCandidates {
 						stats.ScaleReasonCodes = appendUniqueString(stats.ScaleReasonCodes, "scale_graph_relation_limit")
 						return orderCorpusRelations(out), stats
 					}
+					seen[relation.RelationID] = true
+					out = append(out, relation)
 				}
 			}
 		}

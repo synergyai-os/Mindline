@@ -187,9 +187,17 @@ func corpusPressureCounterDeltas(previous, current CorpusPressureSourceCounters)
 
 func corpusPressureLoopConfigFingerprint(options CorpusPressureLoopOptions) string {
 	semanticOptions := normalizeCorpusPressureSemanticOptions(options.PressureOptions.SemanticOptions)
+	scaleBudget := normalizeCorpusPressureScaleBudget(options.PressureOptions.ScaleBudget)
 	parts := []string{
 		fmt.Sprintf("max:%d", normalizeCorpusPressureLoopMaxRuns(options.MaxRuns)),
 		"classifier:" + string(semanticOptions.Classifier),
+		fmt.Sprintf("max_processed_sources:%d", scaleBudget.MaxProcessedSources),
+		fmt.Sprintf("max_source_bytes:%d", scaleBudget.MaxSourceBytes),
+		fmt.Sprintf("max_source_segments:%d", scaleBudget.MaxSourceSegments),
+		fmt.Sprintf("max_source_candidates:%d", scaleBudget.MaxSourceCandidates),
+		fmt.Sprintf("max_graph_pair_comparisons:%d", scaleBudget.MaxGraphPairComparisons),
+		fmt.Sprintf("max_graph_relations:%d", scaleBudget.MaxGraphRelations),
+		fmt.Sprintf("max_packet_review_groups:%d", scaleBudget.MaxPacketReviewGroups),
 	}
 	if semanticOptions.Classifier == SemanticClassifierLLM {
 		parts = append(parts, "provider:"+semanticOptions.LLMProvider, "model:"+semanticOptions.LLMModel)

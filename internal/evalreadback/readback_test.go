@@ -116,6 +116,42 @@ func TestBuildPrioritizesScalePartialAsTopImprovementTarget(t *testing.T) {
 	}
 }
 
+func TestBuildReadsStandaloneCorpusGraphScalePartial(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "corpus-graph", "graph-summary.json"), map[string]any{
+		"schema_version":                "corpus-graph-summary/v0.1",
+		"corpus_id":                     "corpus-graph-scale",
+		"source_count":                  2,
+		"scale_status":                  "scale_partial",
+		"scale_reason_codes":            []any{"scale_graph_relation_limit"},
+		"pair_comparison_count":         10,
+		"pair_comparison_limit":         100,
+		"relation_candidate_limit":      1,
+		"atom_count":                    2,
+		"relation_count":                1,
+		"ready_for_50_file_pressure":    false,
+		"replay_fingerprint":            "graph-scale",
+		"relation_type_counts":          map[string]any{},
+		"relation_status_counts":        map[string]any{},
+		"evidence_ready_atom_count":     2,
+		"evidence_ready_relation_count": 1,
+	})
+
+	summary, err := BuildSummary(root, Options{})
+	if err != nil {
+		t.Fatalf("build summary: %v", err)
+	}
+	if summary.ArtifactTypeCounts["corpus_graph_summary"] != 1 {
+		t.Fatalf("expected corpus graph summary artifact: %+v", summary.ArtifactTypeCounts)
+	}
+	if summary.TopImprovementTarget.Code != "scale_capacity" {
+		t.Fatalf("expected scale capacity target, got %+v", summary.TopImprovementTarget)
+	}
+	if !containsString(summary.Artifacts[0].ReasonCodes, "scale_graph_relation_limit") {
+		t.Fatalf("expected graph scale reason, got %+v", summary.Artifacts[0].ReasonCodes)
+	}
+}
+
 func TestBuildTreatsNewSourceMeaningPacketAsComparableImprovement(t *testing.T) {
 	root := t.TempDir()
 	baseline := filepath.Join(root, "baseline")

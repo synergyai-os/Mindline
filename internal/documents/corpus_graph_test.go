@@ -72,6 +72,32 @@ func TestCorpusGraphRelationGenerationStopsAtScaleBudgets(t *testing.T) {
 	}
 }
 
+func TestCorpusGraphRelationLimitIsCompleteWhenExactlyExhausted(t *testing.T) {
+	atoms := []CorpusGraphAtom{}
+	for i := 0; i < 2; i++ {
+		atoms = append(atoms, CorpusGraphAtom{
+			AtomID:           string(rune('a' + i)),
+			CorpusID:         "corpus-scale",
+			SourceID:         "source",
+			SourceKind:       SourceKindMarkdown,
+			SourceLabel:      "source.md",
+			SourceDocumentID: "doc",
+			Title:            "Shared scale topic",
+			Summary:          "Shared scale topic should create exactly one duplicate relation.",
+			LineStart:        i + 1,
+			LineEnd:          i + 1,
+			Excerpt:          "evidence",
+			ContentHash:      "hash",
+			ReviewStatus:     ReviewStatusReady,
+		})
+	}
+
+	relations, stats := generateCorpusRelations("corpus-scale", atoms, CorpusGraphOptions{MaxPairComparisons: 100, MaxRelationCandidates: 1})
+	if len(relations) != 1 || containsCorpusPressureString(stats.ScaleReasonCodes, "scale_graph_relation_limit") {
+		t.Fatalf("exact relation limit should be complete, relations=%d stats=%+v", len(relations), stats)
+	}
+}
+
 func TestCorpusGraphReplayIgnoresSemanticRunScopedIDs(t *testing.T) {
 	rootA := writeCorpusGraphFixture(t, "run-a")
 	rootB := writeCorpusGraphFixture(t, "run-b")

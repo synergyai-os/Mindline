@@ -712,6 +712,20 @@ func TestCorpusPressureLoopFingerprintUsesEffectiveConfig(t *testing.T) {
 	if corpusPressureLoopConfigFingerprint(base) != corpusPressureLoopConfigFingerprint(capped) {
 		t.Fatalf("loop fingerprints must hash the capped effective max-runs value")
 	}
+
+	changedBudget := base
+	changedBudget.PressureOptions.ScaleBudget = CorpusPressureScaleBudget{
+		MaxProcessedSources:     25,
+		MaxSourceBytes:          DefaultCorpusPressureMaxSourceBytes,
+		MaxSourceSegments:       DefaultCorpusPressureMaxSourceSegments,
+		MaxSourceCandidates:     DefaultCorpusPressureMaxSourceCandidates,
+		MaxGraphPairComparisons: DefaultCorpusPressureMaxGraphPairComparisons,
+		MaxGraphRelations:       DefaultCorpusPressureMaxGraphRelations,
+		MaxPacketReviewGroups:   DefaultCorpusPressureMaxPacketReviewGroups,
+	}
+	if corpusPressureLoopConfigFingerprint(base) == corpusPressureLoopConfigFingerprint(changedBudget) {
+		t.Fatalf("loop fingerprints must include normalized scale budgets")
+	}
 }
 
 func TestCorpusPressureLoopKRRequiresFullPressureReadiness(t *testing.T) {
@@ -1240,6 +1254,40 @@ func TestCorpusPressureOversizedSkippedSourceContentChangesCorpusFingerprint(t *
 	}
 }
 
+func TestCorpusPressureSourceLimitSkippedTailChangesCorpusFingerprint(t *testing.T) {
+	build := func(tail string) CorpusPressureSummary {
+		t.Helper()
+		input := t.TempDir()
+		if err := os.WriteFile(filepath.Join(input, "source-01.md"), []byte("# Source 01\n- capability: processed source\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(input, "source-02.md"), []byte(tail), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		summary, _, err := BuildCorpusPressure(input, t.TempDir(), CorpusPressureOptions{ScaleBudget: CorpusPressureScaleBudget{
+			MaxProcessedSources:     1,
+			MaxSourceBytes:          1024 * 1024,
+			MaxSourceSegments:       200,
+			MaxSourceCandidates:     500,
+			MaxGraphPairComparisons: 250000,
+			MaxGraphRelations:       50000,
+			MaxPacketReviewGroups:   50,
+		}})
+		if err != nil {
+			t.Fatalf("build corpus pressure: %v", err)
+		}
+		return summary
+	}
+	left := build("# Source 02\nleft skipped tail\n")
+	right := build("# Source 02\nright skipped tail\n")
+	if left.Sources[1].ReasonCode != CorpusPressureReasonScaleSourceLimit || left.Sources[1].SourceContentHash == "" {
+		t.Fatalf("expected source-limit tail hash, got %+v", left.Sources[1])
+	}
+	if left.CorpusFingerprint == right.CorpusFingerprint {
+		t.Fatalf("different source-limit tail content must change corpus fingerprint: %s", left.CorpusFingerprint)
+	}
+}
+
 func TestCorpusPressureTracePreservesGraphFailureWhenScalePartial(t *testing.T) {
 	stages := corpusPressureTraceStages(CorpusPressureSummary{
 		SourceCount:               2,
@@ -1252,6 +1300,35 @@ func TestCorpusPressureTracePreservesGraphFailureWhenScalePartial(t *testing.T) 
 		if stage.Name == "corpus_graph" && stage.Status != "failed" {
 			t.Fatalf("graph failure must not be downgraded to scale_partial: %+v", stages)
 		}
+	}
+}
+
+func TestCorpusPressureOversizedSkippedSourceMarksGeneratedDirForReruns(t *testing.T) {
+	input := t.TempDir()
+	if err := os.WriteFile(filepath.Join(input, "oversized.md"), []byte("# Oversized\n"+strings.Repeat("body\n", 20)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := t.TempDir()
+	options := CorpusPressureOptions{ScaleBudget: CorpusPressureScaleBudget{
+		MaxProcessedSources:     10,
+		MaxSourceBytes:          1,
+		MaxSourceSegments:       200,
+		MaxSourceCandidates:     500,
+		MaxGraphPairComparisons: 250000,
+		MaxGraphRelations:       50000,
+		MaxPacketReviewGroups:   50,
+	}}
+	for i := 0; i < 2; i++ {
+		if _, _, err := BuildCorpusPressure(input, out, options); err != nil {
+			t.Fatalf("build corpus pressure rerun %d: %v", i+1, err)
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join(out, "sources"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "oversized" {
+		t.Fatalf("oversized rerun should reuse marked generated dir, got %+v", entries)
 	}
 }
 
