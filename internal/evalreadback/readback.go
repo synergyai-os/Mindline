@@ -304,7 +304,7 @@ func artifactTypeFor(root, ref string) string {
 func artifactRootPrefix(root string) string {
 	base := filepath.Base(root)
 	switch base {
-	case "trace", "corpus-pressure", "corpus-pressure-loop", "corpus-acceptance", "autonomy-readiness", "link-enrichment", "value-proof", "source-meaning-packet":
+	case "trace", "corpus-pressure", "corpus-graph", "corpus-pressure-loop", "corpus-acceptance", "autonomy-readiness", "link-enrichment", "value-proof", "source-meaning-packet":
 		return base
 	case "comparison", "requests", "posthog":
 		if filepath.Base(filepath.Dir(root)) == "link-enrichment" {
@@ -324,6 +324,8 @@ func artifactTypeForRef(ref string) string {
 		return "corpus_pressure_eval_input"
 	case strings.HasSuffix(ref, "corpus-pressure/trace-summary.json"):
 		return "corpus_pressure_trace_summary"
+	case strings.HasSuffix(ref, "corpus-graph/graph-summary.json"):
+		return "corpus_graph_summary"
 	case strings.HasSuffix(ref, "document-segments/segment-summary.json"):
 		return "document_segment_summary"
 	case strings.HasSuffix(ref, "semantic-candidates/semantic-summary.json"):
@@ -397,6 +399,7 @@ func supportedSchema(artifactType, schemaVersion string) bool {
 		"corpus_pressure_summary":            "corpus-pressure-summary/v0.1",
 		"corpus_pressure_eval_input":         "corpus-pressure-eval-input/v0.1",
 		"corpus_pressure_trace_summary":      "corpus-pressure-trace-summary/v0.1",
+		"corpus_graph_summary":               "corpus-graph-summary/v0.1",
 		"document_segment_summary":           "document-segment-summary/v0.1",
 		"semantic_candidate_summary":         "semantic-candidate-summary/v0.1",
 		"corpus_pressure_loop_summary":       "corpus-pressure-loop-summary/v0.1",
@@ -426,18 +429,42 @@ func extractEvidence(raw map[string]any, artifact *ArtifactEvidence) {
 		"eval_counted_model_error_count",
 		"review_group_count", "ready_group_count", "needs_review_group_count", "blocked_group_count",
 		"proposal_count", "evidence_reference_count", "evidence_or_blocker_group_count",
+		"generated_review_group_count", "generated_ready_group_count", "generated_needs_review_group_count",
+		"generated_blocked_group_count", "generated_proposal_count", "generated_evidence_reference_count",
+		"generated_evidence_or_blocker_group_count", "generated_review_burden_count",
+		"scale_skipped_source_count", "max_processed_sources", "max_source_bytes", "max_source_segments", "max_source_candidates",
+		"max_graph_pair_comparisons", "max_graph_relations", "max_packet_review_groups",
+		"graph_pair_comparison_count", "graph_pair_comparison_limit", "graph_relation_candidate_limit",
+		"pair_comparison_count", "pair_comparison_limit", "relation_candidate_limit",
+		"max_review_group_count", "omitted_atom_count",
 		"threshold", "accuracy", "eval_count",
 	} {
 		if value, ok := numberValue(raw[key]); ok {
 			artifact.Metrics[key] = value
 		}
 	}
-	for _, key := range []string{"processed_source_ratio", "source_accounting_ratio", "evidence_ready_atom_ratio", "evidence_or_blocker_ratio", "review_burden_ratio", "candidate_per_processed_source_ratio", "observation_per_segment_ratio", "reference_candidate_ratio", "atom_compression_ratio", "relation_review_compression_ratio", "evidence_or_blocker_group_ratio"} {
+	for _, key := range []string{"processed_source_ratio", "source_accounting_ratio", "evidence_ready_atom_ratio", "evidence_or_blocker_ratio", "review_burden_ratio", "candidate_per_processed_source_ratio", "observation_per_segment_ratio", "reference_candidate_ratio", "atom_compression_ratio", "relation_review_compression_ratio", "evidence_or_blocker_group_ratio", "generated_atom_compression_ratio", "generated_relation_review_compression_ratio", "generated_evidence_or_blocker_group_ratio", "generated_review_burden_ratio"} {
 		if value, ok := numberValue(raw[key]); ok {
 			artifact.Metrics[key] = value
 		}
 	}
 	extractSemanticReadinessEvidence(raw, artifact)
+	if status := stringValue(raw["scale_status"]); status != "" {
+		artifact.Flags[status] = true
+		if status == "scale_partial" {
+			artifact.ReasonCodes = appendUnique(artifact.ReasonCodes, "scale_partial")
+		}
+	}
+	if reasons, ok := raw["scale_reason_codes"].([]any); ok {
+		for _, item := range reasons {
+			if reason := stringValue(item); reason != "" {
+				artifact.ReasonCodes = appendUnique(artifact.ReasonCodes, reason)
+			}
+		}
+	}
+	if budget, ok := raw["scale_budget"].(map[string]any); ok {
+		extractEvidence(budget, artifact)
+	}
 	for _, key := range []string{"ready_for_50_file_pressure", "held_out", "non_generalizable_runtime", "comparable", "dec64_eligible", "no_human_eligible", "suite_valid"} {
 		if value, ok := boolValue(raw[key]); ok {
 			artifact.Flags[key] = value
@@ -841,6 +868,8 @@ func rebuildClaimGates(summary *Summary) {
 		gates = append(gates, ClaimGate{Gate: "improvement_claim", Status: "blocked", ReasonCodes: append([]string{"semantic_readiness_blocked"}, summary.SemanticReadiness.ReasonCodes...), EvidenceRefs: firstRefs(summary.SafeArtifactRefs), ClaimImpact: "blocks improvement claim until semantic extraction value is proven"})
 	} else if summary.SemanticReadiness.Status == "not_evaluated" && !stringListContains(summary.SemanticReadiness.ReasonCodes, "insufficient_processed_sources") {
 		gates = append(gates, ClaimGate{Gate: "improvement_claim", Status: "blocked", ReasonCodes: append([]string{"semantic_readiness_not_evaluated"}, summary.SemanticReadiness.ReasonCodes...), EvidenceRefs: firstRefs(summary.SafeArtifactRefs), ClaimImpact: "blocks improvement claim until semantic-density evidence is present or reconstructable"})
+	} else if summaryHasFlag(summary, "scale_partial") {
+		gates = append(gates, ClaimGate{Gate: "improvement_claim", Status: "blocked", ReasonCodes: []string{"scale_partial"}, EvidenceRefs: firstRefs(summary.SafeArtifactRefs), ClaimImpact: "blocks improvement claim until scale capacity limits are resolved"})
 	} else {
 		switch improvementStatus {
 		case "improved":
@@ -864,7 +893,8 @@ func rebuildClaimGates(summary *Summary) {
 			gates = append(gates, ClaimGate{Gate: "improvement_claim", Status: "blocked", ReasonCodes: []string{"missing_baseline"}, ClaimImpact: "blocks improvement claim until comparable baseline is supplied"})
 		}
 	}
-	if hasDEC64ThresholdProof(summary) && hasSideEffectEvidence(summary) && !hasSideEffectCounter(summary) && !unsafe && !unsupported {
+	scalePartial := summaryHasFlag(summary, "scale_partial")
+	if hasDEC64ThresholdProof(summary) && hasSideEffectEvidence(summary) && !hasSideEffectCounter(summary) && !unsafe && !unsupported && !scalePartial {
 		gates = append(gates, ClaimGate{Gate: "dec64_no_human_claim", Status: "pass", EvidenceRefs: firstRefs(summary.SafeArtifactRefs), ClaimImpact: "held-out threshold proof supports bounded no-human readiness claim"})
 	} else {
 		gates = append(gates, ClaimGate{Gate: "dec64_no_human_claim", Status: "blocked", ReasonCodes: dec64BlockedReasonCodes(summary, unsafe, unsupported), ClaimImpact: "blocks no-human autonomy readiness claim"})
@@ -882,6 +912,15 @@ func rebuildClaimGates(summary *Summary) {
 	summary.ClaimGates = gates
 }
 
+func summaryHasFlag(summary *Summary, flag string) bool {
+	for _, artifact := range summary.Artifacts {
+		if artifact.Flags[flag] {
+			return true
+		}
+	}
+	return false
+}
+
 func dec64BlockedReasonCodes(summary *Summary, unsafe bool, unsupported bool) []string {
 	reasonCodes := []string{}
 	if !hasDEC64ThresholdProof(summary) {
@@ -892,6 +931,9 @@ func dec64BlockedReasonCodes(summary *Summary, unsafe bool, unsupported bool) []
 	}
 	if hasSideEffectCounter(summary) {
 		reasonCodes = append(reasonCodes, "guardrail_counter_nonzero")
+	}
+	if summaryHasFlag(summary, "scale_partial") {
+		reasonCodes = append(reasonCodes, "scale_partial")
 	}
 	if unsafe {
 		reasonCodes = append(reasonCodes, "unsafe_or_leaky")
@@ -1282,6 +1324,9 @@ func chooseTarget(model readbackModel, generalization string) ImprovementTarget 
 	refs = firstRefs(refs)
 	if model.flags["unsafe_or_leaky"] {
 		return ImprovementTarget{Code: "unsafe_or_leaky", Rationale: "Readback detected a denied private or secret-looking pattern in a supported artifact.", EvidenceRefs: refs}
+	}
+	if model.flags["scale_partial"] {
+		return ImprovementTarget{Code: "scale_capacity", Rationale: "The run completed only as bounded partial evidence because one or more configured source, graph, or packet scale budgets were reached.", EvidenceRefs: refs}
 	}
 	if readiness := semanticReadinessForModel(model); readiness.Status == "blocked" {
 		return ImprovementTarget{Code: "needs_semantic_density", Rationale: "Source intake may have succeeded, but semantic value is not proven because extraction collapsed into shallow reference output.", EvidenceRefs: refs}

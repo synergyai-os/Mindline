@@ -56,6 +56,11 @@ type CorpusGraphSummary struct {
 	ReplayFingerprint          string                       `json:"replay_fingerprint"`
 	RelationMetrics            CorpusRelationMetrics        `json:"relation_metrics"`
 	ReadyForFiftyFilePressure  bool                         `json:"ready_for_50_file_pressure"`
+	ScaleStatus                string                       `json:"scale_status,omitempty"`
+	ScaleReasonCodes           []string                     `json:"scale_reason_codes,omitempty"`
+	PairComparisonCount        int                          `json:"pair_comparison_count,omitempty"`
+	PairComparisonLimit        int                          `json:"pair_comparison_limit,omitempty"`
+	RelationCandidateLimit     int                          `json:"relation_candidate_limit,omitempty"`
 	Blockers                   []string                     `json:"blockers"`
 	Atoms                      []CorpusGraphSummaryAtom     `json:"atoms"`
 	Relations                  []CorpusGraphSummaryRelation `json:"relations"`
@@ -184,15 +189,46 @@ type corpusGraphBuild struct {
 	Reviews   []CorpusGraphReviewItem
 }
 
+type CorpusGraphOptions struct {
+	MaxPairComparisons    int
+	MaxRelationCandidates int
+}
+
+type corpusGraphRelationStats struct {
+	PairComparisonCount    int
+	PairComparisonLimit    int
+	RelationCandidateLimit int
+	ScaleReasonCodes       []string
+}
+
+const (
+	DefaultCorpusGraphMaxPairComparisons    = 250000
+	DefaultCorpusGraphMaxRelationCandidates = 25000
+)
+
 func BuildCorpusGraph(manifestPath string) (CorpusGraphSummary, []CorpusGraphAtom, []CorpusGraphRelation, []CorpusGraphReviewItem, error) {
-	build, err := buildCorpusGraph(manifestPath)
+	return BuildCorpusGraphWithOptions(manifestPath, CorpusGraphOptions{})
+}
+
+func BuildCorpusGraphWithOptions(manifestPath string, options CorpusGraphOptions) (CorpusGraphSummary, []CorpusGraphAtom, []CorpusGraphRelation, []CorpusGraphReviewItem, error) {
+	build, err := buildCorpusGraph(manifestPath, normalizeCorpusGraphOptions(options))
 	if err != nil {
 		return CorpusGraphSummary{}, nil, nil, nil, err
 	}
 	return build.Summary, build.Atoms, build.Relations, build.Reviews, nil
 }
 
-func buildCorpusGraph(manifestPath string) (corpusGraphBuild, error) {
+func normalizeCorpusGraphOptions(options CorpusGraphOptions) CorpusGraphOptions {
+	if options.MaxPairComparisons <= 0 {
+		options.MaxPairComparisons = DefaultCorpusGraphMaxPairComparisons
+	}
+	if options.MaxRelationCandidates <= 0 {
+		options.MaxRelationCandidates = DefaultCorpusGraphMaxRelationCandidates
+	}
+	return options
+}
+
+func buildCorpusGraph(manifestPath string, options CorpusGraphOptions) (corpusGraphBuild, error) {
 	manifest, manifestDir, err := loadCorpusGraphManifest(manifestPath)
 	if err != nil {
 		return corpusGraphBuild{}, err
@@ -233,12 +269,12 @@ func buildCorpusGraph(manifestPath string) (corpusGraphBuild, error) {
 		atoms = append(atoms, runAtoms...)
 	}
 	atoms = orderCorpusAtoms(atoms)
-	relations := generateCorpusRelations(manifest.CorpusID, atoms)
+	relations, relationStats := generateCorpusRelations(manifest.CorpusID, atoms, options)
 	answerKey, err := loadCorpusGraphAnswerKey(manifestDir, manifest.AnswerKeyPath)
 	if err != nil {
 		return corpusGraphBuild{}, err
 	}
-	summary := buildCorpusGraphSummary(manifest, semanticRunCount, skipped, atoms, relations, answerKey, blockers)
+	summary := buildCorpusGraphSummary(manifest, semanticRunCount, skipped, atoms, relations, answerKey, blockers, relationStats)
 	reviews := buildCorpusReviewItems(atoms, relations)
 	return corpusGraphBuild{Summary: summary, Atoms: atoms, Relations: relations, Reviews: reviews}, nil
 }
@@ -469,20 +505,33 @@ func CorpusRelationID(corpusID string, relationType CorpusRelationType, fromAtom
 	return "crel-" + shortHash(strings.Join([]string{corpusID, string(relationType), a, b, reasonCode}, "\x00"))
 }
 
-func generateCorpusRelations(corpusID string, atoms []CorpusGraphAtom) []CorpusGraphRelation {
+func generateCorpusRelations(corpusID string, atoms []CorpusGraphAtom, options CorpusGraphOptions) ([]CorpusGraphRelation, corpusGraphRelationStats) {
 	out := []CorpusGraphRelation{}
 	seen := map[string]bool{}
+	stats := corpusGraphRelationStats{
+		PairComparisonLimit:    options.MaxPairComparisons,
+		RelationCandidateLimit: options.MaxRelationCandidates,
+	}
 	for i := 0; i < len(atoms); i++ {
 		for j := i + 1; j < len(atoms); j++ {
+			if options.MaxPairComparisons > 0 && stats.PairComparisonCount >= options.MaxPairComparisons {
+				stats.ScaleReasonCodes = appendUniqueString(stats.ScaleReasonCodes, "scale_graph_pair_limit")
+				return orderCorpusRelations(out), stats
+			}
+			stats.PairComparisonCount++
 			for _, relation := range relationsForAtomPair(corpusID, atoms[i], atoms[j]) {
 				if !seen[relation.RelationID] {
+					if options.MaxRelationCandidates > 0 && len(out) >= options.MaxRelationCandidates {
+						stats.ScaleReasonCodes = appendUniqueString(stats.ScaleReasonCodes, "scale_graph_relation_limit")
+						return orderCorpusRelations(out), stats
+					}
 					seen[relation.RelationID] = true
 					out = append(out, relation)
 				}
 			}
 		}
 	}
-	return orderCorpusRelations(out)
+	return orderCorpusRelations(out), stats
 }
 
 func relationsForAtomPair(corpusID string, a, b CorpusGraphAtom) []CorpusGraphRelation {
@@ -588,12 +637,23 @@ func graphTerms(value string) map[string]bool {
 	return out
 }
 
-func buildCorpusGraphSummary(manifest CorpusGraphManifest, semanticRunCount, skipped int, atoms []CorpusGraphAtom, relations []CorpusGraphRelation, answerKey *CorpusGraphAnswerKey, blockers []string) CorpusGraphSummary {
+func buildCorpusGraphSummary(manifest CorpusGraphManifest, semanticRunCount, skipped int, atoms []CorpusGraphAtom, relations []CorpusGraphRelation, answerKey *CorpusGraphAnswerKey, blockers []string, relationStats corpusGraphRelationStats) CorpusGraphSummary {
 	summary := CorpusGraphSummary{
 		SchemaVersion: CorpusGraphSummarySchemaVersion,
 		CorpusID:      manifest.CorpusID, SourceCount: len(manifest.Sources), SemanticRunCount: semanticRunCount, SkippedSourceCount: skipped,
 		AtomCount: len(atoms), RelationCount: len(relations), RelationTypeCounts: map[CorpusRelationType]int{}, RelationStatusCounts: map[ReviewStatus]int{},
-		Blockers: append([]string(nil), blockers...),
+		ScaleStatus:            "scale_complete",
+		ScaleReasonCodes:       append([]string{}, relationStats.ScaleReasonCodes...),
+		PairComparisonCount:    relationStats.PairComparisonCount,
+		PairComparisonLimit:    relationStats.PairComparisonLimit,
+		RelationCandidateLimit: relationStats.RelationCandidateLimit,
+		Blockers:               append([]string(nil), blockers...),
+	}
+	if len(summary.ScaleReasonCodes) > 0 {
+		summary.ScaleStatus = "scale_partial"
+		for _, reason := range summary.ScaleReasonCodes {
+			summary.Blockers = append(summary.Blockers, "corpus graph scale partial: "+reason)
+		}
 	}
 	for _, atom := range atoms {
 		if atom.ReviewStatus != ReviewStatusBlocked && len(atom.Blockers) == 0 {
@@ -642,7 +702,7 @@ func buildCorpusGraphSummary(manifest CorpusGraphManifest, semanticRunCount, ski
 	if answerKey != nil {
 		summary.RelationMetrics = evaluateCorpusRelations(relations, *answerKey, atoms)
 	}
-	if summary.EvidenceReadyAtomCount == len(atoms) && summary.EvidenceReadyRelationCount == len(relations) && summary.BlockedCount == 0 && skipped == 0 {
+	if summary.EvidenceReadyAtomCount == len(atoms) && summary.EvidenceReadyRelationCount == len(relations) && summary.BlockedCount == 0 && skipped == 0 && summary.ScaleStatus != "scale_partial" {
 		summary.ReadyForFiftyFilePressure = true
 	}
 	summary.ReplayFingerprint = corpusReplayFingerprint(summary, atoms, relations)

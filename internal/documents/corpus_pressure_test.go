@@ -3,6 +3,7 @@ package documents
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -336,6 +337,95 @@ func TestCorpusPressureLLMClassifierCountsHostedInferenceGuardrail(t *testing.T)
 	}
 }
 
+func TestCorpusPressureLLMClassifierUsesRawSourceTextAfterSegmentBudgetScreening(t *testing.T) {
+	input := t.TempDir()
+	if err := os.WriteFile(filepath.Join(input, "source.md"), []byte("# Source\n- capability: raw LLM evidence survives prebuilt structure reuse\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	provider := &fakeLLMSemanticProvider{}
+
+	if _, _, err := BuildCorpusPressure(input, t.TempDir(), CorpusPressureOptions{
+		SemanticOptions: SemanticOptions{
+			Classifier:  SemanticClassifierLLM,
+			LLMProvider: "openai",
+			LLMModel:    "fake-model",
+			LLMAPIKey:   "fake-key",
+			LLMClient:   provider,
+		},
+		ScaleBudget: CorpusPressureScaleBudget{
+			MaxProcessedSources:     10,
+			MaxSourceBytes:          1024 * 1024,
+			MaxSourceSegments:       200,
+			MaxGraphPairComparisons: 250000,
+			MaxGraphRelations:       50000,
+			MaxPacketReviewGroups:   50,
+		},
+	}); err != nil {
+		t.Fatalf("build corpus pressure with LLM classifier: %v", err)
+	}
+	var requestText string
+	for _, node := range provider.request.Nodes {
+		requestText += " " + node.Text
+	}
+	if !strings.Contains(requestText, "raw LLM evidence survives prebuilt structure reuse") {
+		t.Fatalf("expected LLM request to include raw source text, got %q", requestText)
+	}
+	if strings.Contains(requestText, "Document structure root") {
+		t.Fatalf("LLM request used generated structure summary instead of raw source text: %q", requestText)
+	}
+}
+
+func TestCorpusPressureAllBlockedLLMSemanticSkipPreservesReasonCode(t *testing.T) {
+	input := t.TempDir()
+	if err := os.WriteFile(filepath.Join(input, "blocked.md"), []byte("# WP-17 Review\n\nDEC-75 private review material should be blocked.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	provider := &fakeLLMSemanticProvider{}
+	summary, _, err := BuildCorpusPressure(input, t.TempDir(), CorpusPressureOptions{
+		SemanticOptions: SemanticOptions{
+			Classifier:  SemanticClassifierLLM,
+			LLMProvider: "openai",
+			LLMModel:    "fake-model",
+			LLMAPIKey:   "fake-key",
+			LLMClient:   provider,
+		},
+	})
+	if err != nil {
+		t.Fatalf("build corpus pressure: %v", err)
+	}
+	if len(summary.Sources) != 1 || summary.Sources[0].State != CorpusPressureSourceExcluded || summary.Sources[0].ReasonCode != CorpusPressureReasonSemanticSkipped {
+		t.Fatalf("all-blocked semantic skip should be excluded with semantic_skipped reason, got %+v", summary.Sources)
+	}
+}
+
+type multiCandidateLLMSemanticProvider struct {
+	request LLMSemanticRequest
+}
+
+func (provider *multiCandidateLLMSemanticProvider) Classify(request LLMSemanticRequest) (llmSemanticResponse, error) {
+	provider.request = request
+	evidenceNode := ""
+	if len(request.Nodes) > 0 {
+		evidenceNode = request.Nodes[0].NodeID
+	}
+	return llmSemanticResponse{Candidates: []llmSemanticCandidate{
+		{
+			Kind:          string(SemanticCandidateKindAction),
+			Title:         "Prepare bounded evidence",
+			Summary:       "Prepare bounded evidence from the cited source.",
+			Confidence:    string(ConfidenceMedium),
+			EvidenceNodes: []string{evidenceNode},
+		},
+		{
+			Kind:          string(SemanticCandidateKindRequirement),
+			Title:         "Require bounded evidence",
+			Summary:       "Require bounded evidence from the cited source.",
+			Confidence:    string(ConfidenceMedium),
+			EvidenceNodes: []string{evidenceNode},
+		},
+	}}, nil
+}
+
 func TestCorpusPressureFailsWhenOutputSourcesPathIsNotDirectory(t *testing.T) {
 	input := t.TempDir()
 	if err := os.WriteFile(filepath.Join(input, "source.md"), []byte("# Source\n- capability: fail instead of hanging on invalid output sources path\n"), 0o644); err != nil {
@@ -644,6 +734,20 @@ func TestCorpusPressureLoopFingerprintUsesEffectiveConfig(t *testing.T) {
 	capped.MaxRuns = 100
 	if corpusPressureLoopConfigFingerprint(base) != corpusPressureLoopConfigFingerprint(capped) {
 		t.Fatalf("loop fingerprints must hash the capped effective max-runs value")
+	}
+
+	changedBudget := base
+	changedBudget.PressureOptions.ScaleBudget = CorpusPressureScaleBudget{
+		MaxProcessedSources:     25,
+		MaxSourceBytes:          DefaultCorpusPressureMaxSourceBytes,
+		MaxSourceSegments:       DefaultCorpusPressureMaxSourceSegments,
+		MaxSourceCandidates:     DefaultCorpusPressureMaxSourceCandidates,
+		MaxGraphPairComparisons: DefaultCorpusPressureMaxGraphPairComparisons,
+		MaxGraphRelations:       DefaultCorpusPressureMaxGraphRelations,
+		MaxPacketReviewGroups:   DefaultCorpusPressureMaxPacketReviewGroups,
+	}
+	if corpusPressureLoopConfigFingerprint(base) == corpusPressureLoopConfigFingerprint(changedBudget) {
+		t.Fatalf("loop fingerprints must include normalized scale budgets")
 	}
 }
 
@@ -990,6 +1094,379 @@ func TestCorpusPressureRejectsOutputSourceSymlinkEscape(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(escaped, "source.md")); err == nil {
 		t.Fatalf("source copy escaped output root through symlink")
+	}
+}
+
+func TestCorpusPressureWritesScalePartialSummaryWhenSourceLimitReached(t *testing.T) {
+	input := t.TempDir()
+	for i := 1; i <= 3; i++ {
+		path := filepath.Join(input, fmt.Sprintf("source-%02d.md", i))
+		if err := os.WriteFile(path, []byte(fmt.Sprintf("# Source %02d\n- capability: bounded scale proof %02d\n", i, i)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := t.TempDir()
+	summary, _, err := BuildCorpusPressure(input, out, CorpusPressureOptions{ScaleBudget: CorpusPressureScaleBudget{
+		MaxProcessedSources:     2,
+		MaxSourceBytes:          1024 * 1024,
+		MaxSourceSegments:       200,
+		MaxGraphPairComparisons: 250000,
+		MaxGraphRelations:       50000,
+		MaxPacketReviewGroups:   50,
+	}})
+	if err != nil {
+		t.Fatalf("build corpus pressure: %v", err)
+	}
+	if summary.ScaleStatus != "scale_partial" || !containsCorpusPressureString(summary.ScaleReasonCodes, "scale_source_limit") {
+		t.Fatalf("expected scale source limit, got %+v", summary)
+	}
+	if summary.ProcessedSourceCount != 2 || summary.SkippedSourceCount != 1 || summary.ScaleSkippedSourceCount != 1 {
+		t.Fatalf("unexpected source accounting: %+v", summary)
+	}
+	if summary.ReadyForFiftyFilePressure {
+		t.Fatalf("scale partial run must not be ready: %+v", summary)
+	}
+	if !containsCorpusPressureString(summary.NextImprovementTargets, "scale_capacity") {
+		t.Fatalf("expected scale capacity target, got %+v", summary.NextImprovementTargets)
+	}
+	if _, err := os.Stat(filepath.Join(out, CorpusPressureDirName, "pressure-summary.json")); err != nil {
+		t.Fatalf("expected final pressure summary: %v", err)
+	}
+}
+
+func TestCorpusPressureSkipsSourcesBeforeSemanticExplosionWhenScaleBudgetsHit(t *testing.T) {
+	input := t.TempDir()
+	large := strings.Repeat("large source body\n", 20)
+	if err := os.WriteFile(filepath.Join(input, "large.md"), []byte("# Large\n"+large), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(input, "many-segments.md"), []byte("# Many\n\n## A\nalpha\n\n## B\nbeta\n\n## C\ngamma\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(input, "small.md"), []byte("# Small\n- capability: bounded source\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	summary, _, err := BuildCorpusPressure(input, t.TempDir(), CorpusPressureOptions{ScaleBudget: CorpusPressureScaleBudget{
+		MaxProcessedSources:     10,
+		MaxSourceBytes:          80,
+		MaxSourceSegments:       2,
+		MaxGraphPairComparisons: 250000,
+		MaxGraphRelations:       50000,
+		MaxPacketReviewGroups:   50,
+	}})
+	if err != nil {
+		t.Fatalf("build corpus pressure: %v", err)
+	}
+	if summary.ScaleStatus != "scale_partial" {
+		t.Fatalf("expected scale partial, got %+v", summary)
+	}
+	for _, reason := range []string{"scale_source_size_limit", "scale_segment_limit"} {
+		if !containsCorpusPressureString(summary.ScaleReasonCodes, reason) {
+			t.Fatalf("expected scale reason %q, got %+v", reason, summary.ScaleReasonCodes)
+		}
+	}
+	if summary.ProcessedSourceCount != 1 || summary.ScaleSkippedSourceCount != 2 {
+		t.Fatalf("expected one processed and two scale skipped sources, got %+v", summary)
+	}
+}
+
+func TestCorpusPressureCountsAttemptedSourcesAgainstSourceLimit(t *testing.T) {
+	input := t.TempDir()
+	if err := os.WriteFile(filepath.Join(input, "source-01-large.md"), []byte("# Large\n"+strings.Repeat("oversized source body\n", 20)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for i := 2; i <= 3; i++ {
+		if err := os.WriteFile(filepath.Join(input, fmt.Sprintf("source-%02d-small.md", i)), []byte(fmt.Sprintf("# Small %02d\n- capability: process after skipped source\n", i)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	summary, _, err := BuildCorpusPressure(input, t.TempDir(), CorpusPressureOptions{ScaleBudget: CorpusPressureScaleBudget{
+		MaxProcessedSources:     1,
+		MaxSourceBytes:          80,
+		MaxSourceSegments:       200,
+		MaxSourceCandidates:     500,
+		MaxGraphPairComparisons: 250000,
+		MaxGraphRelations:       50000,
+		MaxPacketReviewGroups:   50,
+	}})
+	if err != nil {
+		t.Fatalf("build corpus pressure: %v", err)
+	}
+	if summary.ProcessedSourceCount != 0 || summary.ScaleSkippedSourceCount != 3 {
+		t.Fatalf("source cap should count attempted sources before later artifacts fan out, got %+v", summary)
+	}
+	for _, reason := range []string{"scale_source_size_limit", "scale_source_limit"} {
+		if !containsCorpusPressureString(summary.ScaleReasonCodes, reason) {
+			t.Fatalf("expected scale reason %q, got %+v", reason, summary.ScaleReasonCodes)
+		}
+	}
+	if summary.Sources[1].ReasonCode != CorpusPressureReasonScaleSourceLimit || summary.Sources[2].ReasonCode != CorpusPressureReasonScaleSourceLimit {
+		t.Fatalf("later sources should be skipped by source cap after first attempted source, got %+v", summary.Sources)
+	}
+}
+
+func TestCorpusPressureStopsBeforeWritingSemanticArtifactsWhenCandidateBudgetIsHit(t *testing.T) {
+	input := t.TempDir()
+	if err := os.WriteFile(filepath.Join(input, "source.md"), []byte("# Source\n- capability: candidate budget should stop semantic artifact writes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := t.TempDir()
+	provider := &multiCandidateLLMSemanticProvider{}
+	summary, _, err := BuildCorpusPressure(input, out, CorpusPressureOptions{
+		SemanticOptions: SemanticOptions{
+			Classifier:  SemanticClassifierLLM,
+			LLMProvider: "openai",
+			LLMModel:    "fake-model",
+			LLMAPIKey:   "fake-key",
+			LLMClient:   provider,
+		},
+		ScaleBudget: CorpusPressureScaleBudget{
+			MaxProcessedSources:     10,
+			MaxSourceBytes:          1024 * 1024,
+			MaxSourceSegments:       200,
+			MaxSourceCandidates:     1,
+			MaxGraphPairComparisons: 250000,
+			MaxGraphRelations:       50000,
+			MaxPacketReviewGroups:   50,
+		},
+	})
+	if err != nil {
+		t.Fatalf("build corpus pressure: %v", err)
+	}
+	if summary.ScaleStatus != "scale_partial" || !containsCorpusPressureString(summary.ScaleReasonCodes, "scale_candidate_limit") {
+		t.Fatalf("expected scale candidate limit, got %+v", summary)
+	}
+	if summary.ProcessedSourceCount != 0 || summary.ScaleSkippedSourceCount != 1 {
+		t.Fatalf("candidate-limited source should be scale skipped, got %+v", summary)
+	}
+	source := summary.Sources[0]
+	if source.ReasonCode != CorpusPressureReasonScaleCandidateLimit {
+		t.Fatalf("expected source reason scale_candidate_limit, got %+v", source)
+	}
+	semanticRoot := filepath.Join(out, source.SemanticRunDir, "semantic-candidates")
+	if candidates, err := filepath.Glob(filepath.Join(semanticRoot, "candidates", "*.json")); err != nil || len(candidates) != 0 {
+		t.Fatalf("candidate budget should not write candidate artifacts: paths=%v err=%v", candidates, err)
+	}
+}
+
+func TestCorpusPressureOversizedSkippedSourceContentChangesCorpusFingerprint(t *testing.T) {
+	build := func(body string) CorpusPressureSummary {
+		t.Helper()
+		input := t.TempDir()
+		if err := os.WriteFile(filepath.Join(input, "oversized.md"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		summary, _, err := BuildCorpusPressure(input, t.TempDir(), CorpusPressureOptions{ScaleBudget: CorpusPressureScaleBudget{
+			MaxProcessedSources:     10,
+			MaxSourceBytes:          1,
+			MaxSourceSegments:       200,
+			MaxSourceCandidates:     500,
+			MaxGraphPairComparisons: 250000,
+			MaxGraphRelations:       50000,
+			MaxPacketReviewGroups:   50,
+		}})
+		if err != nil {
+			t.Fatalf("build corpus pressure: %v", err)
+		}
+		return summary
+	}
+	left := build("# Oversized\nleft skipped content\n")
+	right := build("# Oversized\nright skipped content\n")
+	if left.Sources[0].SourceContentHash == "" || right.Sources[0].SourceContentHash == "" {
+		t.Fatalf("oversized skipped sources must still carry content hashes: left=%+v right=%+v", left.Sources[0], right.Sources[0])
+	}
+	if left.CorpusFingerprint == right.CorpusFingerprint {
+		t.Fatalf("different oversized skipped source content must change corpus fingerprint: %s", left.CorpusFingerprint)
+	}
+}
+
+func TestCorpusPressureSourceLimitSkippedTailDoesNotHashContent(t *testing.T) {
+	input := t.TempDir()
+	if err := os.WriteFile(filepath.Join(input, "source-01.md"), []byte("# Source 01\n- capability: processed source\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(input, "source-02.md"), []byte("# Source 02\n"+strings.Repeat("tail content\n", 20)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	summary, _, err := BuildCorpusPressure(input, t.TempDir(), CorpusPressureOptions{ScaleBudget: CorpusPressureScaleBudget{
+		MaxProcessedSources:     1,
+		MaxSourceBytes:          1024 * 1024,
+		MaxSourceSegments:       200,
+		MaxSourceCandidates:     500,
+		MaxGraphPairComparisons: 250000,
+		MaxGraphRelations:       50000,
+		MaxPacketReviewGroups:   50,
+	}})
+	if err != nil {
+		t.Fatalf("build corpus pressure: %v", err)
+	}
+	tail := summary.Sources[1]
+	if tail.ReasonCode != CorpusPressureReasonScaleSourceLimit || tail.SourceContentHash != "" {
+		t.Fatalf("source-limit tail skip should not hash skipped content, got %+v", tail)
+	}
+	if !strings.Contains(tail.Message, "not hashed") {
+		t.Fatalf("source-limit tail skip should explain bounded metadata, got %+v", tail)
+	}
+}
+
+func TestCorpusPressureTracePreservesGraphFailureWhenScalePartial(t *testing.T) {
+	stages := corpusPressureTraceStages(CorpusPressureSummary{
+		SourceCount:               2,
+		ScaleStatus:               "scale_partial",
+		SemanticCandidateCount:    1,
+		ReadyForFiftyFilePressure: false,
+		Blockers:                  []string{"corpus graph failed: write failed"},
+	})
+	for _, stage := range stages {
+		if stage.Name == "corpus_graph" && stage.Status != "failed" {
+			t.Fatalf("graph failure must not be downgraded to scale_partial: %+v", stages)
+		}
+	}
+}
+
+func TestCorpusPressureOversizedSkippedSourceMarksGeneratedDirForReruns(t *testing.T) {
+	input := t.TempDir()
+	if err := os.WriteFile(filepath.Join(input, "oversized.md"), []byte("# Oversized\n"+strings.Repeat("body\n", 20)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := t.TempDir()
+	options := CorpusPressureOptions{ScaleBudget: CorpusPressureScaleBudget{
+		MaxProcessedSources:     10,
+		MaxSourceBytes:          1,
+		MaxSourceSegments:       200,
+		MaxSourceCandidates:     500,
+		MaxGraphPairComparisons: 250000,
+		MaxGraphRelations:       50000,
+		MaxPacketReviewGroups:   50,
+	}}
+	for i := 0; i < 2; i++ {
+		if _, _, err := BuildCorpusPressure(input, out, options); err != nil {
+			t.Fatalf("build corpus pressure rerun %d: %v", i+1, err)
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join(out, "sources"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "oversized" {
+		t.Fatalf("oversized rerun should reuse marked generated dir, got %+v", entries)
+	}
+}
+
+func TestCorpusPressureScaleSkippedSourcesDoNotAdvertiseMissingSourceArtifacts(t *testing.T) {
+	input := t.TempDir()
+	for i := 1; i <= 2; i++ {
+		if err := os.WriteFile(filepath.Join(input, fmt.Sprintf("source-%02d.md", i)), []byte(fmt.Sprintf("# Source %02d\n- capability: source path contract\n", i)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := t.TempDir()
+	summary, _, err := BuildCorpusPressure(input, out, CorpusPressureOptions{ScaleBudget: CorpusPressureScaleBudget{
+		MaxProcessedSources:     1,
+		MaxSourceBytes:          1024 * 1024,
+		MaxSourceSegments:       200,
+		MaxGraphPairComparisons: 250000,
+		MaxGraphRelations:       50000,
+		MaxPacketReviewGroups:   50,
+	}})
+	if err != nil {
+		t.Fatalf("build corpus pressure: %v", err)
+	}
+	for _, source := range summary.Sources {
+		if source.State != CorpusPressureSourceSkipped || !corpusPressureReasonIsScale(source.ReasonCode) {
+			continue
+		}
+		if source.SourcePath != "" {
+			if _, err := os.Stat(filepath.Join(out, filepath.FromSlash(source.SourcePath))); os.IsNotExist(err) {
+				t.Fatalf("scale-skipped source advertised missing source artifact: %+v", source)
+			}
+		}
+	}
+}
+
+func TestCorpusPressureAllScaleSkippedSourcesDoNotAdvertiseMissingGraphArtifacts(t *testing.T) {
+	input := t.TempDir()
+	for i := 1; i <= 2; i++ {
+		if err := os.WriteFile(filepath.Join(input, fmt.Sprintf("source-%02d.md", i)), []byte(fmt.Sprintf("# Source %02d\n- capability: graph path contract\n", i)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := t.TempDir()
+	summary, _, err := BuildCorpusPressure(input, out, CorpusPressureOptions{ScaleBudget: CorpusPressureScaleBudget{
+		MaxProcessedSources:     10,
+		MaxSourceBytes:          1,
+		MaxSourceSegments:       200,
+		MaxGraphPairComparisons: 250000,
+		MaxGraphRelations:       50000,
+		MaxPacketReviewGroups:   50,
+	}})
+	if err != nil {
+		t.Fatalf("build corpus pressure: %v", err)
+	}
+	if summary.ProcessedSourceCount != 0 || summary.ScaleSkippedSourceCount != 2 {
+		t.Fatalf("expected all sources scale skipped, got %+v", summary)
+	}
+	if summary.GraphSummaryPath != "" {
+		t.Fatalf("all-skipped run must not advertise missing graph artifacts: %+v", summary)
+	}
+	if summary.GraphManifestPath != "" {
+		if _, err := os.Stat(filepath.Join(out, filepath.FromSlash(summary.GraphManifestPath))); err != nil {
+			t.Fatalf("advertised graph manifest must exist: %v", err)
+		}
+	}
+	if _, _, err := BuildSourceMeaningPreview(out, t.TempDir()); err != nil {
+		t.Fatalf("source meaning preview should tolerate all-skipped pressure runs: %v", err)
+	}
+	if _, _, err := BuildSourceMeaningPacket(out, t.TempDir()); err != nil {
+		t.Fatalf("source meaning packet should tolerate all-skipped pressure runs: %v", err)
+	}
+}
+
+func TestCorpusPressureUsesRawSourceTextAfterSegmentBudgetScreening(t *testing.T) {
+	input := t.TempDir()
+	if err := os.WriteFile(filepath.Join(input, "raw.md"), []byte("# Raw\n- capability: raw source evidence survives prebuilt structure reuse\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := t.TempDir()
+	summary, _, err := BuildCorpusPressure(input, out, CorpusPressureOptions{ScaleBudget: CorpusPressureScaleBudget{
+		MaxProcessedSources:     10,
+		MaxSourceBytes:          1024 * 1024,
+		MaxSourceSegments:       200,
+		MaxGraphPairComparisons: 250000,
+		MaxGraphRelations:       50000,
+		MaxPacketReviewGroups:   50,
+	}})
+	if err != nil {
+		t.Fatalf("build corpus pressure: %v", err)
+	}
+	if summary.ProcessedSourceCount != 1 {
+		t.Fatalf("expected one processed source, got %+v", summary)
+	}
+	var observationFound bool
+	for _, source := range summary.Sources {
+		if source.State != CorpusPressureSourceProcessed {
+			continue
+		}
+		var semanticSummary SemanticSummary
+		semanticRoot := filepath.Join(out, source.SemanticRunDir, "semantic-candidates")
+		readCorpusPressureJSON(t, filepath.Join(semanticRoot, "semantic-summary.json"), &semanticSummary)
+		observationPaths, err := filepath.Glob(filepath.Join(semanticRoot, "observations", "*.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, observationPath := range observationPaths {
+			var observation SemanticObservation
+			readCorpusPressureJSON(t, observationPath, &observation)
+			if strings.Contains(observation.Summary, "raw source evidence survives prebuilt structure reuse") {
+				observationFound = true
+			}
+			if strings.Contains(observation.Summary, "Document structure root") {
+				t.Fatalf("semantic extraction used generated structure summary instead of raw source text: %+v", observation)
+			}
+		}
+	}
+	if !observationFound {
+		t.Fatalf("expected semantic observation to preserve raw source text")
 	}
 }
 

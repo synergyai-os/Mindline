@@ -1,6 +1,7 @@
 package documents
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -161,6 +162,115 @@ func TestSourceMeaningPacketClustersReviewPressureBeforeChunking(t *testing.T) {
 	}
 	if build.Summary.ReviewBurdenRatio > 0.35 {
 		t.Fatalf("expected bounded review burden, got %+v", build.Summary)
+	}
+}
+
+func TestSourceMeaningPacketReportsScalePartialWhenGroupBudgetIsReached(t *testing.T) {
+	atoms := make([]CorpusGraphAtom, 0, 25)
+	for i := 1; i <= 25; i++ {
+		atomID := fmt.Sprintf("atom-%02d", i)
+		sourceID := fmt.Sprintf("source-%02d", i)
+		atoms = append(atoms, sourceMeaningPacketTestAtom(atomID, sourceID, SemanticCandidateKindTopic))
+	}
+
+	build := buildSourceMeaningPacket(
+		CorpusPressureSummary{
+			CorpusID:             "corpus-test",
+			SourceCount:          25,
+			ProcessedSourceCount: 25,
+			ScaleBudget:          CorpusPressureScaleBudget{MaxPacketReviewGroups: 1},
+		},
+		CorpusGraphSummary{AtomCount: 25},
+		map[string][]CorpusGraphAtom{"sources": atoms},
+		nil,
+	)
+
+	if build.Summary.ReviewGroupCount != 1 || len(build.Groups) != 1 {
+		t.Fatalf("expected group budget to cap packet groups: %+v", build.Summary)
+	}
+	if build.Summary.GeneratedReviewGroupCount != 3 {
+		t.Fatalf("expected generated group diagnostics to retain uncapped count, got %+v", build.Summary)
+	}
+	if build.Summary.ScaleStatus != "scale_partial" || !containsCorpusPressureString(build.Summary.ScaleReasonCodes, "scale_packet_group_limit") {
+		t.Fatalf("expected packet scale partial, got %+v", build.Summary)
+	}
+	if build.Summary.OmittedAtomCount != 13 {
+		t.Fatalf("expected 13 omitted atoms after first 12-atom group, got %+v", build.Summary)
+	}
+	if build.Summary.AtomCompressionRatio != 0.96 {
+		t.Fatalf("emitted packet metrics should account for emitted groups, got %+v", build.Summary)
+	}
+	if build.Summary.GeneratedAtomCompressionRatio != 0.88 {
+		t.Fatalf("generated diagnostics should account for all generated groups before cap, got %+v", build.Summary)
+	}
+	if build.Summary.ReadyGroupCount != 1 || build.Summary.GeneratedReadyGroupCount != 3 {
+		t.Fatalf("emitted and generated group counters should be separated, got %+v", build.Summary)
+	}
+	if build.Summary.ProposalCount != len(build.Proposals) || build.Summary.EvidenceReferenceCount != len(build.EvidenceMap.EvidenceRefs) {
+		t.Fatalf("emitted packet counts should describe written packet artifacts, got summary=%+v proposals=%d evidence=%d", build.Summary, len(build.Proposals), len(build.EvidenceMap.EvidenceRefs))
+	}
+	if build.Summary.GeneratedProposalCount == 0 || build.Summary.GeneratedEvidenceReferenceCount == 0 {
+		t.Fatalf("capped packet should keep uncapped diagnostic totals, got %+v", build.Summary)
+	}
+}
+
+func TestSourceMeaningPacketGuardrailsSerializeCompleteProofGateFloor(t *testing.T) {
+	data, err := json.Marshal(SourceMeaningPacketSummary{Guardrails: CorpusPressureGuardrailCounters{}})
+	if err != nil {
+		t.Fatalf("marshal packet summary: %v", err)
+	}
+	var summary map[string]any
+	if err := json.Unmarshal(data, &summary); err != nil {
+		t.Fatalf("unmarshal packet summary: %v", err)
+	}
+	guardrails, ok := summary["guardrails"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected guardrails object, got %#v", summary["guardrails"])
+	}
+	for _, key := range []string{
+		"network_fetches",
+		"hosted_telemetry_exports",
+		"hosted_inference_calls",
+		"browser_calls",
+		"slack_api_calls",
+		"destination_writes",
+		"product_brain_writes",
+		"tolaria_writes",
+		"auto_accepts",
+		"no_human_claims",
+		"committed_private_artifacts",
+	} {
+		if _, ok := guardrails[key]; !ok {
+			t.Fatalf("packet guardrails missing %q: %#v", key, guardrails)
+		}
+	}
+}
+
+func TestSourceMeaningPacketPropagatesPressureGuardrails(t *testing.T) {
+	build := buildSourceMeaningPacket(
+		CorpusPressureSummary{
+			CorpusID:             "corpus-test",
+			SourceCount:          1,
+			ProcessedSourceCount: 1,
+			Guardrails: CorpusPressureGuardrailCounters{
+				HostedInferenceCalls:      2,
+				HostedTelemetryExports:    1,
+				DestinationWrites:         1,
+				NoHumanClaims:             1,
+				CommittedPrivateArtifacts: 1,
+			},
+		},
+		CorpusGraphSummary{AtomCount: 1},
+		map[string][]CorpusGraphAtom{"source": {sourceMeaningPacketTestAtom("atom-a", "source-a", SemanticCandidateKindTopic)}},
+		nil,
+	)
+
+	if build.Summary.Guardrails.HostedInferenceCalls != 2 ||
+		build.Summary.Guardrails.HostedTelemetryExports != 1 ||
+		build.Summary.Guardrails.DestinationWrites != 1 ||
+		build.Summary.Guardrails.NoHumanClaims != 1 ||
+		build.Summary.Guardrails.CommittedPrivateArtifacts != 1 {
+		t.Fatalf("packet summary must propagate pressure guardrails, got %+v", build.Summary.Guardrails)
 	}
 }
 

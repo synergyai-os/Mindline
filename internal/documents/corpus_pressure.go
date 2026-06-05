@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -33,9 +34,30 @@ type CorpusPressureManifestSource struct {
 
 type CorpusPressureOptions struct {
 	SemanticOptions          SemanticOptions
+	ScaleBudget              CorpusPressureScaleBudget
 	CommandConfigFingerprint string
 	skipPaths                []string
 }
+
+type CorpusPressureScaleBudget struct {
+	MaxProcessedSources     int   `json:"max_processed_sources"`
+	MaxSourceBytes          int64 `json:"max_source_bytes"`
+	MaxSourceSegments       int   `json:"max_source_segments"`
+	MaxSourceCandidates     int   `json:"max_source_candidates"`
+	MaxGraphPairComparisons int   `json:"max_graph_pair_comparisons"`
+	MaxGraphRelations       int   `json:"max_graph_relations"`
+	MaxPacketReviewGroups   int   `json:"max_packet_review_groups"`
+}
+
+const (
+	DefaultCorpusPressureMaxProcessedSources     = 50
+	DefaultCorpusPressureMaxSourceBytes          = 1024 * 1024
+	DefaultCorpusPressureMaxSourceSegments       = 200
+	DefaultCorpusPressureMaxSourceCandidates     = 500
+	DefaultCorpusPressureMaxGraphPairComparisons = DefaultCorpusGraphMaxPairComparisons
+	DefaultCorpusPressureMaxGraphRelations       = DefaultCorpusGraphMaxRelationCandidates
+	DefaultCorpusPressureMaxPacketReviewGroups   = 50
+)
 
 type CorpusPressureSourceState string
 
@@ -54,6 +76,10 @@ const (
 	CorpusPressureReasonSemanticSkipped       CorpusPressureReason = "semantic_skipped"
 	CorpusPressureReasonSemanticError         CorpusPressureReason = "semantic_error"
 	CorpusPressureReasonInputContainmentError CorpusPressureReason = "input_containment_error"
+	CorpusPressureReasonScaleSourceLimit      CorpusPressureReason = "scale_source_limit"
+	CorpusPressureReasonScaleSourceSizeLimit  CorpusPressureReason = "scale_source_size_limit"
+	CorpusPressureReasonScaleSegmentLimit     CorpusPressureReason = "scale_segment_limit"
+	CorpusPressureReasonScaleCandidateLimit   CorpusPressureReason = "scale_candidate_limit"
 )
 
 type CorpusPressureSummary struct {
@@ -78,8 +104,15 @@ type CorpusPressureSummary struct {
 	ReferenceCandidateRatio      float64                         `json:"reference_candidate_ratio"`
 	SemanticReadinessStatus      string                          `json:"semantic_readiness_status"`
 	SemanticReadinessReasonCodes []string                        `json:"semantic_readiness_reason_codes,omitempty"`
+	ScaleStatus                  string                          `json:"scale_status"`
+	ScaleReasonCodes             []string                        `json:"scale_reason_codes,omitempty"`
+	ScaleBudget                  CorpusPressureScaleBudget       `json:"scale_budget"`
+	ScaleSkippedSourceCount      int                             `json:"scale_skipped_source_count"`
 	GraphAtomCount               int                             `json:"graph_atom_count"`
 	GraphRelationCount           int                             `json:"graph_relation_count"`
+	GraphPairComparisonCount     int                             `json:"graph_pair_comparison_count,omitempty"`
+	GraphPairComparisonLimit     int                             `json:"graph_pair_comparison_limit,omitempty"`
+	GraphRelationCandidateLimit  int                             `json:"graph_relation_candidate_limit,omitempty"`
 	RelationTypeCounts           map[CorpusRelationType]int      `json:"relation_type_counts"`
 	RelationStatusCounts         map[ReviewStatus]int            `json:"relation_status_counts"`
 	EvidenceReadyAtomCount       int                             `json:"evidence_ready_atom_count"`
@@ -135,6 +168,10 @@ type CorpusPressureEvalInput struct {
 	ProcessedSourceRatio         float64                         `json:"processed_source_ratio"`
 	SemanticReadinessStatus      string                          `json:"semantic_readiness_status"`
 	SemanticReadinessReasonCodes []string                        `json:"semantic_readiness_reason_codes,omitempty"`
+	ScaleStatus                  string                          `json:"scale_status"`
+	ScaleReasonCodes             []string                        `json:"scale_reason_codes,omitempty"`
+	ScaleSkippedSourceCount      int                             `json:"scale_skipped_source_count"`
+	ScaleBudget                  CorpusPressureScaleBudget       `json:"scale_budget"`
 	DocumentSegmentCount         int                             `json:"document_segment_count"`
 	SemanticObservationCount     int                             `json:"semantic_observation_count"`
 	SemanticCandidateCount       int                             `json:"semantic_candidate_count"`
@@ -160,6 +197,10 @@ type CorpusPressureTraceSummary struct {
 	ProcessedSourceRatio         float64                         `json:"processed_source_ratio"`
 	SemanticReadinessStatus      string                          `json:"semantic_readiness_status"`
 	SemanticReadinessReasonCodes []string                        `json:"semantic_readiness_reason_codes,omitempty"`
+	ScaleStatus                  string                          `json:"scale_status"`
+	ScaleReasonCodes             []string                        `json:"scale_reason_codes,omitempty"`
+	ScaleSkippedSourceCount      int                             `json:"scale_skipped_source_count"`
+	ScaleBudget                  CorpusPressureScaleBudget       `json:"scale_budget"`
 	DocumentSegmentCount         int                             `json:"document_segment_count"`
 	SemanticObservationCount     int                             `json:"semantic_observation_count"`
 	SemanticCandidateCount       int                             `json:"semantic_candidate_count"`
@@ -211,6 +252,31 @@ type corpusPressureSourceInput struct {
 
 const corpusPressureMaxRunDirAttempts = 1000
 
+func normalizeCorpusPressureScaleBudget(budget CorpusPressureScaleBudget) CorpusPressureScaleBudget {
+	if budget.MaxProcessedSources <= 0 {
+		budget.MaxProcessedSources = DefaultCorpusPressureMaxProcessedSources
+	}
+	if budget.MaxSourceBytes <= 0 {
+		budget.MaxSourceBytes = DefaultCorpusPressureMaxSourceBytes
+	}
+	if budget.MaxSourceSegments <= 0 {
+		budget.MaxSourceSegments = DefaultCorpusPressureMaxSourceSegments
+	}
+	if budget.MaxSourceCandidates <= 0 {
+		budget.MaxSourceCandidates = DefaultCorpusPressureMaxSourceCandidates
+	}
+	if budget.MaxGraphPairComparisons <= 0 {
+		budget.MaxGraphPairComparisons = DefaultCorpusPressureMaxGraphPairComparisons
+	}
+	if budget.MaxGraphRelations <= 0 {
+		budget.MaxGraphRelations = DefaultCorpusPressureMaxGraphRelations
+	}
+	if budget.MaxPacketReviewGroups <= 0 {
+		budget.MaxPacketReviewGroups = DefaultCorpusPressureMaxPacketReviewGroups
+	}
+	return budget
+}
+
 type corpusPressureCountingLLMProvider struct {
 	inner LLMSemanticProvider
 	calls *int
@@ -227,12 +293,13 @@ func BuildCorpusPressure(inputPath, outDir string, options CorpusPressureOptions
 	if strings.TrimSpace(outDir) == "" {
 		return CorpusPressureSummary{}, CorpusGraphSummary{}, fmt.Errorf("missing required --out")
 	}
+	options.ScaleBudget = normalizeCorpusPressureScaleBudget(options.ScaleBudget)
 	if options.SemanticOptions.Classifier == "" {
 		options.SemanticOptions.Classifier = SemanticClassifierDeterministic
 	}
 	options.SemanticOptions.ReferenceFallback = true
 	if strings.TrimSpace(options.CommandConfigFingerprint) == "" {
-		options.CommandConfigFingerprint = corpusPressureCommandConfigFingerprint(options.SemanticOptions)
+		options.CommandConfigFingerprint = corpusPressureCommandConfigFingerprint(options.SemanticOptions, options.ScaleBudget)
 	}
 	root, err := filepath.Abs(outDir)
 	if err != nil {
@@ -267,8 +334,14 @@ func BuildCorpusPressure(inputPath, outDir string, options CorpusPressureOptions
 	}
 	results := make([]CorpusPressureSourceResult, 0, len(sources))
 	graphSources := make([]CorpusGraphManifestSource, 0, len(sources))
+	attemptedSources := 0
 	for _, source := range sources {
-		result, graphSource := runCorpusPressureSource(root, source, options.SemanticOptions)
+		if options.ScaleBudget.MaxProcessedSources > 0 && attemptedSources >= options.ScaleBudget.MaxProcessedSources {
+			results = append(results, scaleSkippedCorpusPressureSourceMetadataOnly(source, CorpusPressureReasonScaleSourceLimit, fmt.Sprintf("scale_partial: source skipped because max_processed_sources=%d was reached; source content was not hashed to preserve the source cap I/O bound", options.ScaleBudget.MaxProcessedSources)))
+			continue
+		}
+		attemptedSources++
+		result, graphSource := runCorpusPressureSource(root, source, options.SemanticOptions, options.ScaleBudget)
 		results = append(results, result)
 		if graphSource != nil {
 			graphSources = append(graphSources, *graphSource)
@@ -295,12 +368,16 @@ func BuildCorpusPressure(inputPath, outDir string, options CorpusPressureOptions
 		var atoms []CorpusGraphAtom
 		var relations []CorpusGraphRelation
 		var reviews []CorpusGraphReviewItem
-		graphSummary, atoms, relations, reviews, graphErr = BuildCorpusGraph(graphManifestPath)
+		graphSummary, atoms, relations, reviews, graphErr = BuildCorpusGraphWithOptions(graphManifestPath, CorpusGraphOptions{
+			MaxPairComparisons:    options.ScaleBudget.MaxGraphPairComparisons,
+			MaxRelationCandidates: options.ScaleBudget.MaxGraphRelations,
+		})
 		if graphErr == nil {
 			graphErr = WriteCorpusGraph(root, graphSummary, atoms, relations, reviews)
 		}
 	}
 	summary := buildCorpusPressureSummary(corpusID, results, graphSummary, graphManifestPath, graphErr)
+	summary.ScaleBudget = options.ScaleBudget
 	summary.CommandConfigFingerprint = options.CommandConfigFingerprint
 	summary.CorpusFingerprint = corpusPressureSourceFingerprint(results)
 	summary.Guardrails = guardrails
@@ -620,7 +697,35 @@ func canonicalExistingPath(path string) (string, bool) {
 	return filepath.Clean(realPath), true
 }
 
-func runCorpusPressureSource(root string, source corpusPressureSourceInput, options SemanticOptions) (CorpusPressureSourceResult, *CorpusGraphManifestSource) {
+func scaleSkippedCorpusPressureSource(source corpusPressureSourceInput, reason CorpusPressureReason, message string) CorpusPressureSourceResult {
+	result := CorpusPressureSourceResult{
+		SourceID:    source.SourceID,
+		SourceKind:  source.SourceKind,
+		SourceLabel: source.Label,
+		State:       CorpusPressureSourceSkipped,
+		ReasonCode:  reason,
+		Message:     message,
+	}
+	if hash, err := fileContentHash(source.Path); err == nil {
+		result.SourceContentHash = hash
+	} else {
+		result.Message = strings.TrimSpace(result.Message + "; source content hash unavailable: " + err.Error())
+	}
+	return result
+}
+
+func scaleSkippedCorpusPressureSourceMetadataOnly(source corpusPressureSourceInput, reason CorpusPressureReason, message string) CorpusPressureSourceResult {
+	return CorpusPressureSourceResult{
+		SourceID:    source.SourceID,
+		SourceKind:  source.SourceKind,
+		SourceLabel: source.Label,
+		State:       CorpusPressureSourceSkipped,
+		ReasonCode:  reason,
+		Message:     message,
+	}
+}
+
+func runCorpusPressureSource(root string, source corpusPressureSourceInput, options SemanticOptions, budget CorpusPressureScaleBudget) (CorpusPressureSourceResult, *CorpusGraphManifestSource) {
 	runDir := source.RunDir
 	if runDir == "" {
 		runDir = filepath.ToSlash(filepath.Join("sources", source.SourceID))
@@ -634,7 +739,6 @@ func runCorpusPressureSource(root string, source corpusPressureSourceInput, opti
 		SourceLabel: source.Label,
 		State:       CorpusPressureSourceBlocked,
 		ReasonCode:  CorpusPressureReasonSemanticError,
-		SourcePath:  relSourcePath,
 	}
 	if err := rejectSymlinkAncestors(sourceRoot); err != nil {
 		result.Message = err.Error()
@@ -648,12 +752,33 @@ func runCorpusPressureSource(root string, source corpusPressureSourceInput, opti
 		result.Message = err.Error()
 		return result, nil
 	}
+	if err := os.WriteFile(filepath.Join(sourceRoot, corpusPressureGeneratedSourceMarker), []byte("generated by corpus-pressure\n"), 0o644); err != nil {
+		result.Message = err.Error()
+		return result, nil
+	}
 	if err := rejectSymlinkAncestors(localSourcePath); err != nil {
 		result.Message = err.Error()
 		return result, nil
 	}
 	if err := rejectIfSymlink(localSourcePath); err != nil {
 		result.Message = err.Error()
+		return result, nil
+	}
+	if info, err := os.Stat(source.Path); err != nil {
+		result.ReasonCode = CorpusPressureReasonInputContainmentError
+		result.Message = err.Error()
+		return result, nil
+	} else if budget.MaxSourceBytes > 0 && info.Size() > budget.MaxSourceBytes {
+		hash, err := fileContentHash(source.Path)
+		if err != nil {
+			result.ReasonCode = CorpusPressureReasonInputContainmentError
+			result.Message = err.Error()
+			return result, nil
+		}
+		result.SourceContentHash = hash
+		result.State = CorpusPressureSourceSkipped
+		result.ReasonCode = CorpusPressureReasonScaleSourceSizeLimit
+		result.Message = fmt.Sprintf("scale_partial: source skipped because size %d exceeded max_source_bytes=%d", info.Size(), budget.MaxSourceBytes)
 		return result, nil
 	}
 	data, err := os.ReadFile(source.Path)
@@ -666,12 +791,21 @@ func runCorpusPressureSource(root string, source corpusPressureSourceInput, opti
 		result.Message = err.Error()
 		return result, nil
 	}
-	if err := os.WriteFile(filepath.Join(sourceRoot, corpusPressureGeneratedSourceMarker), []byte("generated by corpus-pressure\n"), 0o644); err != nil {
+	result.SourcePath = relSourcePath
+	result.SourceContentHash = "sha256:" + contentHash(string(data))
+	if _, err := StructurePath(localSourcePath, sourceRoot); err != nil {
 		result.Message = err.Error()
 		return result, nil
 	}
-	result.SourceContentHash = "sha256:" + contentHash(string(data))
-	summary, err := SemanticPathWithOptions(localSourcePath, sourceRoot, options)
+	result.SegmentCount = corpusPressureSegmentCount(sourceRoot)
+	if budget.MaxSourceSegments > 0 && result.SegmentCount > budget.MaxSourceSegments {
+		result.State = CorpusPressureSourceSkipped
+		result.ReasonCode = CorpusPressureReasonScaleSegmentLimit
+		result.Message = fmt.Sprintf("scale_partial: source skipped after segmentation because segment_count=%d exceeded max_source_segments=%d", result.SegmentCount, budget.MaxSourceSegments)
+		return result, nil
+	}
+	options.MaxCandidateCount = budget.MaxSourceCandidates
+	summary, err := SemanticPathWithOptions(filepath.Join(sourceRoot, "document-structure"), sourceRoot, options)
 	if err != nil {
 		result.Message = err.Error()
 		return result, nil
@@ -688,10 +822,14 @@ func runCorpusPressureSource(root string, source corpusPressureSourceInput, opti
 	if summary.SkippedReason != "" {
 		if strings.Contains(summary.SkippedReason, "all structure nodes are blocked") {
 			result.State = CorpusPressureSourceExcluded
+			result.ReasonCode = CorpusPressureReasonSemanticSkipped
+		} else if strings.Contains(summary.SkippedReason, "max_source_candidates=") {
+			result.State = CorpusPressureSourceSkipped
+			result.ReasonCode = CorpusPressureReasonScaleCandidateLimit
 		} else {
 			result.State = CorpusPressureSourceSkipped
+			result.ReasonCode = CorpusPressureReasonSemanticSkipped
 		}
-		result.ReasonCode = CorpusPressureReasonSemanticSkipped
 		result.Message = summary.SkippedReason
 		return result, nil
 	}
@@ -718,27 +856,40 @@ func runCorpusPressureSource(root string, source corpusPressureSourceInput, opti
 
 func buildCorpusPressureSummary(corpusID string, sources []CorpusPressureSourceResult, graph CorpusGraphSummary, manifestPath string, graphErr error) CorpusPressureSummary {
 	summary := CorpusPressureSummary{
-		SchemaVersion:              CorpusPressureSummarySchemaVersion,
-		CorpusID:                   corpusID,
-		SourceCount:                len(sources),
-		GraphAtomCount:             graph.AtomCount,
-		GraphRelationCount:         graph.RelationCount,
-		RelationTypeCounts:         cloneCorpusRelationTypeCounts(graph.RelationTypeCounts),
-		RelationStatusCounts:       cloneReviewStatusCounts(graph.RelationStatusCounts),
-		EvidenceReadyAtomCount:     graph.EvidenceReadyAtomCount,
-		EvidenceReadyRelationCount: graph.EvidenceReadyRelationCount,
-		ReviewBurdenCount:          graph.ReviewBurdenCount,
-		ReviewBurdenRatio:          graph.ReviewBurdenRatio,
-		GraphReplayFingerprint:     graph.ReplayFingerprint,
-		GraphManifestPath:          filepath.ToSlash(filepath.Base(manifestPath)),
-		GraphSummaryPath:           filepath.ToSlash(filepath.Join(CorpusGraphDirName, "graph-summary.json")),
-		Sources:                    append([]CorpusPressureSourceResult{}, sources...),
+		SchemaVersion:               CorpusPressureSummarySchemaVersion,
+		CorpusID:                    corpusID,
+		SourceCount:                 len(sources),
+		ScaleStatus:                 "scale_complete",
+		GraphAtomCount:              graph.AtomCount,
+		GraphRelationCount:          graph.RelationCount,
+		GraphPairComparisonCount:    graph.PairComparisonCount,
+		GraphPairComparisonLimit:    graph.PairComparisonLimit,
+		GraphRelationCandidateLimit: graph.RelationCandidateLimit,
+		RelationTypeCounts:          cloneCorpusRelationTypeCounts(graph.RelationTypeCounts),
+		RelationStatusCounts:        cloneReviewStatusCounts(graph.RelationStatusCounts),
+		EvidenceReadyAtomCount:      graph.EvidenceReadyAtomCount,
+		EvidenceReadyRelationCount:  graph.EvidenceReadyRelationCount,
+		ReviewBurdenCount:           graph.ReviewBurdenCount,
+		ReviewBurdenRatio:           graph.ReviewBurdenRatio,
+		GraphReplayFingerprint:      graph.ReplayFingerprint,
+		Sources:                     append([]CorpusPressureSourceResult{}, sources...),
+	}
+	if strings.TrimSpace(manifestPath) != "" {
+		summary.GraphManifestPath = filepath.ToSlash(filepath.Base(manifestPath))
+		if graphErr == nil && graph.SourceCount > 0 {
+			summary.GraphSummaryPath = filepath.ToSlash(filepath.Join(CorpusGraphDirName, "graph-summary.json"))
+		}
 	}
 	for _, source := range sources {
 		summary.SemanticCandidateCount += source.CandidateCount
 		summary.SemanticObservationCount += source.ObservationCount
 		summary.DocumentSegmentCount += source.SegmentCount
 		summary.ReferenceCandidateCount += source.CandidateKindCounts[SemanticCandidateKindReference]
+		if corpusPressureReasonIsScale(source.ReasonCode) {
+			summary.ScaleStatus = "scale_partial"
+			summary.ScaleSkippedSourceCount++
+			summary.ScaleReasonCodes = appendUniqueString(summary.ScaleReasonCodes, string(source.ReasonCode))
+		}
 		switch source.State {
 		case CorpusPressureSourceProcessed:
 			summary.ProcessedSourceCount++
@@ -760,6 +911,12 @@ func buildCorpusPressureSummary(corpusID string, sources []CorpusPressureSourceR
 		case CorpusPressureSourceBlocked:
 			summary.BlockedSourceCount++
 			summary.Blockers = append(summary.Blockers, fmt.Sprintf("source %s blocked: %s", source.SourceID, source.ReasonCode))
+		}
+	}
+	if graph.ScaleStatus == "scale_partial" {
+		summary.ScaleStatus = "scale_partial"
+		for _, reason := range graph.ScaleReasonCodes {
+			summary.ScaleReasonCodes = appendUniqueString(summary.ScaleReasonCodes, reason)
 		}
 	}
 	summary.EligibleSourceCount = summary.SourceCount - summary.ExcludedSourceCount
@@ -789,6 +946,9 @@ func buildCorpusPressureSummary(corpusID string, sources []CorpusPressureSourceR
 
 func corpusPressureReady(summary CorpusPressureSummary) bool {
 	if summary.SourceCount == 0 || summary.ProcessedSourceCount == 0 || summary.BlockedSourceCount > 0 || summary.UnexplainedExclusionCount > 0 {
+		return false
+	}
+	if summary.ScaleStatus == "scale_partial" {
 		return false
 	}
 	if summary.ProcessedSourceRatio < 0.95 {
@@ -838,10 +998,22 @@ func corpusPressureTargets(summary CorpusPressureSummary) []string {
 	if summary.SemanticReadinessStatus == "blocked" {
 		targets = append(targets, "semantic_density")
 	}
+	if summary.ScaleStatus == "scale_partial" {
+		targets = append([]string{"scale_capacity"}, targets...)
+	}
 	if len(targets) == 0 && !summary.ReadyForFiftyFilePressure {
 		targets = append(targets, "readiness_thresholds")
 	}
 	return targets
+}
+
+func corpusPressureReasonIsScale(reason CorpusPressureReason) bool {
+	switch reason {
+	case CorpusPressureReasonScaleSourceLimit, CorpusPressureReasonScaleSourceSizeLimit, CorpusPressureReasonScaleSegmentLimit, CorpusPressureReasonScaleCandidateLimit:
+		return true
+	default:
+		return false
+	}
 }
 
 func corpusPressureSemanticReadiness(summary CorpusPressureSummary) (string, []string) {
@@ -895,11 +1067,23 @@ func corpusPressureFingerprint(summary CorpusPressureSummary) string {
 	return "pressure-" + hex.EncodeToString(sum[:])[:16]
 }
 
-func corpusPressureCommandConfigFingerprint(options SemanticOptions) string {
+func corpusPressureCommandConfigFingerprint(options SemanticOptions, budgets ...CorpusPressureScaleBudget) string {
 	options = normalizeCorpusPressureSemanticOptions(options)
 	parts := []string{
 		"classifier:" + string(options.Classifier),
 		fmt.Sprintf("reference_fallback:%t", options.ReferenceFallback),
+	}
+	if len(budgets) > 0 {
+		budget := normalizeCorpusPressureScaleBudget(budgets[0])
+		parts = append(parts,
+			fmt.Sprintf("max_processed_sources:%d", budget.MaxProcessedSources),
+			fmt.Sprintf("max_source_bytes:%d", budget.MaxSourceBytes),
+			fmt.Sprintf("max_source_segments:%d", budget.MaxSourceSegments),
+			fmt.Sprintf("max_source_candidates:%d", budget.MaxSourceCandidates),
+			fmt.Sprintf("max_graph_pair_comparisons:%d", budget.MaxGraphPairComparisons),
+			fmt.Sprintf("max_graph_relations:%d", budget.MaxGraphRelations),
+			fmt.Sprintf("max_packet_review_groups:%d", budget.MaxPacketReviewGroups),
+		)
 	}
 	if options.Classifier == SemanticClassifierLLM {
 		parts = append(parts, "provider:"+options.LLMProvider, "model:"+options.LLMModel)
@@ -929,6 +1113,19 @@ func corpusPressureSourceFingerprint(sources []CorpusPressureSourceResult) strin
 	sort.Strings(parts)
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\n")))
 	return "corpus-" + hex.EncodeToString(sum[:])[:16]
+}
+
+func fileContentHash(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
+	}
+	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 func cloneCorpusRelationTypeCounts(in map[CorpusRelationType]int) map[CorpusRelationType]int {

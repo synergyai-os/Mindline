@@ -74,6 +74,13 @@ func SemanticPathWithOptions(inputPath, outDir string, options SemanticOptions) 
 		observations = referenceFallbackObservations(runID, nodes, sourceText)
 		candidates, relations = ConsolidateSemanticCandidates(runID, observations)
 	}
+	if options.MaxCandidateCount > 0 && len(candidates) > options.MaxCandidateCount {
+		skippedReason := fmt.Sprintf("scale_partial: semantic extraction skipped because candidate_count=%d exceeded max_source_candidates=%d", len(candidates), options.MaxCandidateCount)
+		if err := WriteSemanticWithSkippedReason(outDir, runID, structureSummary.SourceCount, []SemanticObservation{}, []SemanticCandidate{}, []SemanticRelation{}, skippedReason); err != nil {
+			return SemanticSummary{}, err
+		}
+		return BuildSemanticSummaryWithSkippedReason(runID, structureSummary.SourceCount, []SemanticObservation{}, []SemanticCandidate{}, []SemanticRelation{}, skippedReason), nil
+	}
 	if err := WriteSemantic(outDir, runID, structureSummary.SourceCount, observations, candidates, relations); err != nil {
 		return SemanticSummary{}, err
 	}

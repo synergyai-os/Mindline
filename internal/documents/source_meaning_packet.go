@@ -10,8 +10,9 @@ import (
 )
 
 const (
-	SourceMeaningPacketSchemaVersion = "source-meaning-packet/v0.1"
-	sourceMeaningPacketMaxGroupAtoms = 12
+	SourceMeaningPacketSchemaVersion   = "source-meaning-packet/v0.1"
+	sourceMeaningPacketMaxGroupAtoms   = 12
+	sourceMeaningPacketMaxReviewGroups = DefaultCorpusPressureMaxPacketReviewGroups
 )
 
 type SourceMeaningPacketSection string
@@ -23,40 +24,57 @@ const (
 )
 
 type SourceMeaningPacketSummary struct {
-	SchemaVersion                  string                                  `json:"schema_version"`
-	CorpusID                       string                                  `json:"corpus_id"`
-	SourceCount                    int                                     `json:"source_count"`
-	ProcessedSourceCount           int                                     `json:"processed_source_count"`
-	AtomCount                      int                                     `json:"atom_count"`
-	RelationCount                  int                                     `json:"relation_count"`
-	ReviewGroupCount               int                                     `json:"review_group_count"`
-	ReadyGroupCount                int                                     `json:"ready_group_count"`
-	NeedsReviewGroupCount          int                                     `json:"needs_review_group_count"`
-	BlockedGroupCount              int                                     `json:"blocked_group_count"`
-	ProposalCount                  int                                     `json:"proposal_count"`
-	EvidenceReferenceCount         int                                     `json:"evidence_reference_count"`
-	EvidenceOrBlockerGroupCount    int                                     `json:"evidence_or_blocker_group_count"`
-	ReviewBurdenCount              int                                     `json:"review_burden_count"`
-	AtomCompressionRatio           float64                                 `json:"atom_compression_ratio"`
-	RelationReviewCompressionRatio float64                                 `json:"relation_review_compression_ratio"`
-	EvidenceOrBlockerGroupRatio    float64                                 `json:"evidence_or_blocker_group_ratio"`
-	ReviewBurdenRatio              float64                                 `json:"review_burden_ratio"`
-	NonGeneralizableRuntime        bool                                    `json:"non_generalizable_runtime"`
-	Comparable                     bool                                    `json:"comparable"`
-	Guardrails                     SourceMeaningPreviewGuardrails          `json:"guardrails"`
-	SectionCounts                  map[SourceMeaningPacketSection]int      `json:"section_counts"`
-	CandidateKindCounts            map[SemanticCandidateKind]int           `json:"candidate_kind_counts"`
-	RoutingHintCounts              map[SourceMeaningPreviewRoutingHint]int `json:"routing_hint_counts"`
-	RelationTypeCounts             map[CorpusRelationType]int              `json:"relation_type_counts"`
-	CorpusFingerprint              string                                  `json:"corpus_fingerprint"`
-	CommandConfigFingerprint       string                                  `json:"command_config_fingerprint"`
-	ReplayFingerprint              string                                  `json:"replay_fingerprint"`
-	PressureReplayFingerprint      string                                  `json:"pressure_replay_fingerprint"`
-	GraphReplayFingerprint         string                                  `json:"graph_replay_fingerprint"`
-	ReviewPacketPath               string                                  `json:"review_packet_path"`
-	EvidenceMapPath                string                                  `json:"evidence_map_path"`
-	BlockedItemsPath               string                                  `json:"blocked_items_path"`
-	Groups                         []SourceMeaningPacketGroupSummary       `json:"groups"`
+	SchemaVersion                           string                                  `json:"schema_version"`
+	CorpusID                                string                                  `json:"corpus_id"`
+	SourceCount                             int                                     `json:"source_count"`
+	ProcessedSourceCount                    int                                     `json:"processed_source_count"`
+	AtomCount                               int                                     `json:"atom_count"`
+	RelationCount                           int                                     `json:"relation_count"`
+	ReviewGroupCount                        int                                     `json:"review_group_count"`
+	GeneratedReviewGroupCount               int                                     `json:"generated_review_group_count,omitempty"`
+	ReadyGroupCount                         int                                     `json:"ready_group_count"`
+	NeedsReviewGroupCount                   int                                     `json:"needs_review_group_count"`
+	BlockedGroupCount                       int                                     `json:"blocked_group_count"`
+	ProposalCount                           int                                     `json:"proposal_count"`
+	EvidenceReferenceCount                  int                                     `json:"evidence_reference_count"`
+	GeneratedReadyGroupCount                int                                     `json:"generated_ready_group_count,omitempty"`
+	GeneratedNeedsReviewGroupCount          int                                     `json:"generated_needs_review_group_count,omitempty"`
+	GeneratedBlockedGroupCount              int                                     `json:"generated_blocked_group_count,omitempty"`
+	GeneratedProposalCount                  int                                     `json:"generated_proposal_count,omitempty"`
+	GeneratedEvidenceReferenceCount         int                                     `json:"generated_evidence_reference_count,omitempty"`
+	EvidenceOrBlockerGroupCount             int                                     `json:"evidence_or_blocker_group_count"`
+	ReviewBurdenCount                       int                                     `json:"review_burden_count"`
+	GeneratedEvidenceOrBlockerGroupCount    int                                     `json:"generated_evidence_or_blocker_group_count,omitempty"`
+	GeneratedReviewBurdenCount              int                                     `json:"generated_review_burden_count,omitempty"`
+	AtomCompressionRatio                    float64                                 `json:"atom_compression_ratio"`
+	RelationReviewCompressionRatio          float64                                 `json:"relation_review_compression_ratio"`
+	EvidenceOrBlockerGroupRatio             float64                                 `json:"evidence_or_blocker_group_ratio"`
+	ReviewBurdenRatio                       float64                                 `json:"review_burden_ratio"`
+	GeneratedAtomCompressionRatio           float64                                 `json:"generated_atom_compression_ratio,omitempty"`
+	GeneratedRelationReviewCompressionRatio float64                                 `json:"generated_relation_review_compression_ratio,omitempty"`
+	GeneratedEvidenceOrBlockerGroupRatio    float64                                 `json:"generated_evidence_or_blocker_group_ratio,omitempty"`
+	GeneratedReviewBurdenRatio              float64                                 `json:"generated_review_burden_ratio,omitempty"`
+	ScaleStatus                             string                                  `json:"scale_status"`
+	ScaleReasonCodes                        []string                                `json:"scale_reason_codes,omitempty"`
+	MaxReviewGroupCount                     int                                     `json:"max_review_group_count,omitempty"`
+	OmittedAtomCount                        int                                     `json:"omitted_atom_count,omitempty"`
+	NonGeneralizableRuntime                 bool                                    `json:"non_generalizable_runtime"`
+	Comparable                              bool                                    `json:"comparable"`
+	Guardrails                              CorpusPressureGuardrailCounters         `json:"guardrails"`
+	SectionCounts                           map[SourceMeaningPacketSection]int      `json:"section_counts"`
+	GeneratedSectionCounts                  map[SourceMeaningPacketSection]int      `json:"generated_section_counts,omitempty"`
+	CandidateKindCounts                     map[SemanticCandidateKind]int           `json:"candidate_kind_counts"`
+	RoutingHintCounts                       map[SourceMeaningPreviewRoutingHint]int `json:"routing_hint_counts"`
+	RelationTypeCounts                      map[CorpusRelationType]int              `json:"relation_type_counts"`
+	CorpusFingerprint                       string                                  `json:"corpus_fingerprint"`
+	CommandConfigFingerprint                string                                  `json:"command_config_fingerprint"`
+	ReplayFingerprint                       string                                  `json:"replay_fingerprint"`
+	PressureReplayFingerprint               string                                  `json:"pressure_replay_fingerprint"`
+	GraphReplayFingerprint                  string                                  `json:"graph_replay_fingerprint"`
+	ReviewPacketPath                        string                                  `json:"review_packet_path"`
+	EvidenceMapPath                         string                                  `json:"evidence_map_path"`
+	BlockedItemsPath                        string                                  `json:"blocked_items_path"`
+	Groups                                  []SourceMeaningPacketGroupSummary       `json:"groups"`
 }
 
 type SourceMeaningPacketGroupSummary struct {
@@ -181,6 +199,20 @@ func buildSourceMeaningPacket(pressure CorpusPressureSummary, graph CorpusGraphS
 	relations := flattenSourceMeaningRelations(relationsBySource)
 	relationIndex := sourceMeaningRelationIndex(relations)
 	groups := buildSourceMeaningGroups(pressure.CorpusID, atoms, relationIndex)
+	allGroups := append([]SourceMeaningPacketGroup{}, groups...)
+	allProposals := buildSourceMeaningProposals(allGroups)
+	allEvidenceMap := buildSourceMeaningEvidenceMap(pressure.CorpusID, allGroups)
+	maxGroups := pressure.ScaleBudget.MaxPacketReviewGroups
+	if maxGroups <= 0 {
+		maxGroups = sourceMeaningPacketMaxReviewGroups
+	}
+	omittedAtomCount := 0
+	if maxGroups > 0 && len(groups) > maxGroups {
+		for _, group := range groups[maxGroups:] {
+			omittedAtomCount += group.AtomCount
+		}
+		groups = append([]SourceMeaningPacketGroup{}, groups[:maxGroups]...)
+	}
 	proposals := buildSourceMeaningProposals(groups)
 	evidenceMap := buildSourceMeaningEvidenceMap(pressure.CorpusID, groups)
 	blockedItems := SourceMeaningPacketBlockedItems{SchemaVersion: SourceMeaningPacketSchemaVersion, CorpusID: pressure.CorpusID}
@@ -189,7 +221,7 @@ func buildSourceMeaningPacket(pressure CorpusPressureSummary, graph CorpusGraphS
 			blockedItems.Items = append(blockedItems.Items, group)
 		}
 	}
-	summary := buildSourceMeaningPacketSummary(pressure, graph, groups, proposals, evidenceMap)
+	summary := buildSourceMeaningPacketSummary(pressure, graph, groups, allGroups, allProposals, allEvidenceMap, maxGroups, omittedAtomCount)
 	return sourceMeaningPacketBuild{Summary: summary, Groups: groups, Proposals: proposals, EvidenceMap: evidenceMap, BlockedItems: blockedItems}
 }
 
@@ -467,7 +499,7 @@ func buildSourceMeaningEvidenceMap(corpusID string, groups []SourceMeaningPacket
 	return SourceMeaningPacketEvidenceMap{SchemaVersion: SourceMeaningPacketSchemaVersion, CorpusID: corpusID, EvidenceRefs: refs}
 }
 
-func buildSourceMeaningPacketSummary(pressure CorpusPressureSummary, graph CorpusGraphSummary, groups []SourceMeaningPacketGroup, proposals []SourceMeaningPacketProposal, evidenceMap SourceMeaningPacketEvidenceMap) SourceMeaningPacketSummary {
+func buildSourceMeaningPacketSummary(pressure CorpusPressureSummary, graph CorpusGraphSummary, emittedGroups []SourceMeaningPacketGroup, metricGroups []SourceMeaningPacketGroup, metricProposals []SourceMeaningPacketProposal, metricEvidenceMap SourceMeaningPacketEvidenceMap, maxGroups int, omittedAtomCount int) SourceMeaningPacketSummary {
 	summary := SourceMeaningPacketSummary{
 		SchemaVersion:             SourceMeaningPacketSchemaVersion,
 		CorpusID:                  pressure.CorpusID,
@@ -475,9 +507,12 @@ func buildSourceMeaningPacketSummary(pressure CorpusPressureSummary, graph Corpu
 		ProcessedSourceCount:      pressure.ProcessedSourceCount,
 		AtomCount:                 graph.AtomCount,
 		RelationCount:             graph.RelationCount,
-		ReviewGroupCount:          len(groups),
-		ProposalCount:             len(proposals),
-		EvidenceReferenceCount:    len(evidenceMap.EvidenceRefs),
+		ReviewGroupCount:          len(emittedGroups),
+		ProposalCount:             len(buildSourceMeaningProposals(emittedGroups)),
+		EvidenceReferenceCount:    len(buildSourceMeaningEvidenceMap(pressure.CorpusID, emittedGroups).EvidenceRefs),
+		ScaleStatus:               "scale_complete",
+		MaxReviewGroupCount:       maxGroups,
+		OmittedAtomCount:          omittedAtomCount,
 		NonGeneralizableRuntime:   true,
 		Comparable:                true,
 		CorpusFingerprint:         pressure.CorpusFingerprint,
@@ -491,15 +526,34 @@ func buildSourceMeaningPacketSummary(pressure CorpusPressureSummary, graph Corpu
 		CandidateKindCounts:       map[SemanticCandidateKind]int{},
 		RoutingHintCounts:         map[SourceMeaningPreviewRoutingHint]int{},
 		RelationTypeCounts:        cloneSourceMeaningRelationTypeCounts(graph.RelationTypeCounts),
-		Guardrails: SourceMeaningPreviewGuardrails{
-			HostedInferenceCalls:   0,
-			HostedTelemetryExports: 0,
-			DestinationWrites:      0,
-			ProductBrainWrites:     0,
-			TolariaWrites:          0,
-		},
+		Guardrails:                pressure.Guardrails,
 	}
-	for _, group := range groups {
+	if pressure.ScaleStatus == "scale_partial" {
+		summary.ScaleStatus = "scale_partial"
+		for _, reason := range pressure.ScaleReasonCodes {
+			summary.ScaleReasonCodes = appendUniqueString(summary.ScaleReasonCodes, reason)
+		}
+	}
+	if graph.ScaleStatus == "scale_partial" {
+		summary.ScaleStatus = "scale_partial"
+		for _, reason := range graph.ScaleReasonCodes {
+			summary.ScaleReasonCodes = appendUniqueString(summary.ScaleReasonCodes, reason)
+		}
+	}
+	if omittedAtomCount > 0 {
+		summary.ScaleStatus = "scale_partial"
+		summary.ScaleReasonCodes = appendUniqueString(summary.ScaleReasonCodes, "scale_packet_group_limit")
+	}
+	if len(metricGroups) != summary.ReviewGroupCount {
+		summary.GeneratedReviewGroupCount = len(metricGroups)
+	}
+	if len(metricProposals) != summary.ProposalCount {
+		summary.GeneratedProposalCount = len(metricProposals)
+	}
+	if len(metricEvidenceMap.EvidenceRefs) != summary.EvidenceReferenceCount {
+		summary.GeneratedEvidenceReferenceCount = len(metricEvidenceMap.EvidenceRefs)
+	}
+	for _, group := range emittedGroups {
 		summary.SectionCounts[group.Section]++
 		summary.CandidateKindCounts[group.CandidateKind] += group.AtomCount
 		summary.RoutingHintCounts[group.RoutingHint]++
@@ -517,6 +571,28 @@ func buildSourceMeaningPacketSummary(pressure CorpusPressureSummary, graph Corpu
 		if group.EvidenceReferenceCount > 0 || len(group.BlockerReasons) > 0 {
 			summary.EvidenceOrBlockerGroupCount++
 		}
+	}
+	if len(metricGroups) != len(emittedGroups) {
+		summary.GeneratedSectionCounts = map[SourceMeaningPacketSection]int{}
+		for _, group := range metricGroups {
+			summary.GeneratedSectionCounts[group.Section]++
+			if group.Section == SourceMeaningPacketSectionReady {
+				summary.GeneratedReadyGroupCount++
+			}
+			if group.Section == SourceMeaningPacketSectionNeedsReview {
+				summary.GeneratedNeedsReviewGroupCount++
+				summary.GeneratedReviewBurdenCount++
+			}
+			if group.Section == SourceMeaningPacketSectionBlocked {
+				summary.GeneratedBlockedGroupCount++
+				summary.GeneratedReviewBurdenCount++
+			}
+			if group.EvidenceReferenceCount > 0 || len(group.BlockerReasons) > 0 {
+				summary.GeneratedEvidenceOrBlockerGroupCount++
+			}
+		}
+	}
+	for _, group := range emittedGroups {
 		groupPath := SourceMeaningPacketGroupPath(group.GroupID)
 		proposalPath := ""
 		if group.Section == SourceMeaningPacketSectionReady {
@@ -538,15 +614,27 @@ func buildSourceMeaningPacketSummary(pressure CorpusPressureSummary, graph Corpu
 			ProposalPath:           sourceMeaningPacketSummaryPath(proposalPath),
 		})
 	}
+	metricGroupCount := len(metricGroups)
+	emittedGroupCount := len(emittedGroups)
 	if graph.AtomCount > 0 {
-		summary.AtomCompressionRatio = 1 - float64(summary.ReviewGroupCount)/float64(graph.AtomCount)
+		summary.AtomCompressionRatio = 1 - float64(emittedGroupCount)/float64(graph.AtomCount)
+		if metricGroupCount != emittedGroupCount {
+			summary.GeneratedAtomCompressionRatio = 1 - float64(metricGroupCount)/float64(graph.AtomCount)
+		}
 	}
 	if graph.RelationCount > 0 {
-		summary.RelationReviewCompressionRatio = 1 - float64(summary.ReviewGroupCount)/float64(graph.RelationCount)
+		summary.RelationReviewCompressionRatio = 1 - float64(emittedGroupCount)/float64(graph.RelationCount)
+		if metricGroupCount != emittedGroupCount {
+			summary.GeneratedRelationReviewCompressionRatio = 1 - float64(metricGroupCount)/float64(graph.RelationCount)
+		}
 	}
-	if summary.ReviewGroupCount > 0 {
-		summary.EvidenceOrBlockerGroupRatio = float64(summary.EvidenceOrBlockerGroupCount) / float64(summary.ReviewGroupCount)
-		summary.ReviewBurdenRatio = float64(summary.ReviewBurdenCount) / float64(summary.ReviewGroupCount)
+	if emittedGroupCount > 0 {
+		summary.EvidenceOrBlockerGroupRatio = float64(summary.EvidenceOrBlockerGroupCount) / float64(emittedGroupCount)
+		summary.ReviewBurdenRatio = float64(summary.ReviewBurdenCount) / float64(emittedGroupCount)
+	}
+	if metricGroupCount != emittedGroupCount && metricGroupCount > 0 {
+		summary.GeneratedEvidenceOrBlockerGroupRatio = float64(summary.GeneratedEvidenceOrBlockerGroupCount) / float64(metricGroupCount)
+		summary.GeneratedReviewBurdenRatio = float64(summary.GeneratedReviewBurdenCount) / float64(metricGroupCount)
 	}
 	summary.ReplayFingerprint = sourceMeaningPacketReplayFingerprint(summary)
 	return summary
@@ -564,7 +652,27 @@ func sourceMeaningPacketReplayFingerprint(summary SourceMeaningPacketSummary) st
 		summary.CorpusID,
 		summary.CorpusFingerprint,
 		summary.CommandConfigFingerprint,
-		fmt.Sprintf("%d:%d:%d", summary.AtomCount, summary.RelationCount, summary.ReviewGroupCount),
+		fmt.Sprintf("%d:%d:%d:%d:%d:%d:%d:%d",
+			summary.AtomCount,
+			summary.RelationCount,
+			summary.ReviewGroupCount,
+			summary.GeneratedReviewGroupCount,
+			summary.ProposalCount,
+			summary.GeneratedProposalCount,
+			summary.EvidenceReferenceCount,
+			summary.GeneratedEvidenceReferenceCount),
+		fmt.Sprintf("review:%d:%d:%d:%d:%d:%d:%d:%d",
+			summary.ReadyGroupCount,
+			summary.NeedsReviewGroupCount,
+			summary.BlockedGroupCount,
+			summary.ReviewBurdenCount,
+			summary.GeneratedReadyGroupCount,
+			summary.GeneratedNeedsReviewGroupCount,
+			summary.GeneratedBlockedGroupCount,
+			summary.GeneratedReviewBurdenCount),
+		fmt.Sprintf("evidence:%d:%d",
+			summary.EvidenceOrBlockerGroupCount,
+			summary.GeneratedEvidenceOrBlockerGroupCount),
 	}
 	for _, group := range summary.Groups {
 		parts = append(parts, strings.Join([]string{group.GroupID, string(group.Section), string(group.CandidateKind), string(group.RoutingHint), fmt.Sprintf("%d", group.AtomCount)}, ":"))

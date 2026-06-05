@@ -293,6 +293,7 @@ type SemanticOptions struct {
 	LLMAPIKey         string
 	LLMClient         LLMSemanticProvider
 	ReferenceFallback bool
+	MaxCandidateCount int
 }
 
 type SemanticSummaryCandidate struct {

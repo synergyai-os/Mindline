@@ -120,6 +120,10 @@ func corpusPressureEvalInput(summary CorpusPressureSummary) CorpusPressureEvalIn
 		ProcessedSourceRatio:         summary.ProcessedSourceRatio,
 		SemanticReadinessStatus:      summary.SemanticReadinessStatus,
 		SemanticReadinessReasonCodes: append([]string{}, summary.SemanticReadinessReasonCodes...),
+		ScaleStatus:                  summary.ScaleStatus,
+		ScaleReasonCodes:             append([]string{}, summary.ScaleReasonCodes...),
+		ScaleSkippedSourceCount:      summary.ScaleSkippedSourceCount,
+		ScaleBudget:                  summary.ScaleBudget,
 		DocumentSegmentCount:         summary.DocumentSegmentCount,
 		SemanticObservationCount:     summary.SemanticObservationCount,
 		SemanticCandidateCount:       summary.SemanticCandidateCount,
@@ -147,6 +151,10 @@ func CorpusPressureTraceSummaryFor(summary CorpusPressureSummary, deltas CorpusP
 		ProcessedSourceRatio:         summary.ProcessedSourceRatio,
 		SemanticReadinessStatus:      summary.SemanticReadinessStatus,
 		SemanticReadinessReasonCodes: append([]string{}, summary.SemanticReadinessReasonCodes...),
+		ScaleStatus:                  summary.ScaleStatus,
+		ScaleReasonCodes:             append([]string{}, summary.ScaleReasonCodes...),
+		ScaleSkippedSourceCount:      summary.ScaleSkippedSourceCount,
+		ScaleBudget:                  summary.ScaleBudget,
 		DocumentSegmentCount:         summary.DocumentSegmentCount,
 		SemanticObservationCount:     summary.SemanticObservationCount,
 		SemanticCandidateCount:       summary.SemanticCandidateCount,
@@ -178,11 +186,22 @@ func corpusPressureTraceStages(summary CorpusPressureSummary) []CorpusPressureTr
 		{Name: "corpus_graph", Status: "pass", Count: summary.GraphAtomCount},
 		{Name: "pressure_readiness", Status: "pass"},
 	}
-	if corpusPressureGraphFailed(summary) {
+	graphFailed := corpusPressureGraphFailed(summary)
+	if graphFailed {
 		stages[2].Status = "failed"
+	}
+	if summary.ScaleStatus == "scale_partial" {
+		stages[0].Status = "scale_partial"
+		if !graphFailed {
+			stages[2].Status = "scale_partial"
+		}
+		stages[len(stages)-1].Status = "scale_partial"
 	}
 	if !summary.ReadyForFiftyFilePressure {
 		stages[len(stages)-1].Status = "needs_improvement"
+	}
+	if summary.ScaleStatus == "scale_partial" {
+		stages[len(stages)-1].Status = "scale_partial"
 	}
 	if summary.BlockedSourceCount > 0 || summary.UnexplainedExclusionCount > 0 {
 		stages[len(stages)-1].Status = "blocked"
@@ -233,8 +252,16 @@ func corpusPressureMarkdown(summary CorpusPressureSummary, graph CorpusGraphSumm
 	if summary.SemanticReadinessStatus == "blocked" {
 		b.WriteString("- Semantic value is not proven even if source intake succeeded.\n")
 	}
+	b.WriteString(fmt.Sprintf("- Scale status: %s", summary.ScaleStatus))
+	if len(summary.ScaleReasonCodes) > 0 {
+		b.WriteString(fmt.Sprintf(" (%s)", strings.Join(summary.ScaleReasonCodes, ", ")))
+	}
+	b.WriteString(fmt.Sprintf(", scale skipped sources=%d\n", summary.ScaleSkippedSourceCount))
 	b.WriteString(fmt.Sprintf("- Graph atoms: %d\n", summary.GraphAtomCount))
 	b.WriteString(fmt.Sprintf("- Graph relations: %d\n", summary.GraphRelationCount))
+	if summary.GraphPairComparisonLimit > 0 || summary.GraphRelationCandidateLimit > 0 {
+		b.WriteString(fmt.Sprintf("- Graph scale budget: %d/%d pair comparisons, relation limit=%d\n", summary.GraphPairComparisonCount, summary.GraphPairComparisonLimit, summary.GraphRelationCandidateLimit))
+	}
 	b.WriteString(fmt.Sprintf("- Evidence-ready atoms: %d (%.2f)\n", summary.EvidenceReadyAtomCount, summary.EvidenceReadyAtomRatio))
 	b.WriteString(fmt.Sprintf("- Review burden: %d (%.2f)\n", summary.ReviewBurdenCount, summary.ReviewBurdenRatio))
 	b.WriteString(fmt.Sprintf("- Replay fingerprint: %s\n\n", summary.ReplayFingerprint))

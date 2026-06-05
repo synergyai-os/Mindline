@@ -71,6 +71,87 @@ func TestBuildComparesBaselineCurrent(t *testing.T) {
 	}
 }
 
+func TestBuildPrioritizesScalePartialAsTopImprovementTarget(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "corpus-pressure", "pressure-summary.json"), map[string]any{
+		"schema_version":             "corpus-pressure-summary/v0.1",
+		"corpus_id":                  "corpus-scale",
+		"source_count":               471,
+		"processed_source_count":     50,
+		"scale_status":               "scale_partial",
+		"scale_reason_codes":         []any{"scale_source_limit"},
+		"scale_skipped_source_count": 421,
+		"semantic_candidate_count":   80,
+		"semantic_observation_count": 90,
+		"document_segment_count":     100,
+		"corpus_fingerprint":         "corpus-scale",
+		"command_config_fingerprint": "config-scale",
+		"guardrails": map[string]any{
+			"network_fetches":             0,
+			"hosted_telemetry_exports":    0,
+			"hosted_inference_calls":      0,
+			"browser_calls":               0,
+			"slack_api_calls":             0,
+			"destination_writes":          0,
+			"product_brain_writes":        0,
+			"tolaria_writes":              0,
+			"auto_accepts":                0,
+			"no_human_claims":             0,
+			"committed_private_artifacts": 0,
+		},
+	})
+
+	summary, err := BuildSummary(root, Options{})
+	if err != nil {
+		t.Fatalf("build summary: %v", err)
+	}
+	if summary.TopImprovementTarget.Code != "scale_capacity" {
+		t.Fatalf("expected scale capacity target, got %+v", summary.TopImprovementTarget)
+	}
+	if !summary.Artifacts[0].Flags["scale_partial"] {
+		t.Fatalf("expected scale partial flag, got %+v", summary.Artifacts[0])
+	}
+	if !containsString(summary.Artifacts[0].ReasonCodes, "scale_source_limit") {
+		t.Fatalf("expected scale reason code, got %+v", summary.Artifacts[0].ReasonCodes)
+	}
+}
+
+func TestBuildReadsStandaloneCorpusGraphScalePartial(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "corpus-graph", "graph-summary.json"), map[string]any{
+		"schema_version":                "corpus-graph-summary/v0.1",
+		"corpus_id":                     "corpus-graph-scale",
+		"source_count":                  2,
+		"scale_status":                  "scale_partial",
+		"scale_reason_codes":            []any{"scale_graph_relation_limit"},
+		"pair_comparison_count":         10,
+		"pair_comparison_limit":         100,
+		"relation_candidate_limit":      1,
+		"atom_count":                    2,
+		"relation_count":                1,
+		"ready_for_50_file_pressure":    false,
+		"replay_fingerprint":            "graph-scale",
+		"relation_type_counts":          map[string]any{},
+		"relation_status_counts":        map[string]any{},
+		"evidence_ready_atom_count":     2,
+		"evidence_ready_relation_count": 1,
+	})
+
+	summary, err := BuildSummary(root, Options{})
+	if err != nil {
+		t.Fatalf("build summary: %v", err)
+	}
+	if summary.ArtifactTypeCounts["corpus_graph_summary"] != 1 {
+		t.Fatalf("expected corpus graph summary artifact: %+v", summary.ArtifactTypeCounts)
+	}
+	if summary.TopImprovementTarget.Code != "scale_capacity" {
+		t.Fatalf("expected scale capacity target, got %+v", summary.TopImprovementTarget)
+	}
+	if !containsString(summary.Artifacts[0].ReasonCodes, "scale_graph_relation_limit") {
+		t.Fatalf("expected graph scale reason, got %+v", summary.Artifacts[0].ReasonCodes)
+	}
+}
+
 func TestBuildTreatsNewSourceMeaningPacketAsComparableImprovement(t *testing.T) {
 	root := t.TempDir()
 	baseline := filepath.Join(root, "baseline")
@@ -705,6 +786,97 @@ func TestBuildSemanticDensityImprovementSupportsImprovementClaim(t *testing.T) {
 	if summary.Comparison == nil || summary.Comparison.MetricDeltas["semantic_candidate_count"] <= 0 ||
 		summary.Comparison.MetricDeltas["reference_candidate_count_reduction"] <= 0 {
 		t.Fatalf("expected semantic density deltas, got %+v", summary.Comparison)
+	}
+}
+
+func TestBuildScalePartialBlocksImprovementClaim(t *testing.T) {
+	root := t.TempDir()
+	baseline := filepath.Join(root, "baseline")
+	current := filepath.Join(root, "current")
+	common := map[string]any{
+		"schema_version":             "corpus-pressure-summary/v0.1",
+		"corpus_id":                  "corpus-a",
+		"source_count":               50,
+		"processed_source_count":     50,
+		"document_segment_count":     425,
+		"semantic_readiness_status":  "ready",
+		"evidence_ready_atom_ratio":  1,
+		"review_burden_ratio":        0,
+		"corpus_fingerprint":         "same",
+		"command_config_fingerprint": "same-config",
+		"guardrails":                 completeGuardrails(),
+	}
+	baselinePressure := cloneMap(common)
+	baselinePressure["semantic_candidate_count"] = 50
+	baselinePressure["semantic_observation_count"] = 50
+	baselinePressure["reference_candidate_count"] = 50
+	baselinePressure["reference_only_source_count"] = 50
+	baselinePressure["one_candidate_source_count"] = 50
+	baselinePressure["candidate_per_processed_source_ratio"] = 1
+	baselinePressure["observation_per_segment_ratio"] = 0.1176
+	baselinePressure["reference_candidate_ratio"] = 1
+	currentPressure := cloneMap(common)
+	currentPressure["semantic_candidate_count"] = 208
+	currentPressure["semantic_observation_count"] = 211
+	currentPressure["reference_candidate_count"] = 0
+	currentPressure["reference_only_source_count"] = 0
+	currentPressure["one_candidate_source_count"] = 0
+	currentPressure["candidate_per_processed_source_ratio"] = 4.16
+	currentPressure["observation_per_segment_ratio"] = 0.4964
+	currentPressure["reference_candidate_ratio"] = 0
+	currentPressure["scale_status"] = "scale_partial"
+	currentPressure["scale_reason_codes"] = []any{"scale_source_limit"}
+	writeFixture(t, filepath.Join(baseline, "corpus-pressure", "pressure-summary.json"), baselinePressure)
+	writeFixture(t, filepath.Join(current, "corpus-pressure", "pressure-summary.json"), currentPressure)
+
+	summary, err := Build(current, filepath.Join(root, "out"), Options{BaselineRoot: baseline})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if summary.ImprovementStatus != "improved" {
+		t.Fatalf("comparison metrics should still report improved, got %s", summary.ImprovementStatus)
+	}
+	gate := gateByName(summary, "improvement_claim")
+	if gate.Status != "blocked" || !containsString(gate.ReasonCodes, "scale_partial") {
+		t.Fatalf("scale partial must block improvement claim, got %+v", summary.ClaimGates)
+	}
+}
+
+func TestBuildScalePartialBlocksDEC64NoHumanClaim(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "corpus-pressure", "pressure-summary.json"), map[string]any{
+		"schema_version":             "corpus-pressure-summary/v0.1",
+		"corpus_id":                  "corpus-a",
+		"source_count":               50,
+		"processed_source_count":     50,
+		"semantic_readiness_status":  "ready",
+		"scale_status":               "scale_partial",
+		"scale_reason_codes":         []any{"scale_source_limit"},
+		"corpus_fingerprint":         "corpus-a",
+		"command_config_fingerprint": "pressure-config",
+		"guardrails":                 completeGuardrails(),
+	})
+	writeFixture(t, filepath.Join(root, "corpus-acceptance", "benchmark-summary.json"), map[string]any{
+		"schema_version":             "corpus-acceptance-summary/v0.1",
+		"suite_kind":                 "held_out",
+		"held_out":                   true,
+		"suite_valid":                true,
+		"dec64_eligible":             true,
+		"threshold":                  0.98,
+		"accuracy":                   1,
+		"eval_count":                 100,
+		"corpus_fingerprint":         "acceptance-corpus",
+		"command_config_fingerprint": "acceptance-config",
+		"guardrails":                 completeGuardrails(),
+	})
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	gate := gateByName(summary, "dec64_no_human_claim")
+	if gate.Status != "blocked" || !containsString(gate.ReasonCodes, "scale_partial") {
+		t.Fatalf("scale partial must block DEC-64/no-human claim, got %+v", gate)
 	}
 }
 
