@@ -71,6 +71,52 @@ func TestBuildComparesBaselineCurrent(t *testing.T) {
 	}
 }
 
+func TestBuildTreatsNewSourceMeaningPacketAsComparableImprovement(t *testing.T) {
+	root := t.TempDir()
+	baseline := filepath.Join(root, "baseline")
+	current := filepath.Join(root, "current")
+	writePressure(t, baseline, 1, 0)
+	writePressure(t, current, 1, 0)
+	writeFixture(t, filepath.Join(current, "source-meaning-packet", "meaning-summary.json"), map[string]any{
+		"schema_version":                    "source-meaning-packet/v0.1",
+		"corpus_id":                         "corpus-a",
+		"source_count":                      50,
+		"processed_source_count":            50,
+		"atom_count":                        208,
+		"relation_count":                    20926,
+		"review_group_count":                19,
+		"ready_group_count":                 14,
+		"needs_review_group_count":          5,
+		"proposal_count":                    14,
+		"evidence_reference_count":          208,
+		"evidence_or_blocker_group_count":   19,
+		"review_burden_count":               5,
+		"atom_compression_ratio":            0.9086,
+		"relation_review_compression_ratio": 0.9990,
+		"evidence_or_blocker_group_ratio":   1,
+		"review_burden_ratio":               0.263,
+		"non_generalizable_runtime":         true,
+		"comparable":                        true,
+		"corpus_fingerprint":                "same",
+		"command_config_fingerprint":        "same-config",
+		"guardrails":                        completeGuardrails(),
+	})
+
+	summary, err := Build(current, filepath.Join(root, "out"), Options{BaselineRoot: baseline})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if summary.ArtifactTypeCounts["source_meaning_packet_summary"] != 1 {
+		t.Fatalf("expected source meaning packet artifact: %+v", summary.ArtifactTypeCounts)
+	}
+	if summary.ImprovementStatus != "improved" {
+		t.Fatalf("expected packet addition to count as improvement, got %s comparison=%+v", summary.ImprovementStatus, summary.Comparison)
+	}
+	if summary.Comparison == nil || summary.Comparison.MetricDeltas["source_meaning_packet_added"] != 1 {
+		t.Fatalf("missing packet improvement delta: %+v", summary.Comparison)
+	}
+}
+
 func TestBuildEmitsReplayBaselineReadyOnlyWithCorpusAndCommandFingerprints(t *testing.T) {
 	root := t.TempDir()
 	writePressure(t, root, 0.8, 0.2)

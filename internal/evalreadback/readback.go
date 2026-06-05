@@ -304,7 +304,7 @@ func artifactTypeFor(root, ref string) string {
 func artifactRootPrefix(root string) string {
 	base := filepath.Base(root)
 	switch base {
-	case "trace", "corpus-pressure", "corpus-pressure-loop", "corpus-acceptance", "autonomy-readiness", "link-enrichment", "value-proof":
+	case "trace", "corpus-pressure", "corpus-pressure-loop", "corpus-acceptance", "autonomy-readiness", "link-enrichment", "value-proof", "source-meaning-packet":
 		return base
 	case "comparison", "requests", "posthog":
 		if filepath.Base(filepath.Dir(root)) == "link-enrichment" {
@@ -344,6 +344,8 @@ func artifactTypeForRef(ref string) string {
 		return "link_enrichment_eval_projection"
 	case strings.HasSuffix(ref, "value-proof/value-summary.json"):
 		return "value_proof_summary"
+	case strings.HasSuffix(ref, "source-meaning-packet/meaning-summary.json"):
+		return "source_meaning_packet_summary"
 	default:
 		return ""
 	}
@@ -405,6 +407,7 @@ func supportedSchema(artifactType, schemaVersion string) bool {
 		"link_artifact_requests":             "local-link-artifact-requests/v0.1",
 		"link_enrichment_eval_projection":    "mindline-link-enrichment-eval-projection/v0.1",
 		"value_proof_summary":                "mindline-value-proof/v0.1",
+		"source_meaning_packet_summary":      "source-meaning-packet/v0.1",
 	}
 	return strings.TrimSpace(schemaVersion) == expected[artifactType]
 }
@@ -421,13 +424,15 @@ func extractEvidence(raw map[string]any, artifact *ArtifactEvidence) {
 		"human_review_required_count",
 		"eval_counted_count", "evidence_ready_count", "eval_counted_human_review_required_count",
 		"eval_counted_model_error_count",
+		"review_group_count", "ready_group_count", "needs_review_group_count", "blocked_group_count",
+		"proposal_count", "evidence_reference_count", "evidence_or_blocker_group_count",
 		"threshold", "accuracy", "eval_count",
 	} {
 		if value, ok := numberValue(raw[key]); ok {
 			artifact.Metrics[key] = value
 		}
 	}
-	for _, key := range []string{"processed_source_ratio", "source_accounting_ratio", "evidence_ready_atom_ratio", "evidence_or_blocker_ratio", "review_burden_ratio", "candidate_per_processed_source_ratio", "observation_per_segment_ratio", "reference_candidate_ratio"} {
+	for _, key := range []string{"processed_source_ratio", "source_accounting_ratio", "evidence_ready_atom_ratio", "evidence_or_blocker_ratio", "review_burden_ratio", "candidate_per_processed_source_ratio", "observation_per_segment_ratio", "reference_candidate_ratio", "atom_compression_ratio", "relation_review_compression_ratio", "evidence_or_blocker_group_ratio"} {
 		if value, ok := numberValue(raw[key]); ok {
 			artifact.Metrics[key] = value
 		}
@@ -456,6 +461,9 @@ func extractEvidence(raw map[string]any, artifact *ArtifactEvidence) {
 	}
 	if value := stringValue(raw["baseline_config_fingerprint"]); value != "" {
 		artifact.Fingerprints["command_config_fingerprint"] = value
+	}
+	if value := stringValue(raw["pressure_replay_fingerprint"]); value != "" {
+		artifact.Fingerprints["pressure_replay_fingerprint"] = value
 	}
 	if guardrails, ok := raw["guardrails"].(map[string]any); ok {
 		extractGuardrails(guardrails, artifact)
@@ -625,6 +633,9 @@ func mergeModelEvidence(model *readbackModel, artifact ArtifactEvidence) {
 		}
 	}
 	for key, value := range artifact.Metrics {
+		if !mergeArtifactMetricIntoModel(artifact.Type, key) {
+			continue
+		}
 		model.metrics[key] = value
 		switch key {
 		case "guardrail_network_fetches", "safety_network_fetches":
@@ -675,6 +686,16 @@ func mergeModelEvidence(model *readbackModel, artifact ArtifactEvidence) {
 			model.fingerprints[key] = value
 		}
 	}
+}
+
+func mergeArtifactMetricIntoModel(artifactType, metric string) bool {
+	if artifactType == "source_meaning_packet_summary" {
+		switch metric {
+		case "review_burden_count", "review_burden_ratio":
+			return false
+		}
+	}
+	return true
 }
 
 func summarize(model readbackModel) Summary {
@@ -1110,6 +1131,7 @@ func compareModels(baseline, current readbackModel) ComparisonSummary {
 		"missing_link_reduction_ratio", "missing_link_enrichment_reduction_ratio", "needs_enrichment_reduction_ratio",
 		"url_accounting_coverage", "artifact_match_coverage", "evidence_ready_count",
 		"semantic_observation_count", "semantic_candidate_count", "candidate_per_processed_source_ratio", "observation_per_segment_ratio",
+		"atom_compression_ratio", "relation_review_compression_ratio", "evidence_or_blocker_group_ratio",
 	} {
 		before, bok := baseline.metrics[metric]
 		after, aok := current.metrics[metric]
@@ -1167,6 +1189,12 @@ func compareModels(baseline, current readbackModel) ComparisonSummary {
 		if guardrail.after > guardrail.before {
 			regressed = true
 			comparison.ReasonCodes = append(comparison.ReasonCodes, "guardrail_regression")
+		}
+	}
+	if !baseline.artifactTypes["source_meaning_packet_summary"] && current.artifactTypes["source_meaning_packet_summary"] {
+		if compression, ok := current.metrics["atom_compression_ratio"]; ok && compression > 0 {
+			comparison.MetricDeltas["source_meaning_packet_added"] = 1
+			improved = true
 		}
 	}
 	switch {
