@@ -184,7 +184,7 @@ func TestSourceMeaningPacketReportsScalePartialWhenGroupBudgetIsReached(t *testi
 		nil,
 	)
 
-	if build.Summary.ReviewGroupCount != 1 || len(build.Groups) != 1 {
+	if build.Summary.ReviewGroupCount != 3 || len(build.Groups) != 1 {
 		t.Fatalf("expected group budget to cap packet groups: %+v", build.Summary)
 	}
 	if build.Summary.ScaleStatus != "scale_partial" || !containsCorpusPressureString(build.Summary.ScaleReasonCodes, "scale_packet_group_limit") {
@@ -192,6 +192,9 @@ func TestSourceMeaningPacketReportsScalePartialWhenGroupBudgetIsReached(t *testi
 	}
 	if build.Summary.OmittedAtomCount != 13 {
 		t.Fatalf("expected 13 omitted atoms after first 12-atom group, got %+v", build.Summary)
+	}
+	if build.Summary.AtomCompressionRatio != 0.88 {
+		t.Fatalf("summary metrics should account for all generated groups before cap, got %+v", build.Summary)
 	}
 }
 

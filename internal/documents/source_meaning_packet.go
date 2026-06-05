@@ -186,6 +186,9 @@ func buildSourceMeaningPacket(pressure CorpusPressureSummary, graph CorpusGraphS
 	relations := flattenSourceMeaningRelations(relationsBySource)
 	relationIndex := sourceMeaningRelationIndex(relations)
 	groups := buildSourceMeaningGroups(pressure.CorpusID, atoms, relationIndex)
+	allGroups := append([]SourceMeaningPacketGroup{}, groups...)
+	allProposals := buildSourceMeaningProposals(allGroups)
+	allEvidenceMap := buildSourceMeaningEvidenceMap(pressure.CorpusID, allGroups)
 	maxGroups := pressure.ScaleBudget.MaxPacketReviewGroups
 	if maxGroups <= 0 {
 		maxGroups = sourceMeaningPacketMaxReviewGroups
@@ -205,7 +208,7 @@ func buildSourceMeaningPacket(pressure CorpusPressureSummary, graph CorpusGraphS
 			blockedItems.Items = append(blockedItems.Items, group)
 		}
 	}
-	summary := buildSourceMeaningPacketSummary(pressure, graph, groups, proposals, evidenceMap, maxGroups, omittedAtomCount)
+	summary := buildSourceMeaningPacketSummary(pressure, graph, groups, allGroups, allProposals, allEvidenceMap, maxGroups, omittedAtomCount)
 	return sourceMeaningPacketBuild{Summary: summary, Groups: groups, Proposals: proposals, EvidenceMap: evidenceMap, BlockedItems: blockedItems}
 }
 
@@ -483,7 +486,7 @@ func buildSourceMeaningEvidenceMap(corpusID string, groups []SourceMeaningPacket
 	return SourceMeaningPacketEvidenceMap{SchemaVersion: SourceMeaningPacketSchemaVersion, CorpusID: corpusID, EvidenceRefs: refs}
 }
 
-func buildSourceMeaningPacketSummary(pressure CorpusPressureSummary, graph CorpusGraphSummary, groups []SourceMeaningPacketGroup, proposals []SourceMeaningPacketProposal, evidenceMap SourceMeaningPacketEvidenceMap, maxGroups int, omittedAtomCount int) SourceMeaningPacketSummary {
+func buildSourceMeaningPacketSummary(pressure CorpusPressureSummary, graph CorpusGraphSummary, emittedGroups []SourceMeaningPacketGroup, metricGroups []SourceMeaningPacketGroup, metricProposals []SourceMeaningPacketProposal, metricEvidenceMap SourceMeaningPacketEvidenceMap, maxGroups int, omittedAtomCount int) SourceMeaningPacketSummary {
 	summary := SourceMeaningPacketSummary{
 		SchemaVersion:             SourceMeaningPacketSchemaVersion,
 		CorpusID:                  pressure.CorpusID,
@@ -491,9 +494,9 @@ func buildSourceMeaningPacketSummary(pressure CorpusPressureSummary, graph Corpu
 		ProcessedSourceCount:      pressure.ProcessedSourceCount,
 		AtomCount:                 graph.AtomCount,
 		RelationCount:             graph.RelationCount,
-		ReviewGroupCount:          len(groups),
-		ProposalCount:             len(proposals),
-		EvidenceReferenceCount:    len(evidenceMap.EvidenceRefs),
+		ReviewGroupCount:          len(metricGroups),
+		ProposalCount:             len(metricProposals),
+		EvidenceReferenceCount:    len(metricEvidenceMap.EvidenceRefs),
 		ScaleStatus:               "scale_complete",
 		MaxReviewGroupCount:       maxGroups,
 		OmittedAtomCount:          omittedAtomCount,
@@ -534,7 +537,7 @@ func buildSourceMeaningPacketSummary(pressure CorpusPressureSummary, graph Corpu
 		summary.ScaleStatus = "scale_partial"
 		summary.ScaleReasonCodes = appendUniqueString(summary.ScaleReasonCodes, "scale_packet_group_limit")
 	}
-	for _, group := range groups {
+	for _, group := range metricGroups {
 		summary.SectionCounts[group.Section]++
 		summary.CandidateKindCounts[group.CandidateKind] += group.AtomCount
 		summary.RoutingHintCounts[group.RoutingHint]++
@@ -552,6 +555,8 @@ func buildSourceMeaningPacketSummary(pressure CorpusPressureSummary, graph Corpu
 		if group.EvidenceReferenceCount > 0 || len(group.BlockerReasons) > 0 {
 			summary.EvidenceOrBlockerGroupCount++
 		}
+	}
+	for _, group := range emittedGroups {
 		groupPath := SourceMeaningPacketGroupPath(group.GroupID)
 		proposalPath := ""
 		if group.Section == SourceMeaningPacketSectionReady {

@@ -813,6 +813,7 @@ func runCorpusPressureSource(root string, source corpusPressureSourceInput, opti
 	if summary.SkippedReason != "" {
 		if strings.Contains(summary.SkippedReason, "all structure nodes are blocked") {
 			result.State = CorpusPressureSourceExcluded
+			result.ReasonCode = CorpusPressureReasonSemanticSkipped
 		} else if strings.Contains(summary.SkippedReason, "max_source_candidates=") {
 			result.State = CorpusPressureSourceSkipped
 			result.ReasonCode = CorpusPressureReasonScaleCandidateLimit

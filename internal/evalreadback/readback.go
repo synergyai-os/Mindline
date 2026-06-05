@@ -865,6 +865,8 @@ func rebuildClaimGates(summary *Summary) {
 		gates = append(gates, ClaimGate{Gate: "improvement_claim", Status: "blocked", ReasonCodes: append([]string{"semantic_readiness_blocked"}, summary.SemanticReadiness.ReasonCodes...), EvidenceRefs: firstRefs(summary.SafeArtifactRefs), ClaimImpact: "blocks improvement claim until semantic extraction value is proven"})
 	} else if summary.SemanticReadiness.Status == "not_evaluated" && !stringListContains(summary.SemanticReadiness.ReasonCodes, "insufficient_processed_sources") {
 		gates = append(gates, ClaimGate{Gate: "improvement_claim", Status: "blocked", ReasonCodes: append([]string{"semantic_readiness_not_evaluated"}, summary.SemanticReadiness.ReasonCodes...), EvidenceRefs: firstRefs(summary.SafeArtifactRefs), ClaimImpact: "blocks improvement claim until semantic-density evidence is present or reconstructable"})
+	} else if summaryHasFlag(summary, "scale_partial") {
+		gates = append(gates, ClaimGate{Gate: "improvement_claim", Status: "blocked", ReasonCodes: []string{"scale_partial"}, EvidenceRefs: firstRefs(summary.SafeArtifactRefs), ClaimImpact: "blocks improvement claim until scale capacity limits are resolved"})
 	} else {
 		switch improvementStatus {
 		case "improved":
@@ -904,6 +906,15 @@ func rebuildClaimGates(summary *Summary) {
 		gates = append(gates, ClaimGate{Gate: "next_target", Status: "pass", EvidenceRefs: summary.TopImprovementTarget.EvidenceRefs, ClaimImpact: "next improvement target is explicit"})
 	}
 	summary.ClaimGates = gates
+}
+
+func summaryHasFlag(summary *Summary, flag string) bool {
+	for _, artifact := range summary.Artifacts {
+		if artifact.Flags[flag] {
+			return true
+		}
+	}
+	return false
 }
 
 func dec64BlockedReasonCodes(summary *Summary, unsafe bool, unsupported bool) []string {

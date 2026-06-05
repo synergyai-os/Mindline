@@ -375,6 +375,29 @@ func TestCorpusPressureLLMClassifierUsesRawSourceTextAfterSegmentBudgetScreening
 	}
 }
 
+func TestCorpusPressureAllBlockedLLMSemanticSkipPreservesReasonCode(t *testing.T) {
+	input := t.TempDir()
+	if err := os.WriteFile(filepath.Join(input, "blocked.md"), []byte("# WP-17 Review\n\nDEC-75 private review material should be blocked.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	provider := &fakeLLMSemanticProvider{}
+	summary, _, err := BuildCorpusPressure(input, t.TempDir(), CorpusPressureOptions{
+		SemanticOptions: SemanticOptions{
+			Classifier:  SemanticClassifierLLM,
+			LLMProvider: "openai",
+			LLMModel:    "fake-model",
+			LLMAPIKey:   "fake-key",
+			LLMClient:   provider,
+		},
+	})
+	if err != nil {
+		t.Fatalf("build corpus pressure: %v", err)
+	}
+	if len(summary.Sources) != 1 || summary.Sources[0].State != CorpusPressureSourceExcluded || summary.Sources[0].ReasonCode != CorpusPressureReasonSemanticSkipped {
+		t.Fatalf("all-blocked semantic skip should be excluded with semantic_skipped reason, got %+v", summary.Sources)
+	}
+}
+
 type multiCandidateLLMSemanticProvider struct {
 	request LLMSemanticRequest
 }
