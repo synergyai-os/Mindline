@@ -842,6 +842,44 @@ func TestBuildScalePartialBlocksImprovementClaim(t *testing.T) {
 	}
 }
 
+func TestBuildScalePartialBlocksDEC64NoHumanClaim(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "corpus-pressure", "pressure-summary.json"), map[string]any{
+		"schema_version":             "corpus-pressure-summary/v0.1",
+		"corpus_id":                  "corpus-a",
+		"source_count":               50,
+		"processed_source_count":     50,
+		"semantic_readiness_status":  "ready",
+		"scale_status":               "scale_partial",
+		"scale_reason_codes":         []any{"scale_source_limit"},
+		"corpus_fingerprint":         "corpus-a",
+		"command_config_fingerprint": "pressure-config",
+		"guardrails":                 completeGuardrails(),
+	})
+	writeFixture(t, filepath.Join(root, "corpus-acceptance", "benchmark-summary.json"), map[string]any{
+		"schema_version":             "corpus-acceptance-summary/v0.1",
+		"suite_kind":                 "held_out",
+		"held_out":                   true,
+		"suite_valid":                true,
+		"dec64_eligible":             true,
+		"threshold":                  0.98,
+		"accuracy":                   1,
+		"eval_count":                 100,
+		"corpus_fingerprint":         "acceptance-corpus",
+		"command_config_fingerprint": "acceptance-config",
+		"guardrails":                 completeGuardrails(),
+	})
+
+	summary, err := Build(root, filepath.Join(root, "out"), Options{})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	gate := gateByName(summary, "dec64_no_human_claim")
+	if gate.Status != "blocked" || !containsString(gate.ReasonCodes, "scale_partial") {
+		t.Fatalf("scale partial must block DEC-64/no-human claim, got %+v", gate)
+	}
+}
+
 func TestBuildCurrentOnlyDoesNotPassImprovementClaim(t *testing.T) {
 	out := t.TempDir()
 	summary, err := Build(filepath.Join("..", "..", "testdata", "eval-readback", "current"), out, Options{})

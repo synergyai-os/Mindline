@@ -890,7 +890,8 @@ func rebuildClaimGates(summary *Summary) {
 			gates = append(gates, ClaimGate{Gate: "improvement_claim", Status: "blocked", ReasonCodes: []string{"missing_baseline"}, ClaimImpact: "blocks improvement claim until comparable baseline is supplied"})
 		}
 	}
-	if hasDEC64ThresholdProof(summary) && hasSideEffectEvidence(summary) && !hasSideEffectCounter(summary) && !unsafe && !unsupported {
+	scalePartial := summaryHasFlag(summary, "scale_partial")
+	if hasDEC64ThresholdProof(summary) && hasSideEffectEvidence(summary) && !hasSideEffectCounter(summary) && !unsafe && !unsupported && !scalePartial {
 		gates = append(gates, ClaimGate{Gate: "dec64_no_human_claim", Status: "pass", EvidenceRefs: firstRefs(summary.SafeArtifactRefs), ClaimImpact: "held-out threshold proof supports bounded no-human readiness claim"})
 	} else {
 		gates = append(gates, ClaimGate{Gate: "dec64_no_human_claim", Status: "blocked", ReasonCodes: dec64BlockedReasonCodes(summary, unsafe, unsupported), ClaimImpact: "blocks no-human autonomy readiness claim"})
@@ -927,6 +928,9 @@ func dec64BlockedReasonCodes(summary *Summary, unsafe bool, unsupported bool) []
 	}
 	if hasSideEffectCounter(summary) {
 		reasonCodes = append(reasonCodes, "guardrail_counter_nonzero")
+	}
+	if summaryHasFlag(summary, "scale_partial") {
+		reasonCodes = append(reasonCodes, "scale_partial")
 	}
 	if unsafe {
 		reasonCodes = append(reasonCodes, "unsafe_or_leaky")

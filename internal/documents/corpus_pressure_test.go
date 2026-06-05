@@ -1170,7 +1170,7 @@ func TestCorpusPressureSkipsSourcesBeforeSemanticExplosionWhenScaleBudgetsHit(t 
 	}
 }
 
-func TestCorpusPressureCountsOnlyProcessedSourcesAgainstSourceLimit(t *testing.T) {
+func TestCorpusPressureCountsAttemptedSourcesAgainstSourceLimit(t *testing.T) {
 	input := t.TempDir()
 	if err := os.WriteFile(filepath.Join(input, "source-01-large.md"), []byte("# Large\n"+strings.Repeat("oversized source body\n", 20)), 0o644); err != nil {
 		t.Fatal(err)
@@ -1192,13 +1192,16 @@ func TestCorpusPressureCountsOnlyProcessedSourcesAgainstSourceLimit(t *testing.T
 	if err != nil {
 		t.Fatalf("build corpus pressure: %v", err)
 	}
-	if summary.ProcessedSourceCount != 1 {
-		t.Fatalf("source cap should count processed sources only, got %+v", summary)
+	if summary.ProcessedSourceCount != 0 || summary.ScaleSkippedSourceCount != 3 {
+		t.Fatalf("source cap should count attempted sources before later artifacts fan out, got %+v", summary)
 	}
 	for _, reason := range []string{"scale_source_size_limit", "scale_source_limit"} {
 		if !containsCorpusPressureString(summary.ScaleReasonCodes, reason) {
 			t.Fatalf("expected scale reason %q, got %+v", reason, summary.ScaleReasonCodes)
 		}
+	}
+	if summary.Sources[1].ReasonCode != CorpusPressureReasonScaleSourceLimit || summary.Sources[2].ReasonCode != CorpusPressureReasonScaleSourceLimit {
+		t.Fatalf("later sources should be skipped by source cap after first attempted source, got %+v", summary.Sources)
 	}
 }
 

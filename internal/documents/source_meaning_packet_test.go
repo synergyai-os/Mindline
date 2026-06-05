@@ -196,6 +196,12 @@ func TestSourceMeaningPacketReportsScalePartialWhenGroupBudgetIsReached(t *testi
 	if build.Summary.AtomCompressionRatio != 0.88 {
 		t.Fatalf("summary metrics should account for all generated groups before cap, got %+v", build.Summary)
 	}
+	if build.Summary.ProposalCount != len(build.Proposals) || build.Summary.EvidenceReferenceCount != len(build.EvidenceMap.EvidenceRefs) {
+		t.Fatalf("emitted packet counts should describe written packet artifacts, got summary=%+v proposals=%d evidence=%d", build.Summary, len(build.Proposals), len(build.EvidenceMap.EvidenceRefs))
+	}
+	if build.Summary.GeneratedProposalCount == 0 || build.Summary.GeneratedEvidenceReferenceCount == 0 {
+		t.Fatalf("capped packet should keep uncapped diagnostic totals, got %+v", build.Summary)
+	}
 }
 
 func allPacketText(t *testing.T, root string) string {

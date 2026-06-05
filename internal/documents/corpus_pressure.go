@@ -334,17 +334,15 @@ func BuildCorpusPressure(inputPath, outDir string, options CorpusPressureOptions
 	}
 	results := make([]CorpusPressureSourceResult, 0, len(sources))
 	graphSources := make([]CorpusGraphManifestSource, 0, len(sources))
-	processedSources := 0
+	attemptedSources := 0
 	for _, source := range sources {
-		if options.ScaleBudget.MaxProcessedSources > 0 && processedSources >= options.ScaleBudget.MaxProcessedSources {
+		if options.ScaleBudget.MaxProcessedSources > 0 && attemptedSources >= options.ScaleBudget.MaxProcessedSources {
 			results = append(results, scaleSkippedCorpusPressureSource(source, CorpusPressureReasonScaleSourceLimit, fmt.Sprintf("scale_partial: source skipped because max_processed_sources=%d was reached", options.ScaleBudget.MaxProcessedSources)))
 			continue
 		}
+		attemptedSources++
 		result, graphSource := runCorpusPressureSource(root, source, options.SemanticOptions, options.ScaleBudget)
 		results = append(results, result)
-		if result.State == CorpusPressureSourceProcessed {
-			processedSources++
-		}
 		if graphSource != nil {
 			graphSources = append(graphSources, *graphSource)
 		}
