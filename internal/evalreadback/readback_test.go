@@ -198,6 +198,47 @@ func TestBuildTreatsNewSourceMeaningPacketAsComparableImprovement(t *testing.T) 
 	}
 }
 
+func TestBuildDetectsCorpusConceptSummary(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "corpus-concepts", "concept-summary.json"), map[string]any{
+		"schema_version":                        "corpus-concepts/v0.1",
+		"corpus_id":                             "corpus-a",
+		"source_count":                          50,
+		"processed_source_count":                50,
+		"atom_count":                            208,
+		"relation_count":                        20926,
+		"concept_count":                         24,
+		"cross_source_concept_count":            8,
+		"evidence_reference_count":              208,
+		"concept_review_burden_count":           10,
+		"concept_review_burden_ratio":           0.416,
+		"relation_review_compression_ratio":     0.9988,
+		"atom_coverage_ratio":                   1,
+		"cross_source_atom_ratio":               0.5,
+		"cross_source_evidence_reference_count": 104,
+		"non_generalizable_runtime":             true,
+		"comparable":                            true,
+		"corpus_fingerprint":                    "same",
+		"command_config_fingerprint":            "same-config",
+		"guardrails":                            completeGuardrails(),
+	})
+
+	summary, err := BuildSummary(root, Options{})
+	if err != nil {
+		t.Fatalf("build summary: %v", err)
+	}
+	if summary.ArtifactTypeCounts["corpus_concept_summary"] != 1 {
+		t.Fatalf("expected corpus concept artifact: %+v", summary.ArtifactTypeCounts)
+	}
+	artifact := summary.Artifacts[0]
+	if artifact.Metrics["concept_count"] != 24 || artifact.Metrics["cross_source_concept_count"] != 8 {
+		t.Fatalf("expected concept metrics, got %+v", artifact.Metrics)
+	}
+	if artifact.Fingerprints["corpus_fingerprint"] != "same" {
+		t.Fatalf("expected corpus fingerprint, got %+v", artifact.Fingerprints)
+	}
+}
+
 func TestBuildEmitsReplayBaselineReadyOnlyWithCorpusAndCommandFingerprints(t *testing.T) {
 	root := t.TempDir()
 	writePressure(t, root, 0.8, 0.2)

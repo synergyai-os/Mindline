@@ -304,7 +304,7 @@ func artifactTypeFor(root, ref string) string {
 func artifactRootPrefix(root string) string {
 	base := filepath.Base(root)
 	switch base {
-	case "trace", "corpus-pressure", "corpus-graph", "corpus-pressure-loop", "corpus-acceptance", "autonomy-readiness", "link-enrichment", "value-proof", "source-meaning-packet":
+	case "trace", "corpus-pressure", "corpus-graph", "corpus-pressure-loop", "corpus-acceptance", "autonomy-readiness", "link-enrichment", "value-proof", "source-meaning-packet", "corpus-concepts":
 		return base
 	case "comparison", "requests", "posthog":
 		if filepath.Base(filepath.Dir(root)) == "link-enrichment" {
@@ -348,6 +348,8 @@ func artifactTypeForRef(ref string) string {
 		return "value_proof_summary"
 	case strings.HasSuffix(ref, "source-meaning-packet/meaning-summary.json"):
 		return "source_meaning_packet_summary"
+	case strings.HasSuffix(ref, "corpus-concepts/concept-summary.json"):
+		return "corpus_concept_summary"
 	default:
 		return ""
 	}
@@ -411,6 +413,7 @@ func supportedSchema(artifactType, schemaVersion string) bool {
 		"link_enrichment_eval_projection":    "mindline-link-enrichment-eval-projection/v0.1",
 		"value_proof_summary":                "mindline-value-proof/v0.1",
 		"source_meaning_packet_summary":      "source-meaning-packet/v0.1",
+		"corpus_concept_summary":             "corpus-concepts/v0.1",
 	}
 	return strings.TrimSpace(schemaVersion) == expected[artifactType]
 }
@@ -432,6 +435,10 @@ func extractEvidence(raw map[string]any, artifact *ArtifactEvidence) {
 		"generated_review_group_count", "generated_ready_group_count", "generated_needs_review_group_count",
 		"generated_blocked_group_count", "generated_proposal_count", "generated_evidence_reference_count",
 		"generated_evidence_or_blocker_group_count", "generated_review_burden_count",
+		"concept_count", "generated_concept_count", "cross_source_concept_count", "local_concept_count",
+		"needs_review_concept_count", "blocked_concept_count", "concept_review_burden_count",
+		"cross_source_evidence_reference_count", "cross_source_kind_pair_count", "max_concept_count",
+		"omitted_concept_count",
 		"scale_skipped_source_count", "max_processed_sources", "max_source_bytes", "max_source_segments", "max_source_candidates",
 		"max_graph_pair_comparisons", "max_graph_relations", "max_packet_review_groups",
 		"graph_pair_comparison_count", "graph_pair_comparison_limit", "graph_relation_candidate_limit",
@@ -443,7 +450,7 @@ func extractEvidence(raw map[string]any, artifact *ArtifactEvidence) {
 			artifact.Metrics[key] = value
 		}
 	}
-	for _, key := range []string{"processed_source_ratio", "source_accounting_ratio", "evidence_ready_atom_ratio", "evidence_or_blocker_ratio", "review_burden_ratio", "candidate_per_processed_source_ratio", "observation_per_segment_ratio", "reference_candidate_ratio", "atom_compression_ratio", "relation_review_compression_ratio", "evidence_or_blocker_group_ratio", "generated_atom_compression_ratio", "generated_relation_review_compression_ratio", "generated_evidence_or_blocker_group_ratio", "generated_review_burden_ratio"} {
+	for _, key := range []string{"processed_source_ratio", "source_accounting_ratio", "evidence_ready_atom_ratio", "evidence_or_blocker_ratio", "review_burden_ratio", "candidate_per_processed_source_ratio", "observation_per_segment_ratio", "reference_candidate_ratio", "atom_compression_ratio", "relation_review_compression_ratio", "evidence_or_blocker_group_ratio", "generated_atom_compression_ratio", "generated_relation_review_compression_ratio", "generated_evidence_or_blocker_group_ratio", "generated_review_burden_ratio", "concept_review_burden_ratio", "atom_coverage_ratio", "cross_source_atom_ratio"} {
 		if value, ok := numberValue(raw[key]); ok {
 			artifact.Metrics[key] = value
 		}
