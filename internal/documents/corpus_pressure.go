@@ -337,7 +337,7 @@ func BuildCorpusPressure(inputPath, outDir string, options CorpusPressureOptions
 	attemptedSources := 0
 	for _, source := range sources {
 		if options.ScaleBudget.MaxProcessedSources > 0 && attemptedSources >= options.ScaleBudget.MaxProcessedSources {
-			results = append(results, scaleSkippedCorpusPressureSource(source, CorpusPressureReasonScaleSourceLimit, fmt.Sprintf("scale_partial: source skipped because max_processed_sources=%d was reached", options.ScaleBudget.MaxProcessedSources)))
+			results = append(results, scaleSkippedCorpusPressureSourceMetadataOnly(source, CorpusPressureReasonScaleSourceLimit, fmt.Sprintf("scale_partial: source skipped because max_processed_sources=%d was reached; source content was not hashed to preserve the source cap I/O bound", options.ScaleBudget.MaxProcessedSources)))
 			continue
 		}
 		attemptedSources++
@@ -712,6 +712,17 @@ func scaleSkippedCorpusPressureSource(source corpusPressureSourceInput, reason C
 		result.Message = strings.TrimSpace(result.Message + "; source content hash unavailable: " + err.Error())
 	}
 	return result
+}
+
+func scaleSkippedCorpusPressureSourceMetadataOnly(source corpusPressureSourceInput, reason CorpusPressureReason, message string) CorpusPressureSourceResult {
+	return CorpusPressureSourceResult{
+		SourceID:    source.SourceID,
+		SourceKind:  source.SourceKind,
+		SourceLabel: source.Label,
+		State:       CorpusPressureSourceSkipped,
+		ReasonCode:  reason,
+		Message:     message,
+	}
 }
 
 func runCorpusPressureSource(root string, source corpusPressureSourceInput, options SemanticOptions, budget CorpusPressureScaleBudget) (CorpusPressureSourceResult, *CorpusGraphManifestSource) {

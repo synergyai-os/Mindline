@@ -429,6 +429,9 @@ func extractEvidence(raw map[string]any, artifact *ArtifactEvidence) {
 		"eval_counted_model_error_count",
 		"review_group_count", "ready_group_count", "needs_review_group_count", "blocked_group_count",
 		"proposal_count", "evidence_reference_count", "evidence_or_blocker_group_count",
+		"generated_review_group_count", "generated_ready_group_count", "generated_needs_review_group_count",
+		"generated_blocked_group_count", "generated_proposal_count", "generated_evidence_reference_count",
+		"generated_evidence_or_blocker_group_count", "generated_review_burden_count",
 		"scale_skipped_source_count", "max_processed_sources", "max_source_bytes", "max_source_segments", "max_source_candidates",
 		"max_graph_pair_comparisons", "max_graph_relations", "max_packet_review_groups",
 		"graph_pair_comparison_count", "graph_pair_comparison_limit", "graph_relation_candidate_limit",
@@ -440,7 +443,7 @@ func extractEvidence(raw map[string]any, artifact *ArtifactEvidence) {
 			artifact.Metrics[key] = value
 		}
 	}
-	for _, key := range []string{"processed_source_ratio", "source_accounting_ratio", "evidence_ready_atom_ratio", "evidence_or_blocker_ratio", "review_burden_ratio", "candidate_per_processed_source_ratio", "observation_per_segment_ratio", "reference_candidate_ratio", "atom_compression_ratio", "relation_review_compression_ratio", "evidence_or_blocker_group_ratio"} {
+	for _, key := range []string{"processed_source_ratio", "source_accounting_ratio", "evidence_ready_atom_ratio", "evidence_or_blocker_ratio", "review_burden_ratio", "candidate_per_processed_source_ratio", "observation_per_segment_ratio", "reference_candidate_ratio", "atom_compression_ratio", "relation_review_compression_ratio", "evidence_or_blocker_group_ratio", "generated_atom_compression_ratio", "generated_relation_review_compression_ratio", "generated_evidence_or_blocker_group_ratio", "generated_review_burden_ratio"} {
 		if value, ok := numberValue(raw[key]); ok {
 			artifact.Metrics[key] = value
 		}

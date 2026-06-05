@@ -1280,37 +1280,32 @@ func TestCorpusPressureOversizedSkippedSourceContentChangesCorpusFingerprint(t *
 	}
 }
 
-func TestCorpusPressureSourceLimitSkippedTailChangesCorpusFingerprint(t *testing.T) {
-	build := func(tail string) CorpusPressureSummary {
-		t.Helper()
-		input := t.TempDir()
-		if err := os.WriteFile(filepath.Join(input, "source-01.md"), []byte("# Source 01\n- capability: processed source\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(input, "source-02.md"), []byte(tail), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		summary, _, err := BuildCorpusPressure(input, t.TempDir(), CorpusPressureOptions{ScaleBudget: CorpusPressureScaleBudget{
-			MaxProcessedSources:     1,
-			MaxSourceBytes:          1024 * 1024,
-			MaxSourceSegments:       200,
-			MaxSourceCandidates:     500,
-			MaxGraphPairComparisons: 250000,
-			MaxGraphRelations:       50000,
-			MaxPacketReviewGroups:   50,
-		}})
-		if err != nil {
-			t.Fatalf("build corpus pressure: %v", err)
-		}
-		return summary
+func TestCorpusPressureSourceLimitSkippedTailDoesNotHashContent(t *testing.T) {
+	input := t.TempDir()
+	if err := os.WriteFile(filepath.Join(input, "source-01.md"), []byte("# Source 01\n- capability: processed source\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	left := build("# Source 02\nleft skipped tail\n")
-	right := build("# Source 02\nright skipped tail\n")
-	if left.Sources[1].ReasonCode != CorpusPressureReasonScaleSourceLimit || left.Sources[1].SourceContentHash == "" {
-		t.Fatalf("expected source-limit tail hash, got %+v", left.Sources[1])
+	if err := os.WriteFile(filepath.Join(input, "source-02.md"), []byte("# Source 02\n"+strings.Repeat("tail content\n", 20)), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	if left.CorpusFingerprint == right.CorpusFingerprint {
-		t.Fatalf("different source-limit tail content must change corpus fingerprint: %s", left.CorpusFingerprint)
+	summary, _, err := BuildCorpusPressure(input, t.TempDir(), CorpusPressureOptions{ScaleBudget: CorpusPressureScaleBudget{
+		MaxProcessedSources:     1,
+		MaxSourceBytes:          1024 * 1024,
+		MaxSourceSegments:       200,
+		MaxSourceCandidates:     500,
+		MaxGraphPairComparisons: 250000,
+		MaxGraphRelations:       50000,
+		MaxPacketReviewGroups:   50,
+	}})
+	if err != nil {
+		t.Fatalf("build corpus pressure: %v", err)
+	}
+	tail := summary.Sources[1]
+	if tail.ReasonCode != CorpusPressureReasonScaleSourceLimit || tail.SourceContentHash != "" {
+		t.Fatalf("source-limit tail skip should not hash skipped content, got %+v", tail)
+	}
+	if !strings.Contains(tail.Message, "not hashed") {
+		t.Fatalf("source-limit tail skip should explain bounded metadata, got %+v", tail)
 	}
 }
 
