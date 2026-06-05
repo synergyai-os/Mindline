@@ -426,6 +426,11 @@ func extractEvidence(raw map[string]any, artifact *ArtifactEvidence) {
 		"eval_counted_model_error_count",
 		"review_group_count", "ready_group_count", "needs_review_group_count", "blocked_group_count",
 		"proposal_count", "evidence_reference_count", "evidence_or_blocker_group_count",
+		"scale_skipped_source_count", "max_processed_sources", "max_source_bytes", "max_source_segments",
+		"max_graph_pair_comparisons", "max_graph_relations", "max_packet_review_groups",
+		"graph_pair_comparison_count", "graph_pair_comparison_limit", "graph_relation_candidate_limit",
+		"pair_comparison_count", "pair_comparison_limit", "relation_candidate_limit",
+		"max_review_group_count", "omitted_atom_count",
 		"threshold", "accuracy", "eval_count",
 	} {
 		if value, ok := numberValue(raw[key]); ok {
@@ -438,6 +443,22 @@ func extractEvidence(raw map[string]any, artifact *ArtifactEvidence) {
 		}
 	}
 	extractSemanticReadinessEvidence(raw, artifact)
+	if status := stringValue(raw["scale_status"]); status != "" {
+		artifact.Flags[status] = true
+		if status == "scale_partial" {
+			artifact.ReasonCodes = appendUnique(artifact.ReasonCodes, "scale_partial")
+		}
+	}
+	if reasons, ok := raw["scale_reason_codes"].([]any); ok {
+		for _, item := range reasons {
+			if reason := stringValue(item); reason != "" {
+				artifact.ReasonCodes = appendUnique(artifact.ReasonCodes, reason)
+			}
+		}
+	}
+	if budget, ok := raw["scale_budget"].(map[string]any); ok {
+		extractEvidence(budget, artifact)
+	}
 	for _, key := range []string{"ready_for_50_file_pressure", "held_out", "non_generalizable_runtime", "comparable", "dec64_eligible", "no_human_eligible", "suite_valid"} {
 		if value, ok := boolValue(raw[key]); ok {
 			artifact.Flags[key] = value
@@ -1282,6 +1303,9 @@ func chooseTarget(model readbackModel, generalization string) ImprovementTarget 
 	refs = firstRefs(refs)
 	if model.flags["unsafe_or_leaky"] {
 		return ImprovementTarget{Code: "unsafe_or_leaky", Rationale: "Readback detected a denied private or secret-looking pattern in a supported artifact.", EvidenceRefs: refs}
+	}
+	if model.flags["scale_partial"] {
+		return ImprovementTarget{Code: "scale_capacity", Rationale: "The run completed only as bounded partial evidence because one or more configured source, graph, or packet scale budgets were reached.", EvidenceRefs: refs}
 	}
 	if readiness := semanticReadinessForModel(model); readiness.Status == "blocked" {
 		return ImprovementTarget{Code: "needs_semantic_density", Rationale: "Source intake may have succeeded, but semantic value is not proven because extraction collapsed into shallow reference output.", EvidenceRefs: refs}

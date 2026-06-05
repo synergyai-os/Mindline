@@ -95,7 +95,12 @@ func sourceMeaningPacketMarkdown(summary SourceMeaningPacketSummary) string {
 	b.WriteString(fmt.Sprintf("- Atom compression ratio: %.2f\n", summary.AtomCompressionRatio))
 	b.WriteString(fmt.Sprintf("- Relation review compression ratio: %.2f\n", summary.RelationReviewCompressionRatio))
 	b.WriteString(fmt.Sprintf("- Evidence/blocker group ratio: %.2f\n", summary.EvidenceOrBlockerGroupRatio))
-	b.WriteString(fmt.Sprintf("- Review burden ratio: %.2f\n\n", summary.ReviewBurdenRatio))
+	b.WriteString(fmt.Sprintf("- Review burden ratio: %.2f\n", summary.ReviewBurdenRatio))
+	b.WriteString(fmt.Sprintf("- Scale status: %s", summary.ScaleStatus))
+	if len(summary.ScaleReasonCodes) > 0 {
+		b.WriteString(fmt.Sprintf(" (%s)", strings.Join(summary.ScaleReasonCodes, ", ")))
+	}
+	b.WriteString(fmt.Sprintf(", omitted atoms=%d, max review groups=%d\n\n", summary.OmittedAtomCount, summary.MaxReviewGroupCount))
 
 	b.WriteString("## Guardrails\n\n")
 	b.WriteString(fmt.Sprintf("- Destination writes: %d\n", summary.Guardrails.DestinationWrites))

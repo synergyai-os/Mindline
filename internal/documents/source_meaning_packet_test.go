@@ -164,6 +164,37 @@ func TestSourceMeaningPacketClustersReviewPressureBeforeChunking(t *testing.T) {
 	}
 }
 
+func TestSourceMeaningPacketReportsScalePartialWhenGroupBudgetIsReached(t *testing.T) {
+	atoms := make([]CorpusGraphAtom, 0, 25)
+	for i := 1; i <= 25; i++ {
+		atomID := fmt.Sprintf("atom-%02d", i)
+		sourceID := fmt.Sprintf("source-%02d", i)
+		atoms = append(atoms, sourceMeaningPacketTestAtom(atomID, sourceID, SemanticCandidateKindTopic))
+	}
+
+	build := buildSourceMeaningPacket(
+		CorpusPressureSummary{
+			CorpusID:             "corpus-test",
+			SourceCount:          25,
+			ProcessedSourceCount: 25,
+			ScaleBudget:          CorpusPressureScaleBudget{MaxPacketReviewGroups: 1},
+		},
+		CorpusGraphSummary{AtomCount: 25},
+		map[string][]CorpusGraphAtom{"sources": atoms},
+		nil,
+	)
+
+	if build.Summary.ReviewGroupCount != 1 || len(build.Groups) != 1 {
+		t.Fatalf("expected group budget to cap packet groups: %+v", build.Summary)
+	}
+	if build.Summary.ScaleStatus != "scale_partial" || !containsCorpusPressureString(build.Summary.ScaleReasonCodes, "scale_packet_group_limit") {
+		t.Fatalf("expected packet scale partial, got %+v", build.Summary)
+	}
+	if build.Summary.OmittedAtomCount != 13 {
+		t.Fatalf("expected 13 omitted atoms after first 12-atom group, got %+v", build.Summary)
+	}
+}
+
 func allPacketText(t *testing.T, root string) string {
 	t.Helper()
 	var b strings.Builder

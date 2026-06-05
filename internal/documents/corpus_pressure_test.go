@@ -3,6 +3,7 @@ package documents
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -990,6 +991,79 @@ func TestCorpusPressureRejectsOutputSourceSymlinkEscape(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(escaped, "source.md")); err == nil {
 		t.Fatalf("source copy escaped output root through symlink")
+	}
+}
+
+func TestCorpusPressureWritesScalePartialSummaryWhenSourceLimitReached(t *testing.T) {
+	input := t.TempDir()
+	for i := 1; i <= 3; i++ {
+		path := filepath.Join(input, fmt.Sprintf("source-%02d.md", i))
+		if err := os.WriteFile(path, []byte(fmt.Sprintf("# Source %02d\n- capability: bounded scale proof %02d\n", i, i)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := t.TempDir()
+	summary, _, err := BuildCorpusPressure(input, out, CorpusPressureOptions{ScaleBudget: CorpusPressureScaleBudget{
+		MaxProcessedSources:     2,
+		MaxSourceBytes:          1024 * 1024,
+		MaxSourceSegments:       200,
+		MaxGraphPairComparisons: 250000,
+		MaxGraphRelations:       50000,
+		MaxPacketReviewGroups:   50,
+	}})
+	if err != nil {
+		t.Fatalf("build corpus pressure: %v", err)
+	}
+	if summary.ScaleStatus != "scale_partial" || !containsCorpusPressureString(summary.ScaleReasonCodes, "scale_source_limit") {
+		t.Fatalf("expected scale source limit, got %+v", summary)
+	}
+	if summary.ProcessedSourceCount != 2 || summary.SkippedSourceCount != 1 || summary.ScaleSkippedSourceCount != 1 {
+		t.Fatalf("unexpected source accounting: %+v", summary)
+	}
+	if summary.ReadyForFiftyFilePressure {
+		t.Fatalf("scale partial run must not be ready: %+v", summary)
+	}
+	if !containsCorpusPressureString(summary.NextImprovementTargets, "scale_capacity") {
+		t.Fatalf("expected scale capacity target, got %+v", summary.NextImprovementTargets)
+	}
+	if _, err := os.Stat(filepath.Join(out, CorpusPressureDirName, "pressure-summary.json")); err != nil {
+		t.Fatalf("expected final pressure summary: %v", err)
+	}
+}
+
+func TestCorpusPressureSkipsSourcesBeforeSemanticExplosionWhenScaleBudgetsHit(t *testing.T) {
+	input := t.TempDir()
+	large := strings.Repeat("large source body\n", 20)
+	if err := os.WriteFile(filepath.Join(input, "large.md"), []byte("# Large\n"+large), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(input, "many-segments.md"), []byte("# Many\n\n## A\nalpha\n\n## B\nbeta\n\n## C\ngamma\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(input, "small.md"), []byte("# Small\n- capability: bounded source\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	summary, _, err := BuildCorpusPressure(input, t.TempDir(), CorpusPressureOptions{ScaleBudget: CorpusPressureScaleBudget{
+		MaxProcessedSources:     10,
+		MaxSourceBytes:          80,
+		MaxSourceSegments:       2,
+		MaxGraphPairComparisons: 250000,
+		MaxGraphRelations:       50000,
+		MaxPacketReviewGroups:   50,
+	}})
+	if err != nil {
+		t.Fatalf("build corpus pressure: %v", err)
+	}
+	if summary.ScaleStatus != "scale_partial" {
+		t.Fatalf("expected scale partial, got %+v", summary)
+	}
+	for _, reason := range []string{"scale_source_size_limit", "scale_segment_limit"} {
+		if !containsCorpusPressureString(summary.ScaleReasonCodes, reason) {
+			t.Fatalf("expected scale reason %q, got %+v", reason, summary.ScaleReasonCodes)
+		}
+	}
+	if summary.ProcessedSourceCount != 1 || summary.ScaleSkippedSourceCount != 2 {
+		t.Fatalf("expected one processed and two scale skipped sources, got %+v", summary)
 	}
 }
 

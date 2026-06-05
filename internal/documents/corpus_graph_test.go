@@ -41,6 +41,37 @@ func TestCorpusGraphBuildsRelationsAndMetrics(t *testing.T) {
 	}
 }
 
+func TestCorpusGraphRelationGenerationStopsAtScaleBudgets(t *testing.T) {
+	atoms := []CorpusGraphAtom{}
+	for i := 0; i < 5; i++ {
+		atoms = append(atoms, CorpusGraphAtom{
+			AtomID:           string(rune('a' + i)),
+			CorpusID:         "corpus-scale",
+			SourceID:         "source",
+			SourceKind:       SourceKindMarkdown,
+			SourceLabel:      "source.md",
+			SourceDocumentID: "doc",
+			Title:            "Shared scale topic",
+			Summary:          "Shared scale topic should create duplicate pressure.",
+			LineStart:        i + 1,
+			LineEnd:          i + 1,
+			Excerpt:          "evidence",
+			ContentHash:      "hash",
+			ReviewStatus:     ReviewStatusReady,
+		})
+	}
+
+	relations, stats := generateCorpusRelations("corpus-scale", atoms, CorpusGraphOptions{MaxPairComparisons: 2, MaxRelationCandidates: 100})
+	if stats.PairComparisonCount != 2 || !containsCorpusPressureString(stats.ScaleReasonCodes, "scale_graph_pair_limit") {
+		t.Fatalf("expected pair comparison limit, relations=%d stats=%+v", len(relations), stats)
+	}
+
+	relations, stats = generateCorpusRelations("corpus-scale", atoms, CorpusGraphOptions{MaxPairComparisons: 100, MaxRelationCandidates: 1})
+	if len(relations) != 1 || !containsCorpusPressureString(stats.ScaleReasonCodes, "scale_graph_relation_limit") {
+		t.Fatalf("expected relation candidate limit, relations=%d stats=%+v", len(relations), stats)
+	}
+}
+
 func TestCorpusGraphReplayIgnoresSemanticRunScopedIDs(t *testing.T) {
 	rootA := writeCorpusGraphFixture(t, "run-a")
 	rootB := writeCorpusGraphFixture(t, "run-b")
@@ -164,7 +195,7 @@ func TestCorpusGraphDuplicateClusterCountUsesConnectedComponents(t *testing.T) {
 		{RelationID: "rel-ab", RelationType: CorpusRelationPossibleDuplicate, FromAtomID: "atom-a", ToAtomID: "atom-b", ReviewStatus: ReviewStatusReady},
 		{RelationID: "rel-bc", RelationType: CorpusRelationPossibleDuplicate, FromAtomID: "atom-b", ToAtomID: "atom-c", ReviewStatus: ReviewStatusReady},
 	}
-	summary := buildCorpusGraphSummary(CorpusGraphManifest{CorpusID: "corpus-fixture"}, 1, 0, atoms, relations, nil, nil)
+	summary := buildCorpusGraphSummary(CorpusGraphManifest{CorpusID: "corpus-fixture"}, 1, 0, atoms, relations, nil, nil, corpusGraphRelationStats{})
 	if summary.DuplicateClusterCount != 1 {
 		t.Fatalf("duplicate cluster count = %d, want 1 connected component", summary.DuplicateClusterCount)
 	}

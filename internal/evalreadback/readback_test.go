@@ -71,6 +71,51 @@ func TestBuildComparesBaselineCurrent(t *testing.T) {
 	}
 }
 
+func TestBuildPrioritizesScalePartialAsTopImprovementTarget(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "corpus-pressure", "pressure-summary.json"), map[string]any{
+		"schema_version":             "corpus-pressure-summary/v0.1",
+		"corpus_id":                  "corpus-scale",
+		"source_count":               471,
+		"processed_source_count":     50,
+		"scale_status":               "scale_partial",
+		"scale_reason_codes":         []any{"scale_source_limit"},
+		"scale_skipped_source_count": 421,
+		"semantic_candidate_count":   80,
+		"semantic_observation_count": 90,
+		"document_segment_count":     100,
+		"corpus_fingerprint":         "corpus-scale",
+		"command_config_fingerprint": "config-scale",
+		"guardrails": map[string]any{
+			"network_fetches":             0,
+			"hosted_telemetry_exports":    0,
+			"hosted_inference_calls":      0,
+			"browser_calls":               0,
+			"slack_api_calls":             0,
+			"destination_writes":          0,
+			"product_brain_writes":        0,
+			"tolaria_writes":              0,
+			"auto_accepts":                0,
+			"no_human_claims":             0,
+			"committed_private_artifacts": 0,
+		},
+	})
+
+	summary, err := BuildSummary(root, Options{})
+	if err != nil {
+		t.Fatalf("build summary: %v", err)
+	}
+	if summary.TopImprovementTarget.Code != "scale_capacity" {
+		t.Fatalf("expected scale capacity target, got %+v", summary.TopImprovementTarget)
+	}
+	if !summary.Artifacts[0].Flags["scale_partial"] {
+		t.Fatalf("expected scale partial flag, got %+v", summary.Artifacts[0])
+	}
+	if !containsString(summary.Artifacts[0].ReasonCodes, "scale_source_limit") {
+		t.Fatalf("expected scale reason code, got %+v", summary.Artifacts[0].ReasonCodes)
+	}
+}
+
 func TestBuildTreatsNewSourceMeaningPacketAsComparableImprovement(t *testing.T) {
 	root := t.TempDir()
 	baseline := filepath.Join(root, "baseline")
