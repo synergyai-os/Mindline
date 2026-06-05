@@ -46,6 +46,42 @@ func TestDocumentsMeaningPreviewCLIWritesPreviewBundle(t *testing.T) {
 	}
 }
 
+func TestDocumentsMeaningPacketCLIWritesReviewPacket(t *testing.T) {
+	root := t.TempDir()
+	pressureOut := filepath.Join(root, "pressure")
+	if _, _, err := documents.BuildCorpusPressure(filepath.Join(repoRoot(t), "testdata", "documents", "markdown"), pressureOut, documents.CorpusPressureOptions{}); err != nil {
+		t.Fatalf("build corpus pressure: %v", err)
+	}
+
+	packetOut := filepath.Join(root, "packet")
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{"documents", "meaning-packet", pressureOut, "--out", packetOut}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("expected exit %d, got %d stderr=%s", ExitOK, code, stderr.String())
+	}
+	if stderr.String() != "" {
+		t.Fatalf("expected empty stderr, got %q", stderr.String())
+	}
+
+	var summary documents.SourceMeaningPacketSummary
+	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
+		t.Fatalf("decode stdout: %v\n%s", err, stdout.String())
+	}
+	if summary.SchemaVersion != documents.SourceMeaningPacketSchemaVersion {
+		t.Fatalf("unexpected schema version %s", summary.SchemaVersion)
+	}
+	if summary.ReviewGroupCount == 0 || summary.AtomCompressionRatio <= 0 {
+		t.Fatalf("expected compressed packet summary: %+v", summary)
+	}
+	if summary.Guardrails.DestinationWrites != 0 || summary.Guardrails.ProductBrainWrites != 0 || summary.Guardrails.TolariaWrites != 0 {
+		t.Fatalf("expected zero write guardrails: %+v", summary.Guardrails)
+	}
+	report := mustReadCLIFile(t, filepath.Join(packetOut, documents.SourceMeaningPacketDirName, "review-packet.md"))
+	if !strings.Contains(report, "Review packet only") || !strings.Contains(report, "Destination writes: 0") {
+		t.Fatalf("report missing review guardrails:\n%s", report)
+	}
+}
+
 func TestDocumentsMeaningPreviewCLIRejectsProtectedRoot(t *testing.T) {
 	root := t.TempDir()
 	pressureOut := filepath.Join(root, "pressure")
