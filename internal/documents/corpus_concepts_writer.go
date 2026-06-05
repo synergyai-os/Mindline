@@ -37,6 +37,7 @@ func WriteCorpusConceptIndex(outDir string, summary CorpusConceptSummary, index 
 		"concept-summary.json": true,
 		"concept-index.json":   true,
 		"review-packet.md":     true,
+		"review-records.json":  true,
 	}
 	for _, concept := range index.Concepts {
 		expected[CorpusConceptPath(concept.ConceptID)] = true
@@ -117,7 +118,13 @@ func writeCorpusConceptSection(b *strings.Builder, heading string, concepts []Co
 		return
 	}
 	for _, concept := range filtered {
-		b.WriteString(fmt.Sprintf("- `%s`: %s; atoms=%d sources=%d evidence_refs=%d coverage=%s concept=`%s`\n", concept.ConceptID, concept.Title, concept.AtomCount, concept.SourceCount, concept.EvidenceReferenceCount, corpusConceptCoverageString(concept.SourceKindCoverage), concept.ConceptPath))
+		b.WriteString(fmt.Sprintf("- `%s`: %s; atoms=%d sources=%d evidence_refs=%d evidence_previews=%d coverage=%s concept=`%s`\n", concept.ConceptID, concept.Title, concept.AtomCount, concept.SourceCount, concept.EvidenceReferenceCount, concept.RepresentativeEvidence, corpusConceptCoverageString(concept.SourceKindCoverage), concept.ConceptPath))
+		if strings.TrimSpace(concept.GroupingRationale) != "" {
+			b.WriteString(fmt.Sprintf("  - rationale=%s\n", concept.GroupingRationale))
+		}
+		if strings.TrimSpace(concept.ReviewPrompt) != "" {
+			b.WriteString(fmt.Sprintf("  - prompt=%s\n", concept.ReviewPrompt))
+		}
 		if len(concept.ReasonCodes) > 0 {
 			b.WriteString(fmt.Sprintf("  - reasons=%s\n", strings.Join(concept.ReasonCodes, ",")))
 		}

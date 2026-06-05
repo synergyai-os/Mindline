@@ -9,14 +9,17 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 )
 
 const (
-	CorpusConceptsSchemaVersion = "corpus-concepts/v0.1"
-	CorpusConceptsDirName       = "corpus-concepts"
-	DefaultCorpusConceptsMax    = 40
-	corpusConceptMaxAtoms       = 18
+	CorpusConceptsSchemaVersion             = "corpus-concepts/v0.1"
+	CorpusConceptReviewRecordsSchemaVersion = "corpus-concept-review-records/v0.1"
+	CorpusConceptsDirName                   = "corpus-concepts"
+	DefaultCorpusConceptsMax                = 40
+	corpusConceptMaxAtoms                   = 18
+	corpusConceptPreviewMax                 = 8
 )
 
 type CorpusConceptSection string
@@ -80,6 +83,8 @@ type CorpusConceptIndex struct {
 type CorpusConceptListItem struct {
 	ConceptID              string                          `json:"concept_id"`
 	Title                  string                          `json:"title"`
+	ReviewPrompt           string                          `json:"review_prompt"`
+	GroupingRationale      string                          `json:"grouping_rationale"`
 	ConceptKey             string                          `json:"concept_key"`
 	Section                CorpusConceptSection            `json:"section"`
 	CandidateKind          SemanticCandidateKind           `json:"candidate_kind"`
@@ -91,6 +96,7 @@ type CorpusConceptListItem struct {
 	ReviewStatus           ReviewStatus                    `json:"review_status"`
 	ReasonCodes            []string                        `json:"reason_codes,omitempty"`
 	ConceptPath            string                          `json:"concept_path"`
+	RepresentativeEvidence int                             `json:"representative_evidence_count"`
 }
 
 type CorpusConcept struct {
@@ -98,6 +104,8 @@ type CorpusConcept struct {
 	ConceptID              string                           `json:"concept_id"`
 	CorpusID               string                           `json:"corpus_id"`
 	Title                  string                           `json:"title"`
+	ReviewPrompt           string                           `json:"review_prompt"`
+	GroupingRationale      string                           `json:"grouping_rationale"`
 	ConceptKey             string                           `json:"concept_key"`
 	Section                CorpusConceptSection             `json:"section"`
 	CandidateKind          SemanticCandidateKind            `json:"candidate_kind"`
@@ -110,7 +118,65 @@ type CorpusConcept struct {
 	SourceKindCoverage     map[string]int                   `json:"source_kind_coverage"`
 	ReasonCodes            []string                         `json:"reason_codes,omitempty"`
 	EvidenceRefs           []SourceMeaningPacketEvidenceRef `json:"evidence_refs"`
+	RepresentativeEvidence []CorpusConceptEvidencePreview   `json:"representative_evidence"`
 	AtomRefs               []SourceMeaningPacketAtomRef     `json:"atom_refs"`
+}
+
+type CorpusConceptEvidencePreview struct {
+	EvidenceRefID string `json:"evidence_ref_id"`
+	AtomID        string `json:"atom_id"`
+	SourceID      string `json:"source_id"`
+	SourceKind    string `json:"source_kind"`
+	SourceRef     string `json:"source_ref"`
+	LineStart     int    `json:"line_start"`
+	LineEnd       int    `json:"line_end"`
+	ContentHash   string `json:"content_hash"`
+	Title         string `json:"title"`
+	Summary       string `json:"summary"`
+	Excerpt       string `json:"excerpt"`
+}
+
+type CorpusConceptReviewChoice string
+
+const (
+	CorpusConceptReviewAccept             CorpusConceptReviewChoice = "accept"
+	CorpusConceptReviewRejectNoisy        CorpusConceptReviewChoice = "reject_noisy"
+	CorpusConceptReviewSplitNeeded        CorpusConceptReviewChoice = "split_needed"
+	CorpusConceptReviewMergeDuplicate     CorpusConceptReviewChoice = "merge_duplicate"
+	CorpusConceptReviewRenameNeeded       CorpusConceptReviewChoice = "rename_needed"
+	CorpusConceptReviewNeedsSourceContext CorpusConceptReviewChoice = "needs_source_context"
+)
+
+type CorpusConceptReviewRecords struct {
+	SchemaVersion string                      `json:"schema_version"`
+	CorpusID      string                      `json:"corpus_id"`
+	Records       []CorpusConceptReviewRecord `json:"records"`
+}
+
+type CorpusConceptReviewRecord struct {
+	SchemaVersion string                    `json:"schema_version"`
+	CorpusID      string                    `json:"corpus_id"`
+	ConceptID     string                    `json:"concept_id"`
+	ConceptTitle  string                    `json:"concept_title"`
+	Choice        CorpusConceptReviewChoice `json:"choice"`
+	Note          string                    `json:"note,omitempty"`
+	ReviewerID    string                    `json:"reviewer_id,omitempty"`
+	RecordedAt    string                    `json:"recorded_at"`
+}
+
+type CorpusConceptReviewRecordInput struct {
+	ConceptID  string
+	Choice     CorpusConceptReviewChoice
+	Note       string
+	ReviewerID string
+	RecordedAt time.Time
+}
+
+type CorpusConceptReviewProgress struct {
+	TotalConceptCount     int                               `json:"total_concept_count"`
+	ReviewedConceptCount  int                               `json:"reviewed_concept_count"`
+	RemainingConceptCount int                               `json:"remaining_concept_count"`
+	ChoiceCounts          map[CorpusConceptReviewChoice]int `json:"choice_counts"`
 }
 
 type corpusConceptBuild struct {
@@ -173,6 +239,169 @@ func ReadCorpusConceptIndex(inputPath string) (CorpusConceptIndex, error) {
 		return CorpusConceptIndex{}, fmt.Errorf("unsupported corpus concept index schema version: %s", index.SchemaVersion)
 	}
 	return index, nil
+}
+
+func ReadCorpusConceptReviewRecords(inputPath string) (CorpusConceptReviewRecords, error) {
+	root, err := corpusConceptRoot(inputPath)
+	if err != nil {
+		return CorpusConceptReviewRecords{}, err
+	}
+	index, err := ReadCorpusConceptIndex(root)
+	if err != nil {
+		return CorpusConceptReviewRecords{}, err
+	}
+	path := filepath.Join(root, "review-records.json")
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return CorpusConceptReviewRecords{
+			SchemaVersion: CorpusConceptReviewRecordsSchemaVersion,
+			CorpusID:      index.CorpusID,
+			Records:       []CorpusConceptReviewRecord{},
+		}, nil
+	}
+	if err != nil {
+		return CorpusConceptReviewRecords{}, fmt.Errorf("read corpus concept review records: %w", err)
+	}
+	var records CorpusConceptReviewRecords
+	if err := json.Unmarshal(data, &records); err != nil {
+		return CorpusConceptReviewRecords{}, fmt.Errorf("decode corpus concept review records: %w", err)
+	}
+	if records.SchemaVersion != CorpusConceptReviewRecordsSchemaVersion {
+		return CorpusConceptReviewRecords{}, fmt.Errorf("unsupported corpus concept review records schema version: %s", records.SchemaVersion)
+	}
+	if records.CorpusID != index.CorpusID {
+		return CorpusConceptReviewRecords{}, fmt.Errorf("corpus concept review records corpus mismatch")
+	}
+	for _, record := range records.Records {
+		if err := ValidateCorpusConceptReviewRecord(record); err != nil {
+			return CorpusConceptReviewRecords{}, err
+		}
+	}
+	return records, nil
+}
+
+func RecordCorpusConceptReview(inputPath string, input CorpusConceptReviewRecordInput) (CorpusConceptReviewRecords, error) {
+	root, err := corpusConceptRoot(inputPath)
+	if err != nil {
+		return CorpusConceptReviewRecords{}, err
+	}
+	if !validCorpusConceptReviewChoice(input.Choice) {
+		return CorpusConceptReviewRecords{}, fmt.Errorf("unsupported corpus concept review choice: %s", input.Choice)
+	}
+	var updated CorpusConceptReviewRecords
+	err = withSemanticJudgmentBundleLock(root, func() error {
+		index, err := ReadCorpusConceptIndex(root)
+		if err != nil {
+			return err
+		}
+		conceptsByID := map[string]CorpusConcept{}
+		for _, concept := range index.Concepts {
+			conceptsByID[concept.ConceptID] = concept
+		}
+		concept, ok := conceptsByID[input.ConceptID]
+		if !ok {
+			return fmt.Errorf("unknown corpus concept: %s", input.ConceptID)
+		}
+		records, err := ReadCorpusConceptReviewRecords(root)
+		if err != nil {
+			return err
+		}
+		recordedAt := input.RecordedAt
+		if recordedAt.IsZero() {
+			recordedAt = time.Now().UTC()
+		}
+		record := CorpusConceptReviewRecord{
+			SchemaVersion: CorpusConceptReviewRecordsSchemaVersion,
+			CorpusID:      index.CorpusID,
+			ConceptID:     concept.ConceptID,
+			ConceptTitle:  concept.Title,
+			Choice:        input.Choice,
+			Note:          strings.TrimSpace(input.Note),
+			ReviewerID:    strings.TrimSpace(input.ReviewerID),
+			RecordedAt:    recordedAt.UTC().Format(time.RFC3339),
+		}
+		if err := ValidateCorpusConceptReviewRecord(record); err != nil {
+			return err
+		}
+		replaced := false
+		for i := range records.Records {
+			if records.Records[i].ConceptID == record.ConceptID {
+				records.Records[i] = record
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			records.Records = append(records.Records, record)
+		}
+		sort.Slice(records.Records, func(i, j int) bool { return records.Records[i].ConceptID < records.Records[j].ConceptID })
+		updated = records
+		if err := writeJSON(root, "review-records.json", updated); err != nil {
+			return ArtifactWriteError{Err: err}
+		}
+		return nil
+	})
+	if err != nil {
+		return CorpusConceptReviewRecords{}, err
+	}
+	return updated, nil
+}
+
+func BuildCorpusConceptReviewProgress(index CorpusConceptIndex, records CorpusConceptReviewRecords) CorpusConceptReviewProgress {
+	validConcepts := map[string]bool{}
+	for _, concept := range index.Concepts {
+		validConcepts[concept.ConceptID] = true
+	}
+	progress := CorpusConceptReviewProgress{
+		TotalConceptCount: len(index.Concepts),
+		ChoiceCounts:      map[CorpusConceptReviewChoice]int{},
+	}
+	seen := map[string]bool{}
+	for _, record := range records.Records {
+		if !validConcepts[record.ConceptID] || seen[record.ConceptID] {
+			continue
+		}
+		seen[record.ConceptID] = true
+		progress.ReviewedConceptCount++
+		progress.ChoiceCounts[record.Choice]++
+	}
+	progress.RemainingConceptCount = progress.TotalConceptCount - progress.ReviewedConceptCount
+	if progress.RemainingConceptCount < 0 {
+		progress.RemainingConceptCount = 0
+	}
+	return progress
+}
+
+func ValidateCorpusConceptReviewRecord(record CorpusConceptReviewRecord) error {
+	if record.SchemaVersion != CorpusConceptReviewRecordsSchemaVersion {
+		return fmt.Errorf("unsupported corpus concept review record schema version: %s", record.SchemaVersion)
+	}
+	if strings.TrimSpace(record.CorpusID) == "" {
+		return fmt.Errorf("missing corpus concept review record corpus id")
+	}
+	if strings.TrimSpace(record.ConceptID) == "" || sanitizeID(record.ConceptID) != record.ConceptID {
+		return fmt.Errorf("unsafe corpus concept review record concept id: %s", record.ConceptID)
+	}
+	if !validCorpusConceptReviewChoice(record.Choice) {
+		return fmt.Errorf("unsupported corpus concept review choice: %s", record.Choice)
+	}
+	if strings.TrimSpace(record.RecordedAt) == "" {
+		return fmt.Errorf("missing corpus concept review record recorded_at")
+	}
+	body := strings.Join([]string{record.ConceptTitle, record.Note, record.ReviewerID}, "\n")
+	if containsUnsafeMarker(body) || containsGovernanceID(body) {
+		return fmt.Errorf("corpus concept review record contains private marker")
+	}
+	return nil
+}
+
+func validCorpusConceptReviewChoice(choice CorpusConceptReviewChoice) bool {
+	switch choice {
+	case CorpusConceptReviewAccept, CorpusConceptReviewRejectNoisy, CorpusConceptReviewSplitNeeded, CorpusConceptReviewMergeDuplicate, CorpusConceptReviewRenameNeeded, CorpusConceptReviewNeedsSourceContext:
+		return true
+	default:
+		return false
+	}
 }
 
 func corpusConceptRoot(inputPath string) (string, error) {
@@ -505,6 +734,9 @@ func buildCorpusConcept(corpusID, key string, atoms []CorpusGraphAtom) CorpusCon
 		}
 	}
 	concept.Title = corpusConceptTitle(key, atoms)
+	concept.ReviewPrompt = corpusConceptReviewPrompt(concept)
+	concept.GroupingRationale = corpusConceptGroupingRationale(key, concept)
+	concept.RepresentativeEvidence = corpusConceptRepresentativeEvidence(atoms)
 	concept.ConceptID = corpusConceptID(corpusID, key, atoms)
 	sort.Slice(concept.EvidenceRefs, func(i, j int) bool {
 		return concept.EvidenceRefs[i].EvidenceRefID < concept.EvidenceRefs[j].EvidenceRefID
@@ -588,6 +820,8 @@ func buildCorpusConceptSummary(pressure CorpusPressureSummary, graph CorpusGraph
 		summary.Concepts = append(summary.Concepts, CorpusConceptListItem{
 			ConceptID:              concept.ConceptID,
 			Title:                  concept.Title,
+			ReviewPrompt:           concept.ReviewPrompt,
+			GroupingRationale:      concept.GroupingRationale,
 			ConceptKey:             concept.ConceptKey,
 			Section:                concept.Section,
 			CandidateKind:          concept.CandidateKind,
@@ -599,6 +833,7 @@ func buildCorpusConceptSummary(pressure CorpusPressureSummary, graph CorpusGraph
 			ReviewStatus:           concept.ReviewStatus,
 			ReasonCodes:            append([]string{}, concept.ReasonCodes...),
 			ConceptPath:            filepath.ToSlash(filepath.Join(CorpusConceptsDirName, CorpusConceptPath(concept.ConceptID))),
+			RepresentativeEvidence: len(concept.RepresentativeEvidence),
 		})
 	}
 	if generatedConceptCount == len(concepts) {
@@ -688,12 +923,265 @@ func corpusConceptTitle(key string, atoms []CorpusGraphAtom) string {
 		return fmt.Sprintf("%s concept: %s", strings.ReplaceAll(string(atoms[0].CandidateKind), "_", " "), parts[2])
 	}
 	if len(parts) >= 3 && parts[0] == "local" {
-		return fmt.Sprintf("Local %s concept: %s", strings.ReplaceAll(string(atoms[0].CandidateKind), "_", " "), parts[2])
+		terms := corpusConceptTopTerms(atoms, 3)
+		if len(terms) == 0 {
+			return fmt.Sprintf("Local %s concept needing review", strings.ReplaceAll(string(atoms[0].CandidateKind), "_", " "))
+		}
+		return fmt.Sprintf("Local %s concept: %s", strings.ReplaceAll(string(atoms[0].CandidateKind), "_", " "), strings.Join(terms, ", "))
 	}
 	if len(parts) >= 2 && parts[0] == "relation" {
-		return fmt.Sprintf("Cross-source %s relation neighborhood", strings.ReplaceAll(string(atoms[0].CandidateKind), "_", " "))
+		terms := corpusConceptTopTerms(atoms, 3)
+		if len(terms) == 0 {
+			return fmt.Sprintf("Cross-source %s cluster needing review", strings.ReplaceAll(string(atoms[0].CandidateKind), "_", " "))
+		}
+		return fmt.Sprintf("Cross-source %s concept: %s", strings.ReplaceAll(string(atoms[0].CandidateKind), "_", " "), strings.Join(terms, ", "))
 	}
 	return fmt.Sprintf("%s concept", strings.ReplaceAll(string(atoms[0].CandidateKind), "_", " "))
+}
+
+func corpusConceptReviewPrompt(concept CorpusConcept) string {
+	if concept.Section == CorpusConceptSectionCrossSource || len(concept.SourceKindCoverage) > 1 {
+		return fmt.Sprintf("Decide whether these %s evidence snippets describe one coherent concept.", corpusConceptSourceKindList(concept.SourceKindCoverage))
+	}
+	if concept.Section == CorpusConceptSectionBlocked {
+		return "Decide whether this blocked concept can be reviewed later after evidence issues are fixed."
+	}
+	return "Decide whether these evidence snippets describe one coherent review concept or need cleanup."
+}
+
+func corpusConceptSourceKindList(coverage map[string]int) string {
+	keys := make([]string, 0, len(coverage))
+	for key := range coverage {
+		if strings.TrimSpace(key) != "" {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	if len(keys) == 0 {
+		return "source"
+	}
+	if len(keys) == 1 {
+		return corpusConceptSourceKindLabel(keys[0])
+	}
+	if len(keys) == 2 {
+		return corpusConceptSourceKindLabel(keys[0]) + " and " + corpusConceptSourceKindLabel(keys[1])
+	}
+	labels := make([]string, 0, len(keys))
+	for _, key := range keys {
+		labels = append(labels, corpusConceptSourceKindLabel(key))
+	}
+	return strings.Join(labels[:len(labels)-1], ", ") + ", and " + labels[len(labels)-1]
+}
+
+func corpusConceptSourceKindLabel(kind string) string {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "gmail":
+		return "Gmail"
+	case "slack":
+		return "Slack"
+	default:
+		return strings.TrimSpace(kind)
+	}
+}
+
+func corpusConceptGroupingRationale(key string, concept CorpusConcept) string {
+	coverage := corpusConceptCoverageString(concept.SourceKindCoverage)
+	if strings.HasPrefix(key, "relation\x00cross_source\x00") {
+		return fmt.Sprintf("Grouped from cross-source same-topic or duplicate graph relations across %d source(s) with %s coverage. This is reviewer feedback only, not accepted knowledge.", concept.SourceCount, coverage)
+	}
+	parts := strings.Split(key, "\x00")
+	if len(parts) >= 3 && parts[0] == "term" {
+		return fmt.Sprintf("Grouped because atoms share the useful term %q across %d source(s) with %s coverage.", parts[2], concept.SourceCount, coverage)
+	}
+	if len(parts) >= 3 && parts[0] == "local" {
+		return fmt.Sprintf("Grouped as a local source-kind review bucket for %s atoms with %s coverage.", strings.ReplaceAll(string(concept.CandidateKind), "_", " "), coverage)
+	}
+	return fmt.Sprintf("Grouped as a bounded %s review bucket across %d source(s).", strings.ReplaceAll(string(concept.CandidateKind), "_", " "), concept.SourceCount)
+}
+
+func corpusConceptRepresentativeEvidence(atoms []CorpusGraphAtom) []CorpusConceptEvidencePreview {
+	byKind := map[string][]CorpusConceptEvidencePreview{}
+	fallbackByKind := map[string][]CorpusConceptEvidencePreview{}
+	kinds := []string{}
+	for _, atom := range atoms {
+		kind := sourceKindForConcept(atom)
+		if _, ok := byKind[kind]; !ok {
+			kinds = append(kinds, kind)
+		}
+		preview := corpusConceptEvidencePreview(atom)
+		if corpusConceptReviewableEvidencePreview(preview) {
+			byKind[kind] = append(byKind[kind], preview)
+		} else {
+			fallbackByKind[kind] = append(fallbackByKind[kind], preview)
+		}
+	}
+	sort.Strings(kinds)
+	out := corpusConceptRoundRobinEvidencePreviews(kinds, byKind, corpusConceptPreviewMax)
+	if len(out) == 0 {
+		out = append(out, corpusConceptRoundRobinEvidencePreviews(kinds, fallbackByKind, corpusConceptPreviewMax)...)
+	}
+	return out
+}
+
+func corpusConceptRoundRobinEvidencePreviews(kinds []string, byKind map[string][]CorpusConceptEvidencePreview, maxItems int) []CorpusConceptEvidencePreview {
+	if maxItems <= 0 {
+		return nil
+	}
+	out := []CorpusConceptEvidencePreview{}
+	seen := map[string]bool{}
+	for len(out) < maxItems {
+		added := false
+		for _, kind := range kinds {
+			if len(byKind[kind]) == 0 {
+				continue
+			}
+			preview := byKind[kind][0]
+			byKind[kind] = byKind[kind][1:]
+			key := corpusConceptEvidencePreviewKey(preview)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, preview)
+			added = true
+			if len(out) >= maxItems {
+				break
+			}
+		}
+		if !added {
+			break
+		}
+	}
+	return out
+}
+
+func corpusConceptEvidencePreviewKey(preview CorpusConceptEvidencePreview) string {
+	excerpt := strings.ToLower(strings.TrimSpace(preview.Excerpt))
+	if excerpt != "" {
+		return preview.SourceKind + "\x00" + excerpt
+	}
+	return preview.AtomID
+}
+
+func corpusConceptEvidencePreview(atom CorpusGraphAtom) CorpusConceptEvidencePreview {
+	evidence := sourceMeaningEvidenceRef(atom)
+	return CorpusConceptEvidencePreview{
+		EvidenceRefID: evidence.EvidenceRefID,
+		AtomID:        atom.AtomID,
+		SourceID:      atom.SourceID,
+		SourceKind:    sourceKindForConcept(atom),
+		SourceRef:     corpusConceptSourceRef(atom.SourceID),
+		LineStart:     atom.LineStart,
+		LineEnd:       atom.LineEnd,
+		ContentHash:   atom.ContentHash,
+		Title:         corpusConceptSafeEvidenceTitle(atom.Title),
+		Summary:       corpusConceptSafeDisplayText(atom.Summary, 260),
+		Excerpt:       corpusConceptSafeDisplayText(atom.Excerpt, 520),
+	}
+}
+
+func corpusConceptReviewableEvidencePreview(preview CorpusConceptEvidencePreview) bool {
+	text := strings.ToLower(strings.Join([]string{preview.Title, preview.Summary, preview.Excerpt}, "\n"))
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
+	}
+	metadataMarkers := []string{
+		"raw locator:",
+		"candidate id:",
+		"source id:",
+		"content hash:",
+		"gmail timestamp:",
+		"timestamp:",
+		"sha256:",
+		"yhc-private-runtime/",
+	}
+	for _, marker := range metadataMarkers {
+		if strings.Contains(text, marker) {
+			return false
+		}
+	}
+	return true
+}
+
+func corpusConceptTopTerms(atoms []CorpusGraphAtom, maxTerms int) []string {
+	counts := map[string]int{}
+	firstSeen := map[string]int{}
+	order := 0
+	for _, atom := range atoms {
+		for _, term := range corpusConceptTerms(atom) {
+			counts[term]++
+			if _, ok := firstSeen[term]; !ok {
+				firstSeen[term] = order
+				order++
+			}
+		}
+	}
+	terms := make([]string, 0, len(counts))
+	for term := range counts {
+		terms = append(terms, term)
+	}
+	sort.Slice(terms, func(i, j int) bool {
+		if counts[terms[i]] != counts[terms[j]] {
+			return counts[terms[i]] > counts[terms[j]]
+		}
+		if firstSeen[terms[i]] != firstSeen[terms[j]] {
+			return firstSeen[terms[i]] < firstSeen[terms[j]]
+		}
+		return terms[i] < terms[j]
+	})
+	if len(terms) > maxTerms {
+		terms = terms[:maxTerms]
+	}
+	return terms
+}
+
+func corpusConceptSafeDisplayText(value string, maxLen int) string {
+	value = strings.TrimSpace(safeSourceMeaningExcerpt(value))
+	value = strings.Join(strings.Fields(value), " ")
+	if maxLen > 0 && len(value) > maxLen {
+		value = strings.TrimSpace(value[:maxLen])
+		value += "..."
+	}
+	return value
+}
+
+func corpusConceptSafeEvidenceTitle(value string) string {
+	value = corpusConceptSafeDisplayText(value, 140)
+	for {
+		lower := strings.ToLower(value)
+		changed := false
+		for _, prefix := range []string{"topic candidate:", "action candidate:", "decision candidate:", "issue candidate:", "reference candidate:", "snippet:"} {
+			if strings.HasPrefix(lower, prefix) {
+				value = strings.TrimSpace(value[len(prefix):])
+				changed = true
+				break
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+	return value
+}
+
+func corpusConceptSourceRef(sourceID string) string {
+	sourceID = strings.TrimSpace(sourceID)
+	if sourceID == "" {
+		return "unknown"
+	}
+	kind := "source"
+	lower := strings.ToLower(sourceID)
+	switch {
+	case strings.HasPrefix(lower, "gmail-"):
+		kind = "gmail"
+	case strings.HasPrefix(lower, "slack-"):
+		kind = "slack"
+	}
+	if len(sourceID) <= 12 {
+		return kind + ":" + sourceID
+	}
+	return kind + ":" + sourceID[len(sourceID)-12:]
 }
 
 func corpusConceptID(corpusID, key string, atoms []CorpusGraphAtom) string {

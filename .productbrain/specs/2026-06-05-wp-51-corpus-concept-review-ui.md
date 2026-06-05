@@ -2,12 +2,18 @@
 
 ## Chain Authority
 
+- DEC-401: WP51 delivery proved a bounded concept index and Light UI on the same 25 Gmail + 25 Slack corpus, but did not prove the review surface was usable.
+- INS-28: PR46 review UI must be reviewer-understandable, not machine-readable only.
+- STD-18: reviewer-facing semantic previews need inline evidence excerpts, not only evidence IDs.
+- STD-19: loopback review write APIs need Host allowlist, token, same-origin, JSON, write locks, and read-only page endpoints.
 - INS-27: next mixed-source proof needs bounded concept review, not relation flood.
 - DEC-400: PR 45 merged into main on 2026-06-05.
 - DEC-391: WP50 delivered bounded corpus scale gates.
 - DEC-386: WP49 delivered source meaning review packets on the same 25 Gmail + 25 Slack runtime corpus.
 - DEC-153: Mindline should use local corpus graph/index proof before hosted auth/database work.
 - PRI-1, BR-1, STD-17, DEC-64: local/private-safe proof, no destination writes, no hosted leakage, no no-human claims without held-out gates.
+
+This PR46 iteration remediates the gap in DEC-401: bounded concept output existed, but the first review UI did not satisfy INS-28's human-reviewable standard.
 
 ## Problem
 
@@ -20,11 +26,12 @@ If one email or Slack message has many atoms, and many items repeat the same ide
 Mindline produces a bounded corpus concept index above the existing corpus graph and source meaning packet:
 
 - concept groups combine related atoms across sources using deterministic, source-neutral signals;
-- each concept exposes source count, atom count, evidence references, source-kind coverage, and review status;
+- each concept exposes a non-generic reviewer title, a one-sentence review prompt, grouping rationale, source count, atom count, source-kind coverage, review status, and representative safe evidence excerpts;
 - cross-source concepts are clearly separated from local/single-source concepts;
 - the concept index writes a compact artifact set and markdown review packet;
 - `eval readback` recognizes the concept index as proof evidence;
-- the light review UI can serve the concept review packet so Randy can inspect the same 25 Gmail + 25 Slack run in a browser.
+- the light review UI can serve the concept review packet so Randy can inspect the same 25 Gmail + 25 Slack run in a browser;
+- the light review UI lets the reviewer record a decision for each concept: accept, reject as noisy, split needed, merge duplicate, rename needed, or needs more source context.
 
 ## Non-Outcome
 
@@ -40,20 +47,25 @@ WP51 does not claim perfect semantic clustering, held-out quality, autonomous ac
 6. `mindline documents concept-serve <concept-index-out-or-parent> --addr <loopback>` serves the review UI and `/api/state` for that concept packet.
 7. `eval readback` detects the concept index summary, concept metrics, scale status, guardrails, and private-safe fingerprints.
 8. Guardrails stay zero for destination writes, Product Brain writes, Tolaria writes, hosted inference calls, hosted telemetry exports, auto-accepts, and no-human claims.
+9. Every emitted concept has a display title that is not the generic relation-neighborhood machine label, plus a grouping rationale that explains why the atoms were grouped.
+10. Every emitted concept exposes at least three representative safe evidence previews when at least three evidence refs exist, including both Gmail and Slack previews for cross-source concepts when both are available.
+11. The UI shows review progress and can persist one reviewer decision plus an optional note for each concept without editing JSON manually.
+12. A reviewer can understand what the selected concept is about, why it exists, what evidence supports it, and what decision is being asked for without opening raw artifacts.
 
 ## Measurable Behavior Difference
 
 Before WP51: the system could say 20,926 relations existed and compress them into a packet, but Randy still could not evaluate whether repeated ideas were combined into coherent corpus concepts in the light UI.
 
-After WP51: Randy can open the light UI and review a bounded concept index for the same 25 Gmail + 25 Slack corpus, seeing which ideas repeat across sources, what evidence supports them, and what still needs human review.
+After WP51: Randy can open the light UI and review a bounded concept index for the same 25 Gmail + 25 Slack corpus, seeing which ideas repeat across sources, why the system grouped them, readable representative evidence, and a concrete decision surface for accepting, rejecting, splitting, merging, renaming, or requesting more context.
 
 ## Guardrails
 
 - Concept grouping must be source-agnostic and destination-neutral.
-- Concept artifacts must use evidence IDs, source IDs, line spans, hashes, and short content refs, not raw private body excerpts.
+- Concept artifacts must keep traceability through evidence IDs, source IDs, line spans, hashes, and short content refs.
+- The reviewer-facing surface must include representative safe excerpts because evidence IDs alone are not reviewable evidence. Excerpts must pass the existing unsafe marker redaction and remain local/private runtime artifacts, not hosted telemetry or committed fixtures.
 - Concept output is review-only and write-ineligible.
 - Single-source or weak concepts must be marked as needs review rather than overclaimed as cross-source knowledge.
-- The UI must remain loopback-only and preserve the existing review-server host/token safety discipline for writes if writes are added later.
+- The UI must remain loopback-only and preserve the existing review-server host/token/same-origin/JSON/write-lock safety discipline for persisted review decisions.
 - Do not commit private runtime artifacts.
 
 ## Re-Challenge And Reconciliation
@@ -67,3 +79,21 @@ Second target: add a concept artifact without UI.
 Rejected as incomplete. The user explicitly needs to see the result in the light UI to evaluate methodology. Artifact-only output would preserve the same gap: the system produces proof that is hard to judge.
 
 Sharper target: build a bounded corpus-level concept index and serve it in the light UI for the same 25 Gmail + 25 Slack dataset. This raises the standard from "we processed 50 sources" to "we can inspect whether repeated meaning is being combined into reviewable, evidence-backed concepts."
+
+## PR46 Iteration Diagnosis
+
+Randy rejected the first PR46 draft because the Light UI was a machine-readable artifact browser, not a human review service. It repeated generic "Cross-source topic candidate relation neighborhood" labels, showed raw evidence refs, source IDs, line spans, and hashes as the primary content, and had no plain-English concept distinction, no grouping explanation, no representative excerpts, no decision controls, and no persisted reviewer outcome.
+
+That failed the actual job. A human reviewer must be able to understand the proposed concept, judge whether the evidence belongs together, and record a decision directly in the review surface. A compact concept count is necessary but not sufficient.
+
+## PR46 Iteration Re-Challenge And Reconciliation
+
+First iteration target: add readable evidence excerpts to the existing detail panel.
+
+Rejected as too weak. Excerpts would make the page less opaque, but Randy would still lack the decision workflow and the system would still not know what the reviewer approved, rejected, split, merged, or renamed.
+
+Second iteration target: add decision buttons and notes to the existing generic concept page.
+
+Rejected as too weak. Recording decisions against indistinguishable generic labels would create review data, but the decisions would be low-quality because the reviewer would still be judging machine buckets rather than named, explained concepts.
+
+Sharpened iteration target: promote a reviewer display model inside the concept artifact and build a complete local review loop around it. Each concept needs a non-generic title, review prompt, grouping rationale, representative safe evidence previews, source mix, quality flags, review controls, and persisted review records. This raises the bar from "bounded concepts exist" to "a human can actually review them."

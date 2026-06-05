@@ -1,108 +1,147 @@
 package cli
 
 import (
-	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/synergyai-os/Mindline/internal/documents"
 )
 
-func TestDocumentsConceptIndexCLIAndUIServeState(t *testing.T) {
+func TestCorpusConceptUIServesReviewStateAndRecordsDecision(t *testing.T) {
 	root := t.TempDir()
-	writeConceptCLIFixture(t, root)
-	out := filepath.Join(root, "concept-out")
-	var stdout, stderr bytes.Buffer
-	code := NewRunner(NewOSFileSystem()).Run([]string{"documents", "concept-index", root, "--out", out}, &stdout, &stderr)
-	if code != ExitOK {
-		t.Fatalf("expected concept-index exit %d got %d stdout=%s stderr=%s", ExitOK, code, stdout.String(), stderr.String())
+	concept := documents.CorpusConcept{
+		SchemaVersion:          documents.CorpusConceptsSchemaVersion,
+		ConceptID:              "concept-ui-test",
+		CorpusID:               "corpus-ui-test",
+		Title:                  "Cross-source topic concept: review, evidence",
+		ReviewPrompt:           "Decide whether these snippets describe one coherent concept.",
+		GroupingRationale:      "Grouped from cross-source relations across 2 sources.",
+		Section:                documents.CorpusConceptSectionCrossSource,
+		CandidateKind:          documents.SemanticCandidateKindTopic,
+		RoutingHint:            documents.SourceMeaningRoutingTolariaCandidate,
+		ReviewStatus:           documents.ReviewStatusNeedsReview,
+		AtomCount:              2,
+		SourceCount:            2,
+		EvidenceReferenceCount: 2,
+		SourceKindCoverage:     map[string]int{"gmail": 1, "slack": 1},
+		RepresentativeEvidence: []documents.CorpusConceptEvidencePreview{{
+			EvidenceRefID: "evref-ui",
+			AtomID:        "atom-ui",
+			SourceID:      "gmail-source-ui",
+			SourceKind:    "gmail",
+			SourceRef:     "gmail:source-ui",
+			LineStart:     1,
+			LineEnd:       2,
+			ContentHash:   "hash-ui",
+			Title:         "Readable evidence title",
+			Summary:       "Readable evidence summary",
+			Excerpt:       "Readable private-local excerpt for review.",
+		}},
 	}
-	var summary documents.CorpusConceptSummary
-	if err := json.Unmarshal(stdout.Bytes(), &summary); err != nil {
-		t.Fatalf("decode stdout: %v", err)
+	summary := documents.CorpusConceptSummary{
+		SchemaVersion:           documents.CorpusConceptsSchemaVersion,
+		CorpusID:                "corpus-ui-test",
+		SourceCount:             2,
+		ProcessedSourceCount:    2,
+		ConceptCount:            1,
+		CrossSourceConceptCount: 1,
+		Concepts: []documents.CorpusConceptListItem{{
+			ConceptID:              concept.ConceptID,
+			Title:                  concept.Title,
+			ReviewPrompt:           concept.ReviewPrompt,
+			GroupingRationale:      concept.GroupingRationale,
+			Section:                concept.Section,
+			CandidateKind:          concept.CandidateKind,
+			RoutingHint:            concept.RoutingHint,
+			AtomCount:              concept.AtomCount,
+			SourceCount:            concept.SourceCount,
+			EvidenceReferenceCount: concept.EvidenceReferenceCount,
+			SourceKindCoverage:     concept.SourceKindCoverage,
+			ReviewStatus:           concept.ReviewStatus,
+			RepresentativeEvidence: len(concept.RepresentativeEvidence),
+			ConceptPath:            filepath.ToSlash(filepath.Join(documents.CorpusConceptsDirName, documents.CorpusConceptPath(concept.ConceptID))),
+		}},
 	}
-	if summary.ConceptCount == 0 || summary.CrossSourceConceptCount == 0 {
-		t.Fatalf("expected cross-source concept summary: %+v", summary)
+	index := documents.CorpusConceptIndex{
+		SchemaVersion: documents.CorpusConceptsSchemaVersion,
+		CorpusID:      "corpus-ui-test",
+		Concepts:      []documents.CorpusConcept{concept},
+	}
+	if err := documents.WriteCorpusConceptIndex(root, summary, index); err != nil {
+		t.Fatalf("write concept index: %v", err)
 	}
 
-	handler := newCorpusConceptUIHandlerWithAllowedHosts(filepath.Join(out, documents.CorpusConceptsDirName), []string{"127.0.0.1:8788"})
-	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8788/api/state", nil)
+	handler := newCorpusConceptUIHandlerWithToken(filepath.Join(root, documents.CorpusConceptsDirName), "test-token", nil)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = judgmentUITestHost
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected UI state 200 got %d body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("expected html status 200, got %d", rec.Code)
 	}
-	var state corpusConceptUIState
-	if err := json.Unmarshal(rec.Body.Bytes(), &state); err != nil {
-		t.Fatalf("decode state: %v", err)
+	if !strings.Contains(rec.Body.String(), `name="mindline-review-token" content="test-token"`) {
+		t.Fatalf("expected review token meta tag")
 	}
-	if len(state.Index.Concepts) == 0 {
-		t.Fatalf("expected UI concepts")
+
+	state := getCorpusConceptUIState(t, handler)
+	if state.Progress.TotalConceptCount != 1 || state.Progress.ReviewedConceptCount != 0 {
+		t.Fatalf("unexpected initial progress: %+v", state.Progress)
+	}
+	if got := state.Index.Concepts[0].RepresentativeEvidence[0].Excerpt; got == "" {
+		t.Fatalf("expected representative evidence excerpt")
+	}
+
+	payload := `{"concept_id":"concept-ui-test","choice":"rename_needed","note":"needs clearer title"}`
+	req = httptest.NewRequest(http.MethodPost, "/api/reviews", strings.NewReader(payload))
+	req.Host = judgmentUITestHost
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected tokenless review status 403, got %d", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/reviews", strings.NewReader(payload))
+	req.Host = judgmentUITestHost
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Mindline-Review-Token", "test-token")
+	req.Header.Set("Origin", "http://"+judgmentUITestHost)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected review status 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	updated := decodeCorpusConceptUIState(t, rec.Body)
+	if updated.Progress.ReviewedConceptCount != 1 || updated.Progress.ChoiceCounts[documents.CorpusConceptReviewRenameNeeded] != 1 {
+		t.Fatalf("expected updated review progress: %+v", updated.Progress)
+	}
+	if len(updated.ReviewRecords.Records) != 1 || updated.ReviewRecords.Records[0].Note != "needs clearer title" {
+		t.Fatalf("expected persisted review record: %+v", updated.ReviewRecords)
 	}
 }
 
-func writeConceptCLIFixture(t *testing.T, root string) {
+func getCorpusConceptUIState(t *testing.T, handler http.Handler) corpusConceptUIState {
 	t.Helper()
-	for _, dir := range []string{
-		filepath.Join(root, "corpus-pressure"),
-		filepath.Join(root, "corpus-graph", "atoms"),
-	} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatalf("mkdir fixture dir: %v", err)
-		}
+	req := httptest.NewRequest(http.MethodGet, "/api/state", nil)
+	req.Host = judgmentUITestHost
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected state status 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
-	pressure := documents.CorpusPressureSummary{
-		SchemaVersion:            documents.CorpusPressureSummarySchemaVersion,
-		CorpusID:                 "corpus-cli-concepts",
-		SourceCount:              2,
-		ProcessedSourceCount:     2,
-		ScaleStatus:              "scale_complete",
-		GraphSummaryPath:         "corpus-graph/graph-summary.json",
-		CorpusFingerprint:        "corpus-cli",
-		CommandConfigFingerprint: "config-cli",
-		ReplayFingerprint:        "pressure-cli",
-	}
-	writeCLITestJSON(t, filepath.Join(root, "corpus-pressure", "pressure-summary.json"), pressure)
-	atoms := []documents.CorpusGraphAtom{
-		cliConceptAtom("atom-a", "gmail-source", "Concept review combines repeated methodology"),
-		cliConceptAtom("atom-b", "slack-source", "Repeated methodology belongs in concept review"),
-	}
-	graph := documents.CorpusGraphSummary{
-		SchemaVersion:     documents.CorpusGraphSummarySchemaVersion,
-		CorpusID:          pressure.CorpusID,
-		SourceCount:       2,
-		AtomCount:         len(atoms),
-		RelationCount:     25,
-		ReplayFingerprint: "graph-cli",
-		Atoms: []documents.CorpusGraphSummaryAtom{
-			{AtomID: atoms[0].AtomID, SourceID: atoms[0].SourceID, CandidateKind: atoms[0].CandidateKind, ReviewStatus: atoms[0].ReviewStatus, AtomPath: "atoms/atom-a.json"},
-			{AtomID: atoms[1].AtomID, SourceID: atoms[1].SourceID, CandidateKind: atoms[1].CandidateKind, ReviewStatus: atoms[1].ReviewStatus, AtomPath: "atoms/atom-b.json"},
-		},
-	}
-	writeCLITestJSON(t, filepath.Join(root, "corpus-graph", "graph-summary.json"), graph)
-	writeCLITestJSON(t, filepath.Join(root, "corpus-graph", "atoms", "atom-a.json"), atoms[0])
-	writeCLITestJSON(t, filepath.Join(root, "corpus-graph", "atoms", "atom-b.json"), atoms[1])
+	return decodeCorpusConceptUIState(t, rec.Body)
 }
 
-func cliConceptAtom(id, sourceID, title string) documents.CorpusGraphAtom {
-	return documents.CorpusGraphAtom{
-		SchemaVersion:    documents.CorpusGraphAtomSchemaVersion,
-		AtomID:           id,
-		CorpusID:         "corpus-cli-concepts",
-		SourceID:         sourceID,
-		SourceKind:       "markdown",
-		SourceDocumentID: sourceID,
-		CandidateKind:    documents.SemanticCandidateKindTopic,
-		ReviewStatus:     documents.ReviewStatusReady,
-		Confidence:       documents.ConfidenceMedium,
-		Title:            title,
-		Summary:          title,
-		LineStart:        1,
-		LineEnd:          2,
-		ContentHash:      "hash-" + id,
+func decodeCorpusConceptUIState(t *testing.T, body io.Reader) corpusConceptUIState {
+	t.Helper()
+	var state corpusConceptUIState
+	if err := json.NewDecoder(body).Decode(&state); err != nil {
+		t.Fatalf("decode concept UI state: %v", err)
 	}
+	return state
 }
