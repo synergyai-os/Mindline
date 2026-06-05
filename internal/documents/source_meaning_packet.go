@@ -234,7 +234,7 @@ func buildSourceMeaningGroups(corpusID string, atoms []CorpusGraphAtom, relation
 	buckets := map[string][]CorpusGraphAtom{}
 	for _, atom := range atoms {
 		route := packetRouteForAtom(atom)
-		key := strings.Join([]string{string(route), string(atom.CandidateKind)}, "\x00")
+		key := strings.Join([]string{string(route), string(atom.CandidateKind), sourceMeaningPacketReviewBucket(atom, relationIndex[atom.AtomID])}, "\x00")
 		buckets[key] = append(buckets[key], atom)
 	}
 	keys := make([]string, 0, len(buckets))
@@ -258,6 +258,35 @@ func buildSourceMeaningGroups(corpusID string, atoms []CorpusGraphAtom, relation
 		}
 	}
 	return groups
+}
+
+func sourceMeaningPacketReviewBucket(atom CorpusGraphAtom, relations []CorpusGraphRelation) string {
+	if sourceMeaningPacketAtomBlocked(atom) {
+		return "blocked"
+	}
+	bucket := "ready"
+	if atom.ReviewStatus == ReviewStatusNeedsReview {
+		bucket = "needs_review"
+	}
+	for _, relation := range relations {
+		if relation.ReviewStatus == ReviewStatusBlocked {
+			return "blocked"
+		}
+		if relation.RelationType == CorpusRelationPossibleDuplicate || relation.ReviewStatus == ReviewStatusNeedsReview {
+			bucket = "needs_review"
+		}
+	}
+	return bucket
+}
+
+func sourceMeaningPacketAtomBlocked(atom CorpusGraphAtom) bool {
+	if atom.ReviewStatus == ReviewStatusBlocked {
+		return true
+	}
+	if strings.TrimSpace(atom.ContentHash) == "" || atom.LineStart <= 0 || atom.LineEnd <= 0 {
+		return true
+	}
+	return len(atom.Blockers) > 0
 }
 
 func buildSourceMeaningGroup(corpusID string, ordinal int, atoms []CorpusGraphAtom, relationIndex map[string][]CorpusGraphRelation) SourceMeaningPacketGroup {
@@ -287,6 +316,9 @@ func buildSourceMeaningGroup(corpusID string, ordinal int, atoms []CorpusGraphAt
 		if atom.ReviewStatus == ReviewStatusBlocked {
 			group.BlockerReasons = appendUniqueString(group.BlockerReasons, "blocked_atom")
 		}
+		if atom.ReviewStatus == ReviewStatusNeedsReview {
+			group.Section = SourceMeaningPacketSectionNeedsReview
+		}
 		for _, blocker := range atom.Blockers {
 			group.BlockerReasons = appendUniqueString(group.BlockerReasons, blocker.Code)
 		}
@@ -305,9 +337,13 @@ func buildSourceMeaningGroup(corpusID string, ordinal int, atoms []CorpusGraphAt
 			group.RelatedRelationRefs = append(group.RelatedRelationRefs, ref)
 			if relation.RelationType == CorpusRelationPossibleDuplicate {
 				group.DuplicatePressureCount++
+				group.Section = SourceMeaningPacketSectionNeedsReview
 			}
 			if relation.ReviewStatus == ReviewStatusBlocked {
 				group.BlockerReasons = appendUniqueString(group.BlockerReasons, "blocked_relation")
+			}
+			if relation.ReviewStatus == ReviewStatusNeedsReview {
+				group.Section = SourceMeaningPacketSectionNeedsReview
 			}
 		}
 	}
@@ -391,7 +427,7 @@ func shortContentRef(value string) string {
 func buildSourceMeaningProposals(groups []SourceMeaningPacketGroup) []SourceMeaningPacketProposal {
 	proposals := []SourceMeaningPacketProposal{}
 	for _, group := range groups {
-		if group.Section == SourceMeaningPacketSectionBlocked {
+		if group.Section != SourceMeaningPacketSectionReady {
 			continue
 		}
 		evidenceRefs := make([]string, 0, len(group.EvidenceRefs))
@@ -483,7 +519,7 @@ func buildSourceMeaningPacketSummary(pressure CorpusPressureSummary, graph Corpu
 		}
 		groupPath := SourceMeaningPacketGroupPath(group.GroupID)
 		proposalPath := ""
-		if group.Section != SourceMeaningPacketSectionBlocked {
+		if group.Section == SourceMeaningPacketSectionReady {
 			proposalPath = SourceMeaningPacketProposalPath(strings.Replace(group.GroupID, "meaning-group-", "meaning-proposal-", 1))
 		}
 		summary.Groups = append(summary.Groups, SourceMeaningPacketGroupSummary{
@@ -499,7 +535,7 @@ func buildSourceMeaningPacketSummary(pressure CorpusPressureSummary, graph Corpu
 			DuplicatePressureCount: group.DuplicatePressureCount,
 			BlockerReasons:         append([]string{}, group.BlockerReasons...),
 			GroupPath:              filepath.ToSlash(filepath.Join(SourceMeaningPacketDirName, groupPath)),
-			ProposalPath:           filepath.ToSlash(filepath.Join(SourceMeaningPacketDirName, proposalPath)),
+			ProposalPath:           sourceMeaningPacketSummaryPath(proposalPath),
 		})
 	}
 	if graph.AtomCount > 0 {
@@ -514,6 +550,13 @@ func buildSourceMeaningPacketSummary(pressure CorpusPressureSummary, graph Corpu
 	}
 	summary.ReplayFingerprint = sourceMeaningPacketReplayFingerprint(summary)
 	return summary
+}
+
+func sourceMeaningPacketSummaryPath(ref string) string {
+	if strings.TrimSpace(ref) == "" {
+		return ""
+	}
+	return filepath.ToSlash(filepath.Join(SourceMeaningPacketDirName, ref))
 }
 
 func sourceMeaningPacketReplayFingerprint(summary SourceMeaningPacketSummary) string {

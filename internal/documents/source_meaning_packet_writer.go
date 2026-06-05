@@ -127,7 +127,11 @@ func writeSourceMeaningPacketSection(b *strings.Builder, heading string, groups 
 		return
 	}
 	for _, group := range filtered {
-		b.WriteString(fmt.Sprintf("- `%s`: atoms=%d sources=%d evidence_refs=%d duplicate_pressure=%d group=`%s` proposal=`%s`\n", group.GroupID, group.AtomCount, group.SourceCount, group.EvidenceReferenceCount, group.DuplicatePressureCount, group.GroupPath, group.ProposalPath))
+		b.WriteString(fmt.Sprintf("- `%s`: atoms=%d sources=%d evidence_refs=%d duplicate_pressure=%d group=`%s`", group.GroupID, group.AtomCount, group.SourceCount, group.EvidenceReferenceCount, group.DuplicatePressureCount, group.GroupPath))
+		if group.ProposalPath != "" {
+			b.WriteString(fmt.Sprintf(" proposal=`%s`", group.ProposalPath))
+		}
+		b.WriteString("\n")
 		if len(group.BlockerReasons) > 0 {
 			b.WriteString(fmt.Sprintf("  - blockers=%s\n", strings.Join(group.BlockerReasons, ",")))
 		}

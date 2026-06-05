@@ -633,6 +633,9 @@ func mergeModelEvidence(model *readbackModel, artifact ArtifactEvidence) {
 		}
 	}
 	for key, value := range artifact.Metrics {
+		if !mergeArtifactMetricIntoModel(artifact.Type, key) {
+			continue
+		}
 		model.metrics[key] = value
 		switch key {
 		case "guardrail_network_fetches", "safety_network_fetches":
@@ -683,6 +686,16 @@ func mergeModelEvidence(model *readbackModel, artifact ArtifactEvidence) {
 			model.fingerprints[key] = value
 		}
 	}
+}
+
+func mergeArtifactMetricIntoModel(artifactType, metric string) bool {
+	if artifactType == "source_meaning_packet_summary" {
+		switch metric {
+		case "review_burden_count", "review_burden_ratio":
+			return false
+		}
+	}
+	return true
 }
 
 func summarize(model readbackModel) Summary {

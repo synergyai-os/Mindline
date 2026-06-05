@@ -1,6 +1,7 @@
 package documents
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,6 +65,105 @@ func TestSourceMeaningPacketBuildsCompressedReviewPacketWithoutRawExcerpts(t *te
 	}
 }
 
+func TestSourceMeaningPacketRoutesDuplicatePressureToNeedsReviewWithoutProposal(t *testing.T) {
+	pressure := CorpusPressureSummary{
+		CorpusID:                 "corpus-test",
+		SourceCount:              2,
+		ProcessedSourceCount:     2,
+		CorpusFingerprint:        "corpus-fingerprint",
+		CommandConfigFingerprint: "command-config",
+		ReplayFingerprint:        "pressure-replay",
+	}
+	graph := CorpusGraphSummary{
+		AtomCount:          2,
+		RelationCount:      1,
+		RelationTypeCounts: map[CorpusRelationType]int{CorpusRelationPossibleDuplicate: 1},
+		ReplayFingerprint:  "graph-replay",
+	}
+	atomsBySource := map[string][]CorpusGraphAtom{
+		"source-a": {sourceMeaningPacketTestAtom("atom-a", "source-a", SemanticCandidateKindDecision)},
+		"source-b": {sourceMeaningPacketTestAtom("atom-b", "source-b", SemanticCandidateKindDecision)},
+	}
+	relationsBySource := map[string][]CorpusGraphRelation{
+		"source-a": {{
+			RelationID:   "rel-duplicate",
+			RelationType: CorpusRelationPossibleDuplicate,
+			FromAtomID:   "atom-a",
+			ToAtomID:     "atom-b",
+			ReviewStatus: ReviewStatusReady,
+		}},
+	}
+
+	build := buildSourceMeaningPacket(pressure, graph, atomsBySource, relationsBySource)
+
+	if build.Summary.NeedsReviewGroupCount != 1 || build.Summary.ReadyGroupCount != 0 || build.Summary.ProposalCount != 0 {
+		t.Fatalf("expected duplicate pressure to require review without proposals: %+v", build.Summary)
+	}
+	if len(build.Groups) != 1 || build.Groups[0].Section != SourceMeaningPacketSectionNeedsReview {
+		t.Fatalf("expected needs-review group, got %+v", build.Groups)
+	}
+	if build.Summary.Groups[0].ProposalPath != "" {
+		t.Fatalf("needs-review group should not expose a proposal path: %+v", build.Summary.Groups[0])
+	}
+}
+
+func TestSourceMeaningPacketPreservesNeedsReviewStatusWithoutProposal(t *testing.T) {
+	pressure := CorpusPressureSummary{CorpusID: "corpus-test", SourceCount: 1, ProcessedSourceCount: 1}
+	graph := CorpusGraphSummary{AtomCount: 1, RelationCount: 1}
+	atom := sourceMeaningPacketTestAtom("atom-a", "source-a", SemanticCandidateKindIssue)
+	atom.ReviewStatus = ReviewStatusNeedsReview
+	relationsBySource := map[string][]CorpusGraphRelation{
+		"source-a": {{
+			RelationID:   "rel-review",
+			RelationType: CorpusRelationSameTopicAs,
+			FromAtomID:   "atom-a",
+			ToAtomID:     "atom-a",
+			ReviewStatus: ReviewStatusNeedsReview,
+		}},
+	}
+
+	build := buildSourceMeaningPacket(pressure, graph, map[string][]CorpusGraphAtom{"source-a": {atom}}, relationsBySource)
+
+	if build.Summary.NeedsReviewGroupCount != 1 || build.Summary.ProposalCount != 0 || build.Summary.ReviewBurdenCount != 1 {
+		t.Fatalf("expected needs-review group without proposal: %+v", build.Summary)
+	}
+	if len(build.Groups) != 1 || build.Groups[0].Section != SourceMeaningPacketSectionNeedsReview {
+		t.Fatalf("expected needs-review section, got %+v", build.Groups)
+	}
+}
+
+func TestSourceMeaningPacketClustersReviewPressureBeforeChunking(t *testing.T) {
+	atoms := make([]CorpusGraphAtom, 0, 25)
+	for i := 1; i <= 25; i++ {
+		atomID := fmt.Sprintf("atom-%02d", i)
+		sourceID := fmt.Sprintf("source-%02d", i)
+		atoms = append(atoms, sourceMeaningPacketTestAtom(atomID, sourceID, SemanticCandidateKindTopic))
+	}
+	relationsBySource := map[string][]CorpusGraphRelation{
+		"source-01": {{
+			RelationID:   "rel-duplicate-spread",
+			RelationType: CorpusRelationPossibleDuplicate,
+			FromAtomID:   "atom-01",
+			ToAtomID:     "atom-25",
+			ReviewStatus: ReviewStatusReady,
+		}},
+	}
+
+	build := buildSourceMeaningPacket(
+		CorpusPressureSummary{CorpusID: "corpus-test", SourceCount: 25, ProcessedSourceCount: 25},
+		CorpusGraphSummary{AtomCount: 25, RelationCount: 1},
+		map[string][]CorpusGraphAtom{"sources": atoms},
+		relationsBySource,
+	)
+
+	if build.Summary.ReviewGroupCount != 3 || build.Summary.NeedsReviewGroupCount != 1 || build.Summary.ReadyGroupCount != 2 {
+		t.Fatalf("expected duplicate-pressure atoms clustered into one review group: %+v", build.Summary)
+	}
+	if build.Summary.ReviewBurdenRatio > 0.35 {
+		t.Fatalf("expected bounded review burden, got %+v", build.Summary)
+	}
+}
+
 func allPacketText(t *testing.T, root string) string {
 	t.Helper()
 	var b strings.Builder
@@ -118,4 +218,22 @@ func sourceFixtureDeniedLines(t *testing.T, root string) []string {
 		t.Fatalf("fixture denied line set is empty")
 	}
 	return lines
+}
+
+func sourceMeaningPacketTestAtom(atomID, sourceID string, kind SemanticCandidateKind) CorpusGraphAtom {
+	return CorpusGraphAtom{
+		AtomID:           atomID,
+		CorpusID:         "corpus-test",
+		SourceID:         sourceID,
+		SourceKind:       "fixture",
+		SourceDocumentID: sourceID + "-doc",
+		CandidateKind:    kind,
+		ReviewStatus:     ReviewStatusReady,
+		Confidence:       ConfidenceHigh,
+		Title:            atomID + " title",
+		Summary:          atomID + " summary",
+		LineStart:        1,
+		LineEnd:          2,
+		ContentHash:      atomID + "-hash",
+	}
 }
