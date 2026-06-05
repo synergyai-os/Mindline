@@ -426,7 +426,7 @@ func extractEvidence(raw map[string]any, artifact *ArtifactEvidence) {
 		"eval_counted_model_error_count",
 		"review_group_count", "ready_group_count", "needs_review_group_count", "blocked_group_count",
 		"proposal_count", "evidence_reference_count", "evidence_or_blocker_group_count",
-		"scale_skipped_source_count", "max_processed_sources", "max_source_bytes", "max_source_segments",
+		"scale_skipped_source_count", "max_processed_sources", "max_source_bytes", "max_source_segments", "max_source_candidates",
 		"max_graph_pair_comparisons", "max_graph_relations", "max_packet_review_groups",
 		"graph_pair_comparison_count", "graph_pair_comparison_limit", "graph_relation_candidate_limit",
 		"pair_comparison_count", "pair_comparison_limit", "relation_candidate_limit",

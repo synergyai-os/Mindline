@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -42,6 +43,7 @@ type CorpusPressureScaleBudget struct {
 	MaxProcessedSources     int   `json:"max_processed_sources"`
 	MaxSourceBytes          int64 `json:"max_source_bytes"`
 	MaxSourceSegments       int   `json:"max_source_segments"`
+	MaxSourceCandidates     int   `json:"max_source_candidates"`
 	MaxGraphPairComparisons int   `json:"max_graph_pair_comparisons"`
 	MaxGraphRelations       int   `json:"max_graph_relations"`
 	MaxPacketReviewGroups   int   `json:"max_packet_review_groups"`
@@ -51,6 +53,7 @@ const (
 	DefaultCorpusPressureMaxProcessedSources     = 50
 	DefaultCorpusPressureMaxSourceBytes          = 1024 * 1024
 	DefaultCorpusPressureMaxSourceSegments       = 200
+	DefaultCorpusPressureMaxSourceCandidates     = 500
 	DefaultCorpusPressureMaxGraphPairComparisons = DefaultCorpusGraphMaxPairComparisons
 	DefaultCorpusPressureMaxGraphRelations       = DefaultCorpusGraphMaxRelationCandidates
 	DefaultCorpusPressureMaxPacketReviewGroups   = 50
@@ -76,6 +79,7 @@ const (
 	CorpusPressureReasonScaleSourceLimit      CorpusPressureReason = "scale_source_limit"
 	CorpusPressureReasonScaleSourceSizeLimit  CorpusPressureReason = "scale_source_size_limit"
 	CorpusPressureReasonScaleSegmentLimit     CorpusPressureReason = "scale_segment_limit"
+	CorpusPressureReasonScaleCandidateLimit   CorpusPressureReason = "scale_candidate_limit"
 )
 
 type CorpusPressureSummary struct {
@@ -258,6 +262,9 @@ func normalizeCorpusPressureScaleBudget(budget CorpusPressureScaleBudget) Corpus
 	if budget.MaxSourceSegments <= 0 {
 		budget.MaxSourceSegments = DefaultCorpusPressureMaxSourceSegments
 	}
+	if budget.MaxSourceCandidates <= 0 {
+		budget.MaxSourceCandidates = DefaultCorpusPressureMaxSourceCandidates
+	}
 	if budget.MaxGraphPairComparisons <= 0 {
 		budget.MaxGraphPairComparisons = DefaultCorpusPressureMaxGraphPairComparisons
 	}
@@ -327,15 +334,17 @@ func BuildCorpusPressure(inputPath, outDir string, options CorpusPressureOptions
 	}
 	results := make([]CorpusPressureSourceResult, 0, len(sources))
 	graphSources := make([]CorpusGraphManifestSource, 0, len(sources))
-	attemptedSources := 0
+	processedSources := 0
 	for _, source := range sources {
-		if options.ScaleBudget.MaxProcessedSources > 0 && attemptedSources >= options.ScaleBudget.MaxProcessedSources {
+		if options.ScaleBudget.MaxProcessedSources > 0 && processedSources >= options.ScaleBudget.MaxProcessedSources {
 			results = append(results, scaleSkippedCorpusPressureSource(source, CorpusPressureReasonScaleSourceLimit, fmt.Sprintf("scale_partial: source skipped because max_processed_sources=%d was reached", options.ScaleBudget.MaxProcessedSources)))
 			continue
 		}
-		attemptedSources++
 		result, graphSource := runCorpusPressureSource(root, source, options.SemanticOptions, options.ScaleBudget)
 		results = append(results, result)
+		if result.State == CorpusPressureSourceProcessed {
+			processedSources++
+		}
 		if graphSource != nil {
 			graphSources = append(graphSources, *graphSource)
 		}
@@ -745,6 +754,13 @@ func runCorpusPressureSource(root string, source corpusPressureSourceInput, opti
 		result.Message = err.Error()
 		return result, nil
 	} else if budget.MaxSourceBytes > 0 && info.Size() > budget.MaxSourceBytes {
+		hash, err := fileContentHash(source.Path)
+		if err != nil {
+			result.ReasonCode = CorpusPressureReasonInputContainmentError
+			result.Message = err.Error()
+			return result, nil
+		}
+		result.SourceContentHash = hash
 		result.State = CorpusPressureSourceSkipped
 		result.ReasonCode = CorpusPressureReasonScaleSourceSizeLimit
 		result.Message = fmt.Sprintf("scale_partial: source skipped because size %d exceeded max_source_bytes=%d", info.Size(), budget.MaxSourceBytes)
@@ -777,6 +793,7 @@ func runCorpusPressureSource(root string, source corpusPressureSourceInput, opti
 		result.Message = fmt.Sprintf("scale_partial: source skipped after segmentation because segment_count=%d exceeded max_source_segments=%d", result.SegmentCount, budget.MaxSourceSegments)
 		return result, nil
 	}
+	options.MaxCandidateCount = budget.MaxSourceCandidates
 	summary, err := SemanticPathWithOptions(filepath.Join(sourceRoot, "document-structure"), sourceRoot, options)
 	if err != nil {
 		result.Message = err.Error()
@@ -794,10 +811,13 @@ func runCorpusPressureSource(root string, source corpusPressureSourceInput, opti
 	if summary.SkippedReason != "" {
 		if strings.Contains(summary.SkippedReason, "all structure nodes are blocked") {
 			result.State = CorpusPressureSourceExcluded
+		} else if strings.Contains(summary.SkippedReason, "max_source_candidates=") {
+			result.State = CorpusPressureSourceSkipped
+			result.ReasonCode = CorpusPressureReasonScaleCandidateLimit
 		} else {
 			result.State = CorpusPressureSourceSkipped
+			result.ReasonCode = CorpusPressureReasonSemanticSkipped
 		}
-		result.ReasonCode = CorpusPressureReasonSemanticSkipped
 		result.Message = summary.SkippedReason
 		return result, nil
 	}
@@ -977,7 +997,7 @@ func corpusPressureTargets(summary CorpusPressureSummary) []string {
 
 func corpusPressureReasonIsScale(reason CorpusPressureReason) bool {
 	switch reason {
-	case CorpusPressureReasonScaleSourceLimit, CorpusPressureReasonScaleSourceSizeLimit, CorpusPressureReasonScaleSegmentLimit:
+	case CorpusPressureReasonScaleSourceLimit, CorpusPressureReasonScaleSourceSizeLimit, CorpusPressureReasonScaleSegmentLimit, CorpusPressureReasonScaleCandidateLimit:
 		return true
 	default:
 		return false
@@ -1047,6 +1067,7 @@ func corpusPressureCommandConfigFingerprint(options SemanticOptions, budgets ...
 			fmt.Sprintf("max_processed_sources:%d", budget.MaxProcessedSources),
 			fmt.Sprintf("max_source_bytes:%d", budget.MaxSourceBytes),
 			fmt.Sprintf("max_source_segments:%d", budget.MaxSourceSegments),
+			fmt.Sprintf("max_source_candidates:%d", budget.MaxSourceCandidates),
 			fmt.Sprintf("max_graph_pair_comparisons:%d", budget.MaxGraphPairComparisons),
 			fmt.Sprintf("max_graph_relations:%d", budget.MaxGraphRelations),
 			fmt.Sprintf("max_packet_review_groups:%d", budget.MaxPacketReviewGroups),
@@ -1080,6 +1101,19 @@ func corpusPressureSourceFingerprint(sources []CorpusPressureSourceResult) strin
 	sort.Strings(parts)
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\n")))
 	return "corpus-" + hex.EncodeToString(sum[:])[:16]
+}
+
+func fileContentHash(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
+	}
+	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 func cloneCorpusRelationTypeCounts(in map[CorpusRelationType]int) map[CorpusRelationType]int {

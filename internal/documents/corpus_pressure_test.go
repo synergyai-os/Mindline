@@ -375,6 +375,34 @@ func TestCorpusPressureLLMClassifierUsesRawSourceTextAfterSegmentBudgetScreening
 	}
 }
 
+type multiCandidateLLMSemanticProvider struct {
+	request LLMSemanticRequest
+}
+
+func (provider *multiCandidateLLMSemanticProvider) Classify(request LLMSemanticRequest) (llmSemanticResponse, error) {
+	provider.request = request
+	evidenceNode := ""
+	if len(request.Nodes) > 0 {
+		evidenceNode = request.Nodes[0].NodeID
+	}
+	return llmSemanticResponse{Candidates: []llmSemanticCandidate{
+		{
+			Kind:          string(SemanticCandidateKindAction),
+			Title:         "Prepare bounded evidence",
+			Summary:       "Prepare bounded evidence from the cited source.",
+			Confidence:    string(ConfidenceMedium),
+			EvidenceNodes: []string{evidenceNode},
+		},
+		{
+			Kind:          string(SemanticCandidateKindRequirement),
+			Title:         "Require bounded evidence",
+			Summary:       "Require bounded evidence from the cited source.",
+			Confidence:    string(ConfidenceMedium),
+			EvidenceNodes: []string{evidenceNode},
+		},
+	}}, nil
+}
+
 func TestCorpusPressureFailsWhenOutputSourcesPathIsNotDirectory(t *testing.T) {
 	input := t.TempDir()
 	if err := os.WriteFile(filepath.Join(input, "source.md"), []byte("# Source\n- capability: fail instead of hanging on invalid output sources path\n"), 0o644); err != nil {
@@ -1102,6 +1130,128 @@ func TestCorpusPressureSkipsSourcesBeforeSemanticExplosionWhenScaleBudgetsHit(t 
 	}
 	if summary.ProcessedSourceCount != 1 || summary.ScaleSkippedSourceCount != 2 {
 		t.Fatalf("expected one processed and two scale skipped sources, got %+v", summary)
+	}
+}
+
+func TestCorpusPressureCountsOnlyProcessedSourcesAgainstSourceLimit(t *testing.T) {
+	input := t.TempDir()
+	if err := os.WriteFile(filepath.Join(input, "source-01-large.md"), []byte("# Large\n"+strings.Repeat("oversized source body\n", 20)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for i := 2; i <= 3; i++ {
+		if err := os.WriteFile(filepath.Join(input, fmt.Sprintf("source-%02d-small.md", i)), []byte(fmt.Sprintf("# Small %02d\n- capability: process after skipped source\n", i)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	summary, _, err := BuildCorpusPressure(input, t.TempDir(), CorpusPressureOptions{ScaleBudget: CorpusPressureScaleBudget{
+		MaxProcessedSources:     1,
+		MaxSourceBytes:          80,
+		MaxSourceSegments:       200,
+		MaxSourceCandidates:     500,
+		MaxGraphPairComparisons: 250000,
+		MaxGraphRelations:       50000,
+		MaxPacketReviewGroups:   50,
+	}})
+	if err != nil {
+		t.Fatalf("build corpus pressure: %v", err)
+	}
+	if summary.ProcessedSourceCount != 1 {
+		t.Fatalf("source cap should count processed sources only, got %+v", summary)
+	}
+	for _, reason := range []string{"scale_source_size_limit", "scale_source_limit"} {
+		if !containsCorpusPressureString(summary.ScaleReasonCodes, reason) {
+			t.Fatalf("expected scale reason %q, got %+v", reason, summary.ScaleReasonCodes)
+		}
+	}
+}
+
+func TestCorpusPressureStopsBeforeWritingSemanticArtifactsWhenCandidateBudgetIsHit(t *testing.T) {
+	input := t.TempDir()
+	if err := os.WriteFile(filepath.Join(input, "source.md"), []byte("# Source\n- capability: candidate budget should stop semantic artifact writes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := t.TempDir()
+	provider := &multiCandidateLLMSemanticProvider{}
+	summary, _, err := BuildCorpusPressure(input, out, CorpusPressureOptions{
+		SemanticOptions: SemanticOptions{
+			Classifier:  SemanticClassifierLLM,
+			LLMProvider: "openai",
+			LLMModel:    "fake-model",
+			LLMAPIKey:   "fake-key",
+			LLMClient:   provider,
+		},
+		ScaleBudget: CorpusPressureScaleBudget{
+			MaxProcessedSources:     10,
+			MaxSourceBytes:          1024 * 1024,
+			MaxSourceSegments:       200,
+			MaxSourceCandidates:     1,
+			MaxGraphPairComparisons: 250000,
+			MaxGraphRelations:       50000,
+			MaxPacketReviewGroups:   50,
+		},
+	})
+	if err != nil {
+		t.Fatalf("build corpus pressure: %v", err)
+	}
+	if summary.ScaleStatus != "scale_partial" || !containsCorpusPressureString(summary.ScaleReasonCodes, "scale_candidate_limit") {
+		t.Fatalf("expected scale candidate limit, got %+v", summary)
+	}
+	if summary.ProcessedSourceCount != 0 || summary.ScaleSkippedSourceCount != 1 {
+		t.Fatalf("candidate-limited source should be scale skipped, got %+v", summary)
+	}
+	source := summary.Sources[0]
+	if source.ReasonCode != CorpusPressureReasonScaleCandidateLimit {
+		t.Fatalf("expected source reason scale_candidate_limit, got %+v", source)
+	}
+	semanticRoot := filepath.Join(out, source.SemanticRunDir, "semantic-candidates")
+	if candidates, err := filepath.Glob(filepath.Join(semanticRoot, "candidates", "*.json")); err != nil || len(candidates) != 0 {
+		t.Fatalf("candidate budget should not write candidate artifacts: paths=%v err=%v", candidates, err)
+	}
+}
+
+func TestCorpusPressureOversizedSkippedSourceContentChangesCorpusFingerprint(t *testing.T) {
+	build := func(body string) CorpusPressureSummary {
+		t.Helper()
+		input := t.TempDir()
+		if err := os.WriteFile(filepath.Join(input, "oversized.md"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		summary, _, err := BuildCorpusPressure(input, t.TempDir(), CorpusPressureOptions{ScaleBudget: CorpusPressureScaleBudget{
+			MaxProcessedSources:     10,
+			MaxSourceBytes:          1,
+			MaxSourceSegments:       200,
+			MaxSourceCandidates:     500,
+			MaxGraphPairComparisons: 250000,
+			MaxGraphRelations:       50000,
+			MaxPacketReviewGroups:   50,
+		}})
+		if err != nil {
+			t.Fatalf("build corpus pressure: %v", err)
+		}
+		return summary
+	}
+	left := build("# Oversized\nleft skipped content\n")
+	right := build("# Oversized\nright skipped content\n")
+	if left.Sources[0].SourceContentHash == "" || right.Sources[0].SourceContentHash == "" {
+		t.Fatalf("oversized skipped sources must still carry content hashes: left=%+v right=%+v", left.Sources[0], right.Sources[0])
+	}
+	if left.CorpusFingerprint == right.CorpusFingerprint {
+		t.Fatalf("different oversized skipped source content must change corpus fingerprint: %s", left.CorpusFingerprint)
+	}
+}
+
+func TestCorpusPressureTracePreservesGraphFailureWhenScalePartial(t *testing.T) {
+	stages := corpusPressureTraceStages(CorpusPressureSummary{
+		SourceCount:               2,
+		ScaleStatus:               "scale_partial",
+		SemanticCandidateCount:    1,
+		ReadyForFiftyFilePressure: false,
+		Blockers:                  []string{"corpus graph failed: write failed"},
+	})
+	for _, stage := range stages {
+		if stage.Name == "corpus_graph" && stage.Status != "failed" {
+			t.Fatalf("graph failure must not be downgraded to scale_partial: %+v", stages)
+		}
 	}
 }
 

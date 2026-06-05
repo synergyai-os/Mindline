@@ -186,12 +186,15 @@ func corpusPressureTraceStages(summary CorpusPressureSummary) []CorpusPressureTr
 		{Name: "corpus_graph", Status: "pass", Count: summary.GraphAtomCount},
 		{Name: "pressure_readiness", Status: "pass"},
 	}
-	if corpusPressureGraphFailed(summary) {
+	graphFailed := corpusPressureGraphFailed(summary)
+	if graphFailed {
 		stages[2].Status = "failed"
 	}
 	if summary.ScaleStatus == "scale_partial" {
 		stages[0].Status = "scale_partial"
-		stages[2].Status = "scale_partial"
+		if !graphFailed {
+			stages[2].Status = "scale_partial"
+		}
 		stages[len(stages)-1].Status = "scale_partial"
 	}
 	if !summary.ReadyForFiftyFilePressure {
