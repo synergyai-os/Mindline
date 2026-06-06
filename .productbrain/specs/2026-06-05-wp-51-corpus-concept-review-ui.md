@@ -6,6 +6,7 @@
 - INS-28: PR46 review UI must be reviewer-understandable, not machine-readable only.
 - INS-29: PR46 concept review needs source-level coherence gates.
 - INS-30: PR46 cross-source concepts require readable support across source kinds and no readable outliers.
+- INS-31: PR46 generic action term buckets are not reviewable concepts.
 - STD-18: reviewer-facing semantic previews need inline evidence excerpts, not only evidence IDs.
 - STD-19: loopback review write APIs need Host allowlist, token, same-origin, JSON, write locks, and read-only page endpoints.
 - INS-27: next mixed-source proof needs bounded concept review, not relation flood.
@@ -20,6 +21,8 @@ This PR46 iteration remediates the gap in DEC-401: bounded concept output existe
 This PR46 v3 iteration remediates the gap INS-29 exposed: a readable UI can still fail the human-review job when the concept candidate itself is a noisy atom-neighborhood cluster.
 
 This PR46 v4 iteration remediates the gap INS-30 exposed: a concept can still be labeled normal `cross_source` when all readable evidence comes from Gmail, Slack evidence is unread link-only material, and a readable Gmail promo/marketing outlier sits inside the relation neighborhood.
+
+This PR46 v5 iteration remediates the gap INS-31 exposed: a term bucket can still be labeled `needs_review` when the only shared signal is a generic generated action word like "prepare" and the readable evidence is about unrelated objects.
 
 ## Problem
 
@@ -44,6 +47,8 @@ Mindline produces a bounded corpus concept index above the existing corpus graph
 - incoherent or under-supported cross-source groups are blocked or downgraded with plain-English reason labels before the human reviewer is asked to judge them.
 - normal cross-source concepts must show readable, non-link support from at least two distinct source kinds, not just raw source-kind presence in the atom group;
 - readable source groups that do not share core terms with the coherent part of a relation-neighborhood concept must block or split the concept rather than being absorbed into a broad label.
+- term-based same-kind concepts must prove a meaningful shared object beyond generic action/title words before entering the normal review queue;
+- reviewer-facing evidence cards and copy packets show clean excerpts before generated summaries, and suppress noisy summaries when they only repeat or truncate the excerpt.
 
 ## Non-Outcome
 
@@ -71,6 +76,9 @@ WP51 does not claim perfect semantic clustering, held-out quality, autonomous ac
 18. The Modelo 190 packet `concept-ff25f0dca0821b55` must no longer present as a normal `cross_source` review concept while its readable support is Gmail-only and Slack evidence is unread LinkedIn URLs.
 19. A normal cross-source concept requires readable, non-link support from at least two source kinds. Link-only source kinds can remain visible as enrichment backlog but cannot make the concept cross-source.
 20. A readable outlier source, such as an unrelated fresh-funding-rounds promo email inside a Modelo 190 tax/admin cluster, must trigger a blocked/split-needed reason instead of being treated as part of the concept.
+21. The `prepare` packet `concept-2bd70948bf53dc33` must no longer present as a normal `needs_review` item when its three Gmail sources are about unrelated objects and only share generic generated action/title terms.
+22. Generic term buckets must be blocked or marked noisy with a plain-English reason when source-level overlap is too weak to identify one coherent concept.
+23. In the Light UI and copy packet, the first human-readable evidence line for each source must be the clean excerpt when one exists; generated summaries must not be the primary text when they are repetitive or truncated.
 
 ## Measurable Behavior Difference
 
@@ -81,6 +89,8 @@ After WP51: Randy can open the light UI and review a bounded concept index for t
 After PR46 v3: Randy should not have to reject obvious junk clusters by hand. If Mindline only has a newsletter notification, a bare LinkedIn URL, and duplicate atoms from one meeting-summary email, the UI should say the concept is blocked or under-supported, explain why, and show the source-level evidence that led to that judgment.
 
 After PR46 v4: Randy should not have to reject a "cross-source finance" cluster where the only readable concept is Gmail tax/admin, Slack is unread links, and an unrelated Gmail promo digest got dragged in. The UI should mark that item blocked or split-needed and explain that it lacks readable cross-source-kind support and contains readable outlier evidence.
+
+After PR46 v5: Randy should not have to inspect three unrelated Gmail snippets just because they share "prepare" or "checklist." The UI should either block the group as generic/noisy or show the clean evidence first so the reviewer can immediately see why it is not one concept.
 
 ## Guardrails
 
@@ -94,6 +104,8 @@ After PR46 v4: Randy should not have to reject a "cross-source finance" cluster 
 - Link-only sources are provenance, not semantic understanding, until enriched; they must be flagged and excluded from coherence support.
 - Duplicate atoms from one source must not inflate independent source support.
 - Readable outlier sources that do not share core concept terms must block/split relation-neighborhood concepts rather than being hidden inside a broad topic label.
+- Generic action/title terms such as "prepare" and "checklist" are weak grouping signals. They cannot by themselves authorize normal same-kind review when the readable source cards do not share a meaningful object.
+- Evidence display must optimize for human judgment: clean excerpt first, generated summary secondary, and no repeated/truncated summary text as the main evidence.
 - The UI must remain loopback-only and preserve the existing review-server host/token/same-origin/JSON/write-lock safety discipline for persisted review decisions.
 - Do not commit private runtime artifacts.
 
@@ -162,3 +174,21 @@ Second v4 target: send all link-only concepts to blocked.
 Rejected as too blunt. Link-only evidence should block cross-source support when it is the only evidence for a source kind, but it can still remain visible as provenance/enrichment backlog around an otherwise reviewable concept.
 
 Sharpened v4 target: normal cross-source requires readable non-link support from at least two source kinds, and readable source outliers trigger blocked/split-needed status. This raises the bar from "source-level sanity" to "reviewable cross-source semantics."
+
+## PR46 v5 Iteration Diagnosis
+
+Randy's `action candidate concept: prepare` packet proved v4 was still too permissive for same-kind term buckets. The group had three readable Gmail sources, but they were about unrelated objects: uninterrupted founder work time, whether a June invoice should wait, and sending proof of payment. The shared title "Prepare the checklist" and shared term "prepare" came from generic generated action text, not one coherent user concept.
+
+The UI also made the failure harder to judge by showing repeated/truncated generated summaries before the clean excerpt. Even when the evidence contained a readable sentence, the reviewer had to parse through duplicated text first.
+
+## PR46 v5 Re-Challenge And Reconciliation
+
+First v5 target: only reorder the UI so excerpts appear first.
+
+Rejected as too weak. Excerpt-first rendering makes the packet easier to read, but it still asks Randy to review a group the system can already identify as generic/noisy.
+
+Second v5 target: block every same-kind term bucket.
+
+Rejected as too blunt. Some same-kind repeated concepts can be useful, especially when multiple source cards share a meaningful object, domain term, or specific noun phrase.
+
+Sharpened v5 target: block or mark noisy term buckets whose only shared terms are generic action/title words and whose readable source cards do not share a meaningful object. Keep source cards visible for traceability, but make the review status honest and display clean excerpts before generated summaries.

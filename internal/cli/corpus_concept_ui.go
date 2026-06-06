@@ -406,12 +406,26 @@ function reasonLabel(code) {
     "insufficient_readable_source_kind_support": "Readable evidence comes from only one source kind, so this is not a supported cross-source concept.",
     "weak_cross_source_coherence": "The readable sources do not share enough meaning to support one cross-source concept.",
     "readable_source_outlier": "At least one readable source does not match the core concept and should be split or discarded.",
+    "generic_term_bucket_requires_cleanup": "This group only shares a generic action or title word, not one coherent concept.",
     "single_source_concept": "Only one source supports this concept.",
     "single_source_kind_concept": "Only one source kind supports this concept.",
     "missing_evidence_reference": "One or more atoms are missing complete trace evidence.",
     "blocked_atom": "One or more atoms were already blocked upstream."
   };
   return labels[code] || code.replaceAll("_", " ");
+}
+
+function normalizedEvidenceText(value) {
+  return String(value || "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function meaningfulSummary(item) {
+  const summary = normalizedEvidenceText(item.summary);
+  const excerpt = normalizedEvidenceText(item.excerpt);
+  if (!summary || !excerpt) return item.summary || "";
+  const excerptHead = excerpt.slice(0, Math.min(90, excerpt.length));
+  if (summary === excerpt || summary.includes(excerptHead) || excerpt.includes(summary)) return "";
+  return item.summary || "";
 }
 
 function metric(label, value) {
@@ -515,10 +529,11 @@ function renderDetail(concept) {
   const sourceEvidence = (concept.source_evidence || []).map((source) => {
     const flags = (source.flags || []).map((flag) => '<span class="tag">' + esc(reasonLabel(flag)) + '</span>').join("");
     const previews = (source.evidence || []).map((item) => {
+      const summary = meaningfulSummary(item);
       return '<div>' +
         '<div class="title">' + esc(item.title || "Untitled evidence") + '</div>' +
-        '<p class="muted">' + esc(item.summary) + '</p>' +
         '<p class="excerpt">' + esc(item.excerpt || "No safe excerpt available.") + '</p>' +
+        (summary ? '<p class="muted">' + esc(summary) + '</p>' : '') +
         '<div class="trace">' + esc(item.evidence_ref_id) + ' | lines ' + esc(item.line_start) + '-' + esc(item.line_end) + ' | ' + esc(item.content_hash) + '</div>' +
         '</div>';
     }).join("");
@@ -528,11 +543,12 @@ function renderDetail(concept) {
       '</article>';
   }).join("") || '<p class="muted">No source evidence cards.</p>';
   const evidence = (concept.representative_evidence || []).map((item) => {
+    const summary = meaningfulSummary(item);
     return '<article class="evidence-card">' +
       '<div class="tags"><span class="tag">' + esc(item.source_kind) + '</span><span class="tag">' + esc(item.source_ref) + '</span><span class="tag">lines ' + esc(item.line_start) + '-' + esc(item.line_end) + '</span></div>' +
       '<div class="title">' + esc(item.title || "Untitled evidence") + '</div>' +
-      '<p class="muted">' + esc(item.summary) + '</p>' +
       '<p class="excerpt">' + esc(item.excerpt || "No safe excerpt available.") + '</p>' +
+      (summary ? '<p class="muted">' + esc(summary) + '</p>' : '') +
       '<div class="trace">' + esc(item.evidence_ref_id) + ' | ' + esc(item.content_hash) + '</div>' +
       '</article>';
   }).join("") || '<p class="muted">No representative evidence previews.</p>';
@@ -604,25 +620,33 @@ function conceptCopyText(concept) {
       "Flags: " + ((source.flags || []).map((flag) => reasonLabel(flag) + " [" + flag + "]").join("; ") || "none")
     );
     (source.evidence || []).forEach((item, itemIndex) => {
+      const summary = meaningfulSummary(item);
       lines.push(
         "  " + String(itemIndex + 1) + ") lines " + item.line_start + "-" + item.line_end,
         "     Title: " + (item.title || ""),
-        "     Summary: " + (item.summary || ""),
-        "     Excerpt: " + (item.excerpt || ""),
+        "     Excerpt: " + (item.excerpt || "")
+      );
+      if (summary) {
+        lines.push("     Summary: " + summary);
+      }
+      lines.push(
         "     Trace: " + (item.evidence_ref_id || "") + " | " + (item.content_hash || "")
       );
     });
   });
   lines.push("", "Atom traces:");
   (concept.representative_evidence || []).forEach((item, index) => {
+    const summary = meaningfulSummary(item);
     lines.push(
       "",
       String(index + 1) + ". " + (item.source_kind || "source") + " " + (item.source_ref || "") + " lines " + item.line_start + "-" + item.line_end,
       "Title: " + (item.title || ""),
-      "Summary: " + (item.summary || ""),
-      "Excerpt: " + (item.excerpt || ""),
-      "Trace: " + (item.evidence_ref_id || "") + " | " + (item.content_hash || "")
+      "Excerpt: " + (item.excerpt || "")
     );
+    if (summary) {
+      lines.push("Summary: " + summary);
+    }
+    lines.push("Trace: " + (item.evidence_ref_id || "") + " | " + (item.content_hash || ""));
   });
   return lines.join("\n");
 }

@@ -953,6 +953,10 @@ func corpusConceptUsefulTerm(term string) bool {
 	return true
 }
 
+func corpusConceptWeakGroupingTerm(term string) bool {
+	return corpusConceptWeakGroupingTerms[strings.ToLower(strings.TrimSpace(term))]
+}
+
 var corpusConceptStopWords = map[string]bool{
 	"about": true, "after": true, "also": true, "and": true, "candidate": true, "changed": true,
 	"confirmation": true, "correct": true, "excerpt": true, "from": true, "gmail": true, "have": true, "https": true,
@@ -960,6 +964,14 @@ var corpusConceptStopWords = map[string]bool{
 	"post": true, "posts": true, "private": true, "review": true, "reviewed": true, "runtime": true,
 	"slack": true, "snippet": true, "snippe": true, "source": true, "that": true, "this": true,
 	"timestamp": true, "topic": true, "updates": true, "what": true, "with": true, "your": true,
+}
+
+var corpusConceptWeakGroupingTerms = map[string]bool{
+	"action": true, "asking": true, "checklist": true, "confirm": true, "create": true,
+	"draft": true, "follow": true, "message": true, "needed": true, "prepare": true,
+	"prepared": true, "preparing": true, "reply": true, "request": true, "send": true,
+	"should": true, "task": true, "tasks": true, "update": true, "updated": true,
+	"whether": true,
 }
 
 func corpusConceptTitle(key string, atoms []CorpusGraphAtom) string {
@@ -1143,6 +1155,9 @@ func applyCorpusConceptSourceQualityGates(concept *CorpusConcept, key string) {
 	if strings.HasPrefix(key, "relation\x00cross_source\x00") {
 		applyCorpusConceptReadableOutlierGate(concept, readableSources)
 	}
+	if strings.HasPrefix(key, "term\x00") {
+		applyCorpusConceptGenericTermGate(concept, readableSources)
+	}
 	if concept.SourceCount > 1 && len(readableSources) < 2 {
 		concept.Section = CorpusConceptSectionBlocked
 		concept.ReviewStatus = ReviewStatusBlocked
@@ -1159,6 +1174,24 @@ func applyCorpusConceptSourceQualityGates(concept *CorpusConcept, key string) {
 		concept.ReviewStatus = ReviewStatusBlocked
 		concept.ReasonCodes = appendUniqueString(concept.ReasonCodes, "weak_cross_source_coherence")
 	}
+}
+
+func applyCorpusConceptGenericTermGate(concept *CorpusConcept, readableSources []CorpusConceptSourceEvidence) {
+	if len(readableSources) < 2 || corpusConceptReadableSourceKindCount(readableSources) > 1 {
+		return
+	}
+	coreTerms := corpusConceptCoreTerms(readableSources)
+	if len(coreTerms) == 0 {
+		return
+	}
+	for term := range coreTerms {
+		if !corpusConceptWeakGroupingTerm(term) {
+			return
+		}
+	}
+	concept.Section = CorpusConceptSectionBlocked
+	concept.ReviewStatus = ReviewStatusBlocked
+	concept.ReasonCodes = appendUniqueString(concept.ReasonCodes, "generic_term_bucket_requires_cleanup")
 }
 
 func applyCorpusConceptReadableOutlierGate(concept *CorpusConcept, readableSources []CorpusConceptSourceEvidence) {

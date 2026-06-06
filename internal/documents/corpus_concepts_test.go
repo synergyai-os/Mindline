@@ -214,6 +214,50 @@ func TestBuildCorpusConceptIndexBlocksCrossSourceWhenReadableSupportIsOneKindAnd
 	}
 }
 
+func TestBuildCorpusConceptIndexBlocksGenericSameKindActionTermBucket(t *testing.T) {
+	pressure := CorpusPressureSummary{
+		SchemaVersion:            CorpusPressureSummarySchemaVersion,
+		CorpusID:                 "corpus-pr46-prepare-concept",
+		SourceCount:              3,
+		ProcessedSourceCount:     3,
+		ScaleStatus:              "scale_complete",
+		CorpusFingerprint:        "corpus-fp",
+		CommandConfigFingerprint: "config-fp",
+		ReplayFingerprint:        "pressure-fp",
+	}
+	graph := CorpusGraphSummary{
+		SchemaVersion:     CorpusGraphSummarySchemaVersion,
+		CorpusID:          pressure.CorpusID,
+		SourceCount:       3,
+		AtomCount:         3,
+		RelationCount:     3,
+		ReplayFingerprint: "graph-fp",
+	}
+	atoms := []CorpusGraphAtom{
+		conceptTestActionAtom("founder-time", "gmail-founder-time", "Prepare the checklist", "Founder operations note about uninterrupted time to solve business problems."),
+		conceptTestActionAtom("invoice-wait", "gmail-invoice-wait", "Prepare the checklist", "Reply asking whether June invoice should wait for updated amount."),
+		conceptTestActionAtom("payment-proof", "gmail-payment-proof", "Prepare the checklist", "Request to send proof of payment so system can be updated."),
+	}
+
+	build := buildCorpusConceptIndex(pressure, graph, atoms, nil, DefaultCorpusConceptsMax)
+	var prepareConcept *CorpusConcept
+	for i := range build.Index.Concepts {
+		if build.Index.Concepts[i].ConceptKey == "term\x00action_candidate\x00prepare" {
+			prepareConcept = &build.Index.Concepts[i]
+			break
+		}
+	}
+	if prepareConcept == nil {
+		t.Fatalf("expected prepare term concept: %+v", build.Index.Concepts)
+	}
+	if prepareConcept.Section != CorpusConceptSectionBlocked || prepareConcept.ReviewStatus != ReviewStatusBlocked {
+		t.Fatalf("expected generic prepare concept to be blocked, got section=%s status=%s reasons=%v", prepareConcept.Section, prepareConcept.ReviewStatus, prepareConcept.ReasonCodes)
+	}
+	if !containsCorpusConceptString(prepareConcept.ReasonCodes, "generic_term_bucket_requires_cleanup") {
+		t.Fatalf("expected generic term reason in %+v", prepareConcept.ReasonCodes)
+	}
+}
+
 func TestRecordCorpusConceptReviewPersistsProgress(t *testing.T) {
 	root := t.TempDir()
 	pressure := CorpusPressureSummary{
@@ -326,6 +370,14 @@ func conceptTestKindAtom(id, sourceID, sourceKind, title string) CorpusGraphAtom
 		LineEnd:          2,
 		ContentHash:      "hash-" + id,
 	}
+}
+
+func conceptTestActionAtom(id, sourceID, title, excerpt string) CorpusGraphAtom {
+	atom := conceptTestKindAtom(id, sourceID, "gmail", title)
+	atom.CandidateKind = SemanticCandidateKindAction
+	atom.Summary = excerpt
+	atom.Excerpt = excerpt
+	return atom
 }
 
 func conceptTestRelation(id, corpusID, fromAtomID, toAtomID string) CorpusGraphRelation {
