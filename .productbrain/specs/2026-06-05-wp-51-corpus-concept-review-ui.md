@@ -5,6 +5,7 @@
 - DEC-401: WP51 delivery proved a bounded concept index and Light UI on the same 25 Gmail + 25 Slack corpus, but did not prove the review surface was usable.
 - INS-28: PR46 review UI must be reviewer-understandable, not machine-readable only.
 - INS-29: PR46 concept review needs source-level coherence gates.
+- INS-30: PR46 cross-source concepts require readable support across source kinds and no readable outliers.
 - STD-18: reviewer-facing semantic previews need inline evidence excerpts, not only evidence IDs.
 - STD-19: loopback review write APIs need Host allowlist, token, same-origin, JSON, write locks, and read-only page endpoints.
 - INS-27: next mixed-source proof needs bounded concept review, not relation flood.
@@ -17,6 +18,8 @@
 This PR46 iteration remediates the gap in DEC-401: bounded concept output existed, but the first review UI did not satisfy INS-28's human-reviewable standard.
 
 This PR46 v3 iteration remediates the gap INS-29 exposed: a readable UI can still fail the human-review job when the concept candidate itself is a noisy atom-neighborhood cluster.
+
+This PR46 v4 iteration remediates the gap INS-30 exposed: a concept can still be labeled normal `cross_source` when all readable evidence comes from Gmail, Slack evidence is unread link-only material, and a readable Gmail promo/marketing outlier sits inside the relation neighborhood.
 
 ## Problem
 
@@ -39,6 +42,8 @@ Mindline produces a bounded corpus concept index above the existing corpus graph
 - link-only source evidence is excluded from readable semantic support and flagged as needing enrichment instead of being treated as understood content;
 - relation-neighborhood concepts must show readable shared meaning across at least two distinct source-level groups before they can remain normal cross-source review concepts;
 - incoherent or under-supported cross-source groups are blocked or downgraded with plain-English reason labels before the human reviewer is asked to judge them.
+- normal cross-source concepts must show readable, non-link support from at least two distinct source kinds, not just raw source-kind presence in the atom group;
+- readable source groups that do not share core terms with the coherent part of a relation-neighborhood concept must block or split the concept rather than being absorbed into a broad label.
 
 ## Non-Outcome
 
@@ -63,6 +68,9 @@ WP51 does not claim perfect semantic clustering, held-out quality, autonomous ac
 15. Link-only evidence that has not been enriched is labeled as link-only and does not count toward cross-source semantic coherence.
 16. Multiple atoms from the same source are counted as one source-level contribution for support, with duplicate-source atom support called out explicitly.
 17. Reason codes shown to Randy have plain-English explanations; raw machine codes may remain as trace metadata but cannot be the only explanation.
+18. The Modelo 190 packet `concept-ff25f0dca0821b55` must no longer present as a normal `cross_source` review concept while its readable support is Gmail-only and Slack evidence is unread LinkedIn URLs.
+19. A normal cross-source concept requires readable, non-link support from at least two source kinds. Link-only source kinds can remain visible as enrichment backlog but cannot make the concept cross-source.
+20. A readable outlier source, such as an unrelated fresh-funding-rounds promo email inside a Modelo 190 tax/admin cluster, must trigger a blocked/split-needed reason instead of being treated as part of the concept.
 
 ## Measurable Behavior Difference
 
@@ -72,6 +80,8 @@ After WP51: Randy can open the light UI and review a bounded concept index for t
 
 After PR46 v3: Randy should not have to reject obvious junk clusters by hand. If Mindline only has a newsletter notification, a bare LinkedIn URL, and duplicate atoms from one meeting-summary email, the UI should say the concept is blocked or under-supported, explain why, and show the source-level evidence that led to that judgment.
 
+After PR46 v4: Randy should not have to reject a "cross-source finance" cluster where the only readable concept is Gmail tax/admin, Slack is unread links, and an unrelated Gmail promo digest got dragged in. The UI should mark that item blocked or split-needed and explain that it lacks readable cross-source-kind support and contains readable outlier evidence.
+
 ## Guardrails
 
 - Concept grouping must be source-agnostic and destination-neutral.
@@ -80,8 +90,10 @@ After PR46 v3: Randy should not have to reject obvious junk clusters by hand. If
 - Concept output is review-only and write-ineligible.
 - Single-source or weak concepts must be marked as needs review rather than overclaimed as cross-source knowledge.
 - Weak cross-source relation neighborhoods must be blocked or downgraded when readable source-level evidence does not share meaning across distinct source groups.
+- Normal cross-source status requires readable support across distinct source kinds; raw source-kind coverage is trace metadata, not semantic support.
 - Link-only sources are provenance, not semantic understanding, until enriched; they must be flagged and excluded from coherence support.
 - Duplicate atoms from one source must not inflate independent source support.
+- Readable outlier sources that do not share core concept terms must block/split relation-neighborhood concepts rather than being hidden inside a broad topic label.
 - The UI must remain loopback-only and preserve the existing review-server host/token/same-origin/JSON/write-lock safety discipline for persisted review decisions.
 - Do not commit private runtime artifacts.
 
@@ -132,3 +144,21 @@ Second v3 target: add a "Noisy" default decision for suspicious concepts.
 Rejected as too weak. That records the failure but does not improve the methodology. The system already has enough signals to see link-only evidence, duplicate-source support, and lack of shared readable source-level meaning.
 
 Sharpened v3 target: add source-level coherence gates before presentation. Concepts must be built and displayed around distinct source contributions. Link-only items become enrichment blockers, duplicate atoms remain trace detail rather than independent support, and relation-neighborhood clusters without shared readable meaning are blocked or downgraded with plain-English reasons. This raises the bar from "a human can read the candidate" to "the system only asks the human to review candidates that passed basic source-level sanity."
+
+## PR46 v4 Iteration Diagnosis
+
+Randy's Modelo 190 packet proved v3 was still too permissive. The concept was left as normal `cross_source needs_review` because two Gmail tax/admin sources shared Modelo terms, while both Slack sources were unread LinkedIn URLs and a third readable Gmail source was an unrelated fresh-funding-rounds/AI-offers promo digest. The UI exposed the issue, but the concept methodology still counted raw Slack presence as cross-source coverage and tolerated a readable outlier.
+
+That fails the review-service standard. A concept is not cross-source just because multiple source kinds are present; it is cross-source only when multiple source kinds provide readable semantic support for the same concept.
+
+## PR46 v4 Re-Challenge And Reconciliation
+
+First v4 target: keep the item cross-source but rely on the reviewer to choose "Split" or "Need context."
+
+Rejected as too weak. That still asks Randy to clean up a failure the system can detect: Slack is unread links, and the promo digest shares no tax/admin terms.
+
+Second v4 target: send all link-only concepts to blocked.
+
+Rejected as too blunt. Link-only evidence should block cross-source support when it is the only evidence for a source kind, but it can still remain visible as provenance/enrichment backlog around an otherwise reviewable concept.
+
+Sharpened v4 target: normal cross-source requires readable non-link support from at least two source kinds, and readable source outliers trigger blocked/split-needed status. This raises the bar from "source-level sanity" to "reviewable cross-source semantics."

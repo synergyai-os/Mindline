@@ -1130,6 +1130,7 @@ func corpusConceptSourceEvidence(atoms []CorpusGraphAtom) []CorpusConceptSourceE
 }
 
 func applyCorpusConceptSourceQualityGates(concept *CorpusConcept, key string) {
+	claimsCrossSource := concept.Section == CorpusConceptSectionCrossSource
 	readableSources := []CorpusConceptSourceEvidence{}
 	for _, source := range concept.SourceEvidence {
 		for _, flag := range source.Flags {
@@ -1139,17 +1140,89 @@ func applyCorpusConceptSourceQualityGates(concept *CorpusConcept, key string) {
 			readableSources = append(readableSources, source)
 		}
 	}
+	if strings.HasPrefix(key, "relation\x00cross_source\x00") {
+		applyCorpusConceptReadableOutlierGate(concept, readableSources)
+	}
 	if concept.SourceCount > 1 && len(readableSources) < 2 {
 		concept.Section = CorpusConceptSectionBlocked
 		concept.ReviewStatus = ReviewStatusBlocked
 		concept.ReasonCodes = appendUniqueString(concept.ReasonCodes, "insufficient_reviewable_source_support")
 		return
 	}
+	if claimsCrossSource && corpusConceptReadableSourceKindCount(readableSources) < 2 {
+		concept.Section = CorpusConceptSectionBlocked
+		concept.ReviewStatus = ReviewStatusBlocked
+		concept.ReasonCodes = appendUniqueString(concept.ReasonCodes, "insufficient_readable_source_kind_support")
+	}
 	if strings.HasPrefix(key, "relation\x00cross_source\x00") && !corpusConceptHasSourceLevelOverlap(readableSources) {
 		concept.Section = CorpusConceptSectionBlocked
 		concept.ReviewStatus = ReviewStatusBlocked
 		concept.ReasonCodes = appendUniqueString(concept.ReasonCodes, "weak_cross_source_coherence")
 	}
+}
+
+func applyCorpusConceptReadableOutlierGate(concept *CorpusConcept, readableSources []CorpusConceptSourceEvidence) {
+	coreTerms := corpusConceptCoreTerms(readableSources)
+	if len(coreTerms) == 0 {
+		return
+	}
+	outlierFound := false
+	for index := range concept.SourceEvidence {
+		source := &concept.SourceEvidence[index]
+		if source.ReviewableAtomCount == 0 || source.LinkOnly {
+			continue
+		}
+		if corpusConceptSourceSharesCoreTerm(*source, coreTerms) {
+			continue
+		}
+		source.Flags = appendUniqueString(source.Flags, "readable_source_outlier")
+		outlierFound = true
+	}
+	if outlierFound {
+		concept.Section = CorpusConceptSectionBlocked
+		concept.ReviewStatus = ReviewStatusBlocked
+		concept.ReasonCodes = appendUniqueString(concept.ReasonCodes, "readable_source_outlier")
+	}
+}
+
+func corpusConceptReadableSourceKindCount(sources []CorpusConceptSourceEvidence) int {
+	kinds := map[string]bool{}
+	for _, source := range sources {
+		if source.ReviewableAtomCount > 0 && !source.LinkOnly {
+			kinds[source.SourceKind] = true
+		}
+	}
+	return len(kinds)
+}
+
+func corpusConceptCoreTerms(sources []CorpusConceptSourceEvidence) map[string]bool {
+	termSourceCount := map[string]int{}
+	for _, source := range sources {
+		seen := map[string]bool{}
+		for _, term := range source.SharedTerms {
+			if seen[term] {
+				continue
+			}
+			seen[term] = true
+			termSourceCount[term]++
+		}
+	}
+	core := map[string]bool{}
+	for term, count := range termSourceCount {
+		if count >= 2 {
+			core[term] = true
+		}
+	}
+	return core
+}
+
+func corpusConceptSourceSharesCoreTerm(source CorpusConceptSourceEvidence, coreTerms map[string]bool) bool {
+	for _, term := range source.SharedTerms {
+		if coreTerms[term] {
+			return true
+		}
+	}
+	return false
 }
 
 func corpusConceptHasSourceLevelOverlap(sources []CorpusConceptSourceEvidence) bool {

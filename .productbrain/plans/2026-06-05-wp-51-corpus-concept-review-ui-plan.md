@@ -6,12 +6,15 @@ Add a deterministic corpus concept index above corpus pressure/graph output, mak
 
 PR46 v3 keeps the same PR and dataset, but raises the methodology standard again: a concept is not reviewable merely because its atom snippets are readable. The builder must first prove source-level reviewability, link-only handling, duplicate-source accounting, and readable cross-source coherence.
 
+PR46 v4 raises the cross-source standard again: raw source-kind coverage is not semantic support. A normal cross-source concept requires readable, non-link evidence from at least two source kinds, and readable source groups that do not share core cluster terms must block/split the relation neighborhood.
+
 ## Authority Anchors
 
 - DEC-401: WP51 bounded concept index proof exists, but the first Light UI did not prove review usability.
 - DEC-403: PR46 v2 delivered a human-reviewable UI iteration whose output exposed the deeper concept-quality failure now addressed by v3.
 - INS-28: PR46 review UI must be reviewer-understandable, not machine-readable only.
 - INS-29: PR46 concept review needs source-level coherence gates.
+- INS-30: PR46 cross-source concepts require readable support across source kinds and no readable outliers.
 - STD-18: inline evidence excerpts are required for reviewer-facing semantic previews.
 - STD-19: loopback review writes require Host allowlist, token, same-origin, JSON, write locks, and read-only page endpoints.
 
@@ -29,6 +32,8 @@ This plan is a PR46 remediation of DEC-401's proof gap, not a new autonomy, dest
    - flag link-only evidence and exclude it from readable semantic support until enriched;
    - require readable term overlap across at least two distinct source-level groups before relation-neighborhood concepts remain normal cross-source review items;
    - block or downgrade incoherent relation-neighborhood clusters with reason codes for weak cross-source coherence, insufficient readable source support, duplicate-source atom support, and link-only evidence requiring enrichment.
+   - require readable source-kind support across at least two source kinds before a relation-neighborhood concept can remain normal `cross_source`;
+   - detect readable outlier source groups that share no core terms with the coherent source cluster and block/split the concept with a plain reason.
 2. Add writer:
    - `corpus-concepts/concept-summary.json`;
    - `corpus-concepts/concept-index.json`;
@@ -57,7 +62,10 @@ This plan is a PR46 remediation of DEC-401's proof gap, not a new autonomy, dest
    - review records persist and read back without manual JSON editing;
    - weak/single-source groups stay needs-review or local, not overclaimed;
    - the copied PR46 bad concept pattern is blocked/downgraded rather than emitted as a normal cross-source review item;
+   - the Modelo 190 packet is blocked/downgraded rather than emitted as a normal cross-source review item when Slack support is link-only and the funding-rounds email is an outlier;
    - link-only evidence does not count as readable support;
+   - link-only source kinds do not count toward readable cross-source-kind support;
+   - readable source outliers are flagged as split-needed/blocking evidence;
    - duplicate atoms from the same source collapse into one source-level contribution;
    - writer rejects stale unexpected files and produces expected paths;
    - CLI builds concept artifacts;
@@ -81,6 +89,7 @@ This plan is a PR46 remediation of DEC-401's proof gap, not a new autonomy, dest
 - Light UI serves the final concept packet over loopback and renders non-empty concept state with non-generic concept titles, grouping rationale, and representative safe evidence previews.
 - Light UI persists at least one reviewer decision through the token-protected POST path, and `/api/state` reflects review progress without mutating read paths.
 - The exact copied failure mode is judged by the shipped code after implementation: newsletter notification + link-only LinkedIn Slack save + duplicate Gmail meeting-summary atoms must be marked blocked or under-supported, with source-level evidence cards and plain-English reasons.
+- The exact Modelo 190 failure mode is judged by the shipped code after implementation: Gmail tax/admin sources + Gmail promo/funding digest + unread Slack LinkedIn URLs must not remain a normal `cross_source` item.
 - Source-level evidence cards are present in JSON, UI state, and copied packets for review.
 - Raw reason codes are accompanied by plain-English reason labels in the UI/copy packet.
 - Product Brain captures spec/plan sign-off and delivery proof.
@@ -93,6 +102,7 @@ This plan is a PR46 remediation of DEC-401's proof gap, not a new autonomy, dest
 - Persisted reviewer decisions can become misleading if concept labels remain generic. The mitigation is to block acceptance on a non-generic display model plus representative evidence, not just buttons.
 - Source-level coherence gates can reduce the apparent cross-source concept count. That is acceptable; a lower number of reviewable concepts is better than asking Randy to judge obvious junk.
 - Deterministic term-overlap coherence is still not semantic truth. The mitigation is to use it only as a fail-closed sanity gate and avoid any held-out quality, destination-write, or no-human claim.
+- Readable source-kind and outlier gates may block nearly all current relation-neighborhood concepts. That is acceptable for this PR: honest blocked review work is better than false cross-source confidence.
 
 ## Reviewer Sign-Off Targets
 

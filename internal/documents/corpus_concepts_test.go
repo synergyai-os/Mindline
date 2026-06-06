@@ -148,6 +148,72 @@ func TestBuildCorpusConceptIndexBlocksIncoherentLinkOnlyRelationNeighborhood(t *
 	}
 }
 
+func TestBuildCorpusConceptIndexBlocksCrossSourceWhenReadableSupportIsOneKindAndOutlier(t *testing.T) {
+	pressure := CorpusPressureSummary{
+		SchemaVersion:            CorpusPressureSummarySchemaVersion,
+		CorpusID:                 "corpus-pr46-modelo-concept",
+		SourceCount:              5,
+		ProcessedSourceCount:     5,
+		ScaleStatus:              "scale_complete",
+		CorpusFingerprint:        "corpus-fp",
+		CommandConfigFingerprint: "config-fp",
+		ReplayFingerprint:        "pressure-fp",
+	}
+	graph := CorpusGraphSummary{
+		SchemaVersion:     CorpusGraphSummarySchemaVersion,
+		CorpusID:          pressure.CorpusID,
+		SourceCount:       5,
+		AtomCount:         5,
+		RelationCount:     5,
+		ReplayFingerprint: "graph-fp",
+	}
+	atoms := []CorpusGraphAtom{
+		conceptTestKindAtom("modelo-request", "gmail-modelo-request", "gmail", "Request for Modelo 190 payslips and Modelo 111s"),
+		conceptTestKindAtom("modelo-confirm", "gmail-modelo-confirm", "gmail", "Confirmation that Modelo 190 was reviewed and correct"),
+		conceptTestKindAtom("funding-digest", "gmail-funding-digest", "gmail", "Digest about fresh funding rounds and AI offers"),
+		conceptTestKindAtom("slack-link-motion", "slack-motion-link", "slack", "https://www.linkedin.com/posts/adish-jain_today-were-launching-motion-the-frontier-ugcPost"),
+		conceptTestKindAtom("slack-link-perspective", "slack-perspective-link", "slack", "https://www.linkedin.com/posts/helensandersonhsa_what-is-your-perspective-on-the-bringing-ugcPost"),
+	}
+	relations := []CorpusGraphRelation{
+		conceptTestRelation("rel-modelo-link", pressure.CorpusID, "modelo-request", "slack-link-motion"),
+		conceptTestRelation("rel-link-confirm", pressure.CorpusID, "slack-link-motion", "modelo-confirm"),
+		conceptTestRelation("rel-link-funding", pressure.CorpusID, "slack-link-motion", "funding-digest"),
+		conceptTestRelation("rel-funding-link", pressure.CorpusID, "funding-digest", "slack-link-perspective"),
+	}
+
+	build := buildCorpusConceptIndex(pressure, graph, atoms, relations, DefaultCorpusConceptsMax)
+	var relationConcept *CorpusConcept
+	for i := range build.Index.Concepts {
+		if strings.HasPrefix(build.Index.Concepts[i].ConceptKey, "relation\x00cross_source\x00") {
+			relationConcept = &build.Index.Concepts[i]
+			break
+		}
+	}
+	if relationConcept == nil {
+		t.Fatalf("expected relation concept: %+v", build.Index.Concepts)
+	}
+	if relationConcept.Section != CorpusConceptSectionBlocked || relationConcept.ReviewStatus != ReviewStatusBlocked {
+		t.Fatalf("expected Modelo relation concept to be blocked, got section=%s status=%s reasons=%v", relationConcept.Section, relationConcept.ReviewStatus, relationConcept.ReasonCodes)
+	}
+	for _, want := range []string{"insufficient_readable_source_kind_support", "readable_source_outlier", "link_only_evidence_requires_enrichment"} {
+		if !containsCorpusConceptString(relationConcept.ReasonCodes, want) {
+			t.Fatalf("expected reason %s in %+v", want, relationConcept.ReasonCodes)
+		}
+	}
+	outlierFound := false
+	for _, source := range relationConcept.SourceEvidence {
+		if source.SourceID == "gmail-funding-digest" {
+			outlierFound = containsCorpusConceptString(source.Flags, "readable_source_outlier")
+		}
+		if strings.HasPrefix(source.SourceID, "slack-") && source.ReviewableAtomCount != 0 {
+			t.Fatalf("expected Slack links to provide no readable support: %+v", source)
+		}
+	}
+	if !outlierFound {
+		t.Fatalf("expected funding digest source to be marked as readable outlier: %+v", relationConcept.SourceEvidence)
+	}
+}
+
 func TestRecordCorpusConceptReviewPersistsProgress(t *testing.T) {
 	root := t.TempDir()
 	pressure := CorpusPressureSummary{
