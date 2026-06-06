@@ -42,6 +42,26 @@ func TestCorpusConceptUIServesReviewStateAndRecordsDecision(t *testing.T) {
 			Summary:       "Readable evidence summary",
 			Excerpt:       "Readable private-local excerpt for review.",
 		}},
+		SourceEvidence: []documents.CorpusConceptSourceEvidence{{
+			SourceID:            "gmail-source-ui",
+			SourceKind:          "gmail",
+			SourceRef:           "gmail:source-ui",
+			AtomCount:           1,
+			ReviewableAtomCount: 1,
+			Evidence: []documents.CorpusConceptEvidencePreview{{
+				EvidenceRefID: "evref-ui",
+				AtomID:        "atom-ui",
+				SourceID:      "gmail-source-ui",
+				SourceKind:    "gmail",
+				SourceRef:     "gmail:source-ui",
+				LineStart:     1,
+				LineEnd:       2,
+				ContentHash:   "hash-ui",
+				Title:         "Readable evidence title",
+				Summary:       "Readable evidence summary",
+				Excerpt:       "Readable private-local excerpt for review.",
+			}},
+		}},
 	}
 	summary := documents.CorpusConceptSummary{
 		SchemaVersion:           documents.CorpusConceptsSchemaVersion,
@@ -64,6 +84,7 @@ func TestCorpusConceptUIServesReviewStateAndRecordsDecision(t *testing.T) {
 			SourceKindCoverage:     concept.SourceKindCoverage,
 			ReviewStatus:           concept.ReviewStatus,
 			RepresentativeEvidence: len(concept.RepresentativeEvidence),
+			SourceEvidence:         len(concept.SourceEvidence),
 			ConceptPath:            filepath.ToSlash(filepath.Join(documents.CorpusConceptsDirName, documents.CorpusConceptPath(concept.ConceptID))),
 		}},
 	}
@@ -87,7 +108,7 @@ func TestCorpusConceptUIServesReviewStateAndRecordsDecision(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `name="mindline-review-token" content="test-token"`) {
 		t.Fatalf("expected review token meta tag")
 	}
-	if !strings.Contains(rec.Body.String(), "Copy concept") || !strings.Contains(rec.Body.String(), "Mindline concept review packet") {
+	if !strings.Contains(rec.Body.String(), "Copy concept") || !strings.Contains(rec.Body.String(), "Mindline concept review packet") || !strings.Contains(rec.Body.String(), "Source Evidence") {
 		t.Fatalf("expected concept copy affordance in UI")
 	}
 
@@ -97,6 +118,9 @@ func TestCorpusConceptUIServesReviewStateAndRecordsDecision(t *testing.T) {
 	}
 	if got := state.Index.Concepts[0].RepresentativeEvidence[0].Excerpt; got == "" {
 		t.Fatalf("expected representative evidence excerpt")
+	}
+	if got := state.Index.Concepts[0].SourceEvidence[0].Evidence[0].Excerpt; got == "" {
+		t.Fatalf("expected source evidence excerpt")
 	}
 
 	payload := `{"concept_id":"concept-ui-test","choice":"rename_needed","note":"needs clearer title"}`

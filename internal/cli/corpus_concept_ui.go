@@ -315,7 +315,18 @@ textarea {
   gap: 7px;
   background: #fffefa;
 }
+.source-card {
+  border-left-color: var(--gold);
+  background: #fffdf5;
+}
 .excerpt { font-size: 14px; }
+.reason-list { display: grid; gap: 6px; }
+.reason {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: #fbfbf8;
+}
 .trace { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
 .empty {
   padding: 36px 18px;
@@ -366,7 +377,7 @@ let filter = "all";
 let activeChoice = "";
 
 function esc(value) {
-  return String(value || "").replace(/[&<>"']/g, (ch) => ({
+  return String(value === null || value === undefined ? "" : value).replace(/[&<>"']/g, (ch) => ({
     "&": "&amp;",
     "<": "&lt;",
     ">": "&gt;",
@@ -385,8 +396,29 @@ function coverage(map) {
   return Object.keys(map).sort().map((key) => key + ":" + map[key]).join(", ");
 }
 
+function reasonLabel(code) {
+  const labels = {
+    "relation_neighborhood_requires_review": "Grouped by graph relations; this needs source-level validation before it can become accepted knowledge.",
+    "duplicate_source_atom_support": "Multiple atoms came from the same source, so they count as trace detail, not independent support.",
+    "link_only_evidence_requires_enrichment": "At least one source only contains a URL; Mindline has not read the linked content yet.",
+    "no_readable_source_evidence": "At least one source has only trace metadata, not readable content.",
+    "insufficient_reviewable_source_support": "Fewer than two distinct sources have readable, non-link evidence.",
+    "weak_cross_source_coherence": "The readable sources do not share enough meaning to support one cross-source concept.",
+    "single_source_concept": "Only one source supports this concept.",
+    "single_source_kind_concept": "Only one source kind supports this concept.",
+    "missing_evidence_reference": "One or more atoms are missing complete trace evidence.",
+    "blocked_atom": "One or more atoms were already blocked upstream."
+  };
+  return labels[code] || code.replaceAll("_", " ");
+}
+
 function metric(label, value) {
   return '<div class="metric"><span>' + esc(label) + '</span><strong>' + esc(value) + '</strong></div>';
+}
+
+function sourceCardCount(concept) {
+  if (typeof concept.source_evidence_count === "number") return concept.source_evidence_count;
+  return (concept.source_evidence || []).length;
 }
 
 function recordsByConcept() {
@@ -404,6 +436,7 @@ function filteredConcepts() {
   if (filter === "unreviewed") return concepts.filter((concept) => !reviewed[concept.concept_id]);
   if (filter === "cross_source") return concepts.filter((concept) => concept.section === "cross_source");
   if (filter === "needs_review") return concepts.filter((concept) => concept.review_status === "needs_review" || concept.section === "needs_review");
+  if (filter === "blocked") return concepts.filter((concept) => concept.review_status === "blocked" || concept.section === "blocked");
   return concepts;
 }
 
@@ -432,7 +465,7 @@ function render() {
     return '<button class="concept' + active + '" type="button" data-id="' + esc(concept.concept_id) + '">' +
       '<div class="title">' + esc(concept.title) + '</div>' +
       '<div class="meta">' + esc(concept.grouping_rationale || "") + '</div>' +
-      '<div class="meta">atoms=' + esc(concept.atom_count) + ' sources=' + esc(concept.source_count) + ' previews=' + esc(concept.representative_evidence_count || 0) + '</div>' +
+      '<div class="meta">atoms=' + esc(concept.atom_count) + ' sources=' + esc(concept.source_count) + ' source cards=' + esc(sourceCardCount(concept)) + '</div>' +
       '<div class="tags"><span class="tag ' + esc(concept.section) + '">' + esc(concept.section) + '</span><span class="tag">' + esc(coverage(concept.source_kind_coverage)) + '</span>' + reviewTag + '</div>' +
       '</button>';
   }).join("") || '<div class="empty">No concepts match this filter.</div>';
@@ -452,7 +485,8 @@ function renderFilters() {
     ["unreviewed", "Unreviewed"],
     ["reviewed", "Reviewed"],
     ["cross_source", "Cross-source"],
-    ["needs_review", "Needs review"]
+    ["needs_review", "Needs review"],
+    ["blocked", "Blocked"]
   ];
   document.getElementById("filters").innerHTML = filters.map(([id, label]) => {
     return '<button class="filter' + (filter === id ? ' active' : '') + '" type="button" data-filter="' + id + '">' + esc(label) + '</button>';
@@ -474,7 +508,23 @@ function renderDetail(concept) {
   const record = recordsByConcept()[concept.concept_id];
   if (!activeChoice && record) activeChoice = record.choice;
   const note = record && record.note ? record.note : "";
-  const reasons = concept.reason_codes && concept.reason_codes.length ? concept.reason_codes.join(", ") : "none";
+  const reasons = concept.reason_codes && concept.reason_codes.length ? concept.reason_codes : [];
+  const reasonHTML = reasons.length ? '<div class="reason-list">' + reasons.map((code) => '<div class="reason"><strong>' + esc(reasonLabel(code)) + '</strong><div class="trace">' + esc(code) + '</div></div>').join("") + '</div>' : '<p class="muted">No quality reasons.</p>';
+  const sourceEvidence = (concept.source_evidence || []).map((source) => {
+    const flags = (source.flags || []).map((flag) => '<span class="tag">' + esc(reasonLabel(flag)) + '</span>').join("");
+    const previews = (source.evidence || []).map((item) => {
+      return '<div>' +
+        '<div class="title">' + esc(item.title || "Untitled evidence") + '</div>' +
+        '<p class="muted">' + esc(item.summary) + '</p>' +
+        '<p class="excerpt">' + esc(item.excerpt || "No safe excerpt available.") + '</p>' +
+        '<div class="trace">' + esc(item.evidence_ref_id) + ' | lines ' + esc(item.line_start) + '-' + esc(item.line_end) + ' | ' + esc(item.content_hash) + '</div>' +
+        '</div>';
+    }).join("");
+    return '<article class="evidence-card source-card">' +
+      '<div class="tags"><span class="tag">' + esc(source.source_kind) + '</span><span class="tag">' + esc(source.source_ref) + '</span><span class="tag">atoms ' + esc(source.atom_count) + '</span><span class="tag">readable ' + esc(source.reviewable_atom_count) + '</span>' + (source.link_only ? '<span class="tag blocked">link-only</span>' : '') + flags + '</div>' +
+      previews +
+      '</article>';
+  }).join("") || '<p class="muted">No source evidence cards.</p>';
   const evidence = (concept.representative_evidence || []).map((item) => {
     return '<article class="evidence-card">' +
       '<div class="tags"><span class="tag">' + esc(item.source_kind) + '</span><span class="tag">' + esc(item.source_ref) + '</span><span class="tag">lines ' + esc(item.line_start) + '-' + esc(item.line_end) + '</span></div>' +
@@ -494,8 +544,9 @@ function renderDetail(concept) {
     '<div class="box"><span>Atoms</span><strong>' + esc(concept.atom_count) + '</strong></div>' +
     '<div class="box"><span>Sources</span><strong>' + esc(concept.source_count) + '</strong></div>' +
     '<div class="box"><span>Coverage</span><strong>' + esc(coverage(concept.source_kind_coverage)) + '</strong></div>' +
-    '<div class="box"><span>Reasons</span><strong>' + esc(reasons) + '</strong></div>' +
+    '<div class="box"><span>Source Cards</span><strong>' + esc((concept.source_evidence || []).length) + '</strong></div>' +
     '</div>' +
+    '<section><h3>Quality Reasons</h3>' + reasonHTML + '</section>' +
     '<section class="review-form">' +
     '<h3>Decision</h3>' +
     '<div class="decisions">' + choices.map(([id, label]) => '<button class="decision' + (activeChoice === id ? ' active' : '') + '" type="button" data-choice="' + id + '">' + esc(label) + '</button>').join("") + '</div>' +
@@ -503,7 +554,8 @@ function renderDetail(concept) {
     '<button class="save" type="button" id="save-review">Save decision</button>' +
     '<p class="muted">' + (record ? 'Last saved: ' + esc(record.choice) + ' at ' + esc(record.recorded_at) : 'No decision saved yet.') + '</p>' +
     '</section>' +
-    '<section><h3>Representative Evidence</h3><div class="evidence">' + evidence + '</div></section>' +
+    '<section><h3>Source Evidence</h3><div class="evidence">' + sourceEvidence + '</div></section>' +
+    '<section><h3>Atom Traces</h3><div class="evidence">' + evidence + '</div></section>' +
     '</div>';
   document.querySelectorAll("button.decision").forEach((button) => {
     button.addEventListener("click", () => {
@@ -528,7 +580,7 @@ function conceptCopyText(concept) {
     "Atoms: " + concept.atom_count,
     "Sources: " + concept.source_count,
     "Coverage: " + coverage(concept.source_kind_coverage),
-    "Reasons: " + ((concept.reason_codes || []).join(", ") || "none"),
+    "Reasons: " + ((concept.reason_codes || []).map((code) => reasonLabel(code) + " [" + code + "]").join("; ") || "none"),
     "",
     "Review question:",
     concept.review_prompt || "",
@@ -540,7 +592,26 @@ function conceptCopyText(concept) {
   if (record && record.note) {
     lines.push("Reviewer note:", record.note, "");
   }
-  lines.push("Representative evidence:");
+  lines.push("Source evidence:");
+  (concept.source_evidence || []).forEach((source, index) => {
+    lines.push(
+      "",
+      String(index + 1) + ". " + (source.source_kind || "source") + " " + (source.source_ref || ""),
+      "Atoms from this source: " + source.atom_count,
+      "Readable non-link atoms: " + source.reviewable_atom_count,
+      "Flags: " + ((source.flags || []).map((flag) => reasonLabel(flag) + " [" + flag + "]").join("; ") || "none")
+    );
+    (source.evidence || []).forEach((item, itemIndex) => {
+      lines.push(
+        "  " + String(itemIndex + 1) + ") lines " + item.line_start + "-" + item.line_end,
+        "     Title: " + (item.title || ""),
+        "     Summary: " + (item.summary || ""),
+        "     Excerpt: " + (item.excerpt || ""),
+        "     Trace: " + (item.evidence_ref_id || "") + " | " + (item.content_hash || "")
+      );
+    });
+  });
+  lines.push("", "Atom traces:");
   (concept.representative_evidence || []).forEach((item, index) => {
     lines.push(
       "",

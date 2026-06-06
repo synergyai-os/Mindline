@@ -20,6 +20,7 @@ const (
 	DefaultCorpusConceptsMax                = 40
 	corpusConceptMaxAtoms                   = 18
 	corpusConceptPreviewMax                 = 8
+	corpusConceptSourcePreviewMax           = 3
 )
 
 type CorpusConceptSection string
@@ -97,6 +98,7 @@ type CorpusConceptListItem struct {
 	ReasonCodes            []string                        `json:"reason_codes,omitempty"`
 	ConceptPath            string                          `json:"concept_path"`
 	RepresentativeEvidence int                             `json:"representative_evidence_count"`
+	SourceEvidence         int                             `json:"source_evidence_count"`
 }
 
 type CorpusConcept struct {
@@ -118,8 +120,22 @@ type CorpusConcept struct {
 	SourceKindCoverage     map[string]int                   `json:"source_kind_coverage"`
 	ReasonCodes            []string                         `json:"reason_codes,omitempty"`
 	EvidenceRefs           []SourceMeaningPacketEvidenceRef `json:"evidence_refs"`
+	SourceEvidence         []CorpusConceptSourceEvidence    `json:"source_evidence"`
 	RepresentativeEvidence []CorpusConceptEvidencePreview   `json:"representative_evidence"`
 	AtomRefs               []SourceMeaningPacketAtomRef     `json:"atom_refs"`
+}
+
+type CorpusConceptSourceEvidence struct {
+	SourceID            string                         `json:"source_id"`
+	SourceKind          string                         `json:"source_kind"`
+	SourceRef           string                         `json:"source_ref"`
+	AtomCount           int                            `json:"atom_count"`
+	ReviewableAtomCount int                            `json:"reviewable_atom_count"`
+	DuplicateAtomCount  int                            `json:"duplicate_atom_count,omitempty"`
+	LinkOnly            bool                           `json:"link_only"`
+	Flags               []string                       `json:"flags,omitempty"`
+	SharedTerms         []string                       `json:"shared_terms,omitempty"`
+	Evidence            []CorpusConceptEvidencePreview `json:"evidence"`
 }
 
 type CorpusConceptEvidencePreview struct {
@@ -727,6 +743,8 @@ func buildCorpusConcept(corpusID, key string, atoms []CorpusGraphAtom) CorpusCon
 		concept.ReviewStatus = ReviewStatusNeedsReview
 		concept.ReasonCodes = appendUniqueString(concept.ReasonCodes, "relation_neighborhood_requires_review")
 	}
+	concept.SourceEvidence = corpusConceptSourceEvidence(atoms)
+	applyCorpusConceptSourceQualityGates(&concept, key)
 	if len(concept.ReasonCodes) > 0 {
 		if containsCorpusConceptString(concept.ReasonCodes, "blocked_atom") || containsCorpusConceptString(concept.ReasonCodes, "missing_evidence_reference") {
 			concept.Section = CorpusConceptSectionBlocked
@@ -834,6 +852,7 @@ func buildCorpusConceptSummary(pressure CorpusPressureSummary, graph CorpusGraph
 			ReasonCodes:            append([]string{}, concept.ReasonCodes...),
 			ConceptPath:            filepath.ToSlash(filepath.Join(CorpusConceptsDirName, CorpusConceptPath(concept.ConceptID))),
 			RepresentativeEvidence: len(concept.RepresentativeEvidence),
+			SourceEvidence:         len(concept.SourceEvidence),
 		})
 	}
 	if generatedConceptCount == len(concepts) {
@@ -855,6 +874,10 @@ func buildCorpusConceptSummary(pressure CorpusPressureSummary, graph CorpusGraph
 
 func corpusConceptTerms(atom CorpusGraphAtom) []string {
 	text := strings.Join([]string{atom.Title, atom.Summary}, " ")
+	return corpusConceptTermsFromText(text)
+}
+
+func corpusConceptTermsFromText(text string) []string {
 	text = removeCorpusConceptURLs(text)
 	parts := strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
 		return !(unicode.IsLetter(r) || unicode.IsDigit(r))
@@ -873,6 +896,28 @@ func corpusConceptTerms(atom CorpusGraphAtom) []string {
 		}
 	}
 	return terms
+}
+
+func corpusConceptPreviewLinkOnly(preview CorpusConceptEvidencePreview) bool {
+	text := strings.TrimSpace(strings.Join([]string{preview.Title, preview.Summary, preview.Excerpt}, " "))
+	if text == "" {
+		return false
+	}
+	lower := strings.ToLower(text)
+	if !strings.Contains(lower, "http://") && !strings.Contains(lower, "https://") && !strings.Contains(lower, "www.") {
+		return false
+	}
+	withoutURLs := removeCorpusConceptURLs(text)
+	parts := strings.FieldsFunc(strings.ToLower(withoutURLs), func(r rune) bool {
+		return !(unicode.IsLetter(r) || unicode.IsDigit(r))
+	})
+	useful := 0
+	for _, part := range parts {
+		if corpusConceptUsefulTerm(strings.TrimSpace(part)) {
+			useful++
+		}
+	}
+	return useful < 3
 }
 
 func removeCorpusConceptURLs(value string) string {
@@ -910,7 +955,7 @@ func corpusConceptUsefulTerm(term string) bool {
 
 var corpusConceptStopWords = map[string]bool{
 	"about": true, "after": true, "also": true, "and": true, "candidate": true, "changed": true,
-	"confirmation": true, "correct": true, "from": true, "gmail": true, "have": true, "https": true,
+	"confirmation": true, "correct": true, "excerpt": true, "from": true, "gmail": true, "have": true, "https": true,
 	"http": true, "into": true, "linkedin": true, "locator": true, "message": true, "needs": true,
 	"post": true, "posts": true, "private": true, "review": true, "reviewed": true, "runtime": true,
 	"slack": true, "snippet": true, "snippe": true, "source": true, "that": true, "this": true,
@@ -940,11 +985,11 @@ func corpusConceptTitle(key string, atoms []CorpusGraphAtom) string {
 }
 
 func corpusConceptReviewPrompt(concept CorpusConcept) string {
+	if concept.Section == CorpusConceptSectionBlocked {
+		return "This concept is blocked: decide whether the system should enrich sources, split the group, or discard it before normal review."
+	}
 	if concept.Section == CorpusConceptSectionCrossSource || len(concept.SourceKindCoverage) > 1 {
 		return fmt.Sprintf("Decide whether these %s evidence snippets describe one coherent concept.", corpusConceptSourceKindList(concept.SourceKindCoverage))
-	}
-	if concept.Section == CorpusConceptSectionBlocked {
-		return "Decide whether this blocked concept can be reviewed later after evidence issues are fixed."
 	}
 	return "Decide whether these evidence snippets describe one coherent review concept or need cleanup."
 }
@@ -1021,6 +1066,138 @@ func corpusConceptRepresentativeEvidence(atoms []CorpusGraphAtom) []CorpusConcep
 		out = append(out, corpusConceptRoundRobinEvidencePreviews(kinds, fallbackByKind, corpusConceptPreviewMax)...)
 	}
 	return out
+}
+
+func corpusConceptSourceEvidence(atoms []CorpusGraphAtom) []CorpusConceptSourceEvidence {
+	bySource := map[string][]CorpusGraphAtom{}
+	sourceIDs := []string{}
+	for _, atom := range atoms {
+		if _, ok := bySource[atom.SourceID]; !ok {
+			sourceIDs = append(sourceIDs, atom.SourceID)
+		}
+		bySource[atom.SourceID] = append(bySource[atom.SourceID], atom)
+	}
+	sort.Strings(sourceIDs)
+	out := []CorpusConceptSourceEvidence{}
+	for _, sourceID := range sourceIDs {
+		sourceAtoms := bySource[sourceID]
+		sortCorpusConceptAtoms(sourceAtoms)
+		group := CorpusConceptSourceEvidence{
+			SourceID:   sourceID,
+			SourceKind: sourceKindForConcept(sourceAtoms[0]),
+			SourceRef:  corpusConceptSourceRef(sourceID),
+			AtomCount:  len(sourceAtoms),
+		}
+		if group.AtomCount > 1 {
+			group.DuplicateAtomCount = group.AtomCount - 1
+			group.Flags = appendUniqueString(group.Flags, "duplicate_source_atom_support")
+		}
+		fallback := []CorpusConceptEvidencePreview{}
+		for _, atom := range sourceAtoms {
+			preview := corpusConceptEvidencePreview(atom)
+			if corpusConceptReviewableEvidencePreview(preview) {
+				group.ReviewableAtomCount++
+				if len(group.Evidence) < corpusConceptSourcePreviewMax {
+					group.Evidence = append(group.Evidence, preview)
+				}
+			} else if len(fallback) < corpusConceptSourcePreviewMax {
+				fallback = append(fallback, preview)
+			}
+		}
+		if len(group.Evidence) == 0 {
+			group.Evidence = fallback
+		}
+		group.LinkOnly = corpusConceptSourceLinkOnly(group)
+		if group.LinkOnly {
+			group.Flags = appendUniqueString(group.Flags, "link_only_evidence_requires_enrichment")
+			group.ReviewableAtomCount = 0
+		} else if group.ReviewableAtomCount == 0 {
+			group.Flags = appendUniqueString(group.Flags, "no_readable_source_evidence")
+		}
+		group.SharedTerms = corpusConceptSharedSourceTerms(group)
+		out = append(out, group)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].ReviewableAtomCount != out[j].ReviewableAtomCount {
+			return out[i].ReviewableAtomCount > out[j].ReviewableAtomCount
+		}
+		if out[i].SourceKind != out[j].SourceKind {
+			return out[i].SourceKind < out[j].SourceKind
+		}
+		return out[i].SourceID < out[j].SourceID
+	})
+	return out
+}
+
+func applyCorpusConceptSourceQualityGates(concept *CorpusConcept, key string) {
+	readableSources := []CorpusConceptSourceEvidence{}
+	for _, source := range concept.SourceEvidence {
+		for _, flag := range source.Flags {
+			concept.ReasonCodes = appendUniqueString(concept.ReasonCodes, flag)
+		}
+		if source.ReviewableAtomCount > 0 && !source.LinkOnly {
+			readableSources = append(readableSources, source)
+		}
+	}
+	if concept.SourceCount > 1 && len(readableSources) < 2 {
+		concept.Section = CorpusConceptSectionBlocked
+		concept.ReviewStatus = ReviewStatusBlocked
+		concept.ReasonCodes = appendUniqueString(concept.ReasonCodes, "insufficient_reviewable_source_support")
+		return
+	}
+	if strings.HasPrefix(key, "relation\x00cross_source\x00") && !corpusConceptHasSourceLevelOverlap(readableSources) {
+		concept.Section = CorpusConceptSectionBlocked
+		concept.ReviewStatus = ReviewStatusBlocked
+		concept.ReasonCodes = appendUniqueString(concept.ReasonCodes, "weak_cross_source_coherence")
+	}
+}
+
+func corpusConceptHasSourceLevelOverlap(sources []CorpusConceptSourceEvidence) bool {
+	termSourceCount := map[string]int{}
+	for _, source := range sources {
+		for _, term := range source.SharedTerms {
+			termSourceCount[term]++
+			if termSourceCount[term] >= 2 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func corpusConceptSharedSourceTerms(source CorpusConceptSourceEvidence) []string {
+	counts := map[string]int{}
+	for _, preview := range source.Evidence {
+		for _, term := range corpusConceptTermsFromText(strings.Join([]string{preview.Title, preview.Summary, preview.Excerpt}, " ")) {
+			counts[term]++
+		}
+	}
+	terms := make([]string, 0, len(counts))
+	for term := range counts {
+		terms = append(terms, term)
+	}
+	sort.Slice(terms, func(i, j int) bool {
+		if counts[terms[i]] != counts[terms[j]] {
+			return counts[terms[i]] > counts[terms[j]]
+		}
+		return terms[i] < terms[j]
+	})
+	if len(terms) > 8 {
+		terms = terms[:8]
+	}
+	return terms
+}
+
+func corpusConceptSourceLinkOnly(source CorpusConceptSourceEvidence) bool {
+	if len(source.Evidence) == 0 {
+		return false
+	}
+	for _, preview := range source.Evidence {
+		if !corpusConceptPreviewLinkOnly(preview) {
+			return false
+		}
+	}
+	return true
 }
 
 func corpusConceptRoundRobinEvidencePreviews(kinds []string, byKind map[string][]CorpusConceptEvidencePreview, maxItems int) []CorpusConceptEvidencePreview {

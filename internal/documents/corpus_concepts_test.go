@@ -64,6 +64,9 @@ func TestBuildCorpusConceptIndexGroupsCrossSourceConcepts(t *testing.T) {
 			if len(concept.RepresentativeEvidence) < 2 {
 				t.Fatalf("expected representative evidence previews: %+v", concept.RepresentativeEvidence)
 			}
+			if len(concept.SourceEvidence) < 2 {
+				t.Fatalf("expected source evidence groups: %+v", concept.SourceEvidence)
+			}
 			for _, preview := range concept.RepresentativeEvidence {
 				if strings.TrimSpace(preview.Excerpt) == "" || strings.TrimSpace(preview.Title) == "" {
 					t.Fatalf("expected readable evidence preview: %+v", preview)
@@ -76,6 +79,72 @@ func TestBuildCorpusConceptIndexGroupsCrossSourceConcepts(t *testing.T) {
 	}
 	if !foundMixed {
 		t.Fatalf("expected mixed source-kind coverage: %+v", build.Index.Concepts)
+	}
+}
+
+func TestBuildCorpusConceptIndexBlocksIncoherentLinkOnlyRelationNeighborhood(t *testing.T) {
+	pressure := CorpusPressureSummary{
+		SchemaVersion:            CorpusPressureSummarySchemaVersion,
+		CorpusID:                 "corpus-pr46-bad-concept",
+		SourceCount:              3,
+		ProcessedSourceCount:     3,
+		ScaleStatus:              "scale_complete",
+		CorpusFingerprint:        "corpus-fp",
+		CommandConfigFingerprint: "config-fp",
+		ReplayFingerprint:        "pressure-fp",
+	}
+	graph := CorpusGraphSummary{
+		SchemaVersion:     CorpusGraphSummarySchemaVersion,
+		CorpusID:          pressure.CorpusID,
+		SourceCount:       3,
+		AtomCount:         5,
+		RelationCount:     5,
+		ReplayFingerprint: "graph-fp",
+	}
+	atoms := []CorpusGraphAtom{
+		conceptTestKindAtom("mail-newsletter", "gmail-newsletter", "gmail", "Notification that newsletter needs more articles before sending"),
+		conceptTestKindAtom("slack-link-1", "slack-linkedin", "slack", "https://www.linkedin.com/posts/victor-ronchin_every-time-a-new-operator-opens-claude-from-share-7465059065443000320-u8sr"),
+		conceptTestKindAtom("slack-link-2", "slack-linkedin", "slack", "- https://www.linkedin.com/posts/victor-ronchin_every-time-a-new-operator-opens-claude-from-share-7465059065443000320-u8sr"),
+		conceptTestKindAtom("mail-meeting-1", "gmail-meeting", "gmail", "Snippet: Meeting summary covering workflow improvements and operational updates"),
+		conceptTestKindAtom("mail-meeting-2", "gmail-meeting", "gmail", "Meeting summary covering workflow improvements and operational updates"),
+	}
+	relations := []CorpusGraphRelation{
+		conceptTestRelation("rel-news-link", pressure.CorpusID, "mail-newsletter", "slack-link-1"),
+		conceptTestRelation("rel-news-link-2", pressure.CorpusID, "mail-newsletter", "slack-link-2"),
+		conceptTestRelation("rel-link-meeting-1", pressure.CorpusID, "slack-link-1", "mail-meeting-1"),
+		conceptTestRelation("rel-link-meeting", pressure.CorpusID, "slack-link-2", "mail-meeting-1"),
+		conceptTestRelation("rel-link-meeting-2", pressure.CorpusID, "slack-link-1", "mail-meeting-2"),
+	}
+
+	build := buildCorpusConceptIndex(pressure, graph, atoms, relations, DefaultCorpusConceptsMax)
+	var relationConcept *CorpusConcept
+	for i := range build.Index.Concepts {
+		if strings.HasPrefix(build.Index.Concepts[i].ConceptKey, "relation\x00cross_source\x00") {
+			relationConcept = &build.Index.Concepts[i]
+			break
+		}
+	}
+	if relationConcept == nil {
+		t.Fatalf("expected relation concept: %+v", build.Index.Concepts)
+	}
+	if relationConcept.Section != CorpusConceptSectionBlocked || relationConcept.ReviewStatus != ReviewStatusBlocked {
+		t.Fatalf("expected incoherent relation concept to be blocked, got section=%s status=%s reasons=%v", relationConcept.Section, relationConcept.ReviewStatus, relationConcept.ReasonCodes)
+	}
+	for _, want := range []string{"weak_cross_source_coherence", "link_only_evidence_requires_enrichment", "duplicate_source_atom_support"} {
+		if !containsCorpusConceptString(relationConcept.ReasonCodes, want) {
+			t.Fatalf("expected reason %s in %+v", want, relationConcept.ReasonCodes)
+		}
+	}
+	if len(relationConcept.SourceEvidence) != 3 {
+		t.Fatalf("expected source evidence collapsed to 3 source groups, got %+v", relationConcept.SourceEvidence)
+	}
+	for _, source := range relationConcept.SourceEvidence {
+		if source.SourceID == "slack-linkedin" && !source.LinkOnly {
+			t.Fatalf("expected slack LinkedIn source to be link-only: %+v", source)
+		}
+		if source.SourceID == "gmail-meeting" && source.DuplicateAtomCount == 0 {
+			t.Fatalf("expected duplicate atoms from same Gmail source to be flagged: %+v", source)
+		}
 	}
 }
 
@@ -170,12 +239,16 @@ func TestWriteCorpusConceptIndexAllowsReviewRecords(t *testing.T) {
 }
 
 func conceptTestAtom(id, sourceID, title string) CorpusGraphAtom {
+	return conceptTestKindAtom(id, sourceID, "markdown", title)
+}
+
+func conceptTestKindAtom(id, sourceID, sourceKind, title string) CorpusGraphAtom {
 	return CorpusGraphAtom{
 		SchemaVersion:    CorpusGraphAtomSchemaVersion,
 		AtomID:           id,
 		CorpusID:         "corpus-concepts-test",
 		SourceID:         sourceID,
-		SourceKind:       "markdown",
+		SourceKind:       sourceKind,
 		SourceDocumentID: sourceID,
 		CandidateKind:    SemanticCandidateKindTopic,
 		ReviewStatus:     ReviewStatusReady,
@@ -186,5 +259,17 @@ func conceptTestAtom(id, sourceID, title string) CorpusGraphAtom {
 		LineStart:        1,
 		LineEnd:          2,
 		ContentHash:      "hash-" + id,
+	}
+}
+
+func conceptTestRelation(id, corpusID, fromAtomID, toAtomID string) CorpusGraphRelation {
+	return CorpusGraphRelation{
+		SchemaVersion: CorpusGraphRelationSchemaVersion,
+		RelationID:    id,
+		CorpusID:      corpusID,
+		RelationType:  CorpusRelationSameTopicAs,
+		FromAtomID:    fromAtomID,
+		ToAtomID:      toAtomID,
+		ReviewStatus:  ReviewStatusReady,
 	}
 }

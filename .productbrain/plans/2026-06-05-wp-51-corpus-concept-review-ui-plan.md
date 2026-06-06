@@ -4,10 +4,14 @@
 
 Add a deterministic corpus concept index above corpus pressure/graph output, make it human-reviewable in the light review UI, and prove it against the same 25 Gmail + 25 Slack runtime corpus used by WP49/WP50. This iteration keeps the PR46 concept-index scope but raises the review-surface standard: bounded concepts are not enough unless a reviewer can understand and decide them.
 
+PR46 v3 keeps the same PR and dataset, but raises the methodology standard again: a concept is not reviewable merely because its atom snippets are readable. The builder must first prove source-level reviewability, link-only handling, duplicate-source accounting, and readable cross-source coherence.
+
 ## Authority Anchors
 
 - DEC-401: WP51 bounded concept index proof exists, but the first Light UI did not prove review usability.
+- DEC-403: PR46 v2 delivered a human-reviewable UI iteration whose output exposed the deeper concept-quality failure now addressed by v3.
 - INS-28: PR46 review UI must be reviewer-understandable, not machine-readable only.
+- INS-29: PR46 concept review needs source-level coherence gates.
 - STD-18: inline evidence excerpts are required for reviewer-facing semantic previews.
 - STD-19: loopback review writes require Host allowlist, token, same-origin, JSON, write locks, and read-only page endpoints.
 
@@ -21,6 +25,10 @@ This plan is a PR46 remediation of DEC-401's proof gap, not a new autonomy, dest
    - separate cross-source concepts from single-source/local concepts;
    - preserve evidence refs, atom refs, source-kind counts, content hashes, and short content refs;
    - add a reviewer display model: non-generic title, review prompt, grouping rationale, representative safe evidence previews, and source mix.
+   - add source-level evidence groups that collapse multiple atoms from one source into one review card;
+   - flag link-only evidence and exclude it from readable semantic support until enriched;
+   - require readable term overlap across at least two distinct source-level groups before relation-neighborhood concepts remain normal cross-source review items;
+   - block or downgrade incoherent relation-neighborhood clusters with reason codes for weak cross-source coherence, insufficient readable source support, duplicate-source atom support, and link-only evidence requiring enrichment.
 2. Add writer:
    - `corpus-concepts/concept-summary.json`;
    - `corpus-concepts/concept-index.json`;
@@ -34,6 +42,9 @@ This plan is a PR46 remediation of DEC-401's proof gap, not a new autonomy, dest
 4. Add light UI support:
    - load concept summary/index;
    - serve a reviewable HTML view with concept list, progress, filters, source coverage, rationale, representative evidence, and decision controls;
+   - show source-level evidence cards before atom-level traces;
+   - translate reason codes into plain-English reviewer explanations;
+   - keep copy packets source-level so Randy can paste one concept back for review without needing raw artifacts.
    - expose `/api/state` for review state inspection;
    - expose a loopback-only POST endpoint for persisting concept review decisions;
    - keep host allowlist, token, same-origin, JSON body, and serialized write safety consistent with `judge-serve`.
@@ -45,6 +56,9 @@ This plan is a PR46 remediation of DEC-401's proof gap, not a new autonomy, dest
    - concept display model produces non-generic titles, rationales, prompts, and representative evidence previews;
    - review records persist and read back without manual JSON editing;
    - weak/single-source groups stay needs-review or local, not overclaimed;
+   - the copied PR46 bad concept pattern is blocked/downgraded rather than emitted as a normal cross-source review item;
+   - link-only evidence does not count as readable support;
+   - duplicate atoms from the same source collapse into one source-level contribution;
    - writer rejects stale unexpected files and produces expected paths;
    - CLI builds concept artifacts;
    - UI handler serves HTML, `/api/state`, and a token-protected decision POST;
@@ -66,6 +80,9 @@ This plan is a PR46 remediation of DEC-401's proof gap, not a new autonomy, dest
 - Concept review burden is at least 99% lower than raw relation count on the same corpus.
 - Light UI serves the final concept packet over loopback and renders non-empty concept state with non-generic concept titles, grouping rationale, and representative safe evidence previews.
 - Light UI persists at least one reviewer decision through the token-protected POST path, and `/api/state` reflects review progress without mutating read paths.
+- The exact copied failure mode is judged by the shipped code after implementation: newsletter notification + link-only LinkedIn Slack save + duplicate Gmail meeting-summary atoms must be marked blocked or under-supported, with source-level evidence cards and plain-English reasons.
+- Source-level evidence cards are present in JSON, UI state, and copied packets for review.
+- Raw reason codes are accompanied by plain-English reason labels in the UI/copy packet.
 - Product Brain captures spec/plan sign-off and delivery proof.
 
 ## Risks
@@ -74,6 +91,8 @@ This plan is a PR46 remediation of DEC-401's proof gap, not a new autonomy, dest
 - If the 50-source private runtime corpus has sparse repeated wording, cross-source concept count may be lower than desired. The proof should report the actual result and block overclaiming.
 - Adding excerpts creates private-data handling risk. The mitigation is to reuse existing unsafe marker redaction, keep artifacts local/private and uncommitted, preserve metadata-only hosted observability, and keep review server loopback-only.
 - Persisted reviewer decisions can become misleading if concept labels remain generic. The mitigation is to block acceptance on a non-generic display model plus representative evidence, not just buttons.
+- Source-level coherence gates can reduce the apparent cross-source concept count. That is acceptable; a lower number of reviewable concepts is better than asking Randy to judge obvious junk.
+- Deterministic term-overlap coherence is still not semantic truth. The mitigation is to use it only as a fail-closed sanity gate and avoid any held-out quality, destination-write, or no-human claim.
 
 ## Reviewer Sign-Off Targets
 
