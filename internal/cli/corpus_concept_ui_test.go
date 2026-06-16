@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -149,6 +150,226 @@ func TestCorpusConceptUIServesReviewStateAndRecordsDecision(t *testing.T) {
 	}
 	if len(updated.ReviewRecords.Records) != 1 || updated.ReviewRecords.Records[0].Note != "needs clearer title" {
 		t.Fatalf("expected persisted review record: %+v", updated.ReviewRecords)
+	}
+}
+
+func TestCorpusConceptUISeparatesWorkKindProgressAndRejectsInvalidChoice(t *testing.T) {
+	root := t.TempDir()
+	conceptReview := documents.CorpusConcept{
+		SchemaVersion:  documents.CorpusConceptsSchemaVersion,
+		ConceptID:      "concept-review-ui",
+		CorpusID:       "corpus-ui-work-kind",
+		Title:          "Cross-source topic concept: review",
+		ReviewPrompt:   "Decide whether these Gmail and Slack snippets describe one coherent concept.",
+		Section:        documents.CorpusConceptSectionCrossSource,
+		ReviewStatus:   documents.ReviewStatusNeedsReview,
+		ReviewWorkKind: documents.CorpusConceptReviewWorkConceptReview,
+		SourceCount:    2,
+		AtomCount:      2,
+	}
+	cleanup := documents.CorpusConcept{
+		SchemaVersion:  documents.CorpusConceptsSchemaVersion,
+		ConceptID:      "cleanup-workspace-ui",
+		CorpusID:       "corpus-ui-work-kind",
+		Title:          "local topic: workspace",
+		ReviewPrompt:   "Use this as extraction cleanup feedback, not as accepted knowledge.",
+		Section:        documents.CorpusConceptSectionLocal,
+		ReviewStatus:   documents.ReviewStatusNeedsReview,
+		ReviewWorkKind: documents.CorpusConceptReviewWorkCleanupTriage,
+		SourceCount:    1,
+		AtomCount:      2,
+		ReasonCodes:    []string{"single_source_concept", "duplicate_source_atom_support"},
+	}
+	summary := documents.CorpusConceptSummary{
+		SchemaVersion: documents.CorpusConceptsSchemaVersion,
+		CorpusID:      "corpus-ui-work-kind",
+		ConceptCount:  2,
+		ReviewWorkKindCounts: map[documents.CorpusConceptReviewWorkKind]int{
+			documents.CorpusConceptReviewWorkConceptReview: 1,
+			documents.CorpusConceptReviewWorkCleanupTriage: 1,
+		},
+	}
+	index := documents.CorpusConceptIndex{
+		SchemaVersion: documents.CorpusConceptsSchemaVersion,
+		CorpusID:      "corpus-ui-work-kind",
+		Concepts:      []documents.CorpusConcept{conceptReview, cleanup},
+	}
+	if err := documents.WriteCorpusConceptIndex(root, summary, index); err != nil {
+		t.Fatalf("write concept index: %v", err)
+	}
+	handler := newCorpusConceptUIHandlerWithToken(filepath.Join(root, documents.CorpusConceptsDirName), "test-token", nil)
+
+	state := getCorpusConceptUIState(t, handler)
+	if state.Progress.TotalConceptCount != 1 {
+		t.Fatalf("expected default progress to count only concept review: %+v", state.Progress)
+	}
+	if got := state.Progress.WorkKindCounts[documents.CorpusConceptReviewWorkCleanupTriage].TotalCount; got != 1 {
+		t.Fatalf("expected cleanup progress count, got %+v", state.Progress.WorkKindCounts)
+	}
+	if state.Index.Concepts[1].ReviewWorkKind != documents.CorpusConceptReviewWorkCleanupTriage {
+		t.Fatalf("expected cleanup work kind in API state: %+v", state.Index.Concepts[1])
+	}
+
+	payload := `{"concept_id":"cleanup-workspace-ui","review_work_kind":"cleanup_triage","choice":"accept"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/reviews", strings.NewReader(payload))
+	req.Host = judgmentUITestHost
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Mindline-Review-Token", "test-token")
+	req.Header.Set("Origin", "http://"+judgmentUITestHost)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid cleanup accept status 400, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	payload = `{"concept_id":"cleanup-workspace-ui","review_work_kind":"cleanup_triage","choice":"rename_needed"}`
+	req = httptest.NewRequest(http.MethodPost, "/api/reviews", strings.NewReader(payload))
+	req.Host = judgmentUITestHost
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Mindline-Review-Token", "test-token")
+	req.Header.Set("Origin", "http://"+judgmentUITestHost)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected valid cleanup status 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	updated := decodeCorpusConceptUIState(t, rec.Body)
+	if got := updated.ReviewRecords.Records[0].ReviewWorkKind; got != documents.CorpusConceptReviewWorkCleanupTriage {
+		t.Fatalf("expected review record work kind, got %s", got)
+	}
+}
+
+func TestCorpusConceptUIDoesNotFallbackZeroConceptReviewProgressToAllConcepts(t *testing.T) {
+	root := t.TempDir()
+	cleanup := documents.CorpusConcept{
+		SchemaVersion:  documents.CorpusConceptsSchemaVersion,
+		ConceptID:      "cleanup-workspace-ui",
+		CorpusID:       "corpus-ui-cleanup-only",
+		Title:          "local topic: workspace",
+		ReviewPrompt:   "Use this as extraction cleanup feedback, not as accepted knowledge.",
+		Section:        documents.CorpusConceptSectionLocal,
+		ReviewStatus:   documents.ReviewStatusNeedsReview,
+		ReviewWorkKind: documents.CorpusConceptReviewWorkCleanupTriage,
+		SourceCount:    1,
+		AtomCount:      2,
+		ReasonCodes:    []string{"single_source_concept", "duplicate_source_atom_support"},
+	}
+	summary := documents.CorpusConceptSummary{
+		SchemaVersion:      documents.CorpusConceptsSchemaVersion,
+		CorpusID:           "corpus-ui-cleanup-only",
+		ConceptCount:       1,
+		CleanupTriageCount: 1,
+		ReviewWorkKindCounts: map[documents.CorpusConceptReviewWorkKind]int{
+			documents.CorpusConceptReviewWorkCleanupTriage: 1,
+		},
+	}
+	index := documents.CorpusConceptIndex{
+		SchemaVersion: documents.CorpusConceptsSchemaVersion,
+		CorpusID:      "corpus-ui-cleanup-only",
+		Concepts:      []documents.CorpusConcept{cleanup},
+	}
+	if err := documents.WriteCorpusConceptIndex(root, summary, index); err != nil {
+		t.Fatalf("write concept index: %v", err)
+	}
+	handler := newCorpusConceptUIHandlerWithToken(filepath.Join(root, documents.CorpusConceptsDirName), "test-token", nil)
+	state := getCorpusConceptUIState(t, handler)
+	if state.Progress.TotalConceptCount != 0 || state.Progress.RemainingConceptCount != 0 {
+		t.Fatalf("expected zero default concept-review progress for cleanup-only queue: %+v", state.Progress)
+	}
+	if got := state.Progress.WorkKindCounts[documents.CorpusConceptReviewWorkCleanupTriage].TotalCount; got != 1 {
+		t.Fatalf("expected cleanup work-kind progress to retain cleanup item, got %+v", state.Progress.WorkKindCounts)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = judgmentUITestHost
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected html status 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "numberOr(progress.total_concept_count, summary.concept_count)") {
+		t.Fatalf("expected UI to preserve zero concept-review totals without || fallback")
+	}
+}
+
+func TestCorpusConceptUIWriteSafetyAndStateReadOnly(t *testing.T) {
+	root := t.TempDir()
+	concept := documents.CorpusConcept{
+		SchemaVersion:  documents.CorpusConceptsSchemaVersion,
+		ConceptID:      "concept-review-ui",
+		CorpusID:       "corpus-ui-safety",
+		Title:          "Cross-source topic concept: review",
+		ReviewPrompt:   "Decide whether these snippets describe one coherent concept.",
+		Section:        documents.CorpusConceptSectionCrossSource,
+		ReviewStatus:   documents.ReviewStatusNeedsReview,
+		ReviewWorkKind: documents.CorpusConceptReviewWorkConceptReview,
+		SourceCount:    2,
+		AtomCount:      2,
+	}
+	summary := documents.CorpusConceptSummary{
+		SchemaVersion: documents.CorpusConceptsSchemaVersion,
+		CorpusID:      "corpus-ui-safety",
+		ConceptCount:  1,
+		ReviewWorkKindCounts: map[documents.CorpusConceptReviewWorkKind]int{
+			documents.CorpusConceptReviewWorkConceptReview: 1,
+		},
+	}
+	index := documents.CorpusConceptIndex{
+		SchemaVersion: documents.CorpusConceptsSchemaVersion,
+		CorpusID:      "corpus-ui-safety",
+		Concepts:      []documents.CorpusConcept{concept},
+	}
+	if err := documents.WriteCorpusConceptIndex(root, summary, index); err != nil {
+		t.Fatalf("write concept index: %v", err)
+	}
+	handler := newCorpusConceptUIHandlerWithToken(filepath.Join(root, documents.CorpusConceptsDirName), "test-token", nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/state", nil)
+	req.Host = judgmentUITestHost
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected state status 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if _, err := documents.ReadCorpusConceptReviewRecords(root); err != nil {
+		t.Fatalf("read empty records: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, documents.CorpusConceptsDirName, "review-records.json")); !os.IsNotExist(err) {
+		t.Fatalf("expected /api/state to be read-only, stat err=%v", err)
+	}
+
+	payload := `{"concept_id":"concept-review-ui","review_work_kind":"concept_review","choice":"accept"}`
+	req = httptest.NewRequest(http.MethodPost, "/api/reviews", strings.NewReader(payload))
+	req.Host = "example.com"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Mindline-Review-Token", "test-token")
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected non-loopback host status 403, got %d", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/reviews", strings.NewReader(payload))
+	req.Host = judgmentUITestHost
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Mindline-Review-Token", "test-token")
+	req.Header.Set("Origin", "http://127.0.0.1:9999")
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected cross-origin status 403, got %d", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/reviews", strings.NewReader("not-json"))
+	req.Host = judgmentUITestHost
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Mindline-Review-Token", "test-token")
+	req.Header.Set("Origin", "http://"+judgmentUITestHost)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected invalid JSON status 400, got %d", rec.Code)
 	}
 }
 

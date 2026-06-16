@@ -258,6 +258,145 @@ func TestBuildCorpusConceptIndexBlocksGenericSameKindActionTermBucket(t *testing
 	}
 }
 
+func TestBuildCorpusConceptIndexRoutesSingleSourceLocalBucketToCleanupTriage(t *testing.T) {
+	pressure := CorpusPressureSummary{
+		SchemaVersion:            CorpusPressureSummarySchemaVersion,
+		CorpusID:                 "corpus-pr46-workspace-concept",
+		SourceCount:              1,
+		ProcessedSourceCount:     1,
+		ScaleStatus:              "scale_complete",
+		CorpusFingerprint:        "corpus-fp",
+		CommandConfigFingerprint: "config-fp",
+		ReplayFingerprint:        "pressure-fp",
+	}
+	graph := CorpusGraphSummary{
+		SchemaVersion:     CorpusGraphSummarySchemaVersion,
+		CorpusID:          pressure.CorpusID,
+		SourceCount:       1,
+		AtomCount:         2,
+		RelationCount:     1,
+		ReplayFingerprint: "graph-fp",
+	}
+	atoms := []CorpusGraphAtom{
+		conceptTestKindAtom("workspace-layout", "gmail-workspace", "gmail", "Workspace setup and layout notes"),
+		conceptTestKindAtom("workspace-tools", "gmail-workspace", "gmail", "Workspace tools and folder structure"),
+	}
+
+	build := buildCorpusConceptIndex(pressure, graph, atoms, nil, DefaultCorpusConceptsMax)
+	var workspaceConcept *CorpusConcept
+	for i := range build.Index.Concepts {
+		if strings.Contains(build.Index.Concepts[i].ConceptKey, "\x00workspace") {
+			workspaceConcept = &build.Index.Concepts[i]
+			break
+		}
+	}
+	if workspaceConcept == nil {
+		t.Fatalf("expected workspace concept: %+v", build.Index.Concepts)
+	}
+	if workspaceConcept.ReviewWorkKind != CorpusConceptReviewWorkCleanupTriage {
+		t.Fatalf("expected workspace concept to be cleanup triage, got %s concept=%+v", workspaceConcept.ReviewWorkKind, workspaceConcept)
+	}
+	if workspaceConcept.ReviewWorkKind == CorpusConceptReviewWorkConceptReview {
+		t.Fatalf("single-source workspace bucket must not be normal concept review: %+v", workspaceConcept)
+	}
+	if !containsCorpusConceptString(workspaceConcept.ReasonCodes, "single_source_concept") {
+		t.Fatalf("expected single-source reason: %+v", workspaceConcept.ReasonCodes)
+	}
+}
+
+func TestCorpusConceptReviewWorkKindProgressAndChoiceValidation(t *testing.T) {
+	index := CorpusConceptIndex{
+		SchemaVersion: CorpusConceptsSchemaVersion,
+		CorpusID:      "corpus-progress",
+		Concepts: []CorpusConcept{
+			{ConceptID: "concept-review", CorpusID: "corpus-progress", Title: "Reviewable concept", ReviewWorkKind: CorpusConceptReviewWorkConceptReview},
+			{ConceptID: "cleanup", CorpusID: "corpus-progress", Title: "Cleanup item", ReviewWorkKind: CorpusConceptReviewWorkCleanupTriage},
+			{ConceptID: "enrichment", CorpusID: "corpus-progress", Title: "Enrichment item", ReviewWorkKind: CorpusConceptReviewWorkEnrichmentBacklog},
+			{ConceptID: "blocked", CorpusID: "corpus-progress", Title: "Blocked item", ReviewWorkKind: CorpusConceptReviewWorkBlockedDiagnostic},
+		},
+	}
+	records := CorpusConceptReviewRecords{
+		SchemaVersion: CorpusConceptReviewRecordsSchemaVersion,
+		CorpusID:      "corpus-progress",
+		Records: []CorpusConceptReviewRecord{{
+			SchemaVersion:  CorpusConceptReviewRecordsSchemaVersion,
+			CorpusID:       "corpus-progress",
+			ConceptID:      "cleanup",
+			ConceptTitle:   "Cleanup item",
+			ReviewWorkKind: CorpusConceptReviewWorkCleanupTriage,
+			Choice:         CorpusConceptReviewRenameNeeded,
+			RecordedAt:     "2026-06-16T10:00:00Z",
+		}},
+	}
+
+	progress := BuildCorpusConceptReviewProgress(index, records)
+	if progress.TotalConceptCount != 1 || progress.RemainingConceptCount != 1 {
+		t.Fatalf("default concept-review progress should count only concept_review work: %+v", progress)
+	}
+	cleanup := progress.WorkKindCounts[CorpusConceptReviewWorkCleanupTriage]
+	if cleanup.TotalCount != 1 || cleanup.ReviewedCount != 1 || cleanup.ChoiceCounts[CorpusConceptReviewRenameNeeded] != 1 {
+		t.Fatalf("expected cleanup progress bucket, got %+v in %+v", cleanup, progress.WorkKindCounts)
+	}
+	if allowedCorpusConceptReviewChoice(CorpusConceptReviewWorkCleanupTriage, CorpusConceptReviewAccept) {
+		t.Fatalf("cleanup triage must reject accept")
+	}
+	if !allowedCorpusConceptReviewChoice(CorpusConceptReviewWorkEnrichmentBacklog, CorpusConceptReviewNeedsSourceContext) {
+		t.Fatalf("enrichment backlog should allow needs source context")
+	}
+}
+
+func TestRecordCorpusConceptReviewRejectsInvalidAndMismatchedWorkKind(t *testing.T) {
+	root := t.TempDir()
+	concept := CorpusConcept{
+		SchemaVersion:  CorpusConceptsSchemaVersion,
+		ConceptID:      "cleanup-concept",
+		CorpusID:       "corpus-record-kind",
+		Title:          "local topic: workspace",
+		ReviewWorkKind: CorpusConceptReviewWorkCleanupTriage,
+		Section:        CorpusConceptSectionLocal,
+		CandidateKind:  SemanticCandidateKindTopic,
+		ReviewStatus:   ReviewStatusNeedsReview,
+	}
+	summary := CorpusConceptSummary{SchemaVersion: CorpusConceptsSchemaVersion, CorpusID: concept.CorpusID, ConceptCount: 1}
+	index := CorpusConceptIndex{SchemaVersion: CorpusConceptsSchemaVersion, CorpusID: concept.CorpusID, Concepts: []CorpusConcept{concept}}
+	if err := WriteCorpusConceptIndex(root, summary, index); err != nil {
+		t.Fatalf("write concept index: %v", err)
+	}
+
+	if _, err := RecordCorpusConceptReview(root, CorpusConceptReviewRecordInput{
+		ConceptID:      concept.ConceptID,
+		ReviewWorkKind: CorpusConceptReviewWorkCleanupTriage,
+		Choice:         CorpusConceptReviewAccept,
+	}); err == nil {
+		t.Fatalf("expected cleanup accept to be rejected")
+	}
+	if _, err := RecordCorpusConceptReview(root, CorpusConceptReviewRecordInput{
+		ConceptID:      concept.ConceptID,
+		ReviewWorkKind: CorpusConceptReviewWorkConceptReview,
+		Choice:         CorpusConceptReviewRejectNoisy,
+	}); err == nil {
+		t.Fatalf("expected mismatched work kind to be rejected")
+	}
+	if _, err := RecordCorpusConceptReview(root, CorpusConceptReviewRecordInput{
+		ConceptID:      concept.ConceptID,
+		ReviewWorkKind: CorpusConceptReviewWorkCleanupTriage,
+		Choice:         CorpusConceptReviewRenameNeeded,
+	}); err != nil {
+		t.Fatalf("expected valid cleanup choice, got %v", err)
+	}
+	records, err := RecordCorpusConceptReview(root, CorpusConceptReviewRecordInput{
+		ConceptID: concept.ConceptID,
+		Choice:    CorpusConceptReviewRenameNeeded,
+	})
+	if err != nil {
+		t.Fatalf("expected omitted input work kind to infer concept work kind, got %v", err)
+	}
+	cleanup := records.ReviewWorkKindProgress[CorpusConceptReviewWorkCleanupTriage]
+	if cleanup.TotalCount != 1 || cleanup.ReviewedCount != 1 || cleanup.ChoiceCounts[CorpusConceptReviewRenameNeeded] != 1 {
+		t.Fatalf("expected persisted cleanup review progress, got %+v", records.ReviewWorkKindProgress)
+	}
+}
+
 func TestRecordCorpusConceptReviewPersistsProgress(t *testing.T) {
 	root := t.TempDir()
 	pressure := CorpusPressureSummary{
@@ -307,6 +446,11 @@ func TestRecordCorpusConceptReviewPersistsProgress(t *testing.T) {
 	}
 	if len(records.Records) != 1 || records.Records[0].Choice != CorpusConceptReviewSplitNeeded {
 		t.Fatalf("expected persisted review record: %+v", records)
+	}
+	workKind := records.Records[0].ReviewWorkKind
+	progressBucket := records.ReviewWorkKindProgress[workKind]
+	if progressBucket.TotalCount == 0 || progressBucket.ReviewedCount != 1 || progressBucket.ChoiceCounts[CorpusConceptReviewSplitNeeded] != 1 {
+		t.Fatalf("expected persisted work-kind progress: workKind=%s records=%+v", workKind, records)
 	}
 	readBack, err := ReadCorpusConceptReviewRecords(root)
 	if err != nil {

@@ -10,14 +10,20 @@ PR46 v4 raises the cross-source standard again: raw source-kind coverage is not 
 
 PR46 v5 raises the same-kind term-bucket standard: generic generated action/title terms such as `prepare` and `checklist` cannot by themselves create a normal review concept, and evidence cards must put clean excerpts before noisy generated summaries.
 
+PR46 v6 raises the review-workflow standard: concept validation, local/source cleanup, enrichment backlog, and blocked diagnostics are distinct human jobs. They must not share one default queue, one progress count, one prompt, or one universal decision model.
+
 ## Authority Anchors
 
 - DEC-401: WP51 bounded concept index proof exists, but the first Light UI did not prove review usability.
 - DEC-403: PR46 v2 delivered a human-reviewable UI iteration whose output exposed the deeper concept-quality failure now addressed by v3.
+- DEC-404: PR46 v3 source-level concept coherence gates delivered.
+- DEC-405: PR46 v4 readable source-kind and outlier gates delivered.
+- DEC-406: PR46 v5 generic action-term and excerpt-first gates delivered.
 - INS-28: PR46 review UI must be reviewer-understandable, not machine-readable only.
 - INS-29: PR46 concept review needs source-level coherence gates.
 - INS-30: PR46 cross-source concepts require readable support across source kinds and no readable outliers.
 - INS-31: PR46 generic action term buckets are not reviewable concepts.
+- INS-32: PR46 local single-source concepts are not reviewable corpus concepts.
 - STD-18: inline evidence excerpts are required for reviewer-facing semantic previews.
 - STD-19: loopback review writes require Host allowlist, token, same-origin, JSON, write locks, and read-only page endpoints.
 
@@ -39,6 +45,9 @@ This plan is a PR46 remediation of DEC-401's proof gap, not a new autonomy, dest
    - detect readable outlier source groups that share no core terms with the coherent source cluster and block/split the concept with a plain reason.
    - block or mark noisy term-based same-kind concepts when their only shared terms are generic generated action/title words and their source cards do not share a meaningful object;
    - make evidence previews expose clean excerpts before generated summaries so the first visible text is reviewable.
+   - add a stable reviewer work kind to every emitted item: `concept_review`, `cleanup_triage`, `enrichment_backlog`, or `blocked_diagnostic`;
+   - apply classification precedence in this order: blocked/unsafe/missing evidence, enrichment backlog, cleanup triage, then normal concept review;
+   - route single-source/local items, single-source-kind buckets, generic/noisy term buckets, duplicate-heavy trace groups, link-only groups, and blocked groups away from normal `concept_review`.
 2. Add writer:
    - `corpus-concepts/concept-summary.json`;
    - `corpus-concepts/concept-index.json`;
@@ -46,6 +55,7 @@ This plan is a PR46 remediation of DEC-401's proof gap, not a new autonomy, dest
    - `corpus-concepts/concepts/<concept-id>.json`;
    - allow a local `review-records.json` file beside the concept index without stale-file rejection;
    - stale-file rejection and symlink/out-dir protections consistent with existing artifact writers.
+   - persist per-work-kind counts and per-work-kind review progress in the summary/state artifacts.
 3. Add CLI:
    - `mindline documents concept-index <corpus-pressure-out-or-parent> --out <dir>`;
    - `mindline documents concept-serve <concept-index-out-or-parent> [--addr 127.0.0.1:8788]`.
@@ -55,12 +65,19 @@ This plan is a PR46 remediation of DEC-401's proof gap, not a new autonomy, dest
    - show source-level evidence cards before atom-level traces;
    - translate reason codes into plain-English reviewer explanations;
    - keep copy packets source-level so Randy can paste one concept back for review without needing raw artifacts.
+   - default to the `concept_review` lane and show an honest empty state when there are no reviewable corpus concepts;
+   - add explicit lanes/filters for cleanup triage, enrichment backlog, and blocked diagnostics;
+   - render lane-specific review questions and allowed decision controls;
+   - implement the allowed-action matrix from the spec for `concept_review`, `cleanup_triage`, `enrichment_backlog`, and `blocked_diagnostic`;
+   - reject invalid POST choices for a concept's work kind and persist the work kind with review records.
+   - reject stale or mismatched review records when the submitted or stored work kind does not match the current concept artifact work kind.
    - expose `/api/state` for review state inspection;
    - expose a loopback-only POST endpoint for persisting concept review decisions;
    - keep host allowlist, token, same-origin, JSON body, and serialized write safety consistent with `judge-serve`.
 5. Extend eval readback:
    - detect `corpus-concepts/concept-summary.json`;
    - extract concept count, cross-source concept count, concept evidence counts, review burden ratio, compression ratio, source coverage, scale status, guardrails, and fingerprints.
+   - extract reviewer work-kind counts and per-work-kind review progress.
 6. Add focused tests:
    - concept grouping combines repeated meaning across source kinds;
    - concept display model produces non-generic titles, rationales, prompts, and representative evidence previews;
@@ -69,10 +86,18 @@ This plan is a PR46 remediation of DEC-401's proof gap, not a new autonomy, dest
    - the copied PR46 bad concept pattern is blocked/downgraded rather than emitted as a normal cross-source review item;
    - the Modelo 190 packet is blocked/downgraded rather than emitted as a normal cross-source review item when Slack support is link-only and the funding-rounds email is an outlier;
    - the `prepare` packet is blocked/downgraded rather than emitted as a normal same-kind needs-review item when unrelated Gmail snippets only share generic action/title terms;
+   - the 2026-06-16 `workspace` screenshot pattern is routed to cleanup/diagnostic work, not normal concept review;
    - link-only evidence does not count as readable support;
    - link-only source kinds do not count toward readable cross-source-kind support;
    - readable source outliers are flagged as split-needed/blocking evidence;
    - duplicate atoms from the same source collapse into one source-level contribution;
+   - local/single-source items do not appear in the default concept-review queue or expose Accept as a corpus concept choice;
+   - `/api/state` reports per-work-kind counts and progress;
+   - UI handler renders different prompts and controls for concept review versus cleanup/enrichment/blocked lanes;
+   - UI/API tests cover the allowed-action matrix for all reviewer work kinds;
+   - review POST validation rejects choices not allowed for the item's work kind;
+   - review record validation rejects stale/mismatched work-kind context when a concept's current work kind changes;
+   - STD-19 negative tests reject non-loopback or unconfigured Host values, cross-origin POST, missing or invalid review token, non-JSON POST bodies, read-path mutations through `/api/state`, and concurrent review writes that bypass serialization;
    - writer rejects stale unexpected files and produces expected paths;
    - CLI builds concept artifacts;
    - UI handler serves HTML, `/api/state`, and a token-protected decision POST;
@@ -83,6 +108,9 @@ This plan is a PR46 remediation of DEC-401's proof gap, not a new autonomy, dest
    - run concept index;
    - run eval readback and safety/improvement proof gates where applicable;
    - start the light UI server and verify it responds.
+   - verify `/api/state` from the advertised server path succeeds against an existing artifact directory;
+   - update the PR body so it reflects the v2-v6 Chain decisions and current proof, not stale DEC-401-only metrics.
+   - verify `git status --short` and `git diff --name-only` show no runtime proof artifacts or private `/tmp` outputs staged or committed.
 
 ## Acceptance Criteria
 
@@ -97,9 +125,20 @@ This plan is a PR46 remediation of DEC-401's proof gap, not a new autonomy, dest
 - The exact copied failure mode is judged by the shipped code after implementation: newsletter notification + link-only LinkedIn Slack save + duplicate Gmail meeting-summary atoms must be marked blocked or under-supported, with source-level evidence cards and plain-English reasons.
 - The exact Modelo 190 failure mode is judged by the shipped code after implementation: Gmail tax/admin sources + Gmail promo/funding digest + unread Slack LinkedIn URLs must not remain a normal `cross_source` item.
 - The exact `prepare` failure mode is judged by the shipped code after implementation: founder work time + June invoice timing + proof-of-payment snippets must not remain a normal `needs_review` concept just because generated action text repeats `prepare`.
+- The exact 2026-06-16 `workspace` screenshot failure mode is judged by the shipped code after implementation: one source, two atoms, duplicate-source atom support, and `single_source_concept` reason must not appear as normal concept-review work or expose a normal Accept action.
+- Concept artifacts, summary, `/api/state`, and copy packets expose reviewer work kind.
+- Default UI queue/progress counts only normal concept-review work; cleanup triage, enrichment backlog, and blocked diagnostics have separate lane counts and empty states.
+- UI prompts and decision controls are lane-specific, and POST review validation rejects choices that are invalid for the item's work kind.
+- Persisted review records include work kind, and stale/mismatched records cannot be applied when the current concept artifact work kind changes.
+- The allowed-action matrix is covered by focused tests for all reviewer work kinds.
+- STD-19 safety has negative test coverage for Host allowlist, same-origin POST, token validation, JSON-only request bodies, read-only `/api/state`, and serialized review writes.
+- `eval readback` reports reviewer work-kind counts and progress.
 - Source-level evidence cards are present in JSON, UI state, and copied packets for review.
 - Source evidence cards and copied packets present clean excerpts before generated summaries, and do not lead with duplicated/truncated generated summary text.
 - Raw reason codes are accompanied by plain-English reason labels in the UI/copy packet.
+- The PR body is updated to summarize DEC-403 through DEC-406 plus v6 proof and no longer claims the stale initial 10 cross-source/all-needs-review state.
+- The advertised local server proof is reproducible and `/api/state` does not point at a removed private temp path.
+- Verification proves no private runtime artifacts or `/tmp` proof outputs are staged or committed.
 - Product Brain captures spec/plan sign-off and delivery proof.
 
 ## Risks
@@ -112,6 +151,9 @@ This plan is a PR46 remediation of DEC-401's proof gap, not a new autonomy, dest
 - Deterministic term-overlap coherence is still not semantic truth. The mitigation is to use it only as a fail-closed sanity gate and avoid any held-out quality, destination-write, or no-human claim.
 - Readable source-kind and outlier gates may block nearly all current relation-neighborhood concepts. That is acceptable for this PR: honest blocked review work is better than false cross-source confidence.
 - Generic-term blocking may hide some weak but potentially useful action clusters. That is acceptable until Mindline has stronger labeled action-object extraction; false reviewability is worse than fewer normal concepts.
+- Separating lanes may reveal that the current corpus has zero normal concept-review items. That is acceptable and should be reported plainly; it is better than manufacturing review work from cleanup artifacts.
+- Lane-specific decisions add schema/API complexity. The mitigation is to keep the first taxonomy small, persist the work kind in artifacts, and reject invalid choices at the write API boundary.
+- Updating the PR body can drift from proof if proof is rerun later. The mitigation is to update the body only after fresh v6 proof and include exact artifact path/date and claim limits.
 
 ## Reviewer Sign-Off Targets
 

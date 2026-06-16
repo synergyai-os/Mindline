@@ -209,6 +209,10 @@ func TestBuildDetectsCorpusConceptSummary(t *testing.T) {
 		"relation_count":                        20926,
 		"concept_count":                         24,
 		"cross_source_concept_count":            8,
+		"concept_review_count":                  8,
+		"cleanup_triage_count":                  10,
+		"enrichment_backlog_count":              4,
+		"blocked_diagnostic_count":              2,
 		"evidence_reference_count":              208,
 		"concept_review_burden_count":           10,
 		"concept_review_burden_ratio":           0.416,
@@ -234,8 +238,71 @@ func TestBuildDetectsCorpusConceptSummary(t *testing.T) {
 	if artifact.Metrics["concept_count"] != 24 || artifact.Metrics["cross_source_concept_count"] != 8 {
 		t.Fatalf("expected concept metrics, got %+v", artifact.Metrics)
 	}
+	if artifact.Metrics["concept_review_count"] != 8 || artifact.Metrics["cleanup_triage_count"] != 10 || artifact.Metrics["enrichment_backlog_count"] != 4 || artifact.Metrics["blocked_diagnostic_count"] != 2 {
+		t.Fatalf("expected review work kind metrics, got %+v", artifact.Metrics)
+	}
 	if artifact.Fingerprints["corpus_fingerprint"] != "same" {
 		t.Fatalf("expected corpus fingerprint, got %+v", artifact.Fingerprints)
+	}
+}
+
+func TestBuildDetectsCorpusConceptReviewRecordProgress(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "corpus-concepts", "review-records.json"), map[string]any{
+		"schema_version": "corpus-concept-review-records/v0.1",
+		"corpus_id":      "corpus-a",
+		"review_work_kind_progress": map[string]any{
+			"concept_review": map[string]any{
+				"total_count":     2,
+				"reviewed_count":  1,
+				"remaining_count": 1,
+				"choice_counts":   map[string]any{"accept": 1},
+			},
+			"cleanup_triage": map[string]any{
+				"total_count":     1,
+				"reviewed_count":  1,
+				"remaining_count": 0,
+				"choice_counts":   map[string]any{"rename_needed": 1},
+			},
+		},
+		"records": []any{
+			map[string]any{
+				"schema_version":   "corpus-concept-review-records/v0.1",
+				"corpus_id":        "corpus-a",
+				"concept_id":       "concept-review",
+				"concept_title":    "Cross-source concept",
+				"review_work_kind": "concept_review",
+				"choice":           "accept",
+				"recorded_at":      "2026-06-16T10:00:00Z",
+			},
+			map[string]any{
+				"schema_version":   "corpus-concept-review-records/v0.1",
+				"corpus_id":        "corpus-a",
+				"concept_id":       "cleanup",
+				"concept_title":    "Cleanup concept",
+				"review_work_kind": "cleanup_triage",
+				"choice":           "rename_needed",
+				"recorded_at":      "2026-06-16T10:00:00Z",
+			},
+		},
+	})
+
+	summary, err := BuildSummary(root, Options{})
+	if err != nil {
+		t.Fatalf("build summary: %v", err)
+	}
+	if summary.ArtifactTypeCounts["corpus_concept_review_records"] != 1 {
+		t.Fatalf("expected review records artifact: %+v", summary.ArtifactTypeCounts)
+	}
+	artifact := summary.Artifacts[0]
+	if artifact.Metrics["concept_review_total_count"] != 2 ||
+		artifact.Metrics["concept_review_reviewed_count"] != 1 ||
+		artifact.Metrics["concept_review_remaining_count"] != 1 ||
+		artifact.Metrics["concept_review_choice_accept_count"] != 1 ||
+		artifact.Metrics["cleanup_triage_total_count"] != 1 ||
+		artifact.Metrics["cleanup_triage_reviewed_count"] != 1 ||
+		artifact.Metrics["cleanup_triage_choice_rename_needed_count"] != 1 {
+		t.Fatalf("expected per-work-kind progress metrics, got %+v", artifact.Metrics)
 	}
 }
 

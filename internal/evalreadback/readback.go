@@ -350,6 +350,8 @@ func artifactTypeForRef(ref string) string {
 		return "source_meaning_packet_summary"
 	case strings.HasSuffix(ref, "corpus-concepts/concept-summary.json"):
 		return "corpus_concept_summary"
+	case strings.HasSuffix(ref, "corpus-concepts/review-records.json"):
+		return "corpus_concept_review_records"
 	default:
 		return ""
 	}
@@ -414,6 +416,7 @@ func supportedSchema(artifactType, schemaVersion string) bool {
 		"value_proof_summary":                "mindline-value-proof/v0.1",
 		"source_meaning_packet_summary":      "source-meaning-packet/v0.1",
 		"corpus_concept_summary":             "corpus-concepts/v0.1",
+		"corpus_concept_review_records":      "corpus-concept-review-records/v0.1",
 	}
 	return strings.TrimSpace(schemaVersion) == expected[artifactType]
 }
@@ -437,6 +440,7 @@ func extractEvidence(raw map[string]any, artifact *ArtifactEvidence) {
 		"generated_evidence_or_blocker_group_count", "generated_review_burden_count",
 		"concept_count", "generated_concept_count", "cross_source_concept_count", "local_concept_count",
 		"needs_review_concept_count", "blocked_concept_count", "concept_review_burden_count",
+		"concept_review_count", "cleanup_triage_count", "enrichment_backlog_count", "blocked_diagnostic_count",
 		"cross_source_evidence_reference_count", "cross_source_kind_pair_count", "max_concept_count",
 		"omitted_concept_count",
 		"scale_skipped_source_count", "max_processed_sources", "max_source_bytes", "max_source_segments", "max_source_candidates",
@@ -517,6 +521,7 @@ func extractEvidence(raw map[string]any, artifact *ArtifactEvidence) {
 	if counts, ok := raw["counts"].(map[string]any); ok {
 		extractEvidence(counts, artifact)
 	}
+	extractCorpusConceptReviewProgressEvidence(raw, artifact)
 	if events, ok := raw["events"].([]any); ok {
 		for _, event := range events {
 			item, ok := event.(map[string]any)
@@ -553,6 +558,70 @@ func extractEvidence(raw map[string]any, artifact *ArtifactEvidence) {
 			} else if value, ok := boolValue(props["safety_no_human_claims"]); ok {
 				artifact.Flags["safety_no_human_claims"] = value
 			}
+		}
+	}
+}
+
+func extractCorpusConceptReviewProgressEvidence(raw map[string]any, artifact *ArtifactEvidence) {
+	progressByKind := map[string]map[string]float64{}
+	hasProgress := false
+	if progress, ok := raw["review_work_kind_progress"].(map[string]any); ok {
+		hasProgress = true
+		for kind, item := range progress {
+			bucket, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			metrics := progressByKind[kind]
+			if metrics == nil {
+				metrics = map[string]float64{}
+				progressByKind[kind] = metrics
+			}
+			for _, key := range []string{"total_count", "reviewed_count", "remaining_count"} {
+				if value, ok := numberValue(bucket[key]); ok {
+					metrics[key] = value
+				}
+			}
+			if choices, ok := bucket["choice_counts"].(map[string]any); ok {
+				for choice, rawCount := range choices {
+					if value, ok := numberValue(rawCount); ok {
+						metrics["choice_"+choice+"_count"] = value
+					}
+				}
+			}
+		}
+	}
+	if records, ok := raw["records"].([]any); ok && !hasProgress {
+		seen := map[string]bool{}
+		for _, item := range records {
+			record, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+			conceptID := stringValue(record["concept_id"])
+			if conceptID == "" || seen[conceptID] {
+				continue
+			}
+			seen[conceptID] = true
+			kind := stringValue(record["review_work_kind"])
+			if kind == "" {
+				kind = "concept_review"
+			}
+			metrics := progressByKind[kind]
+			if metrics == nil {
+				metrics = map[string]float64{}
+				progressByKind[kind] = metrics
+			}
+			metrics["reviewed_count"]++
+			if choice := stringValue(record["choice"]); choice != "" {
+				metrics["choice_"+choice+"_count"]++
+			}
+		}
+	}
+	for kind, metrics := range progressByKind {
+		safeKind := strings.ReplaceAll(kind, "-", "_")
+		for key, value := range metrics {
+			artifact.Metrics[safeKind+"_"+key] = value
 		}
 	}
 }

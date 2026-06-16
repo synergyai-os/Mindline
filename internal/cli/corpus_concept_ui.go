@@ -18,10 +18,11 @@ type corpusConceptUIState struct {
 }
 
 type corpusConceptUIPost struct {
-	ConceptID  string `json:"concept_id"`
-	Choice     string `json:"choice"`
-	Note       string `json:"note"`
-	ReviewerID string `json:"reviewer_id"`
+	ConceptID      string `json:"concept_id"`
+	ReviewWorkKind string `json:"review_work_kind"`
+	Choice         string `json:"choice"`
+	Note           string `json:"note"`
+	ReviewerID     string `json:"reviewer_id"`
 }
 
 type corpusConceptUITemplateData struct {
@@ -81,10 +82,11 @@ func newCorpusConceptUIHandlerWithToken(root, reviewToken string, allowedHosts [
 			return
 		}
 		_, err := documents.RecordCorpusConceptReview(root, documents.CorpusConceptReviewRecordInput{
-			ConceptID:  post.ConceptID,
-			Choice:     documents.CorpusConceptReviewChoice(post.Choice),
-			Note:       post.Note,
-			ReviewerID: strings.TrimSpace(post.ReviewerID),
+			ConceptID:      post.ConceptID,
+			ReviewWorkKind: documents.CorpusConceptReviewWorkKind(post.ReviewWorkKind),
+			Choice:         documents.CorpusConceptReviewChoice(post.Choice),
+			Note:           post.Note,
+			ReviewerID:     strings.TrimSpace(post.ReviewerID),
 		})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -240,6 +242,9 @@ button.concept:hover, button.concept.active { background: var(--accent-soft); }
   background: #fbfbf8;
 }
 .tag.cross_source, .tag.reviewed { color: var(--accent); background: var(--accent-soft); }
+.tag.concept_review { color: var(--accent); background: var(--accent-soft); }
+.tag.cleanup_triage { color: var(--gold); background: var(--gold-soft); }
+.tag.enrichment_backlog, .tag.blocked_diagnostic { color: var(--red); background: var(--red-soft); }
 .tag.needs_review { color: var(--gold); background: var(--gold-soft); }
 .tag.blocked, .tag.unreviewed { color: var(--red); background: var(--red-soft); }
 .detail-body {
@@ -371,9 +376,15 @@ const choices = [
   ["rename_needed", "Rename"],
   ["needs_source_context", "Need context"]
 ];
+const workKindChoices = {
+  concept_review: ["accept", "reject_noisy", "split_needed", "merge_duplicate", "rename_needed", "needs_source_context"],
+  cleanup_triage: ["reject_noisy", "split_needed", "merge_duplicate", "rename_needed"],
+  enrichment_backlog: ["needs_source_context", "reject_noisy"],
+  blocked_diagnostic: ["reject_noisy", "split_needed", "needs_source_context"]
+};
 let state = null;
 let selected = "";
-let filter = "all";
+let filter = "concept_review";
 let activeChoice = "";
 
 function esc(value) {
@@ -389,6 +400,10 @@ function esc(value) {
 function fmtRatio(value, digits = 2) {
   if (typeof value !== "number") return "0.00";
   return value.toFixed(digits);
+}
+
+function numberOr(value, fallback) {
+  return typeof value === "number" ? value : fallback;
 }
 
 function coverage(map) {
@@ -437,6 +452,25 @@ function sourceCardCount(concept) {
   return (concept.source_evidence || []).length;
 }
 
+function workKind(concept) {
+  return concept.review_work_kind || "concept_review";
+}
+
+function workKindLabel(kind) {
+  const labels = {
+    concept_review: "Concept review",
+    cleanup_triage: "Cleanup triage",
+    enrichment_backlog: "Enrichment backlog",
+    blocked_diagnostic: "Blocked diagnostic"
+  };
+  return labels[kind] || String(kind || "").replaceAll("_", " ");
+}
+
+function choicesForConcept(concept) {
+  const allowed = workKindChoices[workKind(concept)] || workKindChoices.concept_review;
+  return choices.filter(([id]) => allowed.includes(id));
+}
+
 function recordsByConcept() {
   const out = {};
   ((state.review_records && state.review_records.records) || []).forEach((record) => {
@@ -450,6 +484,10 @@ function filteredConcepts() {
   const reviewed = recordsByConcept();
   if (filter === "reviewed") return concepts.filter((concept) => reviewed[concept.concept_id]);
   if (filter === "unreviewed") return concepts.filter((concept) => !reviewed[concept.concept_id]);
+  if (filter === "concept_review") return concepts.filter((concept) => workKind(concept) === "concept_review");
+  if (filter === "cleanup_triage") return concepts.filter((concept) => workKind(concept) === "cleanup_triage");
+  if (filter === "enrichment_backlog") return concepts.filter((concept) => workKind(concept) === "enrichment_backlog");
+  if (filter === "blocked_diagnostic") return concepts.filter((concept) => workKind(concept) === "blocked_diagnostic");
   if (filter === "cross_source") return concepts.filter((concept) => concept.section === "cross_source");
   if (filter === "needs_review") return concepts.filter((concept) => concept.review_status === "needs_review" || concept.section === "needs_review");
   if (filter === "blocked") return concepts.filter((concept) => concept.review_status === "blocked" || concept.section === "blocked");
@@ -462,14 +500,14 @@ function render() {
   const concepts = filteredConcepts();
   document.getElementById("run").textContent = summary.corpus_id + " | " + summary.processed_source_count + "/" + summary.source_count + " sources | " + summary.scale_status;
   document.getElementById("metrics").innerHTML = [
-    metric("Reviewed", (progress.reviewed_concept_count || 0) + "/" + (progress.total_concept_count || summary.concept_count)),
+    metric("Reviewed", numberOr(progress.reviewed_concept_count, 0) + "/" + numberOr(progress.total_concept_count, summary.concept_count)),
     metric("Cross-source", summary.cross_source_concept_count),
     metric("Concepts", summary.concept_count),
     metric("Atoms", summary.atom_count),
     metric("Relations", summary.relation_count),
     metric("Compression", fmtRatio(summary.relation_review_compression_ratio, 4))
   ].join("");
-  document.getElementById("list-summary").textContent = concepts.length + " shown; " + (progress.remaining_concept_count || 0) + " remaining";
+  document.getElementById("list-summary").textContent = concepts.length + " shown; " + numberOr(progress.remaining_concept_count, 0) + " remaining";
   renderFilters();
   if (!selected && concepts.length) selected = concepts[0].concept_id;
   if (selected && !concepts.find((concept) => concept.concept_id === selected) && concepts.length) selected = concepts[0].concept_id;
@@ -482,7 +520,7 @@ function render() {
       '<div class="title">' + esc(concept.title) + '</div>' +
       '<div class="meta">' + esc(concept.grouping_rationale || "") + '</div>' +
       '<div class="meta">atoms=' + esc(concept.atom_count) + ' sources=' + esc(concept.source_count) + ' source cards=' + esc(sourceCardCount(concept)) + '</div>' +
-      '<div class="tags"><span class="tag ' + esc(concept.section) + '">' + esc(concept.section) + '</span><span class="tag">' + esc(coverage(concept.source_kind_coverage)) + '</span>' + reviewTag + '</div>' +
+      '<div class="tags"><span class="tag ' + esc(workKind(concept)) + '">' + esc(workKindLabel(workKind(concept))) + '</span><span class="tag ' + esc(concept.section) + '">' + esc(concept.section) + '</span><span class="tag">' + esc(coverage(concept.source_kind_coverage)) + '</span>' + reviewTag + '</div>' +
       '</button>';
   }).join("") || '<div class="empty">No concepts match this filter.</div>';
   document.querySelectorAll("button.concept").forEach((button) => {
@@ -497,6 +535,10 @@ function render() {
 
 function renderFilters() {
   const filters = [
+    ["concept_review", "Concept review"],
+    ["cleanup_triage", "Cleanup"],
+    ["enrichment_backlog", "Enrichment"],
+    ["blocked_diagnostic", "Diagnostic"],
     ["all", "All"],
     ["unreviewed", "Unreviewed"],
     ["reviewed", "Reviewed"],
@@ -523,6 +565,8 @@ function renderDetail(concept) {
   }
   const record = recordsByConcept()[concept.concept_id];
   if (!activeChoice && record) activeChoice = record.choice;
+  const availableChoices = choicesForConcept(concept);
+  if (activeChoice && !availableChoices.find(([id]) => id === activeChoice)) activeChoice = "";
   const note = record && record.note ? record.note : "";
   const reasons = concept.reason_codes && concept.reason_codes.length ? concept.reason_codes : [];
   const reasonHTML = reasons.length ? '<div class="reason-list">' + reasons.map((code) => '<div class="reason"><strong>' + esc(reasonLabel(code)) + '</strong><div class="trace">' + esc(code) + '</div></div>').join("") + '</div>' : '<p class="muted">No quality reasons.</p>';
@@ -557,6 +601,7 @@ function renderDetail(concept) {
     '<div class="actions"><button class="copy" type="button" id="copy-concept">Copy concept</button><span class="muted" id="copy-status"></span></div>' +
     '<section class="question"><h3>Review Question</h3><p>' + esc(concept.review_prompt || "") + '</p><p class="muted">' + esc(concept.grouping_rationale || "") + '</p></section>' +
     '<div class="grid">' +
+    '<div class="box"><span>Work kind</span><strong>' + esc(workKindLabel(workKind(concept))) + '</strong></div>' +
     '<div class="box"><span>Status</span><strong>' + esc(concept.review_status) + '</strong></div>' +
     '<div class="box"><span>Section</span><strong>' + esc(concept.section) + '</strong></div>' +
     '<div class="box"><span>Atoms</span><strong>' + esc(concept.atom_count) + '</strong></div>' +
@@ -567,7 +612,7 @@ function renderDetail(concept) {
     '<section><h3>Quality Reasons</h3>' + reasonHTML + '</section>' +
     '<section class="review-form">' +
     '<h3>Decision</h3>' +
-    '<div class="decisions">' + choices.map(([id, label]) => '<button class="decision' + (activeChoice === id ? ' active' : '') + '" type="button" data-choice="' + id + '">' + esc(label) + '</button>').join("") + '</div>' +
+    '<div class="decisions">' + availableChoices.map(([id, label]) => '<button class="decision' + (activeChoice === id ? ' active' : '') + '" type="button" data-choice="' + id + '">' + esc(label) + '</button>').join("") + '</div>' +
     '<textarea id="review-note" placeholder="Optional note">' + esc(note) + '</textarea>' +
     '<button class="save" type="button" id="save-review">Save decision</button>' +
     '<p class="muted">' + (record ? 'Last saved: ' + esc(record.choice) + ' at ' + esc(record.recorded_at) : 'No decision saved yet.') + '</p>' +
@@ -592,6 +637,7 @@ function conceptCopyText(concept) {
     "",
     "Concept: " + (concept.title || ""),
     "Concept ID: " + concept.concept_id,
+    "Review work kind: " + workKind(concept),
     "Section: " + concept.section,
     "Review status: " + concept.review_status,
     "Decision: " + (record ? record.choice : "unreviewed"),
@@ -681,11 +727,13 @@ function fallbackCopy(text, done, failed) {
 
 function saveReview(conceptID) {
   if (!activeChoice) return;
+  const concept = (state.index.concepts || []).find((item) => item.concept_id === conceptID);
   fetch("/api/reviews", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Mindline-Review-Token": reviewToken },
     body: JSON.stringify({
       concept_id: conceptID,
+      review_work_kind: concept ? workKind(concept) : "",
       choice: activeChoice,
       note: document.getElementById("review-note").value
     })
