@@ -125,6 +125,28 @@ func writeCorpusConceptSection(b *strings.Builder, heading string, concepts []Co
 		if strings.TrimSpace(concept.ReviewPrompt) != "" {
 			b.WriteString(fmt.Sprintf("  - prompt=%s\n", concept.ReviewPrompt))
 		}
+		if strings.TrimSpace(concept.CandidateMeaning) != "" {
+			b.WriteString(fmt.Sprintf("  - candidate=%s\n", concept.CandidateMeaning))
+		}
+		if strings.TrimSpace(concept.AcceptMeaning) != "" {
+			b.WriteString(fmt.Sprintf("  - accept=%s\n", concept.AcceptMeaning))
+		}
+		if len(concept.DecisionRubric) > 0 {
+			criteria := []string{}
+			for _, criterion := range concept.DecisionRubric {
+				label := strings.TrimSpace(criterion.Label)
+				if label == "" {
+					label = strings.ReplaceAll(string(criterion.Choice), "_", " ")
+				}
+				criteria = append(criteria, fmt.Sprintf("%s: %s", label, criterion.Criterion))
+			}
+			b.WriteString(fmt.Sprintf("  - rubric=%s\n", strings.Join(criteria, " | ")))
+		}
+		for _, contribution := range concept.SourceContributions {
+			if strings.TrimSpace(contribution) != "" {
+				b.WriteString(fmt.Sprintf("  - contribution=%s\n", contribution))
+			}
+		}
 		if len(concept.ReasonCodes) > 0 {
 			b.WriteString(fmt.Sprintf("  - reasons=%s\n", strings.Join(concept.ReasonCodes, ",")))
 		}

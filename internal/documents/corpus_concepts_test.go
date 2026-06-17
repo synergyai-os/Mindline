@@ -61,11 +61,25 @@ func TestBuildCorpusConceptIndexGroupsCrossSourceConcepts(t *testing.T) {
 			if strings.TrimSpace(concept.GroupingRationale) == "" || strings.TrimSpace(concept.ReviewPrompt) == "" {
 				t.Fatalf("expected review rationale and prompt: %+v", concept)
 			}
+			if strings.TrimSpace(concept.CandidateMeaning) == "" {
+				t.Fatalf("expected candidate meaning for human review: %+v", concept)
+			}
+			if strings.TrimSpace(concept.AcceptMeaning) == "" || !strings.Contains(strings.ToLower(concept.AcceptMeaning), "accepted corpus concept") {
+				t.Fatalf("expected explicit accept consequence: %+v", concept.AcceptMeaning)
+			}
+			if len(concept.DecisionRubric) < 5 {
+				t.Fatalf("expected decision rubric for reviewer choices: %+v", concept.DecisionRubric)
+			}
 			if len(concept.RepresentativeEvidence) < 2 {
 				t.Fatalf("expected representative evidence previews: %+v", concept.RepresentativeEvidence)
 			}
 			if len(concept.SourceEvidence) < 2 {
 				t.Fatalf("expected source evidence groups: %+v", concept.SourceEvidence)
+			}
+			for _, source := range concept.SourceEvidence {
+				if strings.TrimSpace(source.Contribution) == "" {
+					t.Fatalf("expected interpreted source contribution: %+v", source)
+				}
 			}
 			for _, preview := range concept.RepresentativeEvidence {
 				if strings.TrimSpace(preview.Excerpt) == "" || strings.TrimSpace(preview.Title) == "" {
@@ -79,6 +93,12 @@ func TestBuildCorpusConceptIndexGroupsCrossSourceConcepts(t *testing.T) {
 	}
 	if !foundMixed {
 		t.Fatalf("expected mixed source-kind coverage: %+v", build.Index.Concepts)
+	}
+	reviewPacket := corpusConceptReviewMarkdown(build.Summary)
+	for _, want := range []string{"candidate=", "accept=", "rubric=Accept:", "contribution="} {
+		if !strings.Contains(reviewPacket, want) {
+			t.Fatalf("expected review packet to include %q, got:\n%s", want, reviewPacket)
+		}
 	}
 }
 

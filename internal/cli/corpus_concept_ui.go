@@ -260,6 +260,33 @@ button.concept:hover, button.concept.active { background: var(--accent-soft); }
   display: grid;
   gap: 6px;
 }
+.contract {
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  border-radius: 6px;
+  padding: 12px 14px;
+  display: grid;
+  gap: 10px;
+  background: #fbfbf8;
+}
+.contract-item { display: grid; gap: 3px; }
+.contract-item span, .rubric-title {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.rubric {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+  background: #fbfbf8;
+}
+.rubric-list { display: grid; gap: 6px; }
+.rubric-item { display: grid; grid-template-columns: minmax(80px, 140px) minmax(0, 1fr); gap: 8px; align-items: start; }
+.rubric-item strong { overflow-wrap: anywhere; }
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
@@ -310,6 +337,15 @@ textarea {
   cursor: pointer;
 }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.copy-fallback {
+  display: grid;
+  gap: 6px;
+}
+.copy-fallback[hidden] { display: none; }
+.copy-fallback textarea {
+  min-height: 220px;
+  font-size: 12px;
+}
 .evidence { display: grid; gap: 10px; }
 .evidence-card {
   border: 1px solid var(--line);
@@ -323,6 +359,11 @@ textarea {
 .source-card {
   border-left-color: var(--gold);
   background: #fffdf5;
+}
+.contribution {
+  border-left: 3px solid var(--gold);
+  padding-left: 9px;
+  color: var(--ink);
 }
 .excerpt { font-size: 14px; }
 .reason-list { display: grid; gap: 6px; }
@@ -376,6 +417,10 @@ const choices = [
   ["rename_needed", "Rename"],
   ["needs_source_context", "Need context"]
 ];
+function choiceLabel(choice) {
+  const match = choices.find(([id]) => id === choice);
+  return match ? match[1] : String(choice || "").replaceAll("_", " ");
+}
 const workKindChoices = {
   concept_review: ["accept", "reject_noisy", "split_needed", "merge_duplicate", "rename_needed", "needs_source_context"],
   cleanup_triage: ["reject_noisy", "split_needed", "merge_duplicate", "rename_needed"],
@@ -518,7 +563,7 @@ function render() {
     const reviewTag = record ? '<span class="tag reviewed">' + esc(record.choice) + '</span>' : '<span class="tag unreviewed">unreviewed</span>';
     return '<button class="concept' + active + '" type="button" data-id="' + esc(concept.concept_id) + '">' +
       '<div class="title">' + esc(concept.title) + '</div>' +
-      '<div class="meta">' + esc(concept.grouping_rationale || "") + '</div>' +
+      '<div class="meta">' + esc(concept.candidate_meaning || concept.grouping_rationale || "") + '</div>' +
       '<div class="meta">atoms=' + esc(concept.atom_count) + ' sources=' + esc(concept.source_count) + ' source cards=' + esc(sourceCardCount(concept)) + '</div>' +
       '<div class="tags"><span class="tag ' + esc(workKind(concept)) + '">' + esc(workKindLabel(workKind(concept))) + '</span><span class="tag ' + esc(concept.section) + '">' + esc(concept.section) + '</span><span class="tag">' + esc(coverage(concept.source_kind_coverage)) + '</span>' + reviewTag + '</div>' +
       '</button>';
@@ -570,6 +615,15 @@ function renderDetail(concept) {
   const note = record && record.note ? record.note : "";
   const reasons = concept.reason_codes && concept.reason_codes.length ? concept.reason_codes : [];
   const reasonHTML = reasons.length ? '<div class="reason-list">' + reasons.map((code) => '<div class="reason"><strong>' + esc(reasonLabel(code)) + '</strong><div class="trace">' + esc(code) + '</div></div>').join("") + '</div>' : '<p class="muted">No quality reasons.</p>';
+  const contractHTML = '<section class="contract">' +
+    '<div class="contract-item"><span>Candidate Meaning</span><strong>' + esc(concept.candidate_meaning || "No candidate meaning supplied.") + '</strong></div>' +
+    '<div class="contract-item"><span>Accept means</span><p>' + esc(concept.accept_meaning || "No accept contract supplied.") + '</p></div>' +
+    '</section>';
+  const rubricItems = (concept.decision_rubric || []).map((item) => {
+    const label = item.label || choiceLabel(item.choice);
+    return '<div class="rubric-item"><strong>' + esc(label) + '</strong><span>' + esc(item.criterion || "") + '</span></div>';
+  }).join("");
+  const rubricHTML = '<div class="rubric"><div class="rubric-title">Decision rubric</div>' + (rubricItems ? '<div class="rubric-list">' + rubricItems + '</div>' : '<p class="muted">No rubric supplied.</p>') + '</div>';
   const sourceEvidence = (concept.source_evidence || []).map((source) => {
     const flags = (source.flags || []).map((flag) => '<span class="tag">' + esc(reasonLabel(flag)) + '</span>').join("");
     const previews = (source.evidence || []).map((item) => {
@@ -583,6 +637,7 @@ function renderDetail(concept) {
     }).join("");
     return '<article class="evidence-card source-card">' +
       '<div class="tags"><span class="tag">' + esc(source.source_kind) + '</span><span class="tag">' + esc(source.source_ref) + '</span><span class="tag">atoms ' + esc(source.atom_count) + '</span><span class="tag">readable ' + esc(source.reviewable_atom_count) + '</span>' + (source.link_only ? '<span class="tag blocked">link-only</span>' : '') + flags + '</div>' +
+      (source.contribution ? '<p class="contribution">' + esc(source.contribution) + '</p>' : '') +
       previews +
       '</article>';
   }).join("") || '<p class="muted">No source evidence cards.</p>';
@@ -599,6 +654,8 @@ function renderDetail(concept) {
   detail.innerHTML = '<div class="detail-head"><h2>' + esc(concept.title) + '</h2><p class="muted">' + esc(concept.concept_id) + '</p></div>' +
     '<div class="detail-body">' +
     '<div class="actions"><button class="copy" type="button" id="copy-concept">Copy concept</button><span class="muted" id="copy-status"></span></div>' +
+    '<div class="copy-fallback" id="copy-fallback" hidden><textarea id="copy-fallback-text" aria-label="Copy packet text" readonly></textarea></div>' +
+    contractHTML +
     '<section class="question"><h3>Review Question</h3><p>' + esc(concept.review_prompt || "") + '</p><p class="muted">' + esc(concept.grouping_rationale || "") + '</p></section>' +
     '<div class="grid">' +
     '<div class="box"><span>Work kind</span><strong>' + esc(workKindLabel(workKind(concept))) + '</strong></div>' +
@@ -612,6 +669,7 @@ function renderDetail(concept) {
     '<section><h3>Quality Reasons</h3>' + reasonHTML + '</section>' +
     '<section class="review-form">' +
     '<h3>Decision</h3>' +
+    rubricHTML +
     '<div class="decisions">' + availableChoices.map(([id, label]) => '<button class="decision' + (activeChoice === id ? ' active' : '') + '" type="button" data-choice="' + id + '">' + esc(label) + '</button>').join("") + '</div>' +
     '<textarea id="review-note" placeholder="Optional note">' + esc(note) + '</textarea>' +
     '<button class="save" type="button" id="save-review">Save decision</button>' +
@@ -646,6 +704,12 @@ function conceptCopyText(concept) {
     "Coverage: " + coverage(concept.source_kind_coverage),
     "Reasons: " + ((concept.reason_codes || []).map((code) => reasonLabel(code) + " [" + code + "]").join("; ") || "none"),
     "",
+    "Candidate meaning:",
+    concept.candidate_meaning || "",
+    "",
+    "Accept means:",
+    concept.accept_meaning || "",
+    "",
     "Review question:",
     concept.review_prompt || "",
     "",
@@ -653,6 +717,14 @@ function conceptCopyText(concept) {
     concept.grouping_rationale || "",
     ""
   ];
+  lines.push("Decision rubric:");
+  (concept.decision_rubric || []).forEach((item) => {
+    lines.push("- " + (item.label || choiceLabel(item.choice)) + ": " + (item.criterion || ""));
+  });
+  if (!(concept.decision_rubric || []).length) {
+    lines.push("none");
+  }
+  lines.push("");
   if (record && record.note) {
     lines.push("Reviewer note:", record.note, "");
   }
@@ -663,6 +735,7 @@ function conceptCopyText(concept) {
       String(index + 1) + ". " + (source.source_kind || "source") + " " + (source.source_ref || ""),
       "Atoms from this source: " + source.atom_count,
       "Readable non-link atoms: " + source.reviewable_atom_count,
+      "Contribution: " + (source.contribution || ""),
       "Flags: " + ((source.flags || []).map((flag) => reasonLabel(flag) + " [" + flag + "]").join("; ") || "none")
     );
     (source.evidence || []).forEach((item, itemIndex) => {
@@ -700,13 +773,35 @@ function conceptCopyText(concept) {
 function copyConcept(concept) {
   const text = conceptCopyText(concept);
   const status = document.getElementById("copy-status");
+  hideCopyFallback();
   const done = () => { status.textContent = "Copied"; };
-  const failed = () => { status.textContent = "Copy failed"; };
+  const failed = () => showCopyFallback(text, status);
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done, failed));
     return;
   }
   fallbackCopy(text, done, failed);
+}
+
+function hideCopyFallback() {
+  const fallback = document.getElementById("copy-fallback");
+  const area = document.getElementById("copy-fallback-text");
+  if (fallback) fallback.hidden = true;
+  if (area) area.value = "";
+}
+
+function showCopyFallback(text, status) {
+  const fallback = document.getElementById("copy-fallback");
+  const area = document.getElementById("copy-fallback-text");
+  if (!fallback || !area) {
+    status.textContent = "Copy unavailable";
+    return;
+  }
+  area.value = text;
+  fallback.hidden = false;
+  area.focus();
+  area.select();
+  status.textContent = "Packet shown below";
 }
 
 function fallbackCopy(text, done, failed) {

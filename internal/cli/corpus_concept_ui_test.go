@@ -16,12 +16,19 @@ import (
 func TestCorpusConceptUIServesReviewStateAndRecordsDecision(t *testing.T) {
 	root := t.TempDir()
 	concept := documents.CorpusConcept{
-		SchemaVersion:          documents.CorpusConceptsSchemaVersion,
-		ConceptID:              "concept-ui-test",
-		CorpusID:               "corpus-ui-test",
-		Title:                  "Cross-source topic concept: review, evidence",
-		ReviewPrompt:           "Decide whether these snippets describe one coherent concept.",
-		GroupingRationale:      "Grouped from cross-source relations across 2 sources.",
+		SchemaVersion:     documents.CorpusConceptsSchemaVersion,
+		ConceptID:         "concept-ui-test",
+		CorpusID:          "corpus-ui-test",
+		Title:             "Cross-source topic concept: review, evidence",
+		ReviewPrompt:      "Decide whether these snippets describe one coherent concept.",
+		GroupingRationale: "Grouped from cross-source relations across 2 sources.",
+		CandidateMeaning:  "Possible corpus concept: review and evidence describe the same source-backed decision workflow.",
+		AcceptMeaning:     "Accept means these sources independently support one accepted corpus concept for later proposal work.",
+		DecisionRubric: []documents.CorpusConceptDecisionCriterion{
+			{Choice: documents.CorpusConceptReviewAccept, Label: "Accept", Criterion: "Use only when the candidate meaning is supported by all readable source contributions."},
+			{Choice: documents.CorpusConceptReviewSplitNeeded, Label: "Split", Criterion: "Use when the sources contain different meanings."},
+			{Choice: documents.CorpusConceptReviewNeedsSourceContext, Label: "Need context", Criterion: "Use when the excerpts are insufficient to judge."},
+		},
 		Section:                documents.CorpusConceptSectionCrossSource,
 		CandidateKind:          documents.SemanticCandidateKindTopic,
 		RoutingHint:            documents.SourceMeaningRoutingTolariaCandidate,
@@ -49,6 +56,7 @@ func TestCorpusConceptUIServesReviewStateAndRecordsDecision(t *testing.T) {
 			SourceRef:           "gmail:source-ui",
 			AtomCount:           1,
 			ReviewableAtomCount: 1,
+			Contribution:        "Gmail supports the candidate by saying readable evidence is needed before review decisions.",
 			Evidence: []documents.CorpusConceptEvidencePreview{{
 				EvidenceRefID: "evref-ui",
 				AtomID:        "atom-ui",
@@ -76,6 +84,9 @@ func TestCorpusConceptUIServesReviewStateAndRecordsDecision(t *testing.T) {
 			Title:                  concept.Title,
 			ReviewPrompt:           concept.ReviewPrompt,
 			GroupingRationale:      concept.GroupingRationale,
+			CandidateMeaning:       concept.CandidateMeaning,
+			AcceptMeaning:          concept.AcceptMeaning,
+			DecisionRubric:         concept.DecisionRubric,
 			Section:                concept.Section,
 			CandidateKind:          concept.CandidateKind,
 			RoutingHint:            concept.RoutingHint,
@@ -109,8 +120,13 @@ func TestCorpusConceptUIServesReviewStateAndRecordsDecision(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `name="mindline-review-token" content="test-token"`) {
 		t.Fatalf("expected review token meta tag")
 	}
-	if !strings.Contains(rec.Body.String(), "Copy concept") || !strings.Contains(rec.Body.String(), "Mindline concept review packet") || !strings.Contains(rec.Body.String(), "Source Evidence") {
+	if !strings.Contains(rec.Body.String(), "Copy concept") || !strings.Contains(rec.Body.String(), "copy-fallback-text") || !strings.Contains(rec.Body.String(), "Mindline concept review packet") || !strings.Contains(rec.Body.String(), "Source Evidence") {
 		t.Fatalf("expected concept copy affordance in UI")
+	}
+	for _, want := range []string{"Candidate Meaning", "Accept means", "Decision rubric", "Candidate meaning:", "Accept means:"} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("expected review contract marker %q in UI", want)
+		}
 	}
 
 	state := getCorpusConceptUIState(t, handler)
@@ -122,6 +138,12 @@ func TestCorpusConceptUIServesReviewStateAndRecordsDecision(t *testing.T) {
 	}
 	if got := state.Index.Concepts[0].SourceEvidence[0].Evidence[0].Excerpt; got == "" {
 		t.Fatalf("expected source evidence excerpt")
+	}
+	if got := state.Index.Concepts[0].CandidateMeaning; got == "" {
+		t.Fatalf("expected candidate meaning in API state")
+	}
+	if got := state.Index.Concepts[0].SourceEvidence[0].Contribution; got == "" {
+		t.Fatalf("expected interpreted source contribution in API state")
 	}
 
 	payload := `{"concept_id":"concept-ui-test","choice":"rename_needed","note":"needs clearer title"}`

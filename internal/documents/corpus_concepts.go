@@ -87,24 +87,28 @@ type CorpusConceptIndex struct {
 }
 
 type CorpusConceptListItem struct {
-	ConceptID              string                          `json:"concept_id"`
-	Title                  string                          `json:"title"`
-	ReviewPrompt           string                          `json:"review_prompt"`
-	GroupingRationale      string                          `json:"grouping_rationale"`
-	ConceptKey             string                          `json:"concept_key"`
-	Section                CorpusConceptSection            `json:"section"`
-	CandidateKind          SemanticCandidateKind           `json:"candidate_kind"`
-	RoutingHint            SourceMeaningPreviewRoutingHint `json:"routing_hint"`
-	AtomCount              int                             `json:"atom_count"`
-	SourceCount            int                             `json:"source_count"`
-	EvidenceReferenceCount int                             `json:"evidence_reference_count"`
-	SourceKindCoverage     map[string]int                  `json:"source_kind_coverage"`
-	ReviewStatus           ReviewStatus                    `json:"review_status"`
-	ReviewWorkKind         CorpusConceptReviewWorkKind     `json:"review_work_kind"`
-	ReasonCodes            []string                        `json:"reason_codes,omitempty"`
-	ConceptPath            string                          `json:"concept_path"`
-	RepresentativeEvidence int                             `json:"representative_evidence_count"`
-	SourceEvidence         int                             `json:"source_evidence_count"`
+	ConceptID              string                           `json:"concept_id"`
+	Title                  string                           `json:"title"`
+	ReviewPrompt           string                           `json:"review_prompt"`
+	GroupingRationale      string                           `json:"grouping_rationale"`
+	CandidateMeaning       string                           `json:"candidate_meaning"`
+	AcceptMeaning          string                           `json:"accept_meaning"`
+	DecisionRubric         []CorpusConceptDecisionCriterion `json:"decision_rubric,omitempty"`
+	SourceContributions    []string                         `json:"source_contributions,omitempty"`
+	ConceptKey             string                           `json:"concept_key"`
+	Section                CorpusConceptSection             `json:"section"`
+	CandidateKind          SemanticCandidateKind            `json:"candidate_kind"`
+	RoutingHint            SourceMeaningPreviewRoutingHint  `json:"routing_hint"`
+	AtomCount              int                              `json:"atom_count"`
+	SourceCount            int                              `json:"source_count"`
+	EvidenceReferenceCount int                              `json:"evidence_reference_count"`
+	SourceKindCoverage     map[string]int                   `json:"source_kind_coverage"`
+	ReviewStatus           ReviewStatus                     `json:"review_status"`
+	ReviewWorkKind         CorpusConceptReviewWorkKind      `json:"review_work_kind"`
+	ReasonCodes            []string                         `json:"reason_codes,omitempty"`
+	ConceptPath            string                           `json:"concept_path"`
+	RepresentativeEvidence int                              `json:"representative_evidence_count"`
+	SourceEvidence         int                              `json:"source_evidence_count"`
 }
 
 type CorpusConcept struct {
@@ -114,6 +118,9 @@ type CorpusConcept struct {
 	Title                  string                           `json:"title"`
 	ReviewPrompt           string                           `json:"review_prompt"`
 	GroupingRationale      string                           `json:"grouping_rationale"`
+	CandidateMeaning       string                           `json:"candidate_meaning"`
+	AcceptMeaning          string                           `json:"accept_meaning"`
+	DecisionRubric         []CorpusConceptDecisionCriterion `json:"decision_rubric,omitempty"`
 	ConceptKey             string                           `json:"concept_key"`
 	Section                CorpusConceptSection             `json:"section"`
 	CandidateKind          SemanticCandidateKind            `json:"candidate_kind"`
@@ -132,6 +139,12 @@ type CorpusConcept struct {
 	AtomRefs               []SourceMeaningPacketAtomRef     `json:"atom_refs"`
 }
 
+type CorpusConceptDecisionCriterion struct {
+	Choice    CorpusConceptReviewChoice `json:"choice,omitempty"`
+	Label     string                    `json:"label"`
+	Criterion string                    `json:"criterion"`
+}
+
 type CorpusConceptSourceEvidence struct {
 	SourceID            string                         `json:"source_id"`
 	SourceKind          string                         `json:"source_kind"`
@@ -140,6 +153,7 @@ type CorpusConceptSourceEvidence struct {
 	ReviewableAtomCount int                            `json:"reviewable_atom_count"`
 	DuplicateAtomCount  int                            `json:"duplicate_atom_count,omitempty"`
 	LinkOnly            bool                           `json:"link_only"`
+	Contribution        string                         `json:"contribution,omitempty"`
 	Flags               []string                       `json:"flags,omitempty"`
 	SharedTerms         []string                       `json:"shared_terms,omitempty"`
 	Evidence            []CorpusConceptEvidencePreview `json:"evidence"`
@@ -893,8 +907,11 @@ func buildCorpusConcept(corpusID, key string, atoms []CorpusGraphAtom) CorpusCon
 	}
 	concept.ReviewWorkKind = corpusConceptReviewWorkKind(concept)
 	concept.Title = corpusConceptTitle(key, atoms)
-	concept.ReviewPrompt = corpusConceptReviewPrompt(concept)
 	concept.GroupingRationale = corpusConceptGroupingRationale(key, concept)
+	concept.CandidateMeaning = corpusConceptCandidateMeaning(concept)
+	concept.AcceptMeaning = corpusConceptAcceptMeaning(concept)
+	concept.DecisionRubric = corpusConceptDecisionRubric(concept)
+	concept.ReviewPrompt = corpusConceptReviewPrompt(concept)
 	concept.RepresentativeEvidence = corpusConceptRepresentativeEvidence(atoms)
 	concept.ConceptID = corpusConceptID(corpusID, key, atoms)
 	sort.Slice(concept.EvidenceRefs, func(i, j int) bool {
@@ -994,6 +1011,10 @@ func buildCorpusConceptSummary(pressure CorpusPressureSummary, graph CorpusGraph
 			Title:                  concept.Title,
 			ReviewPrompt:           concept.ReviewPrompt,
 			GroupingRationale:      concept.GroupingRationale,
+			CandidateMeaning:       concept.CandidateMeaning,
+			AcceptMeaning:          concept.AcceptMeaning,
+			DecisionRubric:         append([]CorpusConceptDecisionCriterion{}, concept.DecisionRubric...),
+			SourceContributions:    corpusConceptSourceContributionList(concept.SourceEvidence),
 			ConceptKey:             concept.ConceptKey,
 			Section:                concept.Section,
 			CandidateKind:          concept.CandidateKind,
@@ -1170,6 +1191,82 @@ func corpusConceptReviewWorkKind(concept CorpusConcept) CorpusConceptReviewWorkK
 	return CorpusConceptReviewWorkConceptReview
 }
 
+func corpusConceptCandidateMeaning(concept CorpusConcept) string {
+	kind := strings.ReplaceAll(string(concept.CandidateKind), "_", " ")
+	terms := corpusConceptMeaningTerms(concept.SourceEvidence)
+	termPhrase := corpusConceptHumanList(terms)
+	switch normalizeCorpusConceptReviewWorkKind(concept.ReviewWorkKind) {
+	case CorpusConceptReviewWorkConceptReview:
+		if termPhrase != "" {
+			return fmt.Sprintf("Possible corpus concept: the %s evidence appears to describe one %s around %s.", corpusConceptSourceKindList(concept.SourceKindCoverage), kind, termPhrase)
+		}
+		return fmt.Sprintf("Possible corpus concept: readable evidence from %d source(s) may describe one %s.", concept.SourceCount, kind)
+	case CorpusConceptReviewWorkCleanupTriage:
+		if termPhrase != "" {
+			return fmt.Sprintf("Cleanup item: extracted atoms look related around %s, but they are not eligible to become accepted corpus knowledge yet.", termPhrase)
+		}
+		return "Cleanup item: extracted atoms need triage before they can be considered for concept review."
+	case CorpusConceptReviewWorkEnrichmentBacklog:
+		return "Enrichment item: the system needs more readable source context before this can be judged as a concept."
+	case CorpusConceptReviewWorkBlockedDiagnostic:
+		return "Blocked diagnostic: quality gates found a problem that must be fixed before concept review."
+	default:
+		if termPhrase != "" {
+			return fmt.Sprintf("Possible review item around %s.", termPhrase)
+		}
+		return "Possible review item needing human judgment."
+	}
+}
+
+func corpusConceptAcceptMeaning(concept CorpusConcept) string {
+	switch normalizeCorpusConceptReviewWorkKind(concept.ReviewWorkKind) {
+	case CorpusConceptReviewWorkConceptReview:
+		return "Accept means the readable source contributions independently support this candidate as one accepted corpus concept. It is still reviewer feedback, not a destination write or autonomous knowledge claim."
+	case CorpusConceptReviewWorkCleanupTriage:
+		return "Accept is not available for cleanup triage; choose the cleanup action that best improves or discards the extraction."
+	case CorpusConceptReviewWorkEnrichmentBacklog:
+		return "Accept is not available until source enrichment provides readable support."
+	case CorpusConceptReviewWorkBlockedDiagnostic:
+		return "Accept is not available while the item is blocked by quality diagnostics."
+	default:
+		return "Accept only when the source evidence supports one coherent corpus concept."
+	}
+}
+
+func corpusConceptDecisionRubric(concept CorpusConcept) []CorpusConceptDecisionCriterion {
+	switch normalizeCorpusConceptReviewWorkKind(concept.ReviewWorkKind) {
+	case CorpusConceptReviewWorkConceptReview:
+		return []CorpusConceptDecisionCriterion{
+			{Choice: CorpusConceptReviewAccept, Label: "Accept", Criterion: "Use when every readable source contribution supports the candidate meaning as one coherent corpus concept."},
+			{Choice: CorpusConceptReviewRejectNoisy, Label: "Noisy", Criterion: "Use when the grouping is accidental, too weak, or not useful as a concept."},
+			{Choice: CorpusConceptReviewSplitNeeded, Label: "Split", Criterion: "Use when the evidence contains two or more distinct concepts that should be reviewed separately."},
+			{Choice: CorpusConceptReviewMergeDuplicate, Label: "Merge", Criterion: "Use when this candidate duplicates another concept and should not stand alone."},
+			{Choice: CorpusConceptReviewRenameNeeded, Label: "Rename", Criterion: "Use when the concept is coherent but the title or meaning label needs clearer wording."},
+			{Choice: CorpusConceptReviewNeedsSourceContext, Label: "Need context", Criterion: "Use when excerpts are promising but insufficient to judge without the full source card."},
+		}
+	case CorpusConceptReviewWorkCleanupTriage:
+		return []CorpusConceptDecisionCriterion{
+			{Choice: CorpusConceptReviewRejectNoisy, Label: "Noisy", Criterion: "Use when the extracted item should be discarded as noise."},
+			{Choice: CorpusConceptReviewSplitNeeded, Label: "Split", Criterion: "Use when one cleanup item contains unrelated extracted meanings."},
+			{Choice: CorpusConceptReviewMergeDuplicate, Label: "Merge", Criterion: "Use when this cleanup item duplicates another cleanup item."},
+			{Choice: CorpusConceptReviewRenameNeeded, Label: "Rename", Criterion: "Use when the extraction label is misleading or too vague."},
+		}
+	case CorpusConceptReviewWorkEnrichmentBacklog:
+		return []CorpusConceptDecisionCriterion{
+			{Choice: CorpusConceptReviewNeedsSourceContext, Label: "Need context", Criterion: "Use when the source must be enriched before judging the concept."},
+			{Choice: CorpusConceptReviewRejectNoisy, Label: "Noisy", Criterion: "Use when enrichment would not make this item reviewable."},
+		}
+	case CorpusConceptReviewWorkBlockedDiagnostic:
+		return []CorpusConceptDecisionCriterion{
+			{Choice: CorpusConceptReviewNeedsSourceContext, Label: "Need context", Criterion: "Use when a source or evidence reference must be repaired before review."},
+			{Choice: CorpusConceptReviewRejectNoisy, Label: "Noisy", Criterion: "Use when the blocked item should be discarded."},
+			{Choice: CorpusConceptReviewSplitNeeded, Label: "Split", Criterion: "Use when the diagnostic points to an over-broad grouping."},
+		}
+	default:
+		return nil
+	}
+}
+
 func corpusConceptReviewPrompt(concept CorpusConcept) string {
 	switch normalizeCorpusConceptReviewWorkKind(concept.ReviewWorkKind) {
 	case CorpusConceptReviewWorkBlockedDiagnostic:
@@ -1180,7 +1277,7 @@ func corpusConceptReviewPrompt(concept CorpusConcept) string {
 		return "Use this as extraction cleanup feedback, not as accepted knowledge."
 	case CorpusConceptReviewWorkConceptReview:
 		if concept.Section == CorpusConceptSectionCrossSource || len(concept.SourceKindCoverage) > 1 {
-			return fmt.Sprintf("Decide whether these %s evidence snippets describe one coherent concept.", corpusConceptSourceKindList(concept.SourceKindCoverage))
+			return fmt.Sprintf("Decide whether the candidate meaning is supported by the %s source contributions.", corpusConceptSourceKindList(concept.SourceKindCoverage))
 		}
 	}
 	return "Decide whether these evidence snippets describe one coherent review concept or need cleanup."
@@ -1307,6 +1404,7 @@ func corpusConceptSourceEvidence(atoms []CorpusGraphAtom) []CorpusConceptSourceE
 			group.Flags = appendUniqueString(group.Flags, "no_readable_source_evidence")
 		}
 		group.SharedTerms = corpusConceptSharedSourceTerms(group)
+		group.Contribution = corpusConceptSourceContribution(group)
 		out = append(out, group)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -1318,6 +1416,42 @@ func corpusConceptSourceEvidence(atoms []CorpusGraphAtom) []CorpusConceptSourceE
 		}
 		return out[i].SourceID < out[j].SourceID
 	})
+	return out
+}
+
+func corpusConceptSourceContribution(source CorpusConceptSourceEvidence) string {
+	sourceLabel := corpusConceptSourceKindLabel(source.SourceKind)
+	if strings.TrimSpace(sourceLabel) == "" {
+		sourceLabel = "This source"
+	}
+	if source.LinkOnly {
+		return fmt.Sprintf("%s contributes only link-style evidence; enrich it before using it as independent support.", sourceLabel)
+	}
+	if source.ReviewableAtomCount == 0 {
+		return fmt.Sprintf("%s does not yet contribute readable support for a concept decision.", sourceLabel)
+	}
+	terms := corpusConceptSourceMeaningTerms(source)
+	termPhrase := corpusConceptHumanList(terms)
+	evidencePhrase := corpusConceptSourceEvidencePhrase(source)
+	if termPhrase != "" && evidencePhrase != "" {
+		return fmt.Sprintf("%s contributes readable evidence around %s: %s.", sourceLabel, termPhrase, evidencePhrase)
+	}
+	if termPhrase != "" {
+		return fmt.Sprintf("%s contributes readable evidence around %s.", sourceLabel, termPhrase)
+	}
+	if evidencePhrase != "" {
+		return fmt.Sprintf("%s contributes readable evidence: %s.", sourceLabel, evidencePhrase)
+	}
+	return fmt.Sprintf("%s contributes readable evidence for this review item.", sourceLabel)
+}
+
+func corpusConceptSourceContributionList(sources []CorpusConceptSourceEvidence) []string {
+	out := []string{}
+	for _, source := range sources {
+		if strings.TrimSpace(source.Contribution) != "" {
+			out = append(out, source.Contribution)
+		}
+	}
 	return out
 }
 
@@ -1406,6 +1540,92 @@ func corpusConceptReadableSourceKindCount(sources []CorpusConceptSourceEvidence)
 		}
 	}
 	return len(kinds)
+}
+
+func corpusConceptMeaningTerms(sources []CorpusConceptSourceEvidence) []string {
+	readableSources := []CorpusConceptSourceEvidence{}
+	for _, source := range sources {
+		if source.ReviewableAtomCount > 0 && !source.LinkOnly {
+			readableSources = append(readableSources, source)
+		}
+	}
+	core := corpusConceptCoreTerms(readableSources)
+	terms := make([]string, 0, len(core))
+	for term := range core {
+		terms = append(terms, term)
+	}
+	sort.Strings(terms)
+	if len(terms) == 0 {
+		counts := map[string]int{}
+		for _, source := range readableSources {
+			for _, term := range corpusConceptSourceMeaningTerms(source) {
+				counts[term]++
+			}
+		}
+		for term := range counts {
+			terms = append(terms, term)
+		}
+		sort.Slice(terms, func(i, j int) bool {
+			if counts[terms[i]] != counts[terms[j]] {
+				return counts[terms[i]] > counts[terms[j]]
+			}
+			return terms[i] < terms[j]
+		})
+	}
+	if len(terms) > 4 {
+		terms = terms[:4]
+	}
+	return terms
+}
+
+func corpusConceptSourceMeaningTerms(source CorpusConceptSourceEvidence) []string {
+	terms := append([]string{}, source.SharedTerms...)
+	if len(terms) > 4 {
+		terms = terms[:4]
+	}
+	return terms
+}
+
+func corpusConceptHumanList(values []string) string {
+	clean := []string{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			clean = append(clean, value)
+		}
+	}
+	if len(clean) == 0 {
+		return ""
+	}
+	if len(clean) == 1 {
+		return clean[0]
+	}
+	if len(clean) == 2 {
+		return clean[0] + " and " + clean[1]
+	}
+	return strings.Join(clean[:len(clean)-1], ", ") + ", and " + clean[len(clean)-1]
+}
+
+func corpusConceptSourceEvidencePhrase(source CorpusConceptSourceEvidence) string {
+	for _, preview := range source.Evidence {
+		text := strings.TrimSpace(preview.Title)
+		if text == "" {
+			text = strings.TrimSpace(preview.Summary)
+		}
+		if text == "" {
+			text = strings.TrimSpace(preview.Excerpt)
+		}
+		if text == "" {
+			continue
+		}
+		text = strings.Join(strings.Fields(text), " ")
+		runes := []rune(text)
+		if len(runes) > 150 {
+			text = strings.TrimSpace(string(runes[:150])) + "..."
+		}
+		return strings.TrimRight(text, ".;:!? ")
+	}
+	return ""
 }
 
 func corpusConceptCoreTerms(sources []CorpusConceptSourceEvidence) map[string]bool {
