@@ -13,10 +13,10 @@ Product Brain and Tolaria matter, but they are not the product:
 
 ## Non-Negotiable Paths
 
-- Product Brain CLI working directory: `/Users/randyhereman/Young Human Club Dropbox/01. Projects/PKM with Codex`
+- Product Brain CLI working directory: `/Users/randyhereman/Coding/PKM System`
 - Current Tolaria destination root: `/Users/randyhereman/Young Human Club Dropbox/02. Areas/PKM - Tolaria`
 
-The repository path still says `PKM with Codex` for historical/local reasons. Do not infer product identity from the folder name. The product identity is Mindline.
+The repository folder name is local workspace metadata. Do not infer product identity from the folder name. The product identity is Mindline.
 
 ## Product Brain Context
 
@@ -136,7 +136,7 @@ The Tolaria vault does not own the PB workspace configuration. Running `pb` from
 
 Safe pattern:
 
-1. Run PB commands from `/Users/randyhereman/Young Human Club Dropbox/01. Projects/PKM with Codex`.
+1. Run PB commands from `/Users/randyhereman/Coding/PKM System`.
 2. Read/write Tolaria files under `/Users/randyhereman/Young Human Club Dropbox/02. Areas/PKM - Tolaria` only when Tolaria is explicitly in scope.
 3. Keep PB workspace state, Mindline product state, and destination file state conceptually separate unless a task explicitly bridges them.
 
