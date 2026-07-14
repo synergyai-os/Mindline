@@ -1194,8 +1194,9 @@ func corpusConceptTitle(key string, atoms []CorpusGraphAtom) string {
 func corpusConceptReviewWorkKind(concept CorpusConcept) CorpusConceptReviewWorkKind {
 	if containsCorpusConceptString(concept.ReasonCodes, "blocked_atom") ||
 		containsCorpusConceptString(concept.ReasonCodes, "missing_evidence_reference") ||
-		concept.ReviewStatus == ReviewStatusBlocked ||
-		concept.Section == CorpusConceptSectionBlocked {
+		containsCorpusConceptString(concept.ReasonCodes, "insufficient_readable_source_kind_support") ||
+		containsCorpusConceptString(concept.ReasonCodes, "weak_cross_source_coherence") ||
+		containsCorpusConceptString(concept.ReasonCodes, "readable_source_outlier") {
 		return CorpusConceptReviewWorkBlockedDiagnostic
 	}
 	if containsCorpusConceptString(concept.ReasonCodes, "link_only_evidence_requires_enrichment") || containsCorpusConceptString(concept.ReasonCodes, "no_readable_source_evidence") || containsCorpusConceptString(concept.ReasonCodes, "insufficient_reviewable_source_support") {
@@ -1206,6 +1207,9 @@ func corpusConceptReviewWorkKind(concept CorpusConcept) CorpusConceptReviewWorkK
 		containsCorpusConceptString(concept.ReasonCodes, "single_source_kind_concept") ||
 		containsCorpusConceptString(concept.ReasonCodes, "generic_term_bucket_requires_cleanup") {
 		return CorpusConceptReviewWorkCleanupTriage
+	}
+	if concept.ReviewStatus == ReviewStatusBlocked || concept.Section == CorpusConceptSectionBlocked {
+		return CorpusConceptReviewWorkBlockedDiagnostic
 	}
 	return CorpusConceptReviewWorkConceptReview
 }
@@ -1966,9 +1970,59 @@ func CorpusConceptReviewContractFingerprint(index CorpusConceptIndex) string {
 		for _, evidence := range concept.EvidenceRefs {
 			parts = append(parts, strings.Join([]string{evidence.EvidenceRefID, evidence.AtomID, evidence.SourceID, evidence.ContentHash}, "\x00"))
 		}
+		sources := append([]CorpusConceptSourceEvidence{}, concept.SourceEvidence...)
+		sort.Slice(sources, func(i, j int) bool { return sources[i].SourceID < sources[j].SourceID })
+		for _, source := range sources {
+			flags := append([]string{}, source.Flags...)
+			sharedTerms := append([]string{}, source.SharedTerms...)
+			sort.Strings(flags)
+			sort.Strings(sharedTerms)
+			parts = append(parts, strings.Join([]string{
+				source.SourceID,
+				source.SourceKind,
+				source.SourceRef,
+				fmt.Sprintf("%d", source.AtomCount),
+				fmt.Sprintf("%d", source.ReviewableAtomCount),
+				fmt.Sprintf("%d", source.DuplicateAtomCount),
+				fmt.Sprintf("%t", source.LinkOnly),
+				source.Contribution,
+				strings.Join(flags, ","),
+				strings.Join(sharedTerms, ","),
+			}, "\x00"))
+			sourceEvidence := append([]CorpusConceptEvidencePreview{}, source.Evidence...)
+			sort.Slice(sourceEvidence, func(i, j int) bool {
+				return sourceEvidence[i].EvidenceRefID+"\x00"+sourceEvidence[i].AtomID < sourceEvidence[j].EvidenceRefID+"\x00"+sourceEvidence[j].AtomID
+			})
+			for _, evidence := range sourceEvidence {
+				parts = append(parts, corpusConceptEvidenceContractFingerprintPart(evidence))
+			}
+		}
+		representativeEvidence := append([]CorpusConceptEvidencePreview{}, concept.RepresentativeEvidence...)
+		sort.Slice(representativeEvidence, func(i, j int) bool {
+			return representativeEvidence[i].EvidenceRefID+"\x00"+representativeEvidence[i].AtomID < representativeEvidence[j].EvidenceRefID+"\x00"+representativeEvidence[j].AtomID
+		})
+		for _, evidence := range representativeEvidence {
+			parts = append(parts, corpusConceptEvidenceContractFingerprintPart(evidence))
+		}
 	}
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
 	return "corpus-concept-review-contract-" + hex.EncodeToString(sum[:])[:16]
+}
+
+func corpusConceptEvidenceContractFingerprintPart(evidence CorpusConceptEvidencePreview) string {
+	return strings.Join([]string{
+		evidence.EvidenceRefID,
+		evidence.AtomID,
+		evidence.SourceID,
+		evidence.SourceKind,
+		evidence.SourceRef,
+		fmt.Sprintf("%d", evidence.LineStart),
+		fmt.Sprintf("%d", evidence.LineEnd),
+		evidence.ContentHash,
+		evidence.Title,
+		evidence.Summary,
+		evidence.Excerpt,
+	}, "\x00")
 }
 
 func cloneStringIntMap(input map[string]int) map[string]int {

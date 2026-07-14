@@ -289,8 +289,36 @@ func TestBuildCorpusConceptIndexBlocksGenericSameKindActionTermBucket(t *testing
 	if !containsCorpusConceptString(prepareConcept.ReasonCodes, "generic_term_bucket_requires_cleanup") {
 		t.Fatalf("expected generic term reason in %+v", prepareConcept.ReasonCodes)
 	}
-	if prepareConcept.ReviewWorkKind != CorpusConceptReviewWorkBlockedDiagnostic {
-		t.Fatalf("structurally blocked generic bucket must be diagnostic, got %s", prepareConcept.ReviewWorkKind)
+	if prepareConcept.ReviewWorkKind != CorpusConceptReviewWorkCleanupTriage {
+		t.Fatalf("generic action bucket must route to cleanup despite its blocked quality status, got %s", prepareConcept.ReviewWorkKind)
+	}
+}
+
+func TestCorpusConceptReviewWorkKindUsesReasonTaxonomyBeforeFallbackBlockedState(t *testing.T) {
+	enrichment := CorpusConcept{
+		Section:        CorpusConceptSectionBlocked,
+		ReviewStatus:   ReviewStatusBlocked,
+		ReasonCodes:    []string{"link_only_evidence_requires_enrichment", "insufficient_reviewable_source_support"},
+		ReviewWorkKind: CorpusConceptReviewWorkEnrichmentBacklog,
+	}
+	if got := corpusConceptReviewWorkKind(enrichment); got != CorpusConceptReviewWorkEnrichmentBacklog {
+		t.Fatalf("blocked quality status must not swallow enrichment work, got %s", got)
+	}
+	cleanup := CorpusConcept{
+		Section:      CorpusConceptSectionBlocked,
+		ReviewStatus: ReviewStatusBlocked,
+		ReasonCodes:  []string{"generic_term_bucket_requires_cleanup", "single_source_kind_concept"},
+	}
+	if got := corpusConceptReviewWorkKind(cleanup); got != CorpusConceptReviewWorkCleanupTriage {
+		t.Fatalf("blocked quality status must not swallow cleanup work, got %s", got)
+	}
+	diagnostic := CorpusConcept{
+		Section:      CorpusConceptSectionBlocked,
+		ReviewStatus: ReviewStatusBlocked,
+		ReasonCodes:  []string{"weak_cross_source_coherence", "link_only_evidence_requires_enrichment"},
+	}
+	if got := corpusConceptReviewWorkKind(diagnostic); got != CorpusConceptReviewWorkBlockedDiagnostic {
+		t.Fatalf("structural blocker must retain first precedence, got %s", got)
 	}
 }
 
@@ -585,6 +613,44 @@ func TestReadCorpusConceptReviewRecordsRejectsStaleReviewContract(t *testing.T) 
 	}
 	if _, err := ReadCorpusConceptReviewRecords(root); err == nil || !strings.Contains(err.Error(), "contract fingerprint mismatch") {
 		t.Fatalf("expected stale review contract rejection, got %v", err)
+	}
+}
+
+func TestReadCorpusConceptReviewRecordsRejectsChangedSourceContribution(t *testing.T) {
+	root := t.TempDir()
+	concept := CorpusConcept{
+		SchemaVersion:  CorpusConceptsSchemaVersion,
+		ConceptID:      "concept-visible-contract",
+		CorpusID:       "corpus-visible-contract",
+		Title:          "Reviewable concept",
+		ReviewWorkKind: CorpusConceptReviewWorkConceptReview,
+		SourceEvidence: []CorpusConceptSourceEvidence{{
+			SourceID:     "source-alpha",
+			SourceKind:   "markdown",
+			Contribution: "The source supports the original candidate meaning.",
+			Evidence: []CorpusConceptEvidencePreview{{
+				EvidenceRefID: "evidence-alpha",
+				AtomID:        "atom-alpha",
+				SourceID:      "source-alpha",
+				SourceKind:    "markdown",
+				Excerpt:       "Original reviewer-visible evidence.",
+			}},
+		}},
+	}
+	index := CorpusConceptIndex{SchemaVersion: CorpusConceptsSchemaVersion, CorpusID: concept.CorpusID, Concepts: []CorpusConcept{concept}}
+	summary := CorpusConceptSummary{SchemaVersion: CorpusConceptsSchemaVersion, CorpusID: concept.CorpusID, ConceptCount: 1}
+	if err := WriteCorpusConceptIndex(root, summary, index); err != nil {
+		t.Fatalf("write concept index: %v", err)
+	}
+	if _, err := RecordCorpusConceptReview(root, CorpusConceptReviewRecordInput{ConceptID: concept.ConceptID, Choice: CorpusConceptReviewAccept}); err != nil {
+		t.Fatalf("record initial review: %v", err)
+	}
+	index.Concepts[0].SourceEvidence[0].Contribution = "The source now supports a materially different candidate meaning."
+	if err := WriteCorpusConceptIndex(root, summary, index); err != nil {
+		t.Fatalf("regenerate changed visible contract: %v", err)
+	}
+	if _, err := ReadCorpusConceptReviewRecords(root); err == nil || !strings.Contains(err.Error(), "contract fingerprint mismatch") {
+		t.Fatalf("expected changed source contribution to invalidate review records, got %v", err)
 	}
 }
 

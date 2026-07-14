@@ -568,8 +568,13 @@ function render() {
   ].join("");
 	document.getElementById("list-summary").textContent = concepts.length + " shown; " + laneProgress.remaining + " remaining in " + laneProgress.label.toLowerCase();
   renderFilters();
-  if (!selected && concepts.length) selected = concepts[0].concept_id;
-  if (selected && !concepts.find((concept) => concept.concept_id === selected) && concepts.length) selected = concepts[0].concept_id;
+  if (!concepts.length) {
+    selected = "";
+    activeChoice = "";
+  } else if (!selected || !concepts.find((concept) => concept.concept_id === selected)) {
+    selected = concepts[0].concept_id;
+    activeChoice = "";
+  }
   const reviewed = recordsByConcept();
   document.getElementById("concepts").innerHTML = concepts.map((concept) => {
     const active = concept.concept_id === selected ? " active" : "";
@@ -589,7 +594,7 @@ function render() {
       render();
     });
   });
-  renderDetail((state.index.concepts || []).find((concept) => concept.concept_id === selected));
+  renderDetail(concepts.find((concept) => concept.concept_id === selected));
 }
 
 function renderFilters() {
@@ -615,6 +620,8 @@ function renderFilters() {
   document.querySelectorAll("button.filter").forEach((button) => {
     button.addEventListener("click", () => {
       filter = button.dataset.filter;
+      selected = "";
+      activeChoice = "";
       render();
     });
   });

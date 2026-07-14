@@ -251,10 +251,13 @@ func TestCorpusConceptUISeparatesWorkKindProgressAndRejectsInvalidChoice(t *test
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected html status 200, got %d", rec.Code)
 	}
-	for _, marker := range []string{"function activeWorkProgress(progress)", "progress.work_kind_counts", "Reviewed · ", "remaining in ", "bucket.total_count"} {
+	for _, marker := range []string{"function activeWorkProgress(progress)", "progress.work_kind_counts", "Reviewed · ", "remaining in ", "bucket.total_count", "if (!concepts.length)", "renderDetail(concepts.find", `selected = ""`, `activeChoice = ""`} {
 		if !strings.Contains(rec.Body.String(), marker) {
 			t.Fatalf("expected lane-specific progress marker %q", marker)
 		}
+	}
+	if strings.Contains(rec.Body.String(), "renderDetail((state.index.concepts") {
+		t.Fatalf("detail rendering must not select an item outside the filtered lane")
 	}
 
 	state := getCorpusConceptUIState(t, handler)
