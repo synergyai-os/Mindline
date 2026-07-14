@@ -205,10 +205,14 @@ func validateSemanticJudgmentLoopbackHost(hostPort string, allowedHosts map[stri
 	if hostKey == "" || host == "" {
 		return fmt.Errorf("request host must be loopback")
 	}
-	if allowedHosts[hostKey] && semanticJudgmentNonRebindableHost(host) {
-		return nil
-	}
-	if strings.EqualFold(host, "localhost") {
+	if len(allowedHosts) > 0 {
+		if !allowedHosts[hostKey] {
+			return fmt.Errorf("request host is not the configured review UI host")
+		}
+		if semanticJudgmentNonRebindableHost(host) {
+			return nil
+		}
+	} else if strings.EqualFold(host, "localhost") {
 		return nil
 	}
 	ip := net.ParseIP(host)

@@ -1,0 +1,264 @@
+# WP-51 Corpus Concept Review UI
+
+## Chain Authority
+
+- DEC-401: WP51 delivery proved a bounded concept index and Light UI on the same 25 Gmail + 25 Slack corpus, but did not prove the review surface was usable.
+- INS-28: PR46 review UI must be reviewer-understandable, not machine-readable only.
+- INS-29: PR46 concept review needs source-level coherence gates.
+- INS-30: PR46 cross-source concepts require readable support across source kinds and no readable outliers.
+- INS-31: PR46 generic action term buckets are not reviewable concepts.
+- INS-32: PR46 local single-source concepts are not reviewable corpus concepts.
+- STD-18: reviewer-facing semantic previews need inline evidence excerpts, not only evidence IDs.
+- STD-19: loopback review write APIs need Host allowlist, token, same-origin, JSON, write locks, and read-only page endpoints.
+- INS-27: next mixed-source proof needs bounded concept review, not relation flood.
+- DEC-400: PR 45 merged into main on 2026-06-05.
+- DEC-403: PR46 v2 delivered readable UI mechanics but exposed deeper concept-quality failures.
+- DEC-404: PR46 v3 delivered source-level coherence gates.
+- DEC-405: PR46 v4 delivered readable source-kind and outlier gates.
+- DEC-406: PR46 v5 delivered generic action-term and excerpt-first gates.
+- DEC-391: WP50 delivered bounded corpus scale gates.
+- DEC-386: WP49 delivered source meaning review packets on the same 25 Gmail + 25 Slack runtime corpus.
+- DEC-153: Mindline should use local corpus graph/index proof before hosted auth/database work.
+- PRI-1, BR-1, STD-17, DEC-64: local/private-safe proof, no destination writes, no hosted leakage, no no-human claims without held-out gates.
+
+This PR46 iteration remediates the gap in DEC-401: bounded concept output existed, but the first review UI did not satisfy INS-28's human-reviewable standard.
+
+This PR46 v3 iteration remediates the gap INS-29 exposed: a readable UI can still fail the human-review job when the concept candidate itself is a noisy atom-neighborhood cluster.
+
+This PR46 v4 iteration remediates the gap INS-30 exposed: a concept can still be labeled normal `cross_source` when all readable evidence comes from Gmail, Slack evidence is unread link-only material, and a readable Gmail promo/marketing outlier sits inside the relation neighborhood.
+
+This PR46 v5 iteration remediates the gap INS-31 exposed: a term bucket can still be labeled `needs_review` when the only shared signal is a generic generated action word like "prepare" and the readable evidence is about unrelated objects.
+
+This PR46 v6 iteration remediates the gap INS-32 exposed: the UI can still be human-unreviewable when local single-source buckets, cleanup work, enrichment backlog, blocked diagnostics, and real corpus concept candidates share one queue and one decision model.
+
+## Problem
+
+WP49 made 208 atoms and 20,926 graph relations reviewable as 19 source meaning groups on the 50-item mixed Gmail/Slack corpus. WP50 made oversized corpus runs bounded and honest. The remaining gap is methodology: pairwise `same_topic_as` relations are useful diagnostic substrate, but they are not the user-facing way Randy should evaluate repeated meaning across real inputs.
+
+If one email or Slack message has many atoms, and many items repeat the same idea, the review surface should show a bounded concept with evidence coverage. It should not force the user to inspect relation floods or infer whether the system combined repeated meaning correctly.
+
+The remaining PR46 failure is review-task contamination. A local single-source term bucket can be honest metadata and still be bad review work when it appears next to corpus concept candidates with the same "Accept/Split/Merge" controls. The system must distinguish concept validation from cleanup triage, enrichment backlog, and blocked diagnostics before asking a human to decide.
+
+## Outcome
+
+Mindline produces a bounded corpus concept index above the existing corpus graph and source meaning packet:
+
+- concept groups combine related atoms across sources using deterministic, source-neutral signals;
+- each concept exposes a non-generic reviewer title, a one-sentence review prompt, grouping rationale, source count, atom count, source-kind coverage, review status, and representative safe evidence excerpts;
+- cross-source concepts are clearly separated from local/single-source concepts;
+- the concept index writes a compact artifact set and markdown review packet;
+- `eval readback` recognizes the concept index as proof evidence;
+- the light review UI can serve the concept review packet so Randy can inspect the same 25 Gmail + 25 Slack run in a browser;
+- the light review UI lets the reviewer record only decisions that are valid for the selected item's reviewer work kind;
+- evidence is collapsed into source-level review cards before presentation, so repeated atoms from the same source are visible as one source contribution rather than false independent support;
+- link-only source evidence is excluded from readable semantic support and flagged as needing enrichment instead of being treated as understood content;
+- relation-neighborhood concepts must show readable shared meaning across at least two distinct source-level groups before they can remain normal cross-source review concepts;
+- incoherent or under-supported cross-source groups are blocked or downgraded with plain-English reason labels before the human reviewer is asked to judge them.
+- normal cross-source concepts must show readable, non-link support from at least two distinct source kinds, not just raw source-kind presence in the atom group;
+- readable source groups that do not share core terms with the coherent part of a relation-neighborhood concept must block or split the concept rather than being absorbed into a broad label.
+- term-based same-kind concepts must prove a meaningful shared object beyond generic action/title words before entering the normal review queue;
+- reviewer-facing evidence cards and copy packets show clean excerpts before generated summaries, and suppress noisy summaries when they only repeat or truncate the excerpt.
+- each emitted item carries a reviewer work kind, such as `concept_review`, `cleanup_triage`, `enrichment_backlog`, or `blocked_diagnostic`;
+- the default review queue contains only `concept_review` items that passed the basic source-level gates for human concept validation;
+- local single-source concepts, single-source-kind buckets, generic/noisy term buckets, duplicate-heavy source trace groups, link-only groups, and blocked groups remain visible but move to the appropriate non-concept-review lane;
+- the UI prompt, decision controls, counts, filters, progress, and copy packet reflect the selected item's work kind instead of using one universal concept decision model;
+- stale proof surfaces are not acceptable: the PR body and live `/api/state` proof must point at current artifacts and current Chain decisions.
+
+## Review Work Kind Contract
+
+Every emitted item must carry exactly one reviewer work kind. This is artifact-level behavior, not only UI presentation.
+
+Classification precedence:
+
+1. `blocked_diagnostic`: unsafe, missing-evidence, blocked upstream, or structurally invalid items. These are trace/debug artifacts, not normal review work.
+2. `enrichment_backlog`: link-only, unread, or no-readable-source-support items that may become reviewable only after source enrichment.
+3. `cleanup_triage`: local single-source items, single-source-kind buckets, generic/noisy term buckets, duplicate-heavy weak groups, or groups that need extraction feedback but are not corpus concept decisions.
+4. `concept_review`: only items that pass source-level reviewability gates and ask whether readable evidence from distinct source contributions supports one coherent corpus concept.
+
+Allowed persisted choices by work kind:
+
+| Work kind | Allowed choices | Rejected choices |
+|---|---|---|
+| `concept_review` | `accept`, `reject_noisy`, `split_needed`, `merge_duplicate`, `rename_needed`, `needs_source_context` | none |
+| `cleanup_triage` | `reject_noisy`, `split_needed`, `merge_duplicate`, `rename_needed` | `accept`, `needs_source_context` |
+| `enrichment_backlog` | `needs_source_context`, `reject_noisy` | `accept`, `split_needed`, `merge_duplicate`, `rename_needed` |
+| `blocked_diagnostic` | `reject_noisy`, `split_needed`, `needs_source_context` | `accept`, `merge_duplicate`, `rename_needed` |
+
+Review progress must report normal concept-review progress separately from cleanup, enrichment, and blocked diagnostic progress. `eval readback` must extract work-kind counts and progress so proof can distinguish "zero reviewable corpus concepts" from "many diagnostic artifacts."
+
+## Non-Outcome
+
+WP51 does not claim perfect semantic clustering, held-out quality, autonomous acceptance, destination readiness, Product Brain writes, Tolaria writes, or no-human operation. It does not replace future labeled acceptance. It is a private-runtime, sample-bound proof that the next human review surface is bounded corpus-level concepts instead of raw relation volume.
+
+## Key Results
+
+1. The same mixed-source runtime corpus used by WP49/WP50 processes exactly 50 sources: 25 Gmail and 25 Slack.
+2. `mindline documents concept-index <corpus-pressure-out-or-parent> --out <dir>` writes `corpus-concepts/concept-summary.json`, `concept-index.json`, `review-packet.md`, and per-concept JSON files.
+3. The concept summary reports a bounded concept count within 8-40 groups for the 50-source corpus.
+4. At least one concept has evidence from more than one source kind, and cross-source concepts report source coverage explicitly.
+5. The user-facing review burden is lower than relation review volume by at least 99% on the same 50-source corpus.
+6. `mindline documents concept-serve <concept-index-out-or-parent> --addr <loopback>` serves the review UI and `/api/state` for that concept packet.
+7. `eval readback` detects the concept index summary, concept metrics, scale status, guardrails, and private-safe fingerprints.
+8. Guardrails stay zero for destination writes, Product Brain writes, Tolaria writes, hosted inference calls, hosted telemetry exports, auto-accepts, and no-human claims.
+9. Every emitted concept has a display title that is not the generic relation-neighborhood machine label, plus a grouping rationale that explains why the atoms were grouped.
+10. Every emitted concept exposes at least three representative safe evidence previews when at least three evidence refs exist, including both Gmail and Slack previews for cross-source concepts when both are available.
+11. The UI shows review progress by reviewer work kind and can persist one valid reviewer decision plus an optional note for each eligible item without editing JSON manually.
+12. A reviewer can understand what the selected concept is about, why it exists, what evidence supports it, and what decision is being asked for without opening raw artifacts.
+13. The copied bad concept `concept-0bd57f279ab994b2` must no longer present as a normal cross-source concept that asks Randy to decide whether unrelated newsletter, link-only LinkedIn, and duplicate meeting-summary atoms form one coherent concept.
+14. For every emitted concept, the UI and copy packet show source-level evidence cards first, including source kind/ref, atom count, source flags, readable excerpts, and traces.
+15. Link-only evidence that has not been enriched is labeled as link-only and does not count toward cross-source semantic coherence.
+16. Multiple atoms from the same source are counted as one source-level contribution for support, with duplicate-source atom support called out explicitly.
+17. Reason codes shown to Randy have plain-English explanations; raw machine codes may remain as trace metadata but cannot be the only explanation.
+18. The Modelo 190 packet `concept-ff25f0dca0821b55` must no longer present as a normal `cross_source` review concept while its readable support is Gmail-only and Slack evidence is unread LinkedIn URLs.
+19. A normal cross-source concept requires readable, non-link support from at least two source kinds. Link-only source kinds can remain visible as enrichment backlog but cannot make the concept cross-source.
+20. A readable outlier source, such as an unrelated fresh-funding-rounds promo email inside a Modelo 190 tax/admin cluster, must trigger a blocked/split-needed reason instead of being treated as part of the concept.
+21. The `prepare` packet `concept-2bd70948bf53dc33` must no longer present as a normal `needs_review` item when its three Gmail sources are about unrelated objects and only share generic generated action/title terms.
+22. Generic term buckets must be blocked or marked noisy with a plain-English reason when source-level overlap is too weak to identify one coherent concept.
+23. In the Light UI and copy packet, the first human-readable evidence line for each source must be the clean excerpt when one exists; generated summaries must not be the primary text when they are repetitive or truncated.
+24. Every concept index item exposes a stable reviewer work kind that separates normal corpus concept validation from cleanup triage, enrichment backlog, and blocked diagnostics.
+25. The main/default review queue and review progress count only `concept_review` items unless the reviewer explicitly switches lanes.
+26. A local single-source item matching the 2026-06-16 `workspace` screenshot pattern, with one source, two atoms, duplicate-source atom support, and `single_source_concept`, must not be classified as `concept_review`, must not appear in the default concept-review queue, and must not expose a normal Accept action.
+27. Non-concept-review lanes remain inspectable and copyable with source cards and reason labels, but their prompts and controls match the job: cleanup feedback, enrich/read source first, or diagnostic/no-action.
+28. UI filters and `/api/state` expose per-work-kind counts, reviewed counts, and remaining counts so the reviewer can see whether there are zero reviewable concepts versus many diagnostic artifacts.
+29. The PR body is updated before review to summarize the current v2-v6 Chain proof and no longer claims the stale DEC-401-only state of 10 cross-source concepts/all needs_review.
+30. The advertised local server proof is reproducible from an existing artifact path; `/api/state` must not point at a removed `/private/tmp` directory.
+31. `eval readback` extracts work-kind counts and progress, not only generic concept count and relation-compression metrics.
+
+## Measurable Behavior Difference
+
+Before WP51: the system could say 20,926 relations existed and compress them into a packet, but Randy still could not evaluate whether repeated ideas were combined into coherent corpus concepts in the light UI.
+
+After WP51: Randy can open the light UI and review a bounded concept index for the same 25 Gmail + 25 Slack corpus, seeing which ideas repeat across sources, why the system grouped them, readable representative evidence, and a concrete decision surface for accepting, rejecting, splitting, merging, renaming, or requesting more context.
+
+After PR46 v3: Randy should not have to reject obvious junk clusters by hand. If Mindline only has a newsletter notification, a bare LinkedIn URL, and duplicate atoms from one meeting-summary email, the UI should say the concept is blocked or under-supported, explain why, and show the source-level evidence that led to that judgment.
+
+After PR46 v4: Randy should not have to reject a "cross-source finance" cluster where the only readable concept is Gmail tax/admin, Slack is unread links, and an unrelated Gmail promo digest got dragged in. The UI should mark that item blocked or split-needed and explain that it lacks readable cross-source-kind support and contains readable outlier evidence.
+
+After PR46 v5: Randy should not have to inspect three unrelated Gmail snippets just because they share "prepare" or "checklist." The UI should either block the group as generic/noisy or show the clean evidence first so the reviewer can immediately see why it is not one concept.
+
+After PR46 v6: Randy should not have to decide whether a single-source local bucket such as "workspace" is a corpus concept. The default queue should either show real concept-review work or honestly report that no reviewable corpus concepts exist; local cleanup, enrichment backlog, and blocked diagnostics should be separate lanes with different prompts and controls.
+
+## Guardrails
+
+- Concept grouping must be source-agnostic and destination-neutral.
+- Concept artifacts must keep traceability through evidence IDs, source IDs, line spans, hashes, and short content refs.
+- The reviewer-facing surface must include representative safe excerpts because evidence IDs alone are not reviewable evidence. Excerpts must pass the existing unsafe marker redaction and remain local/private runtime artifacts, not hosted telemetry or committed fixtures.
+- Concept output is review-only and write-ineligible.
+- Single-source or weak concepts must be marked as needs review rather than overclaimed as cross-source knowledge.
+- Weak cross-source relation neighborhoods must be blocked or downgraded when readable source-level evidence does not share meaning across distinct source groups.
+- Normal cross-source status requires readable support across distinct source kinds; raw source-kind coverage is trace metadata, not semantic support.
+- Link-only sources are provenance, not semantic understanding, until enriched; they must be flagged and excluded from coherence support.
+- Duplicate atoms from one source must not inflate independent source support.
+- Readable outlier sources that do not share core concept terms must block/split relation-neighborhood concepts rather than being hidden inside a broad topic label.
+- Generic action/title terms such as "prepare" and "checklist" are weak grouping signals. They cannot by themselves authorize normal same-kind review when the readable source cards do not share a meaningful object.
+- Evidence display must optimize for human judgment: clean excerpt first, generated summary secondary, and no repeated/truncated summary text as the main evidence.
+- Review work kind must not be cosmetic UI-only metadata. It must be written in the concept artifact, served through `/api/state`, used by review progress, used by UI filtering, and covered by focused tests.
+- Single-source/local items must not be counted as normal concept-review burden. They may be counted as cleanup or diagnostic burden only when the UI labels that lane explicitly.
+- Decision records must preserve the work kind and must reject invalid choices for that work kind, so a cleanup item cannot be silently recorded as accepted corpus knowledge.
+- Decision writes must reject stale or mismatched work-kind records when the concept artifact's current work kind differs from the submitted or stored record context.
+- The UI must remain loopback-only and preserve the existing review-server host/token/same-origin/JSON/write-lock safety discipline for persisted review decisions.
+- Do not commit private runtime artifacts.
+
+## Re-Challenge And Reconciliation
+
+First target: show the existing source meaning packet in the light UI.
+
+Rejected as too weak. That would make WP49 easier to browse but would not answer the hard question from the user: one email or Slack message can contain many atoms, and repeated ideas across many items need to be flattened, combined, and evaluated as concepts.
+
+Second target: add a concept artifact without UI.
+
+Rejected as incomplete. The user explicitly needs to see the result in the light UI to evaluate methodology. Artifact-only output would preserve the same gap: the system produces proof that is hard to judge.
+
+Sharper target: build a bounded corpus-level concept index and serve it in the light UI for the same 25 Gmail + 25 Slack dataset. This raises the standard from "we processed 50 sources" to "we can inspect whether repeated meaning is being combined into reviewable, evidence-backed concepts."
+
+## PR46 Iteration Diagnosis
+
+Randy rejected the first PR46 draft because the Light UI was a machine-readable artifact browser, not a human review service. It repeated generic "Cross-source topic candidate relation neighborhood" labels, showed raw evidence refs, source IDs, line spans, and hashes as the primary content, and had no plain-English concept distinction, no grouping explanation, no representative excerpts, no decision controls, and no persisted reviewer outcome.
+
+That failed the actual job. A human reviewer must be able to understand the proposed concept, judge whether the evidence belongs together, and record a decision directly in the review surface. A compact concept count is necessary but not sufficient.
+
+## PR46 Iteration Re-Challenge And Reconciliation
+
+First iteration target: add readable evidence excerpts to the existing detail panel.
+
+Rejected as too weak. Excerpts would make the page less opaque, but Randy would still lack the decision workflow and the system would still not know what the reviewer approved, rejected, split, merged, or renamed.
+
+Second iteration target: add decision buttons and notes to the existing generic concept page.
+
+Rejected as too weak. Recording decisions against indistinguishable generic labels would create review data, but the decisions would be low-quality because the reviewer would still be judging machine buckets rather than named, explained concepts.
+
+Sharpened iteration target: promote a reviewer display model inside the concept artifact and build a complete local review loop around it. Each concept needs a non-generic title, review prompt, grouping rationale, representative safe evidence previews, source mix, quality flags, review controls, and persisted review records. This raises the bar from "bounded concepts exist" to "a human can actually review them."
+
+## PR46 v3 Iteration Diagnosis
+
+Randy's copied review packet proved the v2 UI still let an incoherent concept through as normal review work. The item combined a SaaS newsletter notification, a Slack message containing only a LinkedIn URL, another near-duplicate link-only Slack atom, and duplicate atoms from the same Gmail meeting-summary source. The UI was readable enough to expose the issue, but the concept methodology still treated atom-neighborhood membership as enough to ask a human whether the group was coherent.
+
+That fails the higher review-service standard. A human reviewer should review borderline meaning, not do first-pass cleanup of obvious source-level incoherence.
+
+## PR46 v3 Re-Challenge And Reconciliation
+
+First v3 target: only make the copied packet easier to read.
+
+Rejected as too weak. The copied packet is readable enough to know it is bad; improving labels alone would still push junk to the reviewer.
+
+Second v3 target: add a "Noisy" default decision for suspicious concepts.
+
+Rejected as too weak. That records the failure but does not improve the methodology. The system already has enough signals to see link-only evidence, duplicate-source support, and lack of shared readable source-level meaning.
+
+Sharpened v3 target: add source-level coherence gates before presentation. Concepts must be built and displayed around distinct source contributions. Link-only items become enrichment blockers, duplicate atoms remain trace detail rather than independent support, and relation-neighborhood clusters without shared readable meaning are blocked or downgraded with plain-English reasons. This raises the bar from "a human can read the candidate" to "the system only asks the human to review candidates that passed basic source-level sanity."
+
+## PR46 v4 Iteration Diagnosis
+
+Randy's Modelo 190 packet proved v3 was still too permissive. The concept was left as normal `cross_source needs_review` because two Gmail tax/admin sources shared Modelo terms, while both Slack sources were unread LinkedIn URLs and a third readable Gmail source was an unrelated fresh-funding-rounds/AI-offers promo digest. The UI exposed the issue, but the concept methodology still counted raw Slack presence as cross-source coverage and tolerated a readable outlier.
+
+That fails the review-service standard. A concept is not cross-source just because multiple source kinds are present; it is cross-source only when multiple source kinds provide readable semantic support for the same concept.
+
+## PR46 v4 Re-Challenge And Reconciliation
+
+First v4 target: keep the item cross-source but rely on the reviewer to choose "Split" or "Need context."
+
+Rejected as too weak. That still asks Randy to clean up a failure the system can detect: Slack is unread links, and the promo digest shares no tax/admin terms.
+
+Second v4 target: send all link-only concepts to blocked.
+
+Rejected as too blunt. Link-only evidence should block cross-source support when it is the only evidence for a source kind, but it can still remain visible as provenance/enrichment backlog around an otherwise reviewable concept.
+
+Sharpened v4 target: normal cross-source requires readable non-link support from at least two source kinds, and readable source outliers trigger blocked/split-needed status. This raises the bar from "source-level sanity" to "reviewable cross-source semantics."
+
+## PR46 v5 Iteration Diagnosis
+
+Randy's `action candidate concept: prepare` packet proved v4 was still too permissive for same-kind term buckets. The group had three readable Gmail sources, but they were about unrelated objects: uninterrupted founder work time, whether a June invoice should wait, and sending proof of payment. The shared title "Prepare the checklist" and shared term "prepare" came from generic generated action text, not one coherent user concept.
+
+The UI also made the failure harder to judge by showing repeated/truncated generated summaries before the clean excerpt. Even when the evidence contained a readable sentence, the reviewer had to parse through duplicated text first.
+
+## PR46 v5 Re-Challenge And Reconciliation
+
+First v5 target: only reorder the UI so excerpts appear first.
+
+Rejected as too weak. Excerpt-first rendering makes the packet easier to read, but it still asks Randy to review a group the system can already identify as generic/noisy.
+
+Second v5 target: block every same-kind term bucket.
+
+Rejected as too blunt. Some same-kind repeated concepts can be useful, especially when multiple source cards share a meaningful object, domain term, or specific noun phrase.
+
+Sharpened v5 target: block or mark noisy term buckets whose only shared terms are generic action/title words and whose readable source cards do not share a meaningful object. Keep source cards visible for traceability, but make the review status honest and display clean excerpts before generated summaries.
+
+## PR46 v6 Iteration Diagnosis
+
+Randy's 2026-06-16 screenshot proved v5 still failed the human job. The selected item, `topic candidate concept: workspace`, was a local single-source bucket with two atoms from one Gmail source. The UI showed `Status needs_review`, `Section local`, `Sources 1`, and quality reasons saying only one source supports the concept and duplicate atoms from the same source are trace detail, not independent support. Despite that, the review question still asked whether the snippets describe one coherent review concept, and the decision panel still offered Accept, Noisy, Split, Merge, Rename, and Need context.
+
+That is not a borderline semantic-clustering problem. It is a work-routing problem. The artifact may be useful diagnostic or cleanup evidence, but it is not a corpus concept validation item. When the default queue includes such items, "review burden" is still misleading even if relation count compression is excellent.
+
+The same review also exposed operational staleness: the PR body still described the initial DEC-401 proof while Chain had later DEC-403 through DEC-406 decisions, and the advertised local `/api/state` endpoint pointed at a removed private temp artifact path. A PR cannot be review-ready when its proof story and review surface are stale.
+
+## PR46 v6 Re-Challenge And Reconciliation
+
+First v6 target: hide all local or blocked items from the UI.
+
+Rejected as too weak. Hiding them would make the default queue cleaner, but it would lose useful extraction, enrichment, and diagnostic evidence. It would also make it harder to understand why no reviewable concepts exist.
+
+Second v6 target: keep one queue and only disable the Accept button for local items.
+
+Rejected as too shallow. Disabling one action still leaves the reviewer reading the wrong prompt and treating cleanup backlog as concept-review work.
+
+Sharpened v6 target: introduce review work kinds as an artifact-level contract and route every item into the right lane before UI rendering. The default lane is normal corpus concept review. Cleanup, enrichment, and blocked diagnostics remain visible and copyable, but they use lane-specific prompts, counts, progress, and allowed decisions. This raises the standard from "the UI explains why the item is weak" to "the UI asks the right human job, or does not ask for concept review at all."

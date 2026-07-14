@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/synergyai-os/Mindline/internal/documents"
 )
 
 func TestBuildDetectsArtifactsAndBlocksPrivateGeneralization(t *testing.T) {
@@ -195,6 +197,131 @@ func TestBuildTreatsNewSourceMeaningPacketAsComparableImprovement(t *testing.T) 
 	}
 	if summary.Comparison == nil || summary.Comparison.MetricDeltas["source_meaning_packet_added"] != 1 {
 		t.Fatalf("missing packet improvement delta: %+v", summary.Comparison)
+	}
+}
+
+func TestBuildDetectsCorpusConceptSummary(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "corpus-concepts", "concept-summary.json"), map[string]any{
+		"schema_version":                        "corpus-concepts/v0.2",
+		"corpus_id":                             "corpus-a",
+		"source_count":                          50,
+		"processed_source_count":                50,
+		"atom_count":                            208,
+		"relation_count":                        20926,
+		"concept_count":                         24,
+		"cross_source_concept_count":            8,
+		"concept_review_count":                  8,
+		"cleanup_triage_count":                  10,
+		"enrichment_backlog_count":              4,
+		"blocked_diagnostic_count":              2,
+		"evidence_reference_count":              208,
+		"concept_review_burden_count":           10,
+		"concept_review_burden_ratio":           0.416,
+		"relation_review_compression_ratio":     0.9988,
+		"atom_coverage_ratio":                   1,
+		"cross_source_atom_ratio":               0.5,
+		"cross_source_evidence_reference_count": 104,
+		"non_generalizable_runtime":             true,
+		"comparable":                            true,
+		"corpus_fingerprint":                    "same",
+		"command_config_fingerprint":            "same-config",
+		"guardrails":                            completeGuardrails(),
+	})
+
+	summary, err := BuildSummary(root, Options{})
+	if err != nil {
+		t.Fatalf("build summary: %v", err)
+	}
+	if summary.ArtifactTypeCounts["corpus_concept_summary"] != 1 {
+		t.Fatalf("expected corpus concept artifact: %+v", summary.ArtifactTypeCounts)
+	}
+	artifact := summary.Artifacts[0]
+	if artifact.Metrics["concept_count"] != 24 || artifact.Metrics["cross_source_concept_count"] != 8 {
+		t.Fatalf("expected concept metrics, got %+v", artifact.Metrics)
+	}
+	if artifact.Metrics["concept_review_count"] != 8 || artifact.Metrics["cleanup_triage_count"] != 10 || artifact.Metrics["enrichment_backlog_count"] != 4 || artifact.Metrics["blocked_diagnostic_count"] != 2 {
+		t.Fatalf("expected review work kind metrics, got %+v", artifact.Metrics)
+	}
+	if artifact.Fingerprints["corpus_fingerprint"] != "same" {
+		t.Fatalf("expected corpus fingerprint, got %+v", artifact.Fingerprints)
+	}
+}
+
+func TestBuildDetectsCorpusConceptReviewRecordProgress(t *testing.T) {
+	root := t.TempDir()
+	index := documents.CorpusConceptIndex{
+		SchemaVersion: documents.CorpusConceptsSchemaVersion,
+		CorpusID:      "corpus-a",
+		Concepts: []documents.CorpusConcept{
+			{ConceptID: "concept-review", CorpusID: "corpus-a", Title: "Cross-source concept", ReviewWorkKind: documents.CorpusConceptReviewWorkConceptReview},
+			{ConceptID: "concept-review-two", CorpusID: "corpus-a", Title: "Second concept", ReviewWorkKind: documents.CorpusConceptReviewWorkConceptReview},
+			{ConceptID: "cleanup", CorpusID: "corpus-a", Title: "Cleanup concept", ReviewWorkKind: documents.CorpusConceptReviewWorkCleanupTriage},
+		},
+	}
+	records := documents.CorpusConceptReviewRecords{
+		SchemaVersion:             documents.CorpusConceptReviewRecordsSchemaVersion,
+		CorpusID:                  index.CorpusID,
+		ReviewContractFingerprint: documents.CorpusConceptReviewContractFingerprint(index),
+		Records: []documents.CorpusConceptReviewRecord{
+			{SchemaVersion: documents.CorpusConceptReviewRecordsSchemaVersion, CorpusID: "corpus-a", ConceptID: "concept-review", ConceptTitle: "Cross-source concept", ReviewWorkKind: documents.CorpusConceptReviewWorkConceptReview, Choice: documents.CorpusConceptReviewAccept, RecordedAt: "2026-06-16T10:00:00Z"},
+			{SchemaVersion: documents.CorpusConceptReviewRecordsSchemaVersion, CorpusID: "corpus-a", ConceptID: "cleanup", ConceptTitle: "Cleanup concept", ReviewWorkKind: documents.CorpusConceptReviewWorkCleanupTriage, Choice: documents.CorpusConceptReviewRenameNeeded, RecordedAt: "2026-06-16T10:00:00Z"},
+		},
+	}
+	records.ReviewWorkKindProgress = documents.BuildCorpusConceptReviewProgress(index, records).WorkKindCounts
+	writeFixture(t, filepath.Join(root, "corpus-concepts", "concept-index.json"), index)
+	writeFixture(t, filepath.Join(root, "corpus-concepts", "review-records.json"), records)
+
+	summary, err := BuildSummary(root, Options{})
+	if err != nil {
+		t.Fatalf("build summary: %v", err)
+	}
+	if summary.ArtifactTypeCounts["corpus_concept_review_records"] != 1 {
+		t.Fatalf("expected review records artifact: %+v", summary.ArtifactTypeCounts)
+	}
+	artifact := summary.Artifacts[0]
+	if artifact.Metrics["concept_review_total_count"] != 2 ||
+		artifact.Metrics["concept_review_reviewed_count"] != 1 ||
+		artifact.Metrics["concept_review_remaining_count"] != 1 ||
+		artifact.Metrics["concept_review_choice_accept_count"] != 1 ||
+		artifact.Metrics["cleanup_triage_total_count"] != 1 ||
+		artifact.Metrics["cleanup_triage_reviewed_count"] != 1 ||
+		artifact.Metrics["cleanup_triage_choice_rename_needed_count"] != 1 {
+		t.Fatalf("expected per-work-kind progress metrics, got %+v", artifact.Metrics)
+	}
+}
+
+func TestBuildRejectsStaleCorpusConceptReviewProgress(t *testing.T) {
+	root := t.TempDir()
+	index := documents.CorpusConceptIndex{
+		SchemaVersion: documents.CorpusConceptsSchemaVersion,
+		CorpusID:      "corpus-stale",
+		Concepts: []documents.CorpusConcept{{
+			ConceptID: "concept-stale", CorpusID: "corpus-stale", Title: "Stale concept", ReviewWorkKind: documents.CorpusConceptReviewWorkConceptReview,
+		}},
+	}
+	records := documents.CorpusConceptReviewRecords{
+		SchemaVersion:             documents.CorpusConceptReviewRecordsSchemaVersion,
+		CorpusID:                  index.CorpusID,
+		ReviewContractFingerprint: documents.CorpusConceptReviewContractFingerprint(index),
+		Records: []documents.CorpusConceptReviewRecord{{
+			SchemaVersion: documents.CorpusConceptReviewRecordsSchemaVersion, CorpusID: index.CorpusID, ConceptID: "concept-stale", ConceptTitle: "Stale concept", ReviewWorkKind: documents.CorpusConceptReviewWorkConceptReview, Choice: documents.CorpusConceptReviewAccept, RecordedAt: "2026-06-16T10:00:00Z",
+		}},
+	}
+	records.ReviewWorkKindProgress = documents.BuildCorpusConceptReviewProgress(index, records).WorkKindCounts
+	index.Concepts[0].ReviewWorkKind = documents.CorpusConceptReviewWorkCleanupTriage
+	writeFixture(t, filepath.Join(root, "corpus-concepts", "concept-index.json"), index)
+	writeFixture(t, filepath.Join(root, "corpus-concepts", "review-records.json"), records)
+
+	summary, err := BuildSummary(root, Options{})
+	if err != nil {
+		t.Fatalf("build stale review readback: %v", err)
+	}
+	if len(summary.Artifacts) != 1 || summary.Artifacts[0].Status != "invalid_binding" {
+		t.Fatalf("expected stale review artifact to be invalid, got %+v", summary.Artifacts)
+	}
+	if len(summary.Artifacts[0].Metrics) != 0 {
+		t.Fatalf("stale review progress must not become evidence: %+v", summary.Artifacts[0].Metrics)
 	}
 }
 

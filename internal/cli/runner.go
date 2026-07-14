@@ -35,7 +35,7 @@ const (
 	ExitArtifactWrite = 3
 )
 
-const baseUsage = "usage: mindline process <candidate.json> [--out <dir>]\nusage: mindline slack normalize <slack-export.json> [--out <dir>]\nusage: mindline slack corpus-intake <slack-export.json> --out <dir>\nusage: mindline gmail corpus-intake <gmail-export.json> --out <dir>\nusage: mindline destination dry-run <sbos-result.json> --adapter tolaria --out <dir>\nusage: mindline pipeline dry-run <pipeline-input.json> --method basb-para-code --destination tolaria --out <dir>\nusage: mindline product-brain propose <run-dir> --profile <profile.json> --out <dir>\nusage: mindline documents decompose <markdown-path-or-dir> --out <dir>\nusage: mindline documents structure <markdown-path-or-dir> --out <dir>\nusage: mindline documents semantics <structure-run-dir-or-markdown-path-or-markdown-dir> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents accept <semantic-run-dir> --answer-key <answer-key.json> --out <dir>\nusage: mindline documents calibrate <semantic-acceptance-dir-or-parent> --out <dir> [--threshold 0.98] [--held-out] [--source-root <dir> --source <relative.md>]\nusage: mindline documents calibrate-next <semantic-calibration-dir-or-parent>\nusage: mindline documents judge <semantic-run-dir> --out <dir> [--source-root <dir> --source <relative.md>] [--agent-reviewer llm --llm-provider openai --llm-model <model>]\nusage: mindline documents judge-next <semantic-judgment-dir-or-parent>\nusage: mindline documents judge-record <semantic-judgment-dir-or-parent> --candidate <candidate-id> --choice accept|reject|unclear|duplicate|wrong-kind [--reason <failure-reason>] [--secondary-reason <failure-reason>] [--note <text>] [--reviewer <id>]\nusage: mindline documents judge-serve <semantic-judgment-dir-or-parent> [--addr 127.0.0.1:8787] [--reviewer <id>]\nusage: mindline documents readiness-report <semantic-judgment-dir-or-parent> --out <dir> [--threshold 0.98] [--held-out]\nusage: mindline documents corpus-graph <manifest.json> --out <dir>\nusage: mindline documents enrich-sources <corpus-pressure-manifest.json> --artifacts <local-enrichment-artifacts.json> --out <dir>\nusage: mindline documents link-enrichment-loop <corpus-pressure-manifest-or-intake-dir> --artifacts <local-enrichment-artifacts.json> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents corpus-pressure <markdown-dir-or-manifest> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents corpus-pressure-loop <markdown-dir-or-manifest> --out <dir> [--max-runs <n>] [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents corpus-acceptance <corpus-pressure-out-or-parent> --answer-key <corpus-answer-key.json> --out <dir> [--threshold 0.98] [--held-out]\nusage: mindline documents corpus-acceptance-labeling <corpus-pressure-out-or-parent> --out <dir>\nusage: mindline documents corpus-acceptance-label-next <corpus-acceptance-labeling-out-or-parent> --records <label-records.json> --out <dir>\nusage: mindline documents corpus-acceptance-label-record <corpus-acceptance-labeling-out-or-parent> --records <label-records.json> --map <label-next-map.json> --case-ref <ref> --decision expected_present|expected_absent|uncertain|abstain [--candidate-ref <ref>] [--expected-outcome <id>] [--expected-kind <kind>] [--minimum-confidence-floor low|medium|high] [--required-evidence-ref <ref>] [--labeler <id>] [--independence-attestation not_generated_from_evaluated_run] [--note <text>]\nusage: mindline documents corpus-acceptance-label-apply <corpus-acceptance-labeling-out-or-parent> --records <label-records.json> --out <dir>\nusage: mindline documents meaning-preview <corpus-pressure-out-or-parent> --out <dir>\nusage: mindline documents meaning-packet <corpus-pressure-out-or-parent> --out <dir>\nusage: mindline documents value-proof <markdown-dir-or-manifest> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline eval readback <run-or-artifact-dir> --out <dir> [--baseline <run-or-artifact-dir>]\nusage: mindline eval proof-gate <run-or-readback-dir> --out <dir> --claim safety|improvement|generalization|dec64 [--baseline <run-or-artifact-dir>]\nusage: mindline eval loop-decision <run-or-readback-dir> --out <dir> [--baseline <run-or-artifact-dir>]\nusage: mindline observability posthog-test\n"
+const baseUsage = "usage: mindline process <candidate.json> [--out <dir>]\nusage: mindline slack normalize <slack-export.json> [--out <dir>]\nusage: mindline slack corpus-intake <slack-export.json> --out <dir>\nusage: mindline gmail corpus-intake <gmail-export.json> --out <dir>\nusage: mindline destination dry-run <sbos-result.json> --adapter tolaria --out <dir>\nusage: mindline pipeline dry-run <pipeline-input.json> --method basb-para-code --destination tolaria --out <dir>\nusage: mindline product-brain propose <run-dir> --profile <profile.json> --out <dir>\nusage: mindline documents decompose <markdown-path-or-dir> --out <dir>\nusage: mindline documents structure <markdown-path-or-dir> --out <dir>\nusage: mindline documents semantics <structure-run-dir-or-markdown-path-or-markdown-dir> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents accept <semantic-run-dir> --answer-key <answer-key.json> --out <dir>\nusage: mindline documents calibrate <semantic-acceptance-dir-or-parent> --out <dir> [--threshold 0.98] [--held-out] [--source-root <dir> --source <relative.md>]\nusage: mindline documents calibrate-next <semantic-calibration-dir-or-parent>\nusage: mindline documents judge <semantic-run-dir> --out <dir> [--source-root <dir> --source <relative.md>] [--agent-reviewer llm --llm-provider openai --llm-model <model>]\nusage: mindline documents judge-next <semantic-judgment-dir-or-parent>\nusage: mindline documents judge-record <semantic-judgment-dir-or-parent> --candidate <candidate-id> --choice accept|reject|unclear|duplicate|wrong-kind [--reason <failure-reason>] [--secondary-reason <failure-reason>] [--note <text>] [--reviewer <id>]\nusage: mindline documents judge-serve <semantic-judgment-dir-or-parent> [--addr 127.0.0.1:8787] [--reviewer <id>]\nusage: mindline documents readiness-report <semantic-judgment-dir-or-parent> --out <dir> [--threshold 0.98] [--held-out]\nusage: mindline documents corpus-graph <manifest.json> --out <dir>\nusage: mindline documents enrich-sources <corpus-pressure-manifest.json> --artifacts <local-enrichment-artifacts.json> --out <dir>\nusage: mindline documents link-enrichment-loop <corpus-pressure-manifest-or-intake-dir> --artifacts <local-enrichment-artifacts.json> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents corpus-pressure <markdown-dir-or-manifest> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents corpus-pressure-loop <markdown-dir-or-manifest> --out <dir> [--max-runs <n>] [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents corpus-acceptance <corpus-pressure-out-or-parent> --answer-key <corpus-answer-key.json> --out <dir> [--threshold 0.98] [--held-out]\nusage: mindline documents corpus-acceptance-labeling <corpus-pressure-out-or-parent> --out <dir>\nusage: mindline documents corpus-acceptance-label-next <corpus-acceptance-labeling-out-or-parent> --records <label-records.json> --out <dir>\nusage: mindline documents corpus-acceptance-label-record <corpus-acceptance-labeling-out-or-parent> --records <label-records.json> --map <label-next-map.json> --case-ref <ref> --decision expected_present|expected_absent|uncertain|abstain [--candidate-ref <ref>] [--expected-outcome <id>] [--expected-kind <kind>] [--minimum-confidence-floor low|medium|high] [--required-evidence-ref <ref>] [--labeler <id>] [--independence-attestation not_generated_from_evaluated_run] [--note <text>]\nusage: mindline documents corpus-acceptance-label-apply <corpus-acceptance-labeling-out-or-parent> --records <label-records.json> --out <dir>\nusage: mindline documents meaning-preview <corpus-pressure-out-or-parent> --out <dir>\nusage: mindline documents meaning-packet <corpus-pressure-out-or-parent> --out <dir>\nusage: mindline documents concept-index <corpus-pressure-out-or-parent> --out <dir>\nusage: mindline documents concept-serve <concept-index-out-or-parent> [--addr 127.0.0.1:8788]\nusage: mindline documents value-proof <markdown-dir-or-manifest> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline eval readback <run-or-artifact-dir> --out <dir> [--baseline <run-or-artifact-dir>]\nusage: mindline eval proof-gate <run-or-readback-dir> --out <dir> --claim safety|improvement|generalization|dec64 [--baseline <run-or-artifact-dir>]\nusage: mindline eval loop-decision <run-or-readback-dir> --out <dir> [--baseline <run-or-artifact-dir>]\nusage: mindline observability posthog-test\n"
 
 var usage = strings.Replace(baseUsage, "usage: mindline documents corpus-acceptance-labeling <corpus-pressure-out-or-parent> --out <dir>\n", "usage: mindline documents corpus-acceptance-labeling <corpus-pressure-out-or-parent> --out <dir> [--seed --max-cases <n>]\n", 1)
 
@@ -355,6 +355,12 @@ func (r Runner) runDocuments(args []string, stdout, stderr io.Writer) int {
 	}
 	if len(args) > 0 && args[0] == "meaning-packet" {
 		return r.runDocumentsMeaningPacket(args, stdout, stderr)
+	}
+	if len(args) > 0 && args[0] == "concept-index" {
+		return r.runDocumentsConceptIndex(args, stdout, stderr)
+	}
+	if len(args) > 0 && args[0] == "concept-serve" {
+		return r.runDocumentsConceptServe(args, stdout, stderr)
 	}
 	if len(args) > 0 && args[0] == "value-proof" {
 		return r.runDocumentsValueProof(args, stdout, stderr)
@@ -833,6 +839,58 @@ func (r Runner) runDocumentsMeaningPacket(args []string, stdout, stderr io.Write
 	if err := encoder.Encode(summary); err != nil {
 		fmt.Fprintf(stderr, "write stdout: %v\n", err)
 		return ExitUsage
+	}
+	return ExitOK
+}
+
+func (r Runner) runDocumentsConceptIndex(args []string, stdout, stderr io.Writer) int {
+	inputPath, outDir, parseError := parseDocumentsArgs(args, "concept-index")
+	if parseError != parseErrorNone {
+		fmt.Fprint(stderr, usage)
+		return ExitUsage
+	}
+	if err := r.validateDestinationOutDir(outDir); err != nil {
+		fmt.Fprintf(stderr, "validate concept index output: %v\n", err)
+		return ExitArtifactWrite
+	}
+	summary, _, err := documents.BuildCorpusConceptIndex(inputPath, outDir)
+	if err != nil {
+		if documents.IsArtifactWriteError(err) {
+			fmt.Fprintf(stderr, "write concept index: %v\n", err)
+			return ExitArtifactWrite
+		}
+		fmt.Fprintf(stderr, "build concept index: %v\n", err)
+		return ExitProcess
+	}
+	encoder := json.NewEncoder(stdout)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(summary); err != nil {
+		fmt.Fprintf(stderr, "write stdout: %v\n", err)
+		return ExitUsage
+	}
+	return ExitOK
+}
+
+func (r Runner) runDocumentsConceptServe(args []string, stdout, stderr io.Writer) int {
+	inputPath, addr, parseError := parseDocumentsConceptServeArgs(args)
+	if parseError != parseErrorNone {
+		fmt.Fprint(stderr, usage)
+		return ExitUsage
+	}
+	if err := validateLoopbackAddr(addr); err != nil {
+		fmt.Fprintf(stderr, "invalid --addr: %v\n", err)
+		return ExitUsage
+	}
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		fmt.Fprintf(stderr, "serve corpus concept UI: %v\n", err)
+		return ExitProcess
+	}
+	defer listener.Close()
+	fmt.Fprintf(stdout, "Mindline concept review UI: http://%s\n", listener.Addr().String())
+	if err := http.Serve(listener, newCorpusConceptUIHandlerWithAllowedHosts(inputPath, []string{addr, listener.Addr().String()})); err != nil {
+		fmt.Fprintf(stderr, "serve corpus concept UI: %v\n", err)
+		return ExitProcess
 	}
 	return ExitOK
 }
@@ -2611,6 +2669,27 @@ func parseDocumentsJudgeServeArgs(args []string) (inputPath string, addr string,
 		i += 2
 	}
 	return inputPath, addr, reviewerID, parseErrorNone
+}
+
+func parseDocumentsConceptServeArgs(args []string) (inputPath string, addr string, err parseError) {
+	if len(args) < 2 || args[0] != "concept-serve" || strings.TrimSpace(args[1]) == "" {
+		return "", "", parseErrorUsage
+	}
+	inputPath = args[1]
+	addr = "127.0.0.1:8788"
+	for i := 2; i < len(args); {
+		if i+1 >= len(args) || strings.TrimSpace(args[i+1]) == "" {
+			return "", "", parseErrorUsage
+		}
+		switch args[i] {
+		case "--addr":
+			addr = args[i+1]
+		default:
+			return "", "", parseErrorUsage
+		}
+		i += 2
+	}
+	return inputPath, addr, parseErrorNone
 }
 
 func (r Runner) validateOutDir(outDir string) error {
