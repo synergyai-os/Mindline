@@ -654,6 +654,36 @@ func TestReadCorpusConceptReviewRecordsRejectsChangedSourceContribution(t *testi
 	}
 }
 
+func TestReadCorpusConceptReviewRecordsRejectsChangedGroupingRationale(t *testing.T) {
+	root := t.TempDir()
+	concept := CorpusConcept{
+		SchemaVersion:      CorpusConceptsSchemaVersion,
+		ConceptID:          "concept-grouping-contract",
+		CorpusID:           "corpus-grouping-contract",
+		Title:              "Reviewable concept",
+		ReviewWorkKind:     CorpusConceptReviewWorkConceptReview,
+		GroupingRationale:  "The sources share one strategic theme.",
+		AtomCount:          2,
+		SourceCount:        2,
+		SourceKindCoverage: map[string]int{"markdown": 1, "slack": 1},
+	}
+	index := CorpusConceptIndex{SchemaVersion: CorpusConceptsSchemaVersion, CorpusID: concept.CorpusID, Concepts: []CorpusConcept{concept}}
+	summary := CorpusConceptSummary{SchemaVersion: CorpusConceptsSchemaVersion, CorpusID: concept.CorpusID, ConceptCount: 1}
+	if err := WriteCorpusConceptIndex(root, summary, index); err != nil {
+		t.Fatalf("write concept index: %v", err)
+	}
+	if _, err := RecordCorpusConceptReview(root, CorpusConceptReviewRecordInput{ConceptID: concept.ConceptID, Choice: CorpusConceptReviewAccept}); err != nil {
+		t.Fatalf("record initial review: %v", err)
+	}
+	index.Concepts[0].GroupingRationale = "The sources now describe two unrelated strategic themes."
+	if err := WriteCorpusConceptIndex(root, summary, index); err != nil {
+		t.Fatalf("regenerate changed grouping rationale: %v", err)
+	}
+	if _, err := ReadCorpusConceptReviewRecords(root); err == nil || !strings.Contains(err.Error(), "contract fingerprint mismatch") {
+		t.Fatalf("expected changed grouping rationale to invalidate review records, got %v", err)
+	}
+}
+
 func TestRecordCorpusConceptReviewRejectsSymlinkedRoot(t *testing.T) {
 	targetRoot := t.TempDir()
 	concept := CorpusConcept{

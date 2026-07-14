@@ -1960,10 +1960,26 @@ func CorpusConceptReviewContractFingerprint(index CorpusConceptIndex) string {
 			string(concept.ReviewStatus),
 			concept.Title,
 			concept.ReviewPrompt,
+			concept.GroupingRationale,
 			concept.CandidateMeaning,
 			concept.AcceptMeaning,
+			fmt.Sprintf("%d", concept.AtomCount),
+			fmt.Sprintf("%d", concept.SourceCount),
+			fmt.Sprintf("%d", concept.EvidenceReferenceCount),
 			strings.Join(concept.ReasonCodes, ","),
 		}, "\x00"))
+		coverageKinds := make([]string, 0, len(concept.SourceKindCoverage))
+		for sourceKind := range concept.SourceKindCoverage {
+			coverageKinds = append(coverageKinds, sourceKind)
+		}
+		sort.Strings(coverageKinds)
+		for _, sourceKind := range coverageKinds {
+			parts = append(parts, strings.Join([]string{
+				"source-kind-coverage",
+				sourceKind,
+				fmt.Sprintf("%d", concept.SourceKindCoverage[sourceKind]),
+			}, "\x00"))
+		}
 		for _, criterion := range concept.DecisionRubric {
 			parts = append(parts, strings.Join([]string{string(criterion.Choice), criterion.Label, criterion.Criterion}, "\x00"))
 		}
