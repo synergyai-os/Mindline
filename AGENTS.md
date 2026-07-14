@@ -236,3 +236,33 @@ Before opening, updating, or merging a PR that changes Mindline product behavior
 - Run the relevant tests and readback/eval proof. For named claims, prefer `mindline eval proof-gate` over manual interpretation of readback JSON.
 - Capture durable learnings or corrections in PB.
 - Use LOOP reviewer sign-off when the change affects product direction, agent instructions, evaluation, trust, privacy, destination readiness, or autonomy claims.
+
+## Chain-Bounded Autonomous Delivery
+
+Authoritative anchors: `DEC-414`, `STD-22`, and `SETUP-RULE-MINDLINE_CHAIN_BOUNDED_DELIVERY`. This section is a repository projection; update Product Brain first when the operating contract changes.
+
+- Codex has full execution autonomy inside an unchanged signed Shape, Spec, Plan, work package, privacy boundary, claim boundary, and destination-write policy. A material change to any boundary requires new Chain authority before implementation continues.
+- The parent orchestrates an empowered product team. Product owns outcome and user value; Architecture owns modularity and evolutionary boundaries; Delivery owns implementation and operability; Chain Steward owns authority and phase gates; Risk/Safety owns privacy, credentials, mutations, rollback, and claims; Delivery Quality owns independent regression and lifecycle proof.
+- Apply Team Topologies deliberately: a stream-aligned team owns the end-to-end outcome; platform capabilities supply reusable ingestion, queue, evaluation, security, and observability paths; retrieval/enrichment and semantic evaluation may be complicated subsystems; temporary collaboration must exit into a stable API or ownership boundary.
+- Use `pb promote` and `pb verify` only for governance transitions authorized by signed phase evidence. The local `pb` CLI is never Mindline's runtime Product Brain destination transport.
+- Keep credentials in approved in-memory/session boundaries only. Never place them in Chain entries, files, commands, logs, traces, URLs, or generated instructions.
+- Build the smallest coherent vertical value slice and treat security, privacy, observability, recovery, rate limits, idempotency, exact acknowledgement/readback, replay, and rollback as part of its definition of done.
+- A reviewer defect restarts the required clean-pass sequence on the corrected frozen tree. Close only when the user outcome is visible, executable proof passes, unchanged-tree reviewers agree, and Product Brain states the exact result and remaining obligations.
+
+<!-- pb:region:start — managed by `pb handshake`; edit only OUTSIDE this block -->
+## Product Brain — operating context (managed)
+
+Before any substantive task — implementing, reviewing, or diagnosing — run `pb orient --task "<what you're doing>"` so task-relevant governance is active before you propose a solution.
+To read a spec, run `pb get <ID>` — never infer a spec, exclusions, or acceptance criteria from chat alone.
+Read `.productbrain/context.md` (workspace briefing) and `.productbrain/briefing.md` (entries matched to this repo) first.
+
+| Command | When |
+|---------|------|
+| `pb orient --task "<task>"` | before implementing, reviewing, or diagnosing |
+| `pb get <ID>` | read a BET/DEC/STD/BR/TEN/ARCH spec |
+| `pb search <query>` | find entries across the Chain |
+| `pb session start` / `pb capture "<DEC\|TEN\|INS>: …"` / `pb session close` | track + capture during work (drafts only) |
+
+Work the Chain through the `pb` CLI — it is the single source of truth; do not rely on memory of past runs.
+For task-specific skills, read the Codex skills index at `.codex/skills/README.md`.
+<!-- pb:region:end -->
