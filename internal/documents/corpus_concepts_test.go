@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -27,9 +28,9 @@ func TestBuildCorpusConceptIndexGroupsCrossSourceConcepts(t *testing.T) {
 		ReplayFingerprint: "graph-fp",
 	}
 	atoms := []CorpusGraphAtom{
-		conceptTestAtom("a1", "gmail-alpha", "Source methodology requires bounded concept review"),
-		conceptTestAtom("a2", "slack-alpha", "Bounded concept review should replace relation flood"),
-		conceptTestAtom("a3", "gmail-beta", "Local accountancy reminder"),
+		conceptTestKindAtom("a1", "source-alpha", "gmail", "Source methodology requires bounded concept review"),
+		conceptTestKindAtom("a2", "source-beta", "slack", "Bounded concept review should replace relation flood"),
+		conceptTestKindAtom("a3", "source-gamma", "gmail", "Local accountancy reminder"),
 	}
 	relations := []CorpusGraphRelation{{
 		SchemaVersion: CorpusGraphRelationSchemaVersion,
@@ -55,6 +56,9 @@ func TestBuildCorpusConceptIndexGroupsCrossSourceConcepts(t *testing.T) {
 	for _, concept := range build.Index.Concepts {
 		if concept.Section == CorpusConceptSectionCrossSource && concept.SourceKindCoverage["gmail"] > 0 && concept.SourceKindCoverage["slack"] > 0 {
 			foundMixed = true
+			if concept.ReviewWorkKind != CorpusConceptReviewWorkConceptReview {
+				t.Fatalf("expected supported cross-source item in concept review, got %s", concept.ReviewWorkKind)
+			}
 			if strings.Contains(strings.ToLower(concept.Title), "relation neighborhood") {
 				t.Fatalf("expected reviewer title, got generic machine label: %s", concept.Title)
 			}
@@ -93,6 +97,9 @@ func TestBuildCorpusConceptIndexGroupsCrossSourceConcepts(t *testing.T) {
 	}
 	if !foundMixed {
 		t.Fatalf("expected mixed source-kind coverage: %+v", build.Index.Concepts)
+	}
+	if build.Summary.ConceptReviewBurdenCount != build.Summary.ConceptReviewCount || build.Summary.ConceptReviewBurdenCount == 0 {
+		t.Fatalf("concept review burden must count only concept-review work: %+v", build.Summary)
 	}
 	reviewPacket := corpusConceptReviewMarkdown(build.Summary)
 	for _, want := range []string{"candidate=", "accept=", "rubric=Accept:", "contribution="} {
@@ -149,6 +156,9 @@ func TestBuildCorpusConceptIndexBlocksIncoherentLinkOnlyRelationNeighborhood(t *
 	}
 	if relationConcept.Section != CorpusConceptSectionBlocked || relationConcept.ReviewStatus != ReviewStatusBlocked {
 		t.Fatalf("expected incoherent relation concept to be blocked, got section=%s status=%s reasons=%v", relationConcept.Section, relationConcept.ReviewStatus, relationConcept.ReasonCodes)
+	}
+	if relationConcept.ReviewWorkKind != CorpusConceptReviewWorkBlockedDiagnostic {
+		t.Fatalf("blocked link-only relation must take blocked precedence, got %s", relationConcept.ReviewWorkKind)
 	}
 	for _, want := range []string{"weak_cross_source_coherence", "link_only_evidence_requires_enrichment", "duplicate_source_atom_support"} {
 		if !containsCorpusConceptString(relationConcept.ReasonCodes, want) {
@@ -215,6 +225,9 @@ func TestBuildCorpusConceptIndexBlocksCrossSourceWhenReadableSupportIsOneKindAnd
 	if relationConcept.Section != CorpusConceptSectionBlocked || relationConcept.ReviewStatus != ReviewStatusBlocked {
 		t.Fatalf("expected Modelo relation concept to be blocked, got section=%s status=%s reasons=%v", relationConcept.Section, relationConcept.ReviewStatus, relationConcept.ReasonCodes)
 	}
+	if relationConcept.ReviewWorkKind != CorpusConceptReviewWorkBlockedDiagnostic {
+		t.Fatalf("blocked outlier relation must be diagnostic, got %s", relationConcept.ReviewWorkKind)
+	}
 	for _, want := range []string{"insufficient_readable_source_kind_support", "readable_source_outlier", "link_only_evidence_requires_enrichment"} {
 		if !containsCorpusConceptString(relationConcept.ReasonCodes, want) {
 			t.Fatalf("expected reason %s in %+v", want, relationConcept.ReasonCodes)
@@ -276,6 +289,9 @@ func TestBuildCorpusConceptIndexBlocksGenericSameKindActionTermBucket(t *testing
 	if !containsCorpusConceptString(prepareConcept.ReasonCodes, "generic_term_bucket_requires_cleanup") {
 		t.Fatalf("expected generic term reason in %+v", prepareConcept.ReasonCodes)
 	}
+	if prepareConcept.ReviewWorkKind != CorpusConceptReviewWorkBlockedDiagnostic {
+		t.Fatalf("structurally blocked generic bucket must be diagnostic, got %s", prepareConcept.ReviewWorkKind)
+	}
 }
 
 func TestBuildCorpusConceptIndexRoutesSingleSourceLocalBucketToCleanupTriage(t *testing.T) {
@@ -321,6 +337,19 @@ func TestBuildCorpusConceptIndexRoutesSingleSourceLocalBucketToCleanupTriage(t *
 	}
 	if !containsCorpusConceptString(workspaceConcept.ReasonCodes, "single_source_concept") {
 		t.Fatalf("expected single-source reason: %+v", workspaceConcept.ReasonCodes)
+	}
+	if build.Summary.ConceptReviewBurdenCount != 0 {
+		t.Fatalf("single-source cleanup must not count as concept-review burden: %+v", build.Summary)
+	}
+}
+
+func TestCorpusConceptSourceKindUsesExplicitProvenance(t *testing.T) {
+	atom := conceptTestKindAtom("source-provenance", "slack-shaped-legacy-id", "notion", "Explicit source provenance")
+	if got := sourceKindForConcept(atom); got != "notion" {
+		t.Fatalf("source kind must come from explicit provenance, got %q", got)
+	}
+	if got := corpusConceptSourceRef(atom.SourceID, sourceKindForConcept(atom)); !strings.HasPrefix(got, "notion:") {
+		t.Fatalf("source ref must use explicit source kind, got %q", got)
 	}
 }
 
@@ -438,8 +467,8 @@ func TestRecordCorpusConceptReviewPersistsProgress(t *testing.T) {
 		ReplayFingerprint: "graph-fp",
 	}
 	atoms := []CorpusGraphAtom{
-		conceptTestAtom("a1", "gmail-alpha", "Review surface needs readable evidence"),
-		conceptTestAtom("a2", "slack-alpha", "Readable evidence supports review decisions"),
+		conceptTestKindAtom("a1", "source-alpha", "gmail", "Review surface needs readable evidence"),
+		conceptTestKindAtom("a2", "source-beta", "slack", "Readable evidence supports review decisions"),
 	}
 	relations := []CorpusGraphRelation{{
 		SchemaVersion: CorpusGraphRelationSchemaVersion,
@@ -482,6 +511,112 @@ func TestRecordCorpusConceptReviewPersistsProgress(t *testing.T) {
 	}
 }
 
+func TestRecordCorpusConceptReviewSerializesConcurrentWrites(t *testing.T) {
+	root := t.TempDir()
+	index := CorpusConceptIndex{
+		SchemaVersion: CorpusConceptsSchemaVersion,
+		CorpusID:      "corpus-concurrent-review",
+		Concepts: []CorpusConcept{
+			{SchemaVersion: CorpusConceptsSchemaVersion, ConceptID: "concept-alpha", CorpusID: "corpus-concurrent-review", Title: "Alpha", ReviewWorkKind: CorpusConceptReviewWorkConceptReview},
+			{SchemaVersion: CorpusConceptsSchemaVersion, ConceptID: "concept-beta", CorpusID: "corpus-concurrent-review", Title: "Beta", ReviewWorkKind: CorpusConceptReviewWorkConceptReview},
+		},
+	}
+	summary := CorpusConceptSummary{SchemaVersion: CorpusConceptsSchemaVersion, CorpusID: index.CorpusID, ConceptCount: len(index.Concepts)}
+	if err := WriteCorpusConceptIndex(root, summary, index); err != nil {
+		t.Fatalf("write concept index: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 16)
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func(ordinal int) {
+			defer wg.Done()
+			conceptID := index.Concepts[ordinal%len(index.Concepts)].ConceptID
+			_, err := RecordCorpusConceptReview(root, CorpusConceptReviewRecordInput{
+				ConceptID: conceptID,
+				Choice:    CorpusConceptReviewSplitNeeded,
+				Note:      "concurrent review",
+			})
+			if err != nil {
+				errs <- err
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("concurrent review write failed: %v", err)
+	}
+	records, err := ReadCorpusConceptReviewRecords(root)
+	if err != nil {
+		t.Fatalf("read concurrent review records: %v", err)
+	}
+	if len(records.Records) != 2 {
+		t.Fatalf("expected one durable record per concept, got %+v", records.Records)
+	}
+	bucket := records.ReviewWorkKindProgress[CorpusConceptReviewWorkConceptReview]
+	if bucket.TotalCount != 2 || bucket.ReviewedCount != 2 || bucket.RemainingCount != 0 {
+		t.Fatalf("unexpected concurrent progress: %+v", bucket)
+	}
+}
+
+func TestReadCorpusConceptReviewRecordsRejectsStaleReviewContract(t *testing.T) {
+	root := t.TempDir()
+	concept := CorpusConcept{
+		SchemaVersion:  CorpusConceptsSchemaVersion,
+		ConceptID:      "concept-stale-contract",
+		CorpusID:       "corpus-stale-contract",
+		Title:          "Reviewable concept",
+		ReviewWorkKind: CorpusConceptReviewWorkConceptReview,
+	}
+	index := CorpusConceptIndex{SchemaVersion: CorpusConceptsSchemaVersion, CorpusID: concept.CorpusID, Concepts: []CorpusConcept{concept}}
+	summary := CorpusConceptSummary{SchemaVersion: CorpusConceptsSchemaVersion, CorpusID: concept.CorpusID, ConceptCount: 1}
+	if err := WriteCorpusConceptIndex(root, summary, index); err != nil {
+		t.Fatalf("write concept index: %v", err)
+	}
+	if _, err := RecordCorpusConceptReview(root, CorpusConceptReviewRecordInput{ConceptID: concept.ConceptID, Choice: CorpusConceptReviewAccept}); err != nil {
+		t.Fatalf("record initial review: %v", err)
+	}
+	index.Concepts[0].ReviewWorkKind = CorpusConceptReviewWorkCleanupTriage
+	index.Concepts[0].ReviewPrompt = "Route this to cleanup instead of concept acceptance."
+	if err := WriteCorpusConceptIndex(root, summary, index); err != nil {
+		t.Fatalf("regenerate concept index: %v", err)
+	}
+	if _, err := ReadCorpusConceptReviewRecords(root); err == nil || !strings.Contains(err.Error(), "contract fingerprint mismatch") {
+		t.Fatalf("expected stale review contract rejection, got %v", err)
+	}
+}
+
+func TestRecordCorpusConceptReviewRejectsSymlinkedRoot(t *testing.T) {
+	targetRoot := t.TempDir()
+	concept := CorpusConcept{
+		SchemaVersion:  CorpusConceptsSchemaVersion,
+		ConceptID:      "concept-symlink-root",
+		CorpusID:       "corpus-symlink-root",
+		Title:          "Reviewable concept",
+		ReviewWorkKind: CorpusConceptReviewWorkConceptReview,
+	}
+	index := CorpusConceptIndex{SchemaVersion: CorpusConceptsSchemaVersion, CorpusID: concept.CorpusID, Concepts: []CorpusConcept{concept}}
+	summary := CorpusConceptSummary{SchemaVersion: CorpusConceptsSchemaVersion, CorpusID: concept.CorpusID, ConceptCount: 1}
+	if err := WriteCorpusConceptIndex(targetRoot, summary, index); err != nil {
+		t.Fatalf("write target concept index: %v", err)
+	}
+	linkParent := filepath.Join(t.TempDir(), "linked-output")
+	if err := os.MkdirAll(linkParent, 0o755); err != nil {
+		t.Fatalf("mkdir link parent: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(targetRoot, CorpusConceptsDirName), filepath.Join(linkParent, CorpusConceptsDirName)); err != nil {
+		t.Fatalf("create corpus concept symlink: %v", err)
+	}
+	if _, err := RecordCorpusConceptReview(linkParent, CorpusConceptReviewRecordInput{ConceptID: concept.ConceptID, Choice: CorpusConceptReviewAccept}); err == nil {
+		t.Fatalf("expected symlinked concept root to be rejected")
+	}
+	if _, err := os.Stat(filepath.Join(targetRoot, CorpusConceptsDirName, "review-records.json")); !os.IsNotExist(err) {
+		t.Fatalf("symlink rejection must not write target records, stat err=%v", err)
+	}
+}
+
 func TestWriteCorpusConceptIndexRejectsUnexpectedFiles(t *testing.T) {
 	root := t.TempDir()
 	summary := CorpusConceptSummary{SchemaVersion: CorpusConceptsSchemaVersion, CorpusID: "corpus-a"}
@@ -504,7 +639,14 @@ func TestWriteCorpusConceptIndexAllowsReviewRecords(t *testing.T) {
 	if err := WriteCorpusConceptIndex(root, summary, index); err != nil {
 		t.Fatalf("write concept index: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(root, CorpusConceptsDirName, "review-records.json"), []byte(`{"schema_version":"corpus-concept-review-records/v0.1","corpus_id":"corpus-a","records":[]}`), 0o644); err != nil {
+	records := CorpusConceptReviewRecords{
+		SchemaVersion:             CorpusConceptReviewRecordsSchemaVersion,
+		CorpusID:                  index.CorpusID,
+		ReviewContractFingerprint: CorpusConceptReviewContractFingerprint(index),
+		Records:                   []CorpusConceptReviewRecord{},
+	}
+	records.ReviewWorkKindProgress = BuildCorpusConceptReviewProgress(index, records).WorkKindCounts
+	if err := writeJSON(filepath.Join(root, CorpusConceptsDirName), "review-records.json", records); err != nil {
 		t.Fatalf("write review records: %v", err)
 	}
 	if err := WriteCorpusConceptIndex(root, summary, index); err != nil {

@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	CorpusConceptsSchemaVersion             = "corpus-concepts/v0.1"
-	CorpusConceptReviewRecordsSchemaVersion = "corpus-concept-review-records/v0.1"
+	CorpusConceptsSchemaVersion             = "corpus-concepts/v0.2"
+	CorpusConceptReviewRecordsSchemaVersion = "corpus-concept-review-records/v0.2"
 	CorpusConceptsDirName                   = "corpus-concepts"
 	DefaultCorpusConceptsMax                = 40
 	corpusConceptMaxAtoms                   = 18
@@ -33,51 +33,50 @@ const (
 )
 
 type CorpusConceptSummary struct {
-	SchemaVersion                     string                                  `json:"schema_version"`
-	CorpusID                          string                                  `json:"corpus_id"`
-	SourceCount                       int                                     `json:"source_count"`
-	ProcessedSourceCount              int                                     `json:"processed_source_count"`
-	AtomCount                         int                                     `json:"atom_count"`
-	RelationCount                     int                                     `json:"relation_count"`
-	ConceptCount                      int                                     `json:"concept_count"`
-	GeneratedConceptCount             int                                     `json:"generated_concept_count,omitempty"`
-	CrossSourceConceptCount           int                                     `json:"cross_source_concept_count"`
-	LocalConceptCount                 int                                     `json:"local_concept_count"`
-	NeedsReviewConceptCount           int                                     `json:"needs_review_concept_count"`
-	BlockedConceptCount               int                                     `json:"blocked_concept_count"`
-	ConceptReviewCount                int                                     `json:"concept_review_count"`
-	CleanupTriageCount                int                                     `json:"cleanup_triage_count"`
-	EnrichmentBacklogCount            int                                     `json:"enrichment_backlog_count"`
-	BlockedDiagnosticCount            int                                     `json:"blocked_diagnostic_count"`
-	EvidenceReferenceCount            int                                     `json:"evidence_reference_count"`
-	CrossSourceEvidenceReferenceCount int                                     `json:"cross_source_evidence_reference_count"`
-	ConceptReviewBurdenCount          int                                     `json:"concept_review_burden_count"`
-	ConceptReviewBurdenRatio          float64                                 `json:"concept_review_burden_ratio"`
-	RelationReviewCompressionRatio    float64                                 `json:"relation_review_compression_ratio"`
-	AtomCoverageRatio                 float64                                 `json:"atom_coverage_ratio"`
-	CrossSourceAtomRatio              float64                                 `json:"cross_source_atom_ratio"`
-	SourceKindCoverage                map[string]int                          `json:"source_kind_coverage"`
-	CrossSourceKindPairCount          int                                     `json:"cross_source_kind_pair_count"`
-	MaxConceptCount                   int                                     `json:"max_concept_count"`
-	OmittedConceptCount               int                                     `json:"omitted_concept_count,omitempty"`
-	OmittedAtomCount                  int                                     `json:"omitted_atom_count,omitempty"`
-	ScaleStatus                       string                                  `json:"scale_status"`
-	ScaleReasonCodes                  []string                                `json:"scale_reason_codes,omitempty"`
-	NonGeneralizableRuntime           bool                                    `json:"non_generalizable_runtime"`
-	Comparable                        bool                                    `json:"comparable"`
-	Guardrails                        CorpusPressureGuardrailCounters         `json:"guardrails"`
-	CorpusFingerprint                 string                                  `json:"corpus_fingerprint"`
-	CommandConfigFingerprint          string                                  `json:"command_config_fingerprint"`
-	PressureReplayFingerprint         string                                  `json:"pressure_replay_fingerprint"`
-	GraphReplayFingerprint            string                                  `json:"graph_replay_fingerprint"`
-	ReplayFingerprint                 string                                  `json:"replay_fingerprint"`
-	ConceptIndexPath                  string                                  `json:"concept_index_path"`
-	ReviewPacketPath                  string                                  `json:"review_packet_path"`
-	SectionCounts                     map[CorpusConceptSection]int            `json:"section_counts"`
-	CandidateKindCounts               map[SemanticCandidateKind]int           `json:"candidate_kind_counts"`
-	RoutingHintCounts                 map[SourceMeaningPreviewRoutingHint]int `json:"routing_hint_counts"`
-	ReviewWorkKindCounts              map[CorpusConceptReviewWorkKind]int     `json:"review_work_kind_counts"`
-	Concepts                          []CorpusConceptListItem                 `json:"concepts"`
+	SchemaVersion                     string                              `json:"schema_version"`
+	CorpusID                          string                              `json:"corpus_id"`
+	SourceCount                       int                                 `json:"source_count"`
+	ProcessedSourceCount              int                                 `json:"processed_source_count"`
+	AtomCount                         int                                 `json:"atom_count"`
+	RelationCount                     int                                 `json:"relation_count"`
+	ConceptCount                      int                                 `json:"concept_count"`
+	GeneratedConceptCount             int                                 `json:"generated_concept_count,omitempty"`
+	CrossSourceConceptCount           int                                 `json:"cross_source_concept_count"`
+	LocalConceptCount                 int                                 `json:"local_concept_count"`
+	NeedsReviewConceptCount           int                                 `json:"needs_review_concept_count"`
+	BlockedConceptCount               int                                 `json:"blocked_concept_count"`
+	ConceptReviewCount                int                                 `json:"concept_review_count"`
+	CleanupTriageCount                int                                 `json:"cleanup_triage_count"`
+	EnrichmentBacklogCount            int                                 `json:"enrichment_backlog_count"`
+	BlockedDiagnosticCount            int                                 `json:"blocked_diagnostic_count"`
+	EvidenceReferenceCount            int                                 `json:"evidence_reference_count"`
+	CrossSourceEvidenceReferenceCount int                                 `json:"cross_source_evidence_reference_count"`
+	ConceptReviewBurdenCount          int                                 `json:"concept_review_burden_count"`
+	ConceptReviewBurdenRatio          float64                             `json:"concept_review_burden_ratio"`
+	RelationReviewCompressionRatio    float64                             `json:"relation_review_compression_ratio"`
+	AtomCoverageRatio                 float64                             `json:"atom_coverage_ratio"`
+	CrossSourceAtomRatio              float64                             `json:"cross_source_atom_ratio"`
+	SourceKindCoverage                map[string]int                      `json:"source_kind_coverage"`
+	CrossSourceKindPairCount          int                                 `json:"cross_source_kind_pair_count"`
+	MaxConceptCount                   int                                 `json:"max_concept_count"`
+	OmittedConceptCount               int                                 `json:"omitted_concept_count,omitempty"`
+	OmittedAtomCount                  int                                 `json:"omitted_atom_count,omitempty"`
+	ScaleStatus                       string                              `json:"scale_status"`
+	ScaleReasonCodes                  []string                            `json:"scale_reason_codes,omitempty"`
+	NonGeneralizableRuntime           bool                                `json:"non_generalizable_runtime"`
+	Comparable                        bool                                `json:"comparable"`
+	Guardrails                        CorpusPressureGuardrailCounters     `json:"guardrails"`
+	CorpusFingerprint                 string                              `json:"corpus_fingerprint"`
+	CommandConfigFingerprint          string                              `json:"command_config_fingerprint"`
+	PressureReplayFingerprint         string                              `json:"pressure_replay_fingerprint"`
+	GraphReplayFingerprint            string                              `json:"graph_replay_fingerprint"`
+	ReplayFingerprint                 string                              `json:"replay_fingerprint"`
+	ConceptIndexPath                  string                              `json:"concept_index_path"`
+	ReviewPacketPath                  string                              `json:"review_packet_path"`
+	SectionCounts                     map[CorpusConceptSection]int        `json:"section_counts"`
+	CandidateKindCounts               map[SemanticCandidateKind]int       `json:"candidate_kind_counts"`
+	ReviewWorkKindCounts              map[CorpusConceptReviewWorkKind]int `json:"review_work_kind_counts"`
+	Concepts                          []CorpusConceptListItem             `json:"concepts"`
 }
 
 type CorpusConceptIndex struct {
@@ -98,7 +97,6 @@ type CorpusConceptListItem struct {
 	ConceptKey             string                           `json:"concept_key"`
 	Section                CorpusConceptSection             `json:"section"`
 	CandidateKind          SemanticCandidateKind            `json:"candidate_kind"`
-	RoutingHint            SourceMeaningPreviewRoutingHint  `json:"routing_hint"`
 	AtomCount              int                              `json:"atom_count"`
 	SourceCount            int                              `json:"source_count"`
 	EvidenceReferenceCount int                              `json:"evidence_reference_count"`
@@ -124,7 +122,6 @@ type CorpusConcept struct {
 	ConceptKey             string                           `json:"concept_key"`
 	Section                CorpusConceptSection             `json:"section"`
 	CandidateKind          SemanticCandidateKind            `json:"candidate_kind"`
-	RoutingHint            SourceMeaningPreviewRoutingHint  `json:"routing_hint"`
 	WriteEligible          bool                             `json:"write_eligible"`
 	ReviewStatus           ReviewStatus                     `json:"review_status"`
 	ReviewWorkKind         CorpusConceptReviewWorkKind      `json:"review_work_kind"`
@@ -194,10 +191,11 @@ const (
 )
 
 type CorpusConceptReviewRecords struct {
-	SchemaVersion          string                                                          `json:"schema_version"`
-	CorpusID               string                                                          `json:"corpus_id"`
-	ReviewWorkKindProgress map[CorpusConceptReviewWorkKind]CorpusConceptReviewWorkProgress `json:"review_work_kind_progress,omitempty"`
-	Records                []CorpusConceptReviewRecord                                     `json:"records"`
+	SchemaVersion             string                                                          `json:"schema_version"`
+	CorpusID                  string                                                          `json:"corpus_id"`
+	ReviewContractFingerprint string                                                          `json:"review_contract_fingerprint"`
+	ReviewWorkKindProgress    map[CorpusConceptReviewWorkKind]CorpusConceptReviewWorkProgress `json:"review_work_kind_progress,omitempty"`
+	Records                   []CorpusConceptReviewRecord                                     `json:"records"`
 }
 
 type CorpusConceptReviewRecord struct {
@@ -311,9 +309,10 @@ func ReadCorpusConceptReviewRecords(inputPath string) (CorpusConceptReviewRecord
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return CorpusConceptReviewRecords{
-			SchemaVersion: CorpusConceptReviewRecordsSchemaVersion,
-			CorpusID:      index.CorpusID,
-			Records:       []CorpusConceptReviewRecord{},
+			SchemaVersion:             CorpusConceptReviewRecordsSchemaVersion,
+			CorpusID:                  index.CorpusID,
+			ReviewContractFingerprint: CorpusConceptReviewContractFingerprint(index),
+			Records:                   []CorpusConceptReviewRecord{},
 		}, nil
 	}
 	if err != nil {
@@ -328,6 +327,10 @@ func ReadCorpusConceptReviewRecords(inputPath string) (CorpusConceptReviewRecord
 	}
 	if records.CorpusID != index.CorpusID {
 		return CorpusConceptReviewRecords{}, fmt.Errorf("corpus concept review records corpus mismatch")
+	}
+	expectedFingerprint := CorpusConceptReviewContractFingerprint(index)
+	if records.ReviewContractFingerprint != expectedFingerprint {
+		return CorpusConceptReviewRecords{}, fmt.Errorf("corpus concept review records contract fingerprint mismatch")
 	}
 	conceptsByID := map[string]CorpusConcept{}
 	for _, concept := range index.Concepts {
@@ -347,6 +350,10 @@ func ReadCorpusConceptReviewRecords(inputPath string) (CorpusConceptReviewRecord
 		if !allowedCorpusConceptReviewChoice(concept.ReviewWorkKind, record.Choice) {
 			return CorpusConceptReviewRecords{}, fmt.Errorf("unsupported %s corpus concept review choice: %s", concept.ReviewWorkKind, record.Choice)
 		}
+	}
+	expectedProgress := BuildCorpusConceptReviewProgress(index, records).WorkKindCounts
+	if !corpusConceptReviewWorkProgressEqual(records.ReviewWorkKindProgress, expectedProgress) {
+		return CorpusConceptReviewRecords{}, fmt.Errorf("corpus concept review records progress mismatch")
 	}
 	return records, nil
 }
@@ -418,6 +425,7 @@ func RecordCorpusConceptReview(inputPath string, input CorpusConceptReviewRecord
 			records.Records = append(records.Records, record)
 		}
 		sort.Slice(records.Records, func(i, j int) bool { return records.Records[i].ConceptID < records.Records[j].ConceptID })
+		records.ReviewContractFingerprint = CorpusConceptReviewContractFingerprint(index)
 		records.ReviewWorkKindProgress = BuildCorpusConceptReviewProgress(index, records).WorkKindCounts
 		updated = records
 		if err := writeJSON(root, "review-records.json", updated); err != nil {
@@ -523,6 +531,34 @@ func initialCorpusConceptReviewWorkProgress() map[CorpusConceptReviewWorkKind]Co
 	return out
 }
 
+func corpusConceptReviewWorkProgressEqual(left, right map[CorpusConceptReviewWorkKind]CorpusConceptReviewWorkProgress) bool {
+	for _, kind := range []CorpusConceptReviewWorkKind{
+		CorpusConceptReviewWorkConceptReview,
+		CorpusConceptReviewWorkCleanupTriage,
+		CorpusConceptReviewWorkEnrichmentBacklog,
+		CorpusConceptReviewWorkBlockedDiagnostic,
+	} {
+		leftBucket, leftOK := left[kind]
+		rightBucket, rightOK := right[kind]
+		if !leftOK || !rightOK || leftBucket.TotalCount != rightBucket.TotalCount || leftBucket.ReviewedCount != rightBucket.ReviewedCount || leftBucket.RemainingCount != rightBucket.RemainingCount {
+			return false
+		}
+		for _, choice := range []CorpusConceptReviewChoice{
+			CorpusConceptReviewAccept,
+			CorpusConceptReviewRejectNoisy,
+			CorpusConceptReviewSplitNeeded,
+			CorpusConceptReviewMergeDuplicate,
+			CorpusConceptReviewRenameNeeded,
+			CorpusConceptReviewNeedsSourceContext,
+		} {
+			if leftBucket.ChoiceCounts[choice] != rightBucket.ChoiceCounts[choice] {
+				return false
+			}
+		}
+	}
+	return len(left) == len(right)
+}
+
 func normalizeCorpusConceptReviewWorkKind(kind CorpusConceptReviewWorkKind) CorpusConceptReviewWorkKind {
 	if kind == "" {
 		return CorpusConceptReviewWorkConceptReview
@@ -575,17 +611,7 @@ func validCorpusConceptReviewChoice(choice CorpusConceptReviewChoice) bool {
 }
 
 func corpusConceptRoot(inputPath string) (string, error) {
-	if strings.TrimSpace(inputPath) == "" {
-		return "", fmt.Errorf("missing corpus concept path")
-	}
-	root, err := filepath.Abs(inputPath)
-	if err != nil {
-		return "", err
-	}
-	if filepath.Base(root) != CorpusConceptsDirName {
-		root = filepath.Join(root, CorpusConceptsDirName)
-	}
-	return root, nil
+	return resolveNamedArtifactRoot(inputPath, CorpusConceptsDirName)
 }
 
 func buildCorpusConceptIndex(pressure CorpusPressureSummary, graph CorpusGraphSummary, atoms []CorpusGraphAtom, relations []CorpusGraphRelation, maxConcepts int) corpusConceptBuild {
@@ -839,13 +865,11 @@ func corpusConceptTermBuckets(atoms []CorpusGraphAtom) []corpusConceptTermBucket
 func buildCorpusConcept(corpusID, key string, atoms []CorpusGraphAtom) CorpusConcept {
 	sortCorpusConceptAtoms(atoms)
 	kind := atoms[0].CandidateKind
-	route := packetRouteForAtom(atoms[0])
 	concept := CorpusConcept{
 		SchemaVersion:      CorpusConceptsSchemaVersion,
 		CorpusID:           corpusID,
 		ConceptKey:         key,
 		CandidateKind:      kind,
-		RoutingHint:        route,
 		WriteEligible:      false,
 		ReviewStatus:       ReviewStatusReady,
 		SourceKindCoverage: map[string]int{},
@@ -946,7 +970,6 @@ func buildCorpusConceptSummary(pressure CorpusPressureSummary, graph CorpusGraph
 		SourceKindCoverage:        map[string]int{},
 		SectionCounts:             map[CorpusConceptSection]int{},
 		CandidateKindCounts:       map[SemanticCandidateKind]int{},
-		RoutingHintCounts:         map[SourceMeaningPreviewRoutingHint]int{},
 		ReviewWorkKindCounts:      map[CorpusConceptReviewWorkKind]int{},
 	}
 	if pressure.ScaleStatus == "scale_partial" {
@@ -972,12 +995,12 @@ func buildCorpusConceptSummary(pressure CorpusPressureSummary, graph CorpusGraph
 		summary.EvidenceReferenceCount += concept.EvidenceReferenceCount
 		summary.SectionCounts[concept.Section]++
 		summary.CandidateKindCounts[concept.CandidateKind] += concept.AtomCount
-		summary.RoutingHintCounts[concept.RoutingHint]++
 		workKind := normalizeCorpusConceptReviewWorkKind(concept.ReviewWorkKind)
 		summary.ReviewWorkKindCounts[workKind]++
 		switch workKind {
 		case CorpusConceptReviewWorkConceptReview:
 			summary.ConceptReviewCount++
+			summary.ConceptReviewBurdenCount++
 		case CorpusConceptReviewWorkCleanupTriage:
 			summary.CleanupTriageCount++
 		case CorpusConceptReviewWorkEnrichmentBacklog:
@@ -991,9 +1014,6 @@ func buildCorpusConceptSummary(pressure CorpusPressureSummary, graph CorpusGraph
 		if len(concept.SourceKindCoverage) > 1 {
 			summary.CrossSourceKindPairCount++
 			summary.CrossSourceEvidenceReferenceCount += concept.EvidenceReferenceCount
-		}
-		if concept.ReviewStatus != ReviewStatusReady {
-			summary.ConceptReviewBurdenCount++
 		}
 		switch concept.Section {
 		case CorpusConceptSectionCrossSource:
@@ -1018,7 +1038,6 @@ func buildCorpusConceptSummary(pressure CorpusPressureSummary, graph CorpusGraph
 			ConceptKey:             concept.ConceptKey,
 			Section:                concept.Section,
 			CandidateKind:          concept.CandidateKind,
-			RoutingHint:            concept.RoutingHint,
 			AtomCount:              concept.AtomCount,
 			SourceCount:            concept.SourceCount,
 			EvidenceReferenceCount: concept.EvidenceReferenceCount,
@@ -1173,7 +1192,10 @@ func corpusConceptTitle(key string, atoms []CorpusGraphAtom) string {
 }
 
 func corpusConceptReviewWorkKind(concept CorpusConcept) CorpusConceptReviewWorkKind {
-	if containsCorpusConceptString(concept.ReasonCodes, "blocked_atom") || containsCorpusConceptString(concept.ReasonCodes, "missing_evidence_reference") {
+	if containsCorpusConceptString(concept.ReasonCodes, "blocked_atom") ||
+		containsCorpusConceptString(concept.ReasonCodes, "missing_evidence_reference") ||
+		concept.ReviewStatus == ReviewStatusBlocked ||
+		concept.Section == CorpusConceptSectionBlocked {
 		return CorpusConceptReviewWorkBlockedDiagnostic
 	}
 	if containsCorpusConceptString(concept.ReasonCodes, "link_only_evidence_requires_enrichment") || containsCorpusConceptString(concept.ReasonCodes, "no_readable_source_evidence") || containsCorpusConceptString(concept.ReasonCodes, "insufficient_reviewable_source_support") {
@@ -1184,9 +1206,6 @@ func corpusConceptReviewWorkKind(concept CorpusConcept) CorpusConceptReviewWorkK
 		containsCorpusConceptString(concept.ReasonCodes, "single_source_kind_concept") ||
 		containsCorpusConceptString(concept.ReasonCodes, "generic_term_bucket_requires_cleanup") {
 		return CorpusConceptReviewWorkCleanupTriage
-	}
-	if concept.ReviewStatus == ReviewStatusBlocked || concept.Section == CorpusConceptSectionBlocked {
-		return CorpusConceptReviewWorkBlockedDiagnostic
 	}
 	return CorpusConceptReviewWorkConceptReview
 }
@@ -1374,7 +1393,7 @@ func corpusConceptSourceEvidence(atoms []CorpusGraphAtom) []CorpusConceptSourceE
 		group := CorpusConceptSourceEvidence{
 			SourceID:   sourceID,
 			SourceKind: sourceKindForConcept(sourceAtoms[0]),
-			SourceRef:  corpusConceptSourceRef(sourceID),
+			SourceRef:  corpusConceptSourceRef(sourceID, sourceKindForConcept(sourceAtoms[0])),
 			AtomCount:  len(sourceAtoms),
 		}
 		if group.AtomCount > 1 {
@@ -1753,7 +1772,7 @@ func corpusConceptEvidencePreview(atom CorpusGraphAtom) CorpusConceptEvidencePre
 		AtomID:        atom.AtomID,
 		SourceID:      atom.SourceID,
 		SourceKind:    sourceKindForConcept(atom),
-		SourceRef:     corpusConceptSourceRef(atom.SourceID),
+		SourceRef:     corpusConceptSourceRef(atom.SourceID, sourceKindForConcept(atom)),
 		LineStart:     atom.LineStart,
 		LineEnd:       atom.LineEnd,
 		ContentHash:   atom.ContentHash,
@@ -1848,18 +1867,14 @@ func corpusConceptSafeEvidenceTitle(value string) string {
 	return value
 }
 
-func corpusConceptSourceRef(sourceID string) string {
+func corpusConceptSourceRef(sourceID, sourceKind string) string {
 	sourceID = strings.TrimSpace(sourceID)
 	if sourceID == "" {
 		return "unknown"
 	}
-	kind := "source"
-	lower := strings.ToLower(sourceID)
-	switch {
-	case strings.HasPrefix(lower, "gmail-"):
-		kind = "gmail"
-	case strings.HasPrefix(lower, "slack-"):
-		kind = "slack"
+	kind := strings.ToLower(strings.TrimSpace(sourceKind))
+	if kind == "" || kind == "unknown" {
+		kind = "source"
 	}
 	if len(sourceID) <= 12 {
 		return kind + ":" + sourceID
@@ -1884,7 +1899,20 @@ func corpusConceptReplayFingerprint(summary CorpusConceptSummary) string {
 		fmt.Sprintf("counts:%d:%d:%d:%d:%d:%d", summary.AtomCount, summary.RelationCount, summary.ConceptCount, summary.CrossSourceConceptCount, summary.EvidenceReferenceCount, summary.ConceptReviewBurdenCount),
 	}
 	for _, concept := range summary.Concepts {
-		parts = append(parts, strings.Join([]string{concept.ConceptID, string(concept.Section), string(concept.CandidateKind), fmt.Sprintf("%d", concept.AtomCount)}, ":"))
+		parts = append(parts, strings.Join([]string{
+			concept.ConceptID,
+			string(concept.Section),
+			string(concept.CandidateKind),
+			string(concept.ReviewWorkKind),
+			string(concept.ReviewStatus),
+			fmt.Sprintf("%d", concept.AtomCount),
+			concept.ReviewPrompt,
+			concept.CandidateMeaning,
+			concept.AcceptMeaning,
+		}, "\x00"))
+		for _, criterion := range concept.DecisionRubric {
+			parts = append(parts, strings.Join([]string{string(criterion.Choice), criterion.Label, criterion.Criterion}, "\x00"))
+		}
 	}
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
 	return "corpus-concepts-" + hex.EncodeToString(sum[:])[:16]
@@ -1909,17 +1937,38 @@ func sortCorpusConceptAtoms(atoms []CorpusGraphAtom) {
 }
 
 func sourceKindForConcept(atom CorpusGraphAtom) string {
-	sourceID := strings.ToLower(strings.TrimSpace(atom.SourceID))
-	switch {
-	case strings.HasPrefix(sourceID, "gmail-"):
-		return "gmail"
-	case strings.HasPrefix(sourceID, "slack-"):
-		return "slack"
-	}
 	if strings.TrimSpace(atom.SourceKind) != "" {
 		return strings.ToLower(strings.TrimSpace(atom.SourceKind))
 	}
 	return "unknown"
+}
+
+func CorpusConceptReviewContractFingerprint(index CorpusConceptIndex) string {
+	concepts := append([]CorpusConcept{}, index.Concepts...)
+	sort.Slice(concepts, func(i, j int) bool { return concepts[i].ConceptID < concepts[j].ConceptID })
+	parts := []string{index.SchemaVersion, index.CorpusID}
+	for _, concept := range concepts {
+		parts = append(parts, strings.Join([]string{
+			concept.ConceptID,
+			string(normalizeCorpusConceptReviewWorkKind(concept.ReviewWorkKind)),
+			string(concept.Section),
+			string(concept.CandidateKind),
+			string(concept.ReviewStatus),
+			concept.Title,
+			concept.ReviewPrompt,
+			concept.CandidateMeaning,
+			concept.AcceptMeaning,
+			strings.Join(concept.ReasonCodes, ","),
+		}, "\x00"))
+		for _, criterion := range concept.DecisionRubric {
+			parts = append(parts, strings.Join([]string{string(criterion.Choice), criterion.Label, criterion.Criterion}, "\x00"))
+		}
+		for _, evidence := range concept.EvidenceRefs {
+			parts = append(parts, strings.Join([]string{evidence.EvidenceRefID, evidence.AtomID, evidence.SourceID, evidence.ContentHash}, "\x00"))
+		}
+	}
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return "corpus-concept-review-contract-" + hex.EncodeToString(sum[:])[:16]
 }
 
 func cloneStringIntMap(input map[string]int) map[string]int {

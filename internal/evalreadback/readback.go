@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/synergyai-os/Mindline/internal/documents"
 )
 
 func Build(inputRoot, outRoot string, options Options) (Summary, error) {
@@ -393,6 +395,16 @@ func readArtifact(path, ref, artifactType string) (ArtifactEvidence, error) {
 		artifact.Fingerprints = nil
 		return artifact, nil
 	}
+	if artifactType == "corpus_concept_review_records" {
+		if _, err := documents.ReadCorpusConceptReviewRecords(filepath.Dir(path)); err != nil {
+			artifact.Status = "invalid_binding"
+			artifact.ReasonCodes = []string{"stale_or_invalid_review_contract"}
+			artifact.Metrics = nil
+			artifact.Flags = nil
+			artifact.Fingerprints = nil
+			return artifact, nil
+		}
+	}
 	extractEvidence(raw, &artifact)
 	return artifact, nil
 }
@@ -415,8 +427,8 @@ func supportedSchema(artifactType, schemaVersion string) bool {
 		"link_enrichment_eval_projection":    "mindline-link-enrichment-eval-projection/v0.1",
 		"value_proof_summary":                "mindline-value-proof/v0.1",
 		"source_meaning_packet_summary":      "source-meaning-packet/v0.1",
-		"corpus_concept_summary":             "corpus-concepts/v0.1",
-		"corpus_concept_review_records":      "corpus-concept-review-records/v0.1",
+		"corpus_concept_summary":             "corpus-concepts/v0.2",
+		"corpus_concept_review_records":      "corpus-concept-review-records/v0.2",
 	}
 	return strings.TrimSpace(schemaVersion) == expected[artifactType]
 }
@@ -488,6 +500,9 @@ func extractEvidence(raw map[string]any, artifact *ArtifactEvidence) {
 		if value := stringValue(raw[key]); value != "" {
 			artifact.Fingerprints[key] = value
 		}
+	}
+	if value := stringValue(raw["review_contract_fingerprint"]); value != "" {
+		artifact.Fingerprints["review_contract_fingerprint"] = value
 	}
 	for _, key := range []string{"baseline_corpus_fingerprint", "enriched_corpus_fingerprint", "baseline_config_fingerprint", "enriched_config_fingerprint"} {
 		if value := stringValue(raw[key]); value != "" {

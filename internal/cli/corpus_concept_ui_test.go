@@ -31,7 +31,6 @@ func TestCorpusConceptUIServesReviewStateAndRecordsDecision(t *testing.T) {
 		},
 		Section:                documents.CorpusConceptSectionCrossSource,
 		CandidateKind:          documents.SemanticCandidateKindTopic,
-		RoutingHint:            documents.SourceMeaningRoutingTolariaCandidate,
 		ReviewStatus:           documents.ReviewStatusNeedsReview,
 		AtomCount:              2,
 		SourceCount:            2,
@@ -89,7 +88,6 @@ func TestCorpusConceptUIServesReviewStateAndRecordsDecision(t *testing.T) {
 			DecisionRubric:         concept.DecisionRubric,
 			Section:                concept.Section,
 			CandidateKind:          concept.CandidateKind,
-			RoutingHint:            concept.RoutingHint,
 			AtomCount:              concept.AtomCount,
 			SourceCount:            concept.SourceCount,
 			EvidenceReferenceCount: concept.EvidenceReferenceCount,
@@ -202,24 +200,62 @@ func TestCorpusConceptUISeparatesWorkKindProgressAndRejectsInvalidChoice(t *test
 		AtomCount:      2,
 		ReasonCodes:    []string{"single_source_concept", "duplicate_source_atom_support"},
 	}
+	enrichment := documents.CorpusConcept{
+		SchemaVersion:  documents.CorpusConceptsSchemaVersion,
+		ConceptID:      "enrichment-link-ui",
+		CorpusID:       "corpus-ui-work-kind",
+		Title:          "Unread source link",
+		ReviewPrompt:   "Decide whether this source needs more context.",
+		Section:        documents.CorpusConceptSectionNeedsReview,
+		ReviewStatus:   documents.ReviewStatusNeedsReview,
+		ReviewWorkKind: documents.CorpusConceptReviewWorkEnrichmentBacklog,
+		SourceCount:    1,
+		AtomCount:      1,
+	}
+	blocked := documents.CorpusConcept{
+		SchemaVersion:  documents.CorpusConceptsSchemaVersion,
+		ConceptID:      "blocked-diagnostic-ui",
+		CorpusID:       "corpus-ui-work-kind",
+		Title:          "Blocked evidence",
+		ReviewPrompt:   "Inspect the blocker before concept review.",
+		Section:        documents.CorpusConceptSectionBlocked,
+		ReviewStatus:   documents.ReviewStatusBlocked,
+		ReviewWorkKind: documents.CorpusConceptReviewWorkBlockedDiagnostic,
+		SourceCount:    1,
+		AtomCount:      1,
+	}
 	summary := documents.CorpusConceptSummary{
 		SchemaVersion: documents.CorpusConceptsSchemaVersion,
 		CorpusID:      "corpus-ui-work-kind",
-		ConceptCount:  2,
+		ConceptCount:  4,
 		ReviewWorkKindCounts: map[documents.CorpusConceptReviewWorkKind]int{
-			documents.CorpusConceptReviewWorkConceptReview: 1,
-			documents.CorpusConceptReviewWorkCleanupTriage: 1,
+			documents.CorpusConceptReviewWorkConceptReview:     1,
+			documents.CorpusConceptReviewWorkCleanupTriage:     1,
+			documents.CorpusConceptReviewWorkEnrichmentBacklog: 1,
+			documents.CorpusConceptReviewWorkBlockedDiagnostic: 1,
 		},
 	}
 	index := documents.CorpusConceptIndex{
 		SchemaVersion: documents.CorpusConceptsSchemaVersion,
 		CorpusID:      "corpus-ui-work-kind",
-		Concepts:      []documents.CorpusConcept{conceptReview, cleanup},
+		Concepts:      []documents.CorpusConcept{conceptReview, cleanup, enrichment, blocked},
 	}
 	if err := documents.WriteCorpusConceptIndex(root, summary, index); err != nil {
 		t.Fatalf("write concept index: %v", err)
 	}
 	handler := newCorpusConceptUIHandlerWithToken(filepath.Join(root, documents.CorpusConceptsDirName), "test-token", nil)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Host = judgmentUITestHost
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected html status 200, got %d", rec.Code)
+	}
+	for _, marker := range []string{"function activeWorkProgress(progress)", "progress.work_kind_counts", "Reviewed · ", "remaining in ", "bucket.total_count"} {
+		if !strings.Contains(rec.Body.String(), marker) {
+			t.Fatalf("expected lane-specific progress marker %q", marker)
+		}
+	}
 
 	state := getCorpusConceptUIState(t, handler)
 	if state.Progress.TotalConceptCount != 1 {
@@ -228,17 +264,22 @@ func TestCorpusConceptUISeparatesWorkKindProgressAndRejectsInvalidChoice(t *test
 	if got := state.Progress.WorkKindCounts[documents.CorpusConceptReviewWorkCleanupTriage].TotalCount; got != 1 {
 		t.Fatalf("expected cleanup progress count, got %+v", state.Progress.WorkKindCounts)
 	}
+	for _, kind := range []documents.CorpusConceptReviewWorkKind{documents.CorpusConceptReviewWorkEnrichmentBacklog, documents.CorpusConceptReviewWorkBlockedDiagnostic} {
+		if got := state.Progress.WorkKindCounts[kind].TotalCount; got != 1 {
+			t.Fatalf("expected %s progress count, got %+v", kind, state.Progress.WorkKindCounts)
+		}
+	}
 	if state.Index.Concepts[1].ReviewWorkKind != documents.CorpusConceptReviewWorkCleanupTriage {
 		t.Fatalf("expected cleanup work kind in API state: %+v", state.Index.Concepts[1])
 	}
 
 	payload := `{"concept_id":"cleanup-workspace-ui","review_work_kind":"cleanup_triage","choice":"accept"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/reviews", strings.NewReader(payload))
+	req = httptest.NewRequest(http.MethodPost, "/api/reviews", strings.NewReader(payload))
 	req.Host = judgmentUITestHost
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Mindline-Review-Token", "test-token")
 	req.Header.Set("Origin", "http://"+judgmentUITestHost)
-	rec := httptest.NewRecorder()
+	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected invalid cleanup accept status 400, got %d body=%s", rec.Code, rec.Body.String())
@@ -293,7 +334,7 @@ func TestCorpusConceptUIDoesNotFallbackZeroConceptReviewProgressToAllConcepts(t 
 	if err := documents.WriteCorpusConceptIndex(root, summary, index); err != nil {
 		t.Fatalf("write concept index: %v", err)
 	}
-	handler := newCorpusConceptUIHandlerWithToken(filepath.Join(root, documents.CorpusConceptsDirName), "test-token", nil)
+	handler := newCorpusConceptUIHandlerWithToken(filepath.Join(root, documents.CorpusConceptsDirName), "test-token", []string{judgmentUITestHost})
 	state := getCorpusConceptUIState(t, handler)
 	if state.Progress.TotalConceptCount != 0 || state.Progress.RemainingConceptCount != 0 {
 		t.Fatalf("expected zero default concept-review progress for cleanup-only queue: %+v", state.Progress)
@@ -310,7 +351,7 @@ func TestCorpusConceptUIDoesNotFallbackZeroConceptReviewProgressToAllConcepts(t 
 		t.Fatalf("expected html status 200, got %d", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "numberOr(progress.total_concept_count, summary.concept_count)") {
+	if !strings.Contains(body, `lane === "concept_review" ? numberOr(progress.total_concept_count, 0) : 0`) {
 		t.Fatalf("expected UI to preserve zero concept-review totals without || fallback")
 	}
 }
@@ -345,7 +386,7 @@ func TestCorpusConceptUIWriteSafetyAndStateReadOnly(t *testing.T) {
 	if err := documents.WriteCorpusConceptIndex(root, summary, index); err != nil {
 		t.Fatalf("write concept index: %v", err)
 	}
-	handler := newCorpusConceptUIHandlerWithToken(filepath.Join(root, documents.CorpusConceptsDirName), "test-token", nil)
+	handler := newCorpusConceptUIHandlerWithToken(filepath.Join(root, documents.CorpusConceptsDirName), "test-token", []string{judgmentUITestHost})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/state", nil)
 	req.Host = judgmentUITestHost
@@ -362,6 +403,17 @@ func TestCorpusConceptUIWriteSafetyAndStateReadOnly(t *testing.T) {
 	}
 
 	payload := `{"concept_id":"concept-review-ui","review_work_kind":"concept_review","choice":"accept"}`
+	req = httptest.NewRequest(http.MethodPost, "/api/reviews", strings.NewReader(payload))
+	req.Host = "127.0.0.1:9999"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Mindline-Review-Token", "test-token")
+	req.Header.Set("Origin", "http://127.0.0.1:9999")
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected unconfigured loopback host status 403, got %d", rec.Code)
+	}
+
 	req = httptest.NewRequest(http.MethodPost, "/api/reviews", strings.NewReader(payload))
 	req.Host = "example.com"
 	req.Header.Set("Content-Type", "application/json")

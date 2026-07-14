@@ -511,6 +511,19 @@ function workKindLabel(kind) {
   return labels[kind] || String(kind || "").replaceAll("_", " ");
 }
 
+function activeWorkProgress(progress) {
+  const lane = ["concept_review", "cleanup_triage", "enrichment_backlog", "blocked_diagnostic"].includes(filter) ? filter : "concept_review";
+  const buckets = progress.work_kind_counts || {};
+  const bucket = buckets[lane] || {};
+  return {
+    lane,
+    label: workKindLabel(lane),
+    total: numberOr(bucket.total_count, lane === "concept_review" ? numberOr(progress.total_concept_count, 0) : 0),
+    reviewed: numberOr(bucket.reviewed_count, lane === "concept_review" ? numberOr(progress.reviewed_concept_count, 0) : 0),
+    remaining: numberOr(bucket.remaining_count, lane === "concept_review" ? numberOr(progress.remaining_concept_count, 0) : 0)
+  };
+}
+
 function choicesForConcept(concept) {
   const allowed = workKindChoices[workKind(concept)] || workKindChoices.concept_review;
   return choices.filter(([id]) => allowed.includes(id));
@@ -540,19 +553,20 @@ function filteredConcepts() {
 }
 
 function render() {
-  const summary = state.summary;
-  const progress = state.progress || {};
-  const concepts = filteredConcepts();
+	const summary = state.summary;
+	const progress = state.progress || {};
+	const laneProgress = activeWorkProgress(progress);
+	const concepts = filteredConcepts();
   document.getElementById("run").textContent = summary.corpus_id + " | " + summary.processed_source_count + "/" + summary.source_count + " sources | " + summary.scale_status;
   document.getElementById("metrics").innerHTML = [
-    metric("Reviewed", numberOr(progress.reviewed_concept_count, 0) + "/" + numberOr(progress.total_concept_count, summary.concept_count)),
+	metric("Reviewed · " + laneProgress.label, laneProgress.reviewed + "/" + laneProgress.total),
     metric("Cross-source", summary.cross_source_concept_count),
     metric("Concepts", summary.concept_count),
     metric("Atoms", summary.atom_count),
     metric("Relations", summary.relation_count),
     metric("Compression", fmtRatio(summary.relation_review_compression_ratio, 4))
   ].join("");
-  document.getElementById("list-summary").textContent = concepts.length + " shown; " + numberOr(progress.remaining_concept_count, 0) + " remaining";
+	document.getElementById("list-summary").textContent = concepts.length + " shown; " + laneProgress.remaining + " remaining in " + laneProgress.label.toLowerCase();
   renderFilters();
   if (!selected && concepts.length) selected = concepts[0].concept_id;
   if (selected && !concepts.find((concept) => concept.concept_id === selected) && concepts.length) selected = concepts[0].concept_id;
@@ -579,7 +593,9 @@ function render() {
 }
 
 function renderFilters() {
-  const filters = [
+	const progress = (state && state.progress) || {};
+	const buckets = progress.work_kind_counts || {};
+	const filters = [
     ["concept_review", "Concept review"],
     ["cleanup_triage", "Cleanup"],
     ["enrichment_backlog", "Enrichment"],
@@ -590,9 +606,11 @@ function renderFilters() {
     ["cross_source", "Cross-source"],
     ["needs_review", "Needs review"],
     ["blocked", "Blocked"]
-  ];
-  document.getElementById("filters").innerHTML = filters.map(([id, label]) => {
-    return '<button class="filter' + (filter === id ? ' active' : '') + '" type="button" data-filter="' + id + '">' + esc(label) + '</button>';
+	];
+	document.getElementById("filters").innerHTML = filters.map(([id, label]) => {
+		const bucket = buckets[id];
+		const count = bucket && typeof bucket.total_count === "number" ? " (" + bucket.total_count + ")" : "";
+		return '<button class="filter' + (filter === id ? ' active' : '') + '" type="button" data-filter="' + id + '">' + esc(label + count) + '</button>';
   }).join("");
   document.querySelectorAll("button.filter").forEach((button) => {
     button.addEventListener("click", () => {
