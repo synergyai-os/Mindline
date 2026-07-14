@@ -12,6 +12,7 @@ import (
 
 	"github.com/synergyai-os/Mindline/internal/evalproof"
 	"github.com/synergyai-os/Mindline/internal/evalreadback"
+	"github.com/synergyai-os/Mindline/internal/privateio"
 )
 
 func Build(inputRoot, outRoot string, options Options) (Packet, error) {
@@ -25,11 +26,17 @@ func Build(inputRoot, outRoot string, options Options) (Packet, error) {
 	if err != nil {
 		return Packet{}, err
 	}
+	if err := evalreadback.ValidateOutputPath(root, root, options.ProtectedRoots); err != nil {
+		return Packet{}, err
+	}
+	if err := privateio.PrepareDir(root); err != nil {
+		return Packet{}, err
+	}
 	decisionDir := filepath.Join(root, DirName)
 	if err := evalreadback.ValidateOutputPath(root, decisionDir, options.ProtectedRoots); err != nil {
 		return Packet{}, err
 	}
-	if err := os.MkdirAll(decisionDir, 0o755); err != nil {
+	if err := privateio.PrepareDir(decisionDir); err != nil {
 		return Packet{}, err
 	}
 

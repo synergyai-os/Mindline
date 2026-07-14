@@ -3,11 +3,11 @@ package evalloopdecision
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/synergyai-os/Mindline/internal/evalreadback"
+	"github.com/synergyai-os/Mindline/internal/privateio"
 )
 
 func Write(outRoot string, packet Packet, protectedRoots []string) error {
@@ -15,7 +15,7 @@ func Write(outRoot string, packet Packet, protectedRoots []string) error {
 	if err := evalreadback.ValidateOutputPath(outRoot, dir, protectedRoots); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := privateio.PrepareDir(dir); err != nil {
 		return err
 	}
 	packetJSON, err := json.MarshalIndent(packet, "", "  ")
@@ -35,7 +35,7 @@ func Write(outRoot string, packet Packet, protectedRoots []string) error {
 		if err := evalreadback.ValidateOutputPath(outRoot, target, protectedRoots); err != nil {
 			return err
 		}
-		if err := os.WriteFile(target, data, 0o644); err != nil {
+		if err := privateio.WriteFile(target, data, false); err != nil {
 			return err
 		}
 	}
@@ -63,7 +63,7 @@ func markdownReport(packet Packet) string {
 }
 
 func chainDraft(packet Packet) string {
-	return fmt.Sprintf("WP-38 eval loop decision: improvement_state=%s; top_target=%s; product_general_target=%s; safety=%s; generalization=%s; dec64=%s; rerun=%s.",
+	return fmt.Sprintf("Mindline eval loop decision: improvement_state=%s; top_target=%s; product_general_target=%s; safety=%s; generalization=%s; dec64=%s; rerun=%s.",
 		packet.ImprovementState,
 		packet.TopImprovementTarget.Code,
 		packet.ProductGeneralTarget,

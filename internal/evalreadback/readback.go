@@ -6,12 +6,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/synergyai-os/Mindline/internal/documents"
+	"github.com/synergyai-os/Mindline/internal/privateio"
+	"github.com/synergyai-os/Mindline/internal/productbrain"
 )
 
 func Build(inputRoot, outRoot string, options Options) (Summary, error) {
@@ -274,7 +278,7 @@ func buildModel(inputRoot string) (readbackModel, error) {
 		if artifactType == "" {
 			return nil
 		}
-		artifact, err := readArtifact(path, ref, artifactType)
+		artifact, err := readArtifact(root, path, ref, artifactType)
 		if err != nil {
 			return err
 		}
@@ -354,16 +358,37 @@ func artifactTypeForRef(ref string) string {
 		return "corpus_concept_summary"
 	case strings.HasSuffix(ref, "corpus-concepts/review-records.json"):
 		return "corpus_concept_review_records"
+	case strings.HasSuffix(ref, "route-summary.json"):
+		return "strategic_routing_summary"
+	case strings.HasSuffix(ref, "outbox-summary.json"):
+		return "productbrain_outbox_summary"
+	case strings.HasSuffix(ref, "outbox.json"):
+		return "productbrain_outbox"
+	case strings.Contains(ref, "preflight-snapshots/") && strings.HasSuffix(ref, ".json"):
+		return "productbrain_preflight_snapshot"
+	case strings.HasSuffix(ref, "preflight.json"):
+		return "productbrain_preflight"
+	case strings.HasSuffix(ref, "delivery-history.json"):
+		return "productbrain_delivery_history"
+	case strings.HasSuffix(ref, "delivery-summary.json"):
+		return "productbrain_delivery_summary"
 	default:
 		return ""
 	}
 }
 
-func readArtifact(path, ref, artifactType string) (ArtifactEvidence, error) {
+func readArtifact(root, path, ref, artifactType string) (ArtifactEvidence, error) {
 	if containsDeniedRefString(ref) {
 		return ArtifactEvidence{
 			Type: artifactType, Ref: sanitizedArtifactRef(ref), Status: "unsafe_or_leaky", ReasonCodes: []string{"unsafe_artifact_ref"},
 		}, nil
+	}
+	if proofCriticalPrivateAuthority(artifactType) {
+		if err := privateio.ValidateContained(root, path); err != nil {
+			return ArtifactEvidence{
+				Type: artifactType, Ref: ref, Status: "invalid_binding", ReasonCodes: []string{"unsafe_authority_permissions"},
+			}, nil
+		}
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -405,8 +430,71 @@ func readArtifact(path, ref, artifactType string) (ArtifactEvidence, error) {
 			return artifact, nil
 		}
 	}
+	if strings.HasPrefix(artifactType, "productbrain_") || artifactType == "strategic_routing_summary" {
+		if !artifactFingerprintValid(raw) {
+			artifact.Status = "invalid_binding"
+			artifact.ReasonCodes = []string{"artifact_fingerprint_mismatch"}
+			artifact.Metrics = nil
+			artifact.Flags = nil
+			artifact.Fingerprints = nil
+			return artifact, nil
+		}
+	}
+	var deliveryAuthority *deliveryHistoryAuthority
+	var validatedOutbox *productbrain.Outbox
+	var validatedPreflight *productbrain.PreflightArtifact
+	if artifactType == "productbrain_delivery_history" {
+		authority, valid := validateDeliveryHistory(path, raw)
+		if !valid {
+			artifact.Status = "invalid_binding"
+			artifact.ReasonCodes = []string{"invalid_delivery_history"}
+			artifact.Metrics = nil
+			artifact.Flags = nil
+			artifact.Fingerprints = nil
+			return artifact, nil
+		}
+		deliveryAuthority = &authority
+	}
+	if artifactType == "productbrain_outbox" {
+		outbox, err := productbrain.DecodeOutbox(data)
+		if err != nil {
+			artifact.Status = "invalid_binding"
+			artifact.ReasonCodes = []string{"invalid_productbrain_outbox"}
+			artifact.Metrics = nil
+			artifact.Flags = nil
+			artifact.Fingerprints = nil
+			return artifact, nil
+		}
+		validatedOutbox = &outbox
+	}
+	if artifactType == "productbrain_preflight" || artifactType == "productbrain_preflight_snapshot" {
+		preflight, err := productbrain.DecodePreflight(data)
+		if err != nil {
+			artifact.Status = "invalid_binding"
+			artifact.ReasonCodes = []string{"invalid_productbrain_preflight"}
+			artifact.Metrics = nil
+			artifact.Flags = nil
+			artifact.Fingerprints = nil
+			return artifact, nil
+		}
+		validatedPreflight = &preflight
+	}
 	extractEvidence(raw, &artifact)
+	if deliveryAuthority != nil {
+		mergeDeliveryHistoryAuthority(&artifact, *deliveryAuthority)
+	}
+	if validatedOutbox != nil {
+		extractProductBrainOutboxEvidence(raw, *validatedOutbox, &artifact)
+	}
+	if validatedPreflight != nil {
+		artifact.collectionContracts = []map[string]string{collectionContractMap(*validatedPreflight)}
+		artifact.productBrainPreflights = []productbrain.PreflightArtifact{*validatedPreflight}
+	}
 	return artifact, nil
+}
+
+func proofCriticalPrivateAuthority(artifactType string) bool {
+	return artifactType == "strategic_routing_summary" || strings.HasPrefix(artifactType, "productbrain_")
 }
 
 func supportedSchema(artifactType, schemaVersion string) bool {
@@ -429,11 +517,512 @@ func supportedSchema(artifactType, schemaVersion string) bool {
 		"source_meaning_packet_summary":      "source-meaning-packet/v0.1",
 		"corpus_concept_summary":             "corpus-concepts/v0.2",
 		"corpus_concept_review_records":      "corpus-concept-review-records/v0.2",
+		"strategic_routing_summary":          "mindline-strategic-routing-summary/v0.1",
+		"productbrain_outbox":                "productbrain-outbox/v0.1",
+		"productbrain_outbox_summary":        "productbrain-outbox-summary/v0.1",
+		"productbrain_preflight":             "productbrain-preflight/v0.1",
+		"productbrain_preflight_snapshot":    "productbrain-preflight/v0.1",
+		"productbrain_delivery_history":      "productbrain-delivery-history/v0.1",
+		"productbrain_delivery_summary":      "productbrain-delivery-summary/v0.1",
 	}
 	return strings.TrimSpace(schemaVersion) == expected[artifactType]
 }
 
+func artifactFingerprintValid(raw map[string]any) bool {
+	expected := stringValue(raw["fingerprint"])
+	if expected == "" {
+		return false
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return false
+	}
+	var clone any
+	if err := json.Unmarshal(data, &clone); err != nil {
+		return false
+	}
+	stripArtifactFingerprints(clone)
+	canonical, err := json.Marshal(clone)
+	if err != nil {
+		return false
+	}
+	digest := sha256.Sum256(canonical)
+	return hex.EncodeToString(digest[:]) == expected
+}
+
+func stripArtifactFingerprints(value any) {
+	switch item := value.(type) {
+	case map[string]any:
+		delete(item, "fingerprint")
+		for _, child := range item {
+			stripArtifactFingerprints(child)
+		}
+	case []any:
+		for _, child := range item {
+			stripArtifactFingerprints(child)
+		}
+	}
+}
+
+type deliveryHistoryAuthority struct {
+	Metrics              map[string]float64
+	Flags                map[string]bool
+	PreflightFingerprint string
+	Operations           map[string]operationContract
+	OperationRuns        []map[string]operationContract
+	CollectionContracts  []map[string]string
+	Preflights           []productbrain.PreflightArtifact
+}
+
+type operationContract struct {
+	OperationID         string
+	Kind                string
+	EntryID             string
+	CollectionSlug      string
+	Name                string
+	Data                map[string]any
+	SourceRef           string
+	SourceExcerpt       string
+	CreatedBy           string
+	RelationIdentity    string
+	RelationFromEntryID string
+	RelationToEntryID   string
+	RelationType        string
+	RelationMetadata    map[string]any
+	RemoteObjectID      string
+	EntryDocID          string
+	ReadbackFingerprint string
+}
+
+func validateDeliveryHistory(path string, raw map[string]any) (deliveryHistoryAuthority, bool) {
+	invalid := func() (deliveryHistoryAuthority, bool) { return deliveryHistoryAuthority{}, false }
+	runs, ok := raw["runs"].([]any)
+	if !ok || len(runs) == 0 {
+		return invalid()
+	}
+	refs, ok := raw["run_refs"].([]any)
+	if !ok || len(refs) != len(runs) {
+		return invalid()
+	}
+	outbox := stringValue(raw["outbox_fingerprint"])
+	profile := stringValue(raw["profile_fingerprint"])
+	if outbox == "" || profile == "" {
+		return invalid()
+	}
+	base := filepath.Dir(path)
+	expectedRunRefs := map[string]bool{}
+	expectedSnapshotRefs := map[string]bool{}
+	authority := deliveryHistoryAuthority{Metrics: map[string]float64{}, Flags: map[string]bool{"preflight_lineage_verified": true}, Operations: map[string]operationContract{}}
+	for index, value := range runs {
+		run, ok := value.(map[string]any)
+		if !ok {
+			return invalid()
+		}
+		sequence, ok := numberValue(run["sequence"])
+		if !ok || int(sequence) != index+1 || stringValue(run["schema_version"]) != "productbrain-delivery-run/v0.1" || !artifactFingerprintValid(run) {
+			return invalid()
+		}
+		invocation := stringValue(run["invocation_id"])
+		ref := stringValue(refs[index])
+		expectedRef := fmt.Sprintf("delivery-runs/%06d-%s.json", index+1, invocation)
+		if invocation == "" || ref != expectedRef {
+			return invalid()
+		}
+		expectedRunRefs[ref] = true
+		sealed, valid := readContainedJSONObject(base, ref)
+		if !valid || !artifactFingerprintValid(sealed) || !canonicalJSONEqual(sealed, run) {
+			return invalid()
+		}
+		preflightFingerprint := stringValue(run["preflight_fingerprint"])
+		snapshotRef := stringValue(run["preflight_snapshot_ref"])
+		if stringValue(run["outbox_fingerprint"]) != outbox || stringValue(run["profile_fingerprint"]) != profile || preflightFingerprint == "" || snapshotRef != "preflight-snapshots/"+preflightFingerprint+".json" {
+			return invalid()
+		}
+		authority.PreflightFingerprint = preflightFingerprint
+		expectedSnapshotRefs[snapshotRef] = true
+		snapshot, valid := readContainedJSONObject(base, snapshotRef)
+		snapshotData, marshalErr := json.Marshal(snapshot)
+		preflight, decodeErr := productbrain.DecodePreflight(snapshotData)
+		if !valid || marshalErr != nil || decodeErr != nil || preflight.Fingerprint != preflightFingerprint || preflight.OutboxFingerprint != outbox || preflight.ProfileFingerprint != profile {
+			return invalid()
+		}
+		authority.CollectionContracts = append(authority.CollectionContracts, collectionContractMap(preflight))
+		authority.Preflights = append(authority.Preflights, preflight)
+		if mutations, ok := numberValue(run["preflight_mutation_calls"]); !ok || mutations != 0 {
+			return invalid()
+		}
+		if !boolValueOrFalse(run["external_preconditions_repeated"]) && !safeFailedPreconditionRun(run) {
+			return invalid()
+		}
+	}
+	if !directoryExactlyReferences(filepath.Join(base, "delivery-runs"), expectedRunRefs) || !directoryExactlyReferences(filepath.Join(base, "preflight-snapshots"), expectedSnapshotRefs) {
+		return invalid()
+	}
+	if !deriveDeliveryHistoryAuthority(runs, &authority) {
+		return invalid()
+	}
+	return authority, true
+}
+
+func readContainedJSONObject(base, ref string) (map[string]any, bool) {
+	if ref == "" || filepath.IsAbs(ref) || filepath.ToSlash(filepath.Clean(filepath.FromSlash(ref))) != ref || ref == "." || strings.HasPrefix(ref, "../") {
+		return nil, false
+	}
+	path := filepath.Join(base, filepath.FromSlash(ref))
+	rel, err := filepath.Rel(base, path)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil, false
+	}
+	if err := privateio.ValidateContained(base, path); err != nil {
+		return nil, false
+	}
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, false
+	}
+	data, err := io.ReadAll(file)
+	closeErr := file.Close()
+	if err != nil || closeErr != nil || containsDeniedString(string(data)) {
+		return nil, false
+	}
+	var raw map[string]any
+	if json.Unmarshal(data, &raw) != nil {
+		return nil, false
+	}
+	return raw, true
+}
+
+func directoryExactlyReferences(dir string, expected map[string]bool) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != len(expected) {
+		return false
+	}
+	parent := filepath.Base(dir)
+	for _, entry := range entries {
+		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 || !expected[filepath.ToSlash(filepath.Join(parent, entry.Name()))] {
+			return false
+		}
+	}
+	return true
+}
+
+func canonicalJSONEqual(left, right any) bool {
+	a, errA := json.Marshal(left)
+	b, errB := json.Marshal(right)
+	return errA == nil && errB == nil && string(a) == string(b)
+}
+
+func boolValueOrFalse(value any) bool {
+	result, _ := boolValue(value)
+	return result
+}
+
+func deriveDeliveryHistoryAuthority(runs []any, authority *deliveryHistoryAuthority) bool {
+	for _, key := range []string{"completed_run_count", "interrupted_run_count", "failed_run_count", "entries_acknowledged", "relations_acknowledged", "blocked", "mismatches", "destination_writes", "product_brain_writes"} {
+		authority.Metrics[key] = 0
+	}
+	authority.Metrics["run_count"] = float64(len(runs))
+	var expectedKinds map[string]string
+	for _, value := range runs {
+		run := value.(map[string]any)
+		outcome := stringValue(run["outcome"])
+		switch outcome {
+		case "completed":
+			authority.Metrics["completed_run_count"]++
+		case "interrupted":
+			authority.Metrics["interrupted_run_count"]++
+		case "failed":
+			authority.Metrics["failed_run_count"]++
+		default:
+			return false
+		}
+		authority.Metrics["destination_writes"] += intNumberAsFloat(run["entries_created_this_run"]) + intNumberAsFloat(run["relations_created_this_run"])
+		authority.Metrics["product_brain_writes"] = authority.Metrics["destination_writes"]
+		operations, ok := run["operations"].([]any)
+		if !ok || len(operations) == 0 {
+			return false
+		}
+		currentKinds := map[string]string{}
+		currentContracts := map[string]operationContract{}
+		remoteIDs := map[string]bool{}
+		entryMutations, relationMutations := 0, 0
+		for _, operationValue := range operations {
+			op, ok := operationValue.(map[string]any)
+			if !ok {
+				return false
+			}
+			operationID, kind := stringValue(op["operation_id"]), stringValue(op["kind"])
+			if operationID == "" || (kind != "entry" && kind != "relation") || currentKinds[operationID] != "" {
+				return false
+			}
+			currentKinds[operationID] = kind
+			acknowledged := boolValueOrFalse(op["acknowledged"])
+			state := stringValue(op["state"])
+			if !validDeliveryOperationState(op) || acknowledged != (state == "acknowledged") {
+				return false
+			}
+			mutationObserved := boolValueOrFalse(op["mutation_observed"])
+			mutationResponseReceived := boolValueOrFalse(op["mutation_response_received"])
+			if mutationObserved || mutationResponseReceived {
+				if kind == "entry" {
+					entryMutations++
+				} else {
+					relationMutations++
+				}
+			}
+			if stringValue(op["safe_category"]) == "readback_mismatch" {
+				authority.Metrics["mismatches"]++
+			}
+			if state == "blocked" {
+				authority.Metrics["blocked"]++
+			}
+			if !acknowledged {
+				if stringValue(op["remote_object_id"]) != "" || stringValue(op["entry_doc_id"]) != "" || stringValue(op["readback_fingerprint"]) != "" || boolValueOrFalse(op["draft_verified"]) || boolValueOrFalse(op["actor_verified"]) || boolValueOrFalse(op["attribution_verified"]) {
+					return false
+				}
+				continue
+			}
+			remoteID, readbackFingerprint := stringValue(op["remote_object_id"]), stringValue(op["readback_fingerprint"])
+			if remoteID == "" || readbackFingerprint == "" || remoteIDs[remoteID] {
+				return false
+			}
+			remoteIDs[remoteID] = true
+			contract := operationContract{OperationID: operationID, Kind: kind, RemoteObjectID: remoteID, EntryDocID: stringValue(op["entry_doc_id"]), ReadbackFingerprint: readbackFingerprint}
+			switch kind {
+			case "entry":
+				if contract.EntryDocID == "" {
+					return false
+				}
+			}
+			currentContracts[operationID] = contract
+		}
+		if float64(entryMutations) != intNumberAsFloat(run["entries_created_this_run"]) || float64(relationMutations) != intNumberAsFloat(run["relations_created_this_run"]) {
+			return false
+		}
+		if outcome == "completed" && len(currentContracts) != len(operations) {
+			return false
+		}
+		if expectedKinds == nil {
+			expectedKinds = currentKinds
+		} else if !stringMapEqual(expectedKinds, currentKinds) {
+			return false
+		}
+		authority.OperationRuns = append(authority.OperationRuns, currentContracts)
+	}
+	latest := runs[len(runs)-1].(map[string]any)
+	for index, value := range runs {
+		if len(runs) == 1 || index < len(runs)-1 {
+			run := value.(map[string]any)
+			authority.Metrics["first_run_entry_mutations"] += intNumberAsFloat(run["entries_created_this_run"])
+			authority.Metrics["first_run_relation_mutations"] += intNumberAsFloat(run["relations_created_this_run"])
+		}
+	}
+	authority.Metrics["latest_run_entry_mutations"] = intNumberAsFloat(latest["entries_created_this_run"])
+	authority.Metrics["latest_run_relation_mutations"] = intNumberAsFloat(latest["relations_created_this_run"])
+	latestContracts := authority.OperationRuns[len(authority.OperationRuns)-1]
+	latestOperations, _ := latest["operations"].([]any)
+	draftOnly, entryActor, relationAttribution := true, true, true
+	for _, value := range latestOperations {
+		op := value.(map[string]any)
+		if stringValue(op["kind"]) == "entry" {
+			draftOnly = draftOnly && boolValueOrFalse(op["draft_verified"])
+			entryActor = entryActor && boolValueOrFalse(op["actor_verified"])
+		} else {
+			relationAttribution = relationAttribution && boolValueOrFalse(op["attribution_verified"])
+		}
+	}
+	for _, contract := range latestContracts {
+		switch contract.Kind {
+		case "entry":
+			authority.Metrics["entries_acknowledged"]++
+		case "relation":
+			authority.Metrics["relations_acknowledged"]++
+		default:
+			return false
+		}
+		authority.Operations[contract.OperationID] = contract
+	}
+	authority.Metrics["expected_operation_count"] = float64(len(expectedKinds))
+	authority.Flags["draft_only"] = draftOnly
+	authority.Flags["entry_actor_verified"] = entryActor
+	authority.Flags["relation_attribution_verified"] = relationAttribution
+	authority.Flags["replay_zero_mutation"] = len(runs) >= 2 && stringValue(latest["outcome"]) == "completed" && authority.Metrics["latest_run_entry_mutations"] == 0 && authority.Metrics["latest_run_relation_mutations"] == 0 && len(latestContracts) == len(expectedKinds)
+	return len(authority.Operations) == len(expectedKinds)
+}
+
+func validDeliveryOperationState(operation map[string]any) bool {
+	state := stringValue(operation["state"])
+	attempts, ok := numberValue(operation["attempts"])
+	if !ok || attempts < 0 || attempts != float64(int(attempts)) {
+		return false
+	}
+	acknowledged := boolValueOrFalse(operation["acknowledged"])
+	mutationResponseReceived := boolValueOrFalse(operation["mutation_response_received"])
+	mutationObserved := boolValueOrFalse(operation["mutation_observed"])
+	safeCategory := stringValue(operation["safe_category"])
+	switch state {
+	case "pending":
+		return attempts == 0 && !mutationResponseReceived && !acknowledged && !mutationObserved && safeCategory == ""
+	case "sending":
+		return attempts >= 1 && !mutationResponseReceived && !acknowledged && !mutationObserved && safeCategory == ""
+	case "reconciling":
+		return attempts >= 1 && !acknowledged && !mutationObserved && safeCategory == ""
+	case "blocked":
+		if attempts < 1 || acknowledged || !productbrain.ValidSafeDeliveryCategory(safeCategory) {
+			return false
+		}
+		if mutationObserved != (safeCategory == "readback_mismatch") {
+			return false
+		}
+		return !mutationResponseReceived || safeCategory == "readback_mismatch" || safeCategory == "ambiguous_outcome"
+	case "acknowledged":
+		return attempts >= 1 && acknowledged && safeCategory == ""
+	default:
+		return false
+	}
+}
+
+func stringMapEqual(left, right map[string]string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for key, value := range left {
+		if right[key] != value {
+			return false
+		}
+	}
+	return true
+}
+
+func intNumberAsFloat(value any) float64 {
+	number, _ := numberValue(value)
+	return number
+}
+
+func safeFailedPreconditionRun(run map[string]any) bool {
+	if stringValue(run["outcome"]) != "failed" || intNumberAsFloat(run["entries_created_this_run"]) != 0 || intNumberAsFloat(run["relations_created_this_run"]) != 0 {
+		return false
+	}
+	operations, ok := run["operations"].([]any)
+	if !ok || len(operations) == 0 {
+		return false
+	}
+	for _, value := range operations {
+		operation, ok := value.(map[string]any)
+		if !ok || stringValue(operation["state"]) != "pending" || intNumberAsFloat(operation["attempts"]) != 0 || boolValueOrFalse(operation["mutation_response_received"]) || boolValueOrFalse(operation["mutation_observed"]) || boolValueOrFalse(operation["acknowledged"]) || stringValue(operation["remote_object_id"]) != "" || stringValue(operation["entry_doc_id"]) != "" || stringValue(operation["readback_fingerprint"]) != "" {
+			return false
+		}
+	}
+	return true
+}
+
+func mergeDeliveryHistoryAuthority(artifact *ArtifactEvidence, authority deliveryHistoryAuthority) {
+	for key, value := range authority.Metrics {
+		artifact.Metrics[key] = value
+	}
+	for key, value := range authority.Flags {
+		artifact.Flags[key] = value
+	}
+	artifact.Fingerprints["preflight_fingerprint"] = authority.PreflightFingerprint
+	artifact.operationContracts = authority.Operations
+	artifact.operationRuns = authority.OperationRuns
+	artifact.collectionContracts = authority.CollectionContracts
+	artifact.productBrainPreflights = authority.Preflights
+}
+
+func extractProductBrainOutboxEvidence(raw map[string]any, outbox productbrain.Outbox, artifact *ArtifactEvidence) {
+	operations, _ := raw["operations"].([]any)
+	artifact.operationContracts = map[string]operationContract{}
+	artifact.Metrics["operation_count"] = float64(len(operations))
+	for _, value := range operations {
+		op, _ := value.(map[string]any)
+		operationID, kind := stringValue(op["operation_id"]), stringValue(op["kind"])
+		contract := operationContract{OperationID: operationID, Kind: kind}
+		switch kind {
+		case "entry":
+			artifact.Metrics["entry_operation_count"]++
+			entry, _ := op["entry"].(map[string]any)
+			contract.EntryID = stringValue(entry["entry_id"])
+			contract.CollectionSlug = stringValue(entry["collection_slug"])
+			contract.Name = stringValue(entry["name"])
+			contract.Data, _ = entry["data"].(map[string]any)
+			contract.SourceRef = stringValue(entry["source_ref"])
+			contract.SourceExcerpt = stringValue(entry["source_excerpt"])
+			contract.CreatedBy = stringValue(entry["created_by"])
+		case "relation":
+			artifact.Metrics["relation_operation_count"]++
+			relation, _ := op["relation"].(map[string]any)
+			contract.RelationIdentity = stringValue(relation["relation_identity"])
+			contract.RelationFromEntryID = stringValue(relation["from_entry_id"])
+			contract.RelationToEntryID = stringValue(relation["to_entry_id"])
+			contract.RelationType = stringValue(relation["type"])
+			contract.RelationMetadata, _ = relation["metadata"].(map[string]any)
+		}
+		artifact.operationContracts[operationID] = contract
+	}
+	findings, _ := raw["privacy_findings"].([]any)
+	artifact.Metrics["privacy_finding_count"] = float64(len(findings))
+	artifact.Fingerprints["outbox_fingerprint"] = stringValue(raw["fingerprint"])
+	artifact.Fingerprints["routing_fingerprint"] = stringValue(raw["routing_fingerprint"])
+	artifact.Fingerprints["profile_fingerprint"] = stringValue(raw["profile_fingerprint"])
+	if snapshot, ok := raw["delivery_profile_snapshot"].(map[string]any); ok {
+		artifact.Flags["draft_only"] = boolValueOrFalse(snapshot["draft_only"])
+	}
+	uniquePrimary := map[string]bool{}
+	duplicateCount := 0
+	lensIDs := map[string]bool{}
+	for _, capture := range outbox.ReviewContext.Captures {
+		uniquePrimary[capture.CanonicalURLID] = true
+		if capture.DuplicateOf != "" {
+			duplicateCount++
+		}
+		for _, lens := range capture.LensResults {
+			lensIDs[lens.LensID] = true
+		}
+	}
+	artifact.Metrics["review_capture_count"] = float64(len(outbox.ReviewContext.Captures))
+	artifact.Metrics["review_primary_canonical_count"] = float64(len(uniquePrimary))
+	artifact.Metrics["review_depth_one_count"] = float64(len(outbox.ReviewContext.DepthOneSources))
+	artifact.Metrics["review_duplicate_count"] = float64(duplicateCount)
+	artifact.Metrics["review_lens_count"] = float64(len(lensIDs))
+	artifact.Metrics["review_lens_result_count"] = float64((len(uniquePrimary) + len(outbox.ReviewContext.DepthOneSources)) * len(lensIDs))
+	collectionSet := map[string]string{}
+	for _, operation := range outbox.Operations {
+		if operation.Entry != nil {
+			collectionSet[operation.Entry.CollectionSlug] = ""
+		}
+	}
+	artifact.collectionContracts = []map[string]string{collectionSet}
+	artifact.productBrainOutbox = &outbox
+}
+
+func collectionContractMap(artifact productbrain.PreflightArtifact) map[string]string {
+	result := map[string]string{}
+	for _, contract := range artifact.CollectionContracts {
+		result[contract.Slug] = contract.Fingerprint
+	}
+	return result
+}
+
 func extractEvidence(raw map[string]any, artifact *ArtifactEvidence) {
+	if projection, ok := raw["eval_projection"].(map[string]any); ok {
+		artifact.SampleStatus = stringValue(projection["sample_status"])
+		if value, present := boolValue(projection["held_out"]); present {
+			artifact.Flags["held_out"] = value
+			if !value {
+				artifact.Flags["declared_not_held_out"] = true
+			}
+		}
+		if value, present := boolValue(projection["generalizable"]); present {
+			artifact.Flags["generalizable"] = value
+			if !value {
+				artifact.Flags["declared_non_generalizable"] = true
+			}
+		}
+	}
+	if artifact.Type == "productbrain_preflight" {
+		artifact.Fingerprints["preflight_fingerprint"] = stringValue(raw["fingerprint"])
+	}
 	for _, key := range []string{
 		"source_count", "candidate_count", "semantic_candidate_count", "observation_count", "evidence_ready_atom_count",
 		"processed_source_count", "semantic_observation_count", "document_segment_count", "segment_count",
@@ -461,6 +1050,13 @@ func extractEvidence(raw map[string]any, artifact *ArtifactEvidence) {
 		"pair_comparison_count", "pair_comparison_limit", "relation_candidate_limit",
 		"max_review_group_count", "omitted_atom_count",
 		"threshold", "accuracy", "eval_count",
+		"input_record_count", "url_occurrence_count", "primary_canonical_url_count", "depth_one_url_count",
+		"canonical_source_count", "duplicate_occurrence_count", "lens_count", "required_lens_result_count",
+		"lens_result_count", "validation_failure_count", "local_private_handling_findings", "outbound_privacy_findings",
+		"operation_count", "entry_operation_count", "relation_operation_count", "privacy_finding_count", "mutation_calls",
+		"run_count", "completed_run_count", "interrupted_run_count", "failed_run_count", "expected_operation_count", "entries_acknowledged",
+		"relations_acknowledged", "blocked", "mismatches", "first_run_entry_mutations", "first_run_relation_mutations",
+		"latest_run_entry_mutations", "latest_run_relation_mutations", "destination_writes", "product_brain_writes",
 	} {
 		if value, ok := numberValue(raw[key]); ok {
 			artifact.Metrics[key] = value
@@ -493,10 +1089,27 @@ func extractEvidence(raw map[string]any, artifact *ArtifactEvidence) {
 			artifact.Flags[key] = value
 		}
 	}
+	for _, key := range []string{"operator_judged", "draft_only", "preflight_lineage_verified", "replay_zero_mutation", "entry_actor_verified", "relation_attribution_verified", "autonomy_claim", "generalizable"} {
+		if value, ok := boolValue(raw[key]); ok {
+			artifact.Flags[key] = value
+		}
+	}
+	if value, ok := boolValue(raw["held_out"]); ok && !value {
+		artifact.Flags["declared_not_held_out"] = true
+	}
+	if value, ok := boolValue(raw["generalizable"]); ok && !value {
+		artifact.Flags["declared_non_generalizable"] = true
+	}
+	if value, ok := boolValue(raw["autonomy_claim"]); ok && !value {
+		artifact.Flags["declared_no_autonomy_claim"] = true
+	}
+	if stringValue(raw["verdict"]) == "pass" && artifact.Type == "productbrain_preflight" {
+		artifact.Flags["preflight_pass"] = true
+	}
 	if stringValue(raw["threshold_status"]) == "eligible" {
 		artifact.Flags["threshold_eligible"] = true
 	}
-	for _, key := range []string{"corpus_fingerprint", "command_config_fingerprint", "replay_fingerprint", "graph_replay_fingerprint"} {
+	for _, key := range []string{"corpus_fingerprint", "command_config_fingerprint", "replay_fingerprint", "graph_replay_fingerprint", "outbox_fingerprint", "profile_fingerprint", "source_graph_fingerprint", "route_decisions_fingerprint", "lens_profile_fingerprint"} {
 		if value := stringValue(raw[key]); value != "" {
 			artifact.Fingerprints[key] = value
 		}
@@ -717,6 +1330,17 @@ func extractSafetyCounters(safetyCounters map[string]any, artifact *ArtifactEvid
 
 func mergeModelEvidence(model *readbackModel, artifact ArtifactEvidence) {
 	model.artifactTypes[artifact.Type] = true
+	if artifact.SampleStatus != "" {
+		if model.flags["declared_sample_status"] && model.sampleStatus != artifact.SampleStatus {
+			model.flags["conflicting_sample_status"] = true
+		} else {
+			model.sampleStatus = artifact.SampleStatus
+			model.flags["declared_sample_status"] = true
+		}
+	}
+	if artifact.Status == "invalid_binding" {
+		model.flags["invalid_delivery_binding"] = true
+	}
 	if artifact.Status == "unsafe_or_leaky" {
 		model.flags["unsafe_or_leaky"] = true
 	}
@@ -766,9 +1390,9 @@ func mergeModelEvidence(model *readbackModel, artifact ArtifactEvidence) {
 			model.guardrails.BrowserCalls = maxInt(model.guardrails.BrowserCalls, int(value))
 		case "guardrail_slack_api_calls", "safety_slack_api_calls":
 			model.guardrails.SlackAPICalls = maxInt(model.guardrails.SlackAPICalls, int(value))
-		case "guardrail_destination_writes", "safety_destination_writes":
+		case "guardrail_destination_writes", "safety_destination_writes", "destination_writes":
 			model.guardrails.DestinationWrites = maxInt(model.guardrails.DestinationWrites, int(value))
-		case "guardrail_product_brain_writes", "safety_product_brain_writes":
+		case "guardrail_product_brain_writes", "safety_product_brain_writes", "product_brain_writes":
 			model.guardrails.ProductBrainWrites = maxInt(model.guardrails.ProductBrainWrites, int(value))
 		case "guardrail_tolaria_writes", "safety_tolaria_writes":
 			model.guardrails.TolariaWrites = maxInt(model.guardrails.TolariaWrites, int(value))
@@ -839,7 +1463,7 @@ func summarize(model readbackModel) Summary {
 		SafeArtifactRefs:   refs,
 		Artifacts:          model.artifacts,
 	}
-	if model.flags["non_generalizable_runtime"] || sampleStatus == "private_runtime" || sampleStatus == "temp_runtime" || sampleStatus == "unknown" {
+	if model.flags["non_generalizable_runtime"] || model.flags["declared_non_generalizable"] || model.flags["declared_not_held_out"] || strings.Contains(sampleStatus, "private") || strings.Contains(sampleStatus, "curated") || sampleStatus == "temp_runtime" || sampleStatus == "unknown" {
 		summary.GeneralizationStatus = "non_generalizable"
 	} else {
 		summary.GeneralizationStatus = "generalizable"
@@ -947,6 +1571,8 @@ func rebuildClaimGates(summary *Summary) {
 	} else {
 		gates = append(gates, ClaimGate{Gate: "generalization_claim", Status: "blocked", ReasonCodes: []string{"sample_bound_or_non_held_out"}, EvidenceRefs: firstRefs(summary.SafeArtifactRefs), ClaimImpact: "blocks broad product, DEC-64, or no-human claims"})
 	}
+	deliveryStatus, deliveryReasons := deliveryClaimStatus(summary)
+	gates = append(gates, ClaimGate{Gate: "delivery_claim", Status: deliveryStatus, ReasonCodes: deliveryReasons, EvidenceRefs: firstRefs(summary.SafeArtifactRefs), ClaimImpact: "authorizes only the bounded acknowledged Product Brain draft-delivery claim"})
 	if summary.SemanticReadiness.Status == "blocked" {
 		gates = append(gates, ClaimGate{Gate: "semantic_readiness", Status: "blocked", ReasonCodes: append([]string{"semantic_readiness_blocked"}, summary.SemanticReadiness.ReasonCodes...), EvidenceRefs: firstRefs(summary.SafeArtifactRefs), ClaimImpact: "source intake may have succeeded, but semantic value is not proven"})
 	} else if summary.SemanticReadiness.Status == "ready" {
@@ -1001,6 +1627,256 @@ func rebuildClaimGates(summary *Summary) {
 		gates = append(gates, ClaimGate{Gate: "next_target", Status: "pass", EvidenceRefs: summary.TopImprovementTarget.EvidenceRefs, ClaimImpact: "next improvement target is explicit"})
 	}
 	summary.ClaimGates = gates
+}
+
+func deliveryClaimStatus(summary *Summary) (string, []string) {
+	requiredTypes := []string{"strategic_routing_summary", "productbrain_outbox", "productbrain_outbox_summary", "productbrain_preflight", "productbrain_delivery_history", "productbrain_delivery_summary"}
+	reasons := []string{}
+	for _, artifactType := range requiredTypes {
+		if summary.ArtifactTypeCounts[artifactType] == 0 {
+			reasons = append(reasons, "missing_"+artifactType)
+		}
+	}
+	for _, artifact := range summary.Artifacts {
+		if artifact.Status != "detected" && stringListContains(requiredTypes, artifact.Type) {
+			reasons = append(reasons, artifact.Type+"_"+artifact.Status)
+		}
+	}
+	routingArtifact, routeOK := singleDetectedArtifact(*summary, "strategic_routing_summary")
+	outboxArtifact, outboxOK := singleDetectedArtifact(*summary, "productbrain_outbox")
+	outboxSummary, outboxSummaryOK := singleDetectedArtifact(*summary, "productbrain_outbox_summary")
+	preflightArtifact, preflightOK := singleDetectedArtifact(*summary, "productbrain_preflight")
+	historyArtifact, historyOK := singleDetectedArtifact(*summary, "productbrain_delivery_history")
+	deliverySummary, deliverySummaryOK := singleDetectedArtifact(*summary, "productbrain_delivery_summary")
+	if !routeOK || !outboxOK || !outboxSummaryOK || !historyOK || !deliverySummaryOK {
+		reasons = append(reasons, "duplicate_or_missing_delivery_authority")
+	}
+	if routeOK {
+		input := artifactMetricValue(routingArtifact, "input_record_count")
+		occurrences := artifactMetricValue(routingArtifact, "url_occurrence_count")
+		primary := artifactMetricValue(routingArtifact, "primary_canonical_url_count")
+		depthOne := artifactMetricValue(routingArtifact, "depth_one_url_count")
+		canonical := artifactMetricValue(routingArtifact, "canonical_source_count")
+		requiredLenses := artifactMetricValue(routingArtifact, "required_lens_result_count")
+		actualLenses := artifactMetricValue(routingArtifact, "lens_result_count")
+		lensCount := artifactMetricValue(routingArtifact, "lens_count")
+		if !artifactHasMetrics(routingArtifact, "input_record_count", "url_occurrence_count", "primary_canonical_url_count", "depth_one_url_count", "canonical_source_count", "lens_count", "required_lens_result_count", "lens_result_count", "validation_failure_count", "outbound_privacy_findings") || input <= 0 || occurrences != input || canonical != primary+depthOne || lensCount <= 0 || requiredLenses != canonical*lensCount || actualLenses != requiredLenses || artifactMetricValue(routingArtifact, "validation_failure_count") != 0 || artifactMetricValue(routingArtifact, "outbound_privacy_findings") != 0 {
+			reasons = append(reasons, "routing_accounting_mismatch")
+		}
+		if routingArtifact.SampleStatus != "private_curated_sample" || !routingArtifact.Flags["operator_judged"] || !routingArtifact.Flags["declared_not_held_out"] || !routingArtifact.Flags["declared_non_generalizable"] {
+			reasons = append(reasons, "routing_claim_boundary_missing")
+		}
+	}
+	entryOps, relationOps, operationCount := float64(0), float64(0), float64(0)
+	if outboxOK && outboxSummaryOK {
+		entryOps = artifactMetricValue(outboxArtifact, "entry_operation_count")
+		relationOps = artifactMetricValue(outboxArtifact, "relation_operation_count")
+		operationCount = artifactMetricValue(outboxArtifact, "operation_count")
+		if !artifactHasMetrics(outboxArtifact, "operation_count", "entry_operation_count", "relation_operation_count", "privacy_finding_count") || operationCount <= 0 || operationCount != entryOps+relationOps || artifactMetricValue(outboxArtifact, "privacy_finding_count") != 0 || !artifactMetricsEqual(outboxArtifact, outboxSummary, "operation_count", "entry_operation_count", "relation_operation_count", "privacy_finding_count") {
+			reasons = append(reasons, "outbox_accounting_mismatch")
+		}
+		if !outboxArtifact.Flags["draft_only"] || !outboxArtifact.Flags["operator_judged"] || !outboxArtifact.Flags["declared_not_held_out"] || !outboxArtifact.Flags["declared_non_generalizable"] || !outboxArtifact.Flags["declared_no_autonomy_claim"] {
+			reasons = append(reasons, "outbox_claim_boundary_missing")
+		}
+		if routingArtifact.Fingerprints["route_decisions_fingerprint"] == "" || routingArtifact.Fingerprints["route_decisions_fingerprint"] != outboxArtifact.Fingerprints["routing_fingerprint"] {
+			reasons = append(reasons, "routing_outbox_binding_mismatch")
+		}
+		if artifactMetricValue(outboxArtifact, "review_capture_count") != artifactMetricValue(routingArtifact, "input_record_count") || artifactMetricValue(outboxArtifact, "review_primary_canonical_count") != artifactMetricValue(routingArtifact, "primary_canonical_url_count") || artifactMetricValue(outboxArtifact, "review_depth_one_count") != artifactMetricValue(routingArtifact, "depth_one_url_count") || artifactMetricValue(outboxArtifact, "review_duplicate_count") != artifactMetricValue(routingArtifact, "duplicate_occurrence_count") || artifactMetricValue(outboxArtifact, "review_lens_count") != artifactMetricValue(routingArtifact, "lens_count") || artifactMetricValue(outboxArtifact, "review_lens_result_count") != artifactMetricValue(routingArtifact, "lens_result_count") {
+			reasons = append(reasons, "routing_review_matrix_mismatch")
+		}
+		if !preflightOK || !productBrainPreflightsMatch(outboxArtifact, preflightArtifact) {
+			reasons = append(reasons, "preflight_collection_binding_mismatch")
+		}
+	}
+	if historyOK && deliverySummaryOK {
+		if !deliveryOperationContractsMatch(outboxArtifact, historyArtifact) {
+			reasons = append(reasons, "delivery_operation_binding_mismatch")
+		}
+		if !artifactHasMetrics(historyArtifact, "run_count", "completed_run_count", "interrupted_run_count", "failed_run_count", "expected_operation_count", "entries_acknowledged", "relations_acknowledged", "first_run_entry_mutations", "first_run_relation_mutations", "latest_run_entry_mutations", "latest_run_relation_mutations", "blocked", "mismatches", "destination_writes", "product_brain_writes") || artifactMetricValue(historyArtifact, "run_count") < 2 || artifactMetricValue(historyArtifact, "completed_run_count") < 2 || artifactMetricValue(historyArtifact, "completed_run_count")+artifactMetricValue(historyArtifact, "interrupted_run_count")+artifactMetricValue(historyArtifact, "failed_run_count") != artifactMetricValue(historyArtifact, "run_count") || artifactMetricValue(historyArtifact, "expected_operation_count") != operationCount || artifactMetricValue(historyArtifact, "entries_acknowledged") != entryOps || artifactMetricValue(historyArtifact, "relations_acknowledged") != relationOps || artifactMetricValue(historyArtifact, "first_run_entry_mutations") != entryOps || artifactMetricValue(historyArtifact, "first_run_relation_mutations") != relationOps || artifactMetricValue(historyArtifact, "destination_writes") != operationCount || artifactMetricValue(historyArtifact, "product_brain_writes") != operationCount || artifactMetricValue(historyArtifact, "latest_run_entry_mutations") != 0 || artifactMetricValue(historyArtifact, "latest_run_relation_mutations") != 0 || artifactMetricValue(historyArtifact, "blocked") != 0 || artifactMetricValue(historyArtifact, "mismatches") != 0 {
+			reasons = append(reasons, "delivery_history_accounting_mismatch")
+		}
+		if !artifactMetricsEqual(historyArtifact, deliverySummary, "run_count", "completed_run_count", "interrupted_run_count", "failed_run_count", "expected_operation_count", "entries_acknowledged", "relations_acknowledged", "first_run_entry_mutations", "first_run_relation_mutations", "latest_run_entry_mutations", "latest_run_relation_mutations", "blocked", "mismatches", "destination_writes", "product_brain_writes") {
+			reasons = append(reasons, "delivery_projection_mismatch")
+		}
+		for _, key := range []string{"preflight_lineage_verified", "replay_zero_mutation", "draft_only", "entry_actor_verified", "relation_attribution_verified"} {
+			if !historyArtifact.Flags[key] || !deliverySummary.Flags[key] {
+				reasons = append(reasons, key+"_not_proven")
+			}
+		}
+		for _, key := range []string{"declared_not_held_out", "declared_non_generalizable", "declared_no_autonomy_claim"} {
+			if !deliverySummary.Flags[key] {
+				reasons = append(reasons, key+"_not_proven")
+			}
+		}
+	}
+	preflightDetected := false
+	for _, artifact := range summary.Artifacts {
+		if artifact.Type == "productbrain_preflight" && artifact.Status == "detected" {
+			preflightDetected = true
+			if !artifactHasMetrics(artifact, "mutation_calls") || artifactMetricValue(artifact, "mutation_calls") != 0 || !artifact.Flags["preflight_pass"] {
+				reasons = append(reasons, "preflight_not_read_only_or_passing")
+			}
+		}
+	}
+	if !preflightDetected {
+		reasons = append(reasons, "missing_passing_preflight")
+	}
+	for _, key := range []string{"outbox_fingerprint", "profile_fingerprint", "preflight_fingerprint"} {
+		if !consistentArtifactFingerprint(summary, key) {
+			reasons = append(reasons, "conflicting_"+key)
+		}
+	}
+	if len(reasons) > 0 {
+		sort.Strings(reasons)
+		return "fail", reasons
+	}
+	return "pass", nil
+}
+
+func deliveryOperationContractsMatch(outbox, history ArtifactEvidence) bool {
+	if len(outbox.operationContracts) == 0 || len(outbox.operationContracts) != len(history.operationContracts) {
+		return false
+	}
+	if len(history.operationRuns) == 0 || !productBrainPreflightsMatch(outbox, history) {
+		return false
+	}
+	for _, run := range history.operationRuns {
+		for operationID, actual := range run {
+			expected, ok := outbox.operationContracts[operationID]
+			if !ok || !operationContractMatches(expected, actual) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func operationContractMatches(expected, actual operationContract) bool {
+	if actual.OperationID != expected.OperationID || actual.Kind != expected.Kind || actual.RemoteObjectID == "" || actual.ReadbackFingerprint == "" {
+		return false
+	}
+	switch expected.Kind {
+	case "entry":
+		return actual.RemoteObjectID == expected.EntryID && actual.EntryDocID != "" && actual.ReadbackFingerprint == expectedEntryReadbackFingerprint(expected, actual)
+	case "relation":
+		return expected.RelationIdentity != "" && expected.RelationType != "" && expected.RelationFromEntryID != "" && expected.RelationToEntryID != "" && actual.ReadbackFingerprint == expectedRelationReadbackFingerprint(expected, actual.RemoteObjectID)
+	default:
+		return false
+	}
+}
+
+func collectionContractSetsMatch(outbox, authority ArtifactEvidence) bool {
+	if len(outbox.collectionContracts) != 1 || len(outbox.collectionContracts[0]) == 0 || len(authority.collectionContracts) == 0 {
+		return false
+	}
+	expected := outbox.collectionContracts[0]
+	for _, contracts := range authority.collectionContracts {
+		if len(contracts) != len(expected) {
+			return false
+		}
+		for slug := range expected {
+			if strings.TrimSpace(contracts[slug]) == "" {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func productBrainPreflightsMatch(outbox, authority ArtifactEvidence) bool {
+	if outbox.productBrainOutbox == nil || len(authority.productBrainPreflights) == 0 || !collectionContractSetsMatch(outbox, authority) {
+		return false
+	}
+	profile := productbrain.DeliveryProfileFromSnapshot(outbox.productBrainOutbox.ProfileSnapshot)
+	for _, preflight := range authority.productBrainPreflights {
+		if err := productbrain.ValidatePreflight(preflight, *outbox.productBrainOutbox, profile); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+func expectedEntryReadbackFingerprint(expected, actual operationContract) string {
+	readback := struct {
+		Found          bool           `json:"found"`
+		DocID          string         `json:"doc_id,omitempty"`
+		EntryID        string         `json:"entry_id,omitempty"`
+		CollectionSlug string         `json:"collection_slug,omitempty"`
+		Name           string         `json:"name,omitempty"`
+		Status         string         `json:"status,omitempty"`
+		Data           map[string]any `json:"data,omitempty"`
+		SourceRef      string         `json:"source_ref,omitempty"`
+		SourceExcerpt  string         `json:"source_excerpt,omitempty"`
+		CreatedBy      string         `json:"created_by,omitempty"`
+	}{true, actual.EntryDocID, expected.EntryID, expected.CollectionSlug, expected.Name, "draft", expected.Data, expected.SourceRef, expected.SourceExcerpt, expected.CreatedBy}
+	return canonicalFingerprint(readback)
+}
+
+func expectedRelationReadbackFingerprint(expected operationContract, remoteID string) string {
+	return canonicalFingerprint(map[string]any{"relation_id": remoteID, "identity": expected.RelationIdentity, "metadata": expected.RelationMetadata})
+}
+
+func canonicalFingerprint(value any) string {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	var canonicalValue any
+	if json.Unmarshal(data, &canonicalValue) != nil {
+		return ""
+	}
+	stripArtifactFingerprints(canonicalValue)
+	canonical, err := json.Marshal(canonicalValue)
+	if err != nil {
+		return ""
+	}
+	digest := sha256.Sum256(canonical)
+	return hex.EncodeToString(digest[:])
+}
+
+func singleDetectedArtifact(summary Summary, artifactType string) (ArtifactEvidence, bool) {
+	var found ArtifactEvidence
+	count := 0
+	for _, artifact := range summary.Artifacts {
+		if artifact.Type == artifactType && artifact.Status == "detected" {
+			found = artifact
+			count++
+		}
+	}
+	return found, count == 1
+}
+
+func artifactMetricValue(artifact ArtifactEvidence, key string) float64 {
+	return artifact.Metrics[key]
+}
+
+func artifactMetricsEqual(left, right ArtifactEvidence, keys ...string) bool {
+	for _, key := range keys {
+		leftValue, leftOK := left.Metrics[key]
+		rightValue, rightOK := right.Metrics[key]
+		if !leftOK || !rightOK || leftValue != rightValue {
+			return false
+		}
+	}
+	return true
+}
+
+func artifactHasMetrics(artifact ArtifactEvidence, keys ...string) bool {
+	for _, key := range keys {
+		if _, ok := artifact.Metrics[key]; !ok {
+			return false
+		}
+	}
+	return true
+}
+func consistentArtifactFingerprint(summary *Summary, key string) bool {
+	values := map[string]bool{}
+	for _, artifact := range summary.Artifacts {
+		if value := artifact.Fingerprints[key]; value != "" {
+			values[value] = true
+		}
+	}
+	return len(values) == 1
 }
 
 func summaryHasFlag(summary *Summary, flag string) bool {
@@ -1538,14 +2414,14 @@ func writeSummary(outRoot string, summary Summary, protectedRoots []string) erro
 	if err := rejectSymlinkEscape(root, root, protectedRoots); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(root, 0o755); err != nil {
+	if err := privateio.PrepareDir(root); err != nil {
 		return err
 	}
 	dir := filepath.Join(root, DirName)
 	if err := rejectSymlinkEscape(root, dir, protectedRoots); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := privateio.PrepareDir(dir); err != nil {
 		return err
 	}
 	if err := rejectSymlinkEscape(root, dir, protectedRoots); err != nil {
@@ -1573,14 +2449,14 @@ func writeSummary(outRoot string, summary Summary, protectedRoots []string) erro
 	if err := rejectSymlinkEscape(root, reportPath, protectedRoots); err != nil {
 		return err
 	}
-	if err := os.WriteFile(reportPath, []byte(markdownReport(summary)), 0o644); err != nil {
+	if err := privateio.WriteFile(reportPath, []byte(markdownReport(summary)), false); err != nil {
 		return err
 	}
 	chainPath := filepath.Join(dir, "chain-capture-draft.md")
 	if err := rejectSymlinkEscape(root, chainPath, protectedRoots); err != nil {
 		return err
 	}
-	if err := os.WriteFile(chainPath, []byte(chainDraft(summary)), 0o644); err != nil {
+	if err := privateio.WriteFile(chainPath, []byte(chainDraft(summary)), false); err != nil {
 		return err
 	}
 	return nil
@@ -1666,12 +2542,7 @@ func isSameOrInside(root, candidate string) bool {
 }
 
 func writeJSON(path string, value any) error {
-	data, err := json.MarshalIndent(value, "", "  ")
-	if err != nil {
-		return err
-	}
-	data = append(data, '\n')
-	return os.WriteFile(path, data, 0o644)
+	return privateio.WriteJSON(path, value)
 }
 
 func removeIfExists(path string) error {
@@ -1749,7 +2620,7 @@ func markdownReport(summary Summary) string {
 
 func chainDraft(summary Summary) string {
 	var b strings.Builder
-	b.WriteString("WP-35 eval readback result: ")
+	b.WriteString("Mindline eval readback result: ")
 	b.WriteString(summary.ImprovementStatus)
 	b.WriteString(". Generalization: ")
 	b.WriteString(summary.GeneralizationStatus)

@@ -1,5 +1,7 @@
 package evalreadback
 
+import "github.com/synergyai-os/Mindline/internal/productbrain"
+
 const (
 	SummarySchemaVersion    = "mindline-eval-readback-summary/v0.1"
 	ComparisonSchemaVersion = "mindline-eval-readback-comparison/v0.1"
@@ -37,14 +39,20 @@ type Summary struct {
 }
 
 type ArtifactEvidence struct {
-	Type          string             `json:"type"`
-	SchemaVersion string             `json:"schema_version,omitempty"`
-	Ref           string             `json:"ref"`
-	Status        string             `json:"status"`
-	ReasonCodes   []string           `json:"reason_codes,omitempty"`
-	Metrics       map[string]float64 `json:"metrics,omitempty"`
-	Flags         map[string]bool    `json:"flags,omitempty"`
-	Fingerprints  map[string]string  `json:"fingerprints,omitempty"`
+	Type                   string             `json:"type"`
+	SchemaVersion          string             `json:"schema_version,omitempty"`
+	Ref                    string             `json:"ref"`
+	Status                 string             `json:"status"`
+	SampleStatus           string             `json:"sample_status,omitempty"`
+	ReasonCodes            []string           `json:"reason_codes,omitempty"`
+	Metrics                map[string]float64 `json:"metrics,omitempty"`
+	Flags                  map[string]bool    `json:"flags,omitempty"`
+	Fingerprints           map[string]string  `json:"fingerprints,omitempty"`
+	operationContracts     map[string]operationContract
+	operationRuns          []map[string]operationContract
+	collectionContracts    []map[string]string
+	productBrainOutbox     *productbrain.Outbox
+	productBrainPreflights []productbrain.PreflightArtifact
 }
 
 type ClaimGate struct {
