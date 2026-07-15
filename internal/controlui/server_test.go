@@ -178,7 +178,7 @@ func TestServerBootstrapUsesHeadersAndNoCookies(t *testing.T) {
 	}
 }
 
-func TestSummaryPanelsOwnReadableForegroundOnLightBackground(t *testing.T) {
+func TestControlUIOwnsReadableTypographySpacingAndContrast(t *testing.T) {
 	session := newTestSession(t)
 	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:43123/style.css", nil)
 	request.Host = "127.0.0.1:43123"
@@ -188,8 +188,20 @@ func TestSummaryPanelsOwnReadableForegroundOnLightBackground(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("status %d", response.Code)
 	}
-	if !strings.Contains(response.Body.String(), "background: #f4f8f5; color: #17201b;") {
-		t.Fatal("light summary panels must explicitly own a dark foreground color")
+	css := response.Body.String()
+	for _, required := range []string{
+		"font-size: clamp(2.25rem, 5vw, 3.5rem);",
+		"line-height: 1.06;",
+		"min-height: 44px;",
+		"border-radius: 10px;",
+		"background: var(--surface-subtle);",
+		"color: var(--ink);",
+		"#pairing-panel {",
+		"gap: 18px;",
+	} {
+		if !strings.Contains(css, required) {
+			t.Fatalf("control UI typography/spacing contract missing %q", required)
+		}
 	}
 }
 

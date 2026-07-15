@@ -91,6 +91,8 @@ function clearBrowserAuthority() {
 function showLocked() {
   byId("private-workspace").hidden = true;
   byId("pairing-panel").hidden = false;
+  byId("pair").hidden = false;
+  byId("pairing-code-panel").hidden = true;
   byId("lock-session").hidden = true;
   byId("session-status").textContent = "This local Mindline window is locked.";
 }
@@ -130,7 +132,8 @@ async function pairBrowser() {
         if (frame.type === "challenge") {
           byId("pairing-code").textContent = frame.challenge;
           byId("pairing-code-panel").hidden = false;
-          byId("session-status").textContent = "Confirm the exact code through Codex.";
+          byId("pair").hidden = true;
+          byId("session-status").textContent = "Waiting for Codex to confirm the exact code…";
         } else if (frame.type === "paired") {
           sessionCapability = frame.session;
           csrfCapability = frame.csrf;
@@ -146,6 +149,10 @@ async function pairBrowser() {
     throw new Error("Pairing ended before confirmation. Create a new code.");
   } finally {
     byId("pair").disabled = false;
+    if (!sessionCapability) {
+      byId("pair").hidden = false;
+      byId("pairing-code-panel").hidden = true;
+    }
     pairingAbort = null;
   }
 }
