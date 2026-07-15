@@ -259,7 +259,14 @@ func ValidateResult(result Result) error {
 		return err
 	}
 
-	expectedSummary := summarizeBound(result.Graph, decisions, len(lensOrder), decisions.LensProfileFingerprint)
+	lensCount := len(lensOrder)
+	if len(decisions.Sources) == 0 {
+		lensCount = result.Summary.LensCount
+		if lensCount < 0 || lensCount > 8 {
+			return errors.New("invalid empty-route lens count")
+		}
+	}
+	expectedSummary := summarizeBound(result.Graph, decisions, lensCount, decisions.LensProfileFingerprint)
 	actualSummary, _ := json.Marshal(result.Summary)
 	expectedSummaryJSON, _ := json.Marshal(expectedSummary)
 	if string(actualSummary) != string(expectedSummaryJSON) {

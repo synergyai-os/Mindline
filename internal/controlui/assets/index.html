@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mindline activation</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main>
+    <header>
+      <p class="eyebrow">Mindline</p>
+      <h1>Turn a Slack landscape into reviewed Product Brain drafts.</h1>
+      <p id="session-status">Starting a private local session…</p>
+      <button id="help" class="secondary">What happens in this proof?</button>
+      <p id="help-text" hidden>This run freezes the complete Slack denominator, processes at most three canonical items per observed retrieval/format type, requires your judgment on every selected item, and sends only one exact approved draft batch. The remainder stays unprocessed.</p>
+    </header>
+
+    <section>
+      <h2>1. Connections</h2>
+      <p>First save the collection strategy and safety limits below. Then connect Slack or import an occurrence-complete export, and connect a draft-only Product Brain destination. Credentials live only for this process.</p>
+      <form id="slack-source-form">
+        <label>Slack user token <input id="slack-key" type="password" autocomplete="off" minlength="16"></label>
+        <label>Slack channel ID <input id="slack-channel" type="text" autocomplete="off" pattern="[A-Z0-9]{2,64}" placeholder="C0123456789"></label>
+        <button type="submit">Connect Slack source</button>
+      </form>
+      <form id="slack-drain-form">
+        <label>Oldest Slack timestamp <input id="slack-oldest" type="text" value="0.000001"></label>
+        <label>Latest Slack timestamp <input id="slack-latest" type="text" placeholder="Leave blank to freeze at first drain"></label>
+        <button type="submit">Build full occurrence inventory</button>
+        <button id="disconnect-slack" class="secondary" type="button">Disconnect Slack token</button>
+      </form>
+      <p>Alternatively, upload an occurrence-complete manifest produced by another Slack integration. This keeps source adapters interchangeable.</p>
+      <form id="import-form">
+        <label>External Slack inventory <input id="manifest" name="manifest" type="file" accept="application/json" required></label>
+        <button type="submit">Validate and import</button>
+      </form>
+      <form id="destination-form">
+        <label>Product Brain key <input id="destination-key" type="password" autocomplete="off" minlength="16" required></label>
+        <button type="submit">Connect destination</button>
+      </form>
+      <div id="connections-summary" class="summary"></div>
+    </section>
+
+    <section>
+      <h2>2. Strategy</h2>
+      <form id="strategy-form">
+        <label>What matters and why<textarea id="context-lenses" required>Product Brain landscape: tools, resources, repositories, competitors, complements, and lessons relevant to building Product Brain.
+
+AI-dominant organization design: team structures, operating models, capabilities, incentives, and coordination patterns for transformational AI work.</textarea></label>
+        <label>How to route it<textarea id="routing-policy" required>Promote only evidence-backed, strategically relevant findings, entities, or tensions. Hold incomplete or uncertain items. Send inaccessible and private sources to manual support. Never fabricate missing context.</textarea></label>
+        <fieldset>
+          <legend>Experimental full-drain limits</legend>
+          <p>These are your policy ceilings, saved before the sample is selected. Readiness compares the observed projection to these values; Mindline does not expand them from the inventory.</p>
+          <label>Maximum network requests <input id="drain-network" type="number" min="1" max="1000000" value="5000" required></label>
+          <label>Maximum wall time (seconds) <input id="drain-wall" type="number" min="60" max="86400" value="14400" required></label>
+          <label>Maximum cost (microunits) <input id="drain-cost" type="number" min="0" max="1000000000000" value="1000000" required></label>
+          <label>Maximum retry attempts <input id="drain-retries" type="number" min="0" max="100000" value="2000" required></label>
+          <label>Maximum manual-support items <input id="drain-manual" type="number" min="0" max="250000" value="250" required></label>
+        </fieldset>
+        <button type="submit">Save strategy</button>
+      </form>
+    </section>
+
+    <section>
+      <h2>3. Prove</h2>
+      <p>The inventory is exhaustive. The proof sample is deterministic, capped at three per observed strategy/format stratum, and never rerolled.</p>
+      <div class="actions">
+        <button id="freeze">Freeze inventory</button>
+        <button id="prove">Start capped proof</button>
+      </div>
+      <div id="inventory-summary" class="summary"></div>
+      <div id="proof-summary" class="summary"></div>
+      <div id="proof-items" class="cards"></div>
+    </section>
+
+    <section>
+      <h2>4. Exact Product Brain batch</h2>
+      <p id="delivery-boundary">No proof result grants blanket delivery. Approval applies only to the rendered fingerprint and budgets.</p>
+      <form id="preview-form">
+        <label>Maximum unique writes <input id="max-writes" type="number" min="1" value="3" required></label>
+        <label>Maximum mutation attempts <input id="max-attempts" type="number" min="1" value="3" required></label>
+        <button type="submit">Render exact preview</button>
+      </form>
+      <div id="approval-panel" hidden>
+        <div id="batch-summary" class="summary"></div>
+        <details><summary>Technical exact payload</summary><pre id="batch-preview"></pre></details>
+        <button id="approve">I approve this exact draft batch</button>
+      </div>
+      <div class="actions danger-actions">
+        <button id="resume-delivery" class="secondary">Resume the existing exact approved batch</button>
+        <button id="cancel-delivery" class="secondary">Cancel approved batch</button>
+        <button id="disconnect" class="secondary">Disconnect destination key</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Founder review</h2>
+      <form id="founder-form">
+        <label>Exact Product Brain or zero-draft receipt <input id="receipt" readonly></label>
+        <label>Value verdict
+          <select id="value-verdict"><option value="not_useful" selected>Not useful yet</option><option value="useful">Useful</option><option value="zero_draft">Zero-draft proof</option></select>
+        </label>
+        <fieldset><legend>Select only drafts you actually found useful</legend><div id="useful-drafts"></div></fieldset>
+        <label><input id="zero-draft" type="checkbox" disabled> The sealed proof produced no draft batch</label>
+        <label>Why was or was not this useful?<textarea id="usefulness" required></textarea></label>
+        <label>Session-key burden<textarea id="credential-burden" required></textarea></label>
+        <label>Manual-support burden (enter N/A explicitly if none was needed)<textarea id="manual-burden" required></textarea></label>
+        <label>Exact-approval burden<textarea id="approval-burden" required></textarea></label>
+        <button type="submit">Record founder review</button>
+      </form>
+    </section>
+
+    <section>
+      <h2>Drain readiness</h2>
+      <p>The frozen remainder stays unprocessed in this proof. This panel explains whether a later experimental processing run could be considered; it never approves Product Brain delivery.</p>
+      <button id="confirm-drain">Confirm later experimental processing plan</button>
+      <div id="drain-summary" class="summary"></div>
+    </section>
+
+    <section>
+      <h2>Technical evidence</h2>
+      <details><summary>Show complete local state</summary><pre id="state"></pre></details>
+      <button id="refresh" class="secondary">Refresh</button>
+      <p id="notice" role="status"></p>
+    </section>
+  </main>
+  <script src="/app.js" defer></script>
+</body>
+</html>

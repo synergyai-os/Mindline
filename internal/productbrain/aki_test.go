@@ -13,11 +13,93 @@ import (
 type countingSecretProvider struct {
 	calls  int
 	secret string
+	err    error
+}
+
+type revocableTestSecretProvider struct {
+	secret string
+	lease  context.Context
+	calls  int
+}
+
+func (p *revocableTestSecretProvider) Secret(context.Context) (string, error) {
+	return "", errors.New("legacy secret path must not be used")
+}
+
+func (p *revocableTestSecretProvider) SecretWithContext(context.Context) (string, context.Context, error) {
+	p.calls++
+	return p.secret, p.lease, nil
 }
 
 func (p *countingSecretProvider) Secret(context.Context) (string, error) {
 	p.calls++
-	return p.secret, nil
+	return p.secret, p.err
+}
+
+func TestAKIResolvesCredentialForEveryCallAndHonorsRevocation(t *testing.T) {
+	profile := testDeliveryProfile()
+	provider := &countingSecretProvider{secret: "first-secret"}
+	seen := []string{}
+	transport, err := NewAKITransport(context.Background(), profile, provider, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		seen = append(seen, request.Header.Get("Authorization"))
+		response := `{"ok":true,"data":{"_id":"ws-test","slug":"test","governanceMode":"open","keyScope":"readwrite","keyId":"key-test"}}`
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(response)), Request: request}, nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := transport.ResolveWorkspace(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	provider.secret = "second-secret"
+	if _, err := transport.ResolveWorkspace(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	provider.err = errors.New("revoked")
+	if _, err := transport.ResolveWorkspace(context.Background()); err == nil || err.Error() != "credential_missing" {
+		t.Fatalf("revoked provider was not rejected: %v", err)
+	}
+	if provider.calls != 3 || len(seen) != 2 || seen[0] != "Bearer first-secret" || seen[1] != "Bearer second-secret" {
+		t.Fatalf("credential was cached or leaked across calls: calls=%d seen=%v", provider.calls, seen)
+	}
+}
+
+func TestAKIDefaultTransportDisablesAmbientProxy(t *testing.T) {
+	transport, err := NewAKITransport(context.Background(), testDeliveryProfile(), &countingSecretProvider{secret: "test-secret"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpTransport, ok := transport.client.Transport.(*http.Transport)
+	if !ok || httpTransport.Proxy != nil {
+		t.Fatalf("default AKI transport did not disable ambient proxy: %#v", transport.client.Transport)
+	}
+}
+
+func TestAKIRevocationCancelsInFlightRequest(t *testing.T) {
+	lease, revoke := context.WithCancel(context.Background())
+	provider := &revocableTestSecretProvider{secret: "ephemeral-secret", lease: lease}
+	started := make(chan struct{})
+	transport, err := NewAKITransport(context.Background(), testDeliveryProfile(), provider, roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		close(started)
+		<-request.Context().Done()
+		return nil, request.Context().Err()
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	go func() {
+		_, err := transport.ResolveWorkspace(context.Background())
+		result <- err
+	}()
+	<-started
+	revoke()
+	if err := <-result; err == nil || err.Error() != "transient" {
+		t.Fatalf("revoked in-flight request did not stop safely: %v", err)
+	}
+	if provider.calls != 1 {
+		t.Fatalf("revocation-aware provider was not resolved exactly once: %d", provider.calls)
+	}
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

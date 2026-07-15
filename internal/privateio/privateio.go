@@ -18,6 +18,11 @@ const (
 	FileMode fs.FileMode = 0o600
 )
 
+var (
+	ErrInvalidReadLimit  = errors.New("private read limit must be positive")
+	ErrReadLimitExceeded = errors.New("private read limit exceeded")
+)
+
 // ValidateContained requires every supplied path to resolve beneath root. It also
 // rejects symlink components, including components that exist above a path that
 // has not been created yet.
@@ -180,6 +185,66 @@ func ReadFile(root, path string) ([]byte, error) {
 		return nil, errors.New("private file must be regular and use mode 0600")
 	}
 	return io.ReadAll(file)
+}
+
+// ReadFileBounded opens an owner-only contained regular file without following
+// its final path and refuses to allocate or read beyond maxBytes.
+func ReadFileBounded(root, path string, maxBytes int64) ([]byte, error) {
+	if maxBytes <= 0 {
+		return nil, ErrInvalidReadLimit
+	}
+	if err := ValidateContained(root, path); err != nil {
+		return nil, err
+	}
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || int(stat.Uid) != os.Geteuid() {
+		return nil, errors.New("private file is not owned by current user")
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm() != FileMode {
+		return nil, errors.New("private file must be regular and use mode 0600")
+	}
+	if info.Size() > maxBytes {
+		return nil, ErrReadLimitExceeded
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, ErrReadLimitExceeded
+	}
+	return data, nil
+}
+
+// ReadJSONStrictBounded combines the owner-only bounded read with the closed
+// JSON decoder used at authority boundaries.
+func ReadJSONStrictBounded(root, path string, maxBytes int64, target any) error {
+	data, err := ReadFileBounded(root, path, maxBytes)
+	if err != nil {
+		return err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return fmt.Errorf("decode %s: %w", filepath.Base(path), err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("decode %s: trailing JSON", filepath.Base(path))
+		}
+		return fmt.Errorf("decode %s: %w", filepath.Base(path), err)
+	}
+	return nil
 }
 
 // ReadJSONStrict is the closed-schema authority decoder. It rejects unknown

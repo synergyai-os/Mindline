@@ -19,7 +19,7 @@ const maxAKIResponseBytes = 1 << 20
 
 type AKITransport struct {
 	endpoint string
-	secret   string
+	provider SecretProvider
 	client   *http.Client
 }
 
@@ -33,15 +33,17 @@ func NewAKITransportWithTrust(ctx context.Context, profile DeliveryProfile, prov
 	if provider == nil {
 		return nil, errors.New("credential_missing")
 	}
-	secret, err := provider.Secret(ctx)
-	if err != nil || strings.TrimSpace(secret) == "" {
-		return nil, errors.New("credential_missing")
-	}
 	if roundTripper == nil {
-		roundTripper = http.DefaultTransport
+		base, ok := http.DefaultTransport.(*http.Transport)
+		if !ok {
+			return nil, errors.New("transport_unavailable")
+		}
+		fixed := base.Clone()
+		fixed.Proxy = nil
+		roundTripper = fixed
 	}
 	client := &http.Client{Transport: roundTripper, Timeout: 15 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
-	return &AKITransport{endpoint: profile.Transport.BaseURL + profile.Transport.APIPath, secret: secret, client: client}, nil
+	return &AKITransport{endpoint: profile.Transport.BaseURL + profile.Transport.APIPath, provider: provider, client: client}, nil
 }
 
 func validateTrustedOrigin(raw, trusted string) error {
@@ -71,15 +73,20 @@ type akiEnvelope struct {
 }
 
 func (t *AKITransport) call(ctx context.Context, fn string, args any, target any, mutation bool) error {
+	secret, requestContext, release, err := t.secretForCall(ctx)
+	if err != nil || strings.TrimSpace(secret) == "" {
+		return &TransportError{Category: "credential_missing"}
+	}
+	defer release()
 	body, err := json.Marshal(map[string]any{"fn": fn, "args": args})
 	if err != nil {
 		return &TransportError{Category: "validation_failed"}
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, t.endpoint, bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(requestContext, http.MethodPost, t.endpoint, bytes.NewReader(body))
 	if err != nil {
 		return &TransportError{Category: "validation_failed"}
 	}
-	request.Header.Set("Authorization", "Bearer "+t.secret)
+	request.Header.Set("Authorization", "Bearer "+secret)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("x-pb-source", "mindline")
 	response, err := t.client.Do(request)
@@ -105,6 +112,20 @@ func (t *AKITransport) call(ctx context.Context, fn string, args any, target any
 		return &TransportError{Category: "remote_failure", MayHaveCommitted: mutation}
 	}
 	return nil
+}
+
+func (t *AKITransport) secretForCall(ctx context.Context) (string, context.Context, func(), error) {
+	if provider, ok := t.provider.(RevocationAwareSecretProvider); ok {
+		secret, leaseContext, err := provider.SecretWithContext(ctx)
+		if err != nil || leaseContext == nil || leaseContext.Err() != nil {
+			return "", nil, func() {}, errors.New("credential_missing")
+		}
+		requestContext, cancel := context.WithCancel(ctx)
+		stop := context.AfterFunc(leaseContext, cancel)
+		return secret, requestContext, func() { stop(); cancel() }, nil
+	}
+	secret, err := t.provider.Secret(ctx)
+	return secret, ctx, func() {}, err
 }
 func safeHTTPError(status int, code string) string {
 	switch status {
@@ -251,7 +272,12 @@ func (t *AKITransport) CreateEntryRelation(ctx context.Context, r CreateRelation
 }
 
 func (t *AKITransport) RuntimeSecretFindings(value any) []PrivacyFinding {
-	return ScanPublicArtifact(value, t.secret)
+	secret, _, release, err := t.secretForCall(context.Background())
+	if err != nil || strings.TrimSpace(secret) == "" {
+		return []PrivacyFinding{{Category: "runtime_secret_unavailable", JSONPath: "$"}}
+	}
+	defer release()
+	return ScanPublicArtifact(value, secret)
 }
 
 var _ ProductBrainTransport = (*AKITransport)(nil)

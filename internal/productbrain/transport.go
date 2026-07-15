@@ -153,6 +153,15 @@ type SecretProvider interface {
 	Secret(context.Context) (string, error)
 }
 
+// RevocationAwareSecretProvider is the activation-time extension. The returned
+// context is cancelled by the provider when the lease expires or is revoked;
+// AKITransport links it to the individual HTTP request. Legacy providers remain
+// supported through SecretProvider and are still resolved before every call.
+type RevocationAwareSecretProvider interface {
+	SecretProvider
+	SecretWithContext(context.Context) (string, context.Context, error)
+}
+
 type EnvironmentSecretProvider struct{ Name string }
 
 func (p EnvironmentSecretProvider) Secret(_ context.Context) (string, error) {

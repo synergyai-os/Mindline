@@ -473,7 +473,7 @@ func ValidateOutbox(outbox Outbox) error {
 	if outbox.SchemaVersion != OutboxSchema || outbox.Fingerprint == "" || outbox.Fingerprint != hashValue(outbox) {
 		return errors.New("outbox fingerprint mismatch")
 	}
-	if outbox.RoutingFingerprint == "" || outbox.ProfileFingerprint == "" || validateProfileSnapshot(outbox.ProfileSnapshot, outbox.Fingerprint) != nil || len(outbox.ReviewContext.Captures) == 0 || len(outbox.Operations) == 0 || !outbox.OperatorJudged || outbox.HeldOut || outbox.Generalizable || outbox.AutonomyClaim {
+	if outbox.RoutingFingerprint == "" || outbox.ProfileFingerprint == "" || validateProfileSnapshot(outbox.ProfileSnapshot, outbox.Fingerprint) != nil || !outbox.OperatorJudged || outbox.HeldOut || outbox.Generalizable || outbox.AutonomyClaim {
 		return errors.New("invalid outbox authority")
 	}
 	profile := DeliveryProfileFromSnapshot(outbox.ProfileSnapshot)

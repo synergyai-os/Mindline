@@ -48,19 +48,28 @@ Feature elements:
 
 | Contract | Required executable evidence | State |
 |---|---|---|
-| Pure run authority | aggregate, transition, drift, deterministic sample, readiness tests | pending |
-| Occurrence accounting | source-record/occurrence/canonical invariant tests and full live denominator | pending |
-| Session credentials | lease/revoke/reconnect plus success/error/restart sentinel scans | pending |
-| Retrieval safety | Slack pagination and SSRF/rebinding/redirect/budget adversarial suites | pending |
-| Processor isolation | prompt-injection, closed schema, evidence-ref, no-authority tests | pending |
-| Routing compatibility | WP-45 golden transformation through `routing.CompileGraph` | pending |
-| Product Brain approval | one-time human evidence, v0.2 attempt/cancel/crash/readback/replay tests | pending |
-| Hardened UI | Host/peer/Origin/session/CSRF/multipart/XSS/timeouts/hostile-port tests and browser smoke | pending |
+| Pure run authority | aggregate, transition, drift, deterministic sample, readiness tests | automated local proof passed; clean-commit gate pending |
+| Occurrence accounting | source-record/occurrence/canonical invariant tests and full live denominator | synthetic and import invariants passed; full live denominator pending |
+| Session credentials | lease/revoke/reconnect plus success/error/restart sentinel scans | automated lease/revoke/restart and sentinel proof passed; live disconnect pending |
+| Retrieval safety | Slack pagination and SSRF/rebinding/redirect/budget adversarial suites | automated broker, Slack pagination/restart, content-free checkpoint, and durable-budget suites passed; live scenario proof pending |
+| Processor isolation | prompt-injection, closed schema, evidence-ref, no-authority tests | automated proof passed, including explicit manual-retrieval non-promotion |
+| Routing compatibility | WP-45 golden transformation through `routing.CompileGraph` | automated compatibility proof passed |
+| Product Brain approval | one-time human evidence, v0.2 attempt/cancel/crash/readback/replay tests | automated proof passed, including per-attempt expiry and atomic cancel/reserve ordering; live destination proof pending |
+| Hardened UI | Host/peer/Origin/session/CSRF/multipart/XSS/timeouts/hostile-port tests and browser smoke | automated server/adversarial proof passed; current-commit browser smoke pending |
 | Pre-live gate | commit/config-bound tests, race, vet, govulncheck, gosec, gitleaks, sentinel, browser, crash/replay receipt | pending |
 | Founder proof | browser Configure -> Prove -> Review; conditional exact draft delivery; usefulness/burden review | pending |
-| Remainder boundary | full frozen inventory selected/unselected-unprocessed projection; no remainder retrieval/delivery | pending |
+| Remainder boundary | full frozen inventory selected/unselected-unprocessed projection; no remainder retrieval/delivery | automated capped-selection/queue/readiness proof passed; live full-denominator projection pending |
 | Eval/claims | readback and proof gates; blocked safety/generalization/improvement/DEC-64 claims | pending |
 | Close | post-live rerun, two clean reviews, PB reconciliation, key lifecycle evidence | pending |
+
+Current uncommitted-tree verification:
+
+- `go test ./...`: pass.
+- `go vet ./...`: pass.
+- `go test -race ./...`: pass.
+- `git diff --check`: pass.
+- Product/UX, Architecture/Chain authority, and Risk/Safety defect-driven re-reviews: pass; no implementation blocker.
+- Clean immutable commit, pinned scanner receipt, and founder browser evidence remain pending.
 
 ## Defect history retained in the contract
 
@@ -70,6 +79,7 @@ Feature elements:
 - Product Brain approved delivery uses v0.2 durable state; v0.1 stays isolated and read-only for activation.
 - Session/CSRF capabilities stay in JS memory, not loopback-host cookies.
 - Mutation attempts are durably reserved before every send and cancellation is enforced inside Product Brain authority.
+- Approval expiry is revalidated immediately before every new reservation; cancellation creation and cancellation-check/reservation share a short authority lock that is released before destination I/O.
 - Human approval uses one-time server-derived initiation evidence; no actor string, CLI, processor, or agent can approve.
 - Private source data, real credentials, and real transports remain unreachable until the pre-live receipt passes.
-
+- Slack restart checkpoints contain only exact scope, non-secret fingerprints, and counts. Raw messages, URLs, response bodies, credentials, and provider cursors are never checkpointed; cumulative fail-safe budgets survive restart and progress clears only after inventory adoption.

@@ -1,0 +1,32 @@
+:root { color-scheme: light; font: 16px/1.5 Inter, ui-sans-serif, system-ui, sans-serif; background: #f4f3ee; color: #17201b; }
+body { margin: 0; }
+main { width: min(920px, calc(100% - 32px)); margin: 0 auto; padding: 48px 0 96px; }
+header { padding: 32px; background: #143d2b; color: #f7fff9; border-radius: 20px; }
+h1 { max-width: 760px; font-size: clamp(2rem, 5vw, 4rem); line-height: 1; margin: 8px 0 20px; }
+.eyebrow { letter-spacing: .12em; text-transform: uppercase; font-weight: 700; }
+section { margin-top: 24px; padding: 24px; border: 1px solid #d5d8d2; border-radius: 16px; background: white; }
+form { display: grid; gap: 16px; margin-top: 16px; }
+label { display: grid; gap: 6px; font-weight: 650; }
+input, textarea, select, button { font: inherit; }
+input, textarea, select { box-sizing: border-box; width: 100%; padding: 10px 12px; border: 1px solid #aeb8b1; border-radius: 8px; background: #fff; }
+textarea { min-height: 110px; resize: vertical; }
+button { width: fit-content; border: 0; border-radius: 999px; padding: 10px 18px; background: #1f6b49; color: white; font-weight: 700; cursor: pointer; }
+button:hover { background: #174e37; }
+button:disabled { cursor: not-allowed; opacity: .45; }
+.secondary { color: #244436; background: #e4ece7; }
+.secondary:hover { background: #d3e1d8; }
+.actions { display: flex; flex-wrap: wrap; gap: 12px; }
+.danger-actions { margin-top: 18px; }
+.summary { margin-top: 16px; padding: 14px 16px; border-left: 4px solid #739982; background: #f4f8f5; border-radius: 8px; overflow-wrap: anywhere; }
+.summary:empty { display: none; }
+.cards { display: grid; gap: 16px; margin-top: 20px; }
+.card { padding: 18px; border: 1px solid #ccd7d0; border-radius: 12px; background: #fbfdfb; }
+.card h3 { margin: 0 0 8px; }
+.card .meta { color: #51645a; font-size: .92rem; }
+.card blockquote { margin: 12px 0; padding-left: 14px; border-left: 3px solid #a8b9ae; }
+.card .reviewed { color: #17603e; font-weight: 700; }
+.card form { padding-top: 12px; border-top: 1px solid #dde5e0; }
+.pill { display: inline-block; margin: 3px 5px 3px 0; padding: 3px 8px; border-radius: 999px; background: #e7eee9; font-size: .84rem; }
+pre { overflow: auto; padding: 16px; border-radius: 10px; background: #eef2ee; white-space: pre-wrap; overflow-wrap: anywhere; }
+#notice { min-height: 1.5em; color: #7b2d17; font-weight: 650; }
+[hidden] { display: none !important; }

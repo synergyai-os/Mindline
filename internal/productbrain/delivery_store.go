@@ -1,6 +1,7 @@
 package productbrain
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,41 @@ import (
 type deliveryLock struct {
 	PID      int    `json:"pid"`
 	Hostname string `json:"hostname"`
+}
+
+// acquireApprovedOrderingLock serializes only cancellation creation and the
+// cancellation-check/attempt-reservation transaction. It is deliberately not
+// held during destination I/O, so cancellation authority remains writable
+// while a previously reserved mutation is in flight.
+func acquireApprovedOrderingLock(ctx context.Context, dir string) (func(), error) {
+	path := filepath.Join(dir, ".approved-ordering.lock")
+	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, privateio.FileMode)
+	if err != nil {
+		return nil, err
+	}
+	if err := file.Chmod(privateio.FileMode); err != nil {
+		file.Close()
+		return nil, err
+	}
+	for {
+		err = syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			return func() {
+				_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+				_ = file.Close()
+			}, nil
+		}
+		if err != syscall.EWOULDBLOCK && err != syscall.EAGAIN {
+			file.Close()
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			file.Close()
+			return nil, ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
 }
 
 func acquireDeliveryLock(dir string) (func(), error) {
