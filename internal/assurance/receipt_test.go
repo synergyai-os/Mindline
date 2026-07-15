@@ -23,17 +23,17 @@ func TestReceiptBindsCommitConfigurationAndCompleteChecks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Validate(receipt, "commit-1", "config-1", now.Add(time.Hour), 24*time.Hour); err != nil {
+	if err := Validate(receipt, "commit-1", "config-1"); err != nil {
 		t.Fatal(err)
 	}
 	for _, test := range []struct{ commit, config string }{{"commit-2", "config-1"}, {"commit-1", "config-2"}} {
-		if err := Validate(receipt, test.commit, test.config, now.Add(time.Hour), 24*time.Hour); err == nil {
+		if err := Validate(receipt, test.commit, test.config); err == nil {
 			t.Fatal("drifted receipt accepted")
 		}
 	}
 }
 
-func TestReceiptFailsClosedForMissingFailedDuplicateOrExpiredChecks(t *testing.T) {
+func TestReceiptFailsClosedForMissingFailedOrDuplicateChecksAndHasNoAgeAuthority(t *testing.T) {
 	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
 	tests := []struct {
 		name   string
@@ -55,8 +55,8 @@ func TestReceiptFailsClosedForMissingFailedDuplicateOrExpiredChecks(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Validate(receipt, "commit", "config", now.Add(25*time.Hour), 24*time.Hour); err == nil {
-		t.Fatal("expired receipt accepted")
+	if err := Validate(receipt, "commit", "config"); err != nil {
+		t.Fatalf("informational receipt age became authority: %v", err)
 	}
 }
 
@@ -69,7 +69,7 @@ func TestReceiptTamperAndPrivateRoundTrip(t *testing.T) {
 	tampered := receipt
 	tampered.Checks = append([]Check{}, receipt.Checks...)
 	tampered.Checks[0].EvidenceFingerprint = "changed"
-	if err := Validate(tampered, "commit", "config", now, 24*time.Hour); err == nil {
+	if err := Validate(tampered, "commit", "config"); err == nil {
 		t.Fatal("tampered receipt accepted")
 	}
 	root := t.TempDir()

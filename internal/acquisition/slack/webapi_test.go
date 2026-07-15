@@ -97,7 +97,7 @@ func TestAuthorizedWebAPIDrainRetainsCompletedCheckpointUntilCallerAdopts(t *tes
 	client := &syntheticWebAPIClient{workspace: "T-proof", history: map[string]WebAPIPage{"": {Messages: []WebAPIMessage{{Timestamp: "120.000001", Text: "https://example.com/private"}}}}}
 	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
 	identity := WebAPIIdentity{WorkspaceID: "T-proof", ChannelID: "C-proof"}
-	if _, err := (WebAPIDrain{Client: client, CheckpointStore: store}).DrainAuthorized(context.Background(), identity, "100.000001", "199.000001", authorizedTestReceipt(t, now), "commit-1", "config-1", now, time.Minute); err != nil {
+	if _, err := (WebAPIDrain{Client: client, CheckpointStore: store}).DrainAuthorized(context.Background(), identity, "100.000001", "199.000001", authorizedTestReceipt(t, now), "commit-1", "config-1"); err != nil {
 		t.Fatal(err)
 	}
 	scope := WebAPICheckpointScope{WorkspaceID: "T-proof", ChannelID: "C-proof", Oldest: "100.000001", Latest: "199.000001"}

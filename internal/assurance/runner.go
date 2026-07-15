@@ -249,12 +249,19 @@ func supportedScannerBuild(name string, info *debug.BuildInfo) bool {
 }
 
 func fixedBuildToolchainRoot() (string, error) {
-	if strings.TrimSpace(os.Getenv("GOROOT")) != "" {
-		return "", errors.New("pre-live gate rejects ambient GOROOT")
-	}
 	root := filepath.Clean(runtime.GOROOT())
 	if root == "." || !filepath.IsAbs(root) {
 		return "", errors.New("pre-live build toolchain root unavailable")
+	}
+	// Recent Go drivers propagate their own exact GOROOT to test and build
+	// subprocesses. Accept only that benign, identity-equal projection; any
+	// caller override that resolves elsewhere remains hostile and fails closed.
+	if ambient := strings.TrimSpace(os.Getenv("GOROOT")); ambient != "" {
+		resolvedRoot, rootErr := filepath.EvalSymlinks(root)
+		resolvedAmbient, ambientErr := filepath.EvalSymlinks(filepath.Clean(ambient))
+		if rootErr != nil || ambientErr != nil || resolvedRoot != resolvedAmbient {
+			return "", errors.New("pre-live gate rejects ambient GOROOT")
+		}
 	}
 	return root, nil
 }

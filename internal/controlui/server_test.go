@@ -12,7 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/synergyai-os/Mindline/internal/processing"
+	"github.com/synergyai-os/Mindline/internal/controlrun"
+	"github.com/synergyai-os/Mindline/internal/controlsettings"
 )
 
 type fakeApplication struct {
@@ -21,6 +22,18 @@ type fakeApplication struct {
 	preview     BatchPreview
 	approval    HumanApproval
 	authority   *HumanAuthority
+	runAction   string
+	runID       string
+	runExpected controlrun.Revision
+	saveResult  controlsettings.Snapshot
+	saveErr     error
+}
+
+type fakePairingConfirmer struct{ challenge string }
+
+func (f *fakePairingConfirmer) ConfirmPairing(_ context.Context, challenge string) error {
+	f.challenge = challenge
+	return nil
 }
 
 func (f *fakeApplication) ControlUIAuthority() *HumanAuthority { return f.authority }
@@ -56,6 +69,27 @@ func (f *fakeApplication) ApproveBatch(_ context.Context, approval HumanApproval
 	f.approval = approval
 	return map[string]any{"approved": true}, nil
 }
+func (f *fakeApplication) SaveSettings(_ context.Context, _ controlsettings.Revision, draft controlsettings.Draft) (controlsettings.Snapshot, error) {
+	if f.saveErr != nil {
+		return f.saveResult, f.saveErr
+	}
+	return controlsettings.Snapshot{State: controlsettings.StateSaved, Document: controlsettings.Document{SchemaVersion: controlsettings.SchemaVersion, Version: 1, Generation: strings.Repeat("a", 43), Fingerprint: "sha256:test", Draft: draft}}, nil
+}
+func (f *fakeApplication) CreateRun(_ context.Context, expected controlrun.Revision, _ controlsettings.Revision, _ string) (controlrun.Snapshot, error) {
+	f.runAction, f.runExpected, f.runID = "create", expected, "run-20260715T143000Z-aaaaaaaaaaaaaaaaaaaaaaaaaa"
+	return controlrun.Snapshot{State: controlrun.StateSelected, Document: controlrun.Document{Version: expected.Version + 1, SelectedRunID: f.runID}}, nil
+}
+func (f *fakeApplication) SelectRun(_ context.Context, expected controlrun.Revision, runID string) (controlrun.Snapshot, error) {
+	f.runAction, f.runExpected, f.runID = "select", expected, runID
+	return controlrun.Snapshot{State: controlrun.StateSelected, Document: controlrun.Document{Version: expected.Version + 1, SelectedRunID: runID}}, nil
+}
+func (f *fakeApplication) RecoverRunSelection(_ context.Context, _ string, expected *controlrun.Revision, _ string, runID string) (controlrun.Snapshot, error) {
+	f.runAction, f.runID = "recover", runID
+	if expected != nil {
+		f.runExpected = *expected
+	}
+	return controlrun.Snapshot{State: controlrun.StateNone, Document: controlrun.Document{Version: 1}}, nil
+}
 
 type testSession struct {
 	server  *Server
@@ -75,25 +109,33 @@ func newTestSession(t *testing.T) testSession {
 		t.Fatal(err)
 	}
 	app := &fakeApplication{authority: authority, preview: BatchPreview{BatchFingerprint: "batch-1", DestinationWorkspaceID: "workspace-1", DestinationKeyID: "key-1", OperationFingerprints: []string{"operation-1"}, MaximumDestinationWrites: 1, MaximumMutationAttempts: 1, ExpiresAt: "2030-01-01T00:00:00Z"}}
-	server, err := New(app, Options{ExpectedHost: "127.0.0.1:43123", Origin: "http://127.0.0.1:43123", RuntimeRoot: root})
+	pairing := &fakePairingConfirmer{}
+	server, err := New(app, Options{ExpectedHost: "127.0.0.1:43123", Origin: "http://127.0.0.1:43123", RuntimeRoot: root, Pairing: pairing})
 	if err != nil {
 		t.Fatal(err)
 	}
-	fragment := strings.TrimPrefix(server.BootstrapFragment(), "bootstrap=")
-	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:43123/api/bootstrap", strings.NewReader("{}"))
+	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:43123/api/session/pair", strings.NewReader("{}"))
 	request.Host = "127.0.0.1:43123"
 	request.RemoteAddr = "127.0.0.1:49100"
 	request.Header.Set("Origin", "http://127.0.0.1:43123")
+	request.Header.Set("X-Mindline-Origin", "http://127.0.0.1:43123")
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("X-Mindline-Bootstrap", fragment)
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
 		t.Fatalf("bootstrap status %d: %s", response.Code, response.Body.String())
 	}
-	var values map[string]string
-	if err := json.Unmarshal(response.Body.Bytes(), &values); err != nil {
+	decoder := json.NewDecoder(response.Body)
+	var challenge map[string]any
+	if err := decoder.Decode(&challenge); err != nil {
 		t.Fatal(err)
+	}
+	var values map[string]string
+	if err := decoder.Decode(&values); err != nil {
+		t.Fatal(err)
+	}
+	if challenge["type"] != "challenge" || pairing.challenge == "" || values["type"] != "paired" {
+		t.Fatalf("unexpected pairing frames: challenge=%v paired=%v", challenge, values)
 	}
 	return testSession{server: server, app: app, session: values["session"], csrf: values["csrf"]}
 }
@@ -103,6 +145,7 @@ func (s testSession) request(method, path, contentType string, body *bytes.Reade
 	request.Host = "127.0.0.1:43123"
 	request.RemoteAddr = "127.0.0.1:49100"
 	request.Header.Set("Origin", "http://127.0.0.1:43123")
+	request.Header.Set("X-Mindline-Origin", "http://127.0.0.1:43123")
 	request.Header.Set("X-Mindline-Session", s.session)
 	request.Header.Set("X-Mindline-CSRF", s.csrf)
 	if contentType != "" {
@@ -125,13 +168,116 @@ func TestServerBootstrapUsesHeadersAndNoCookies(t *testing.T) {
 		t.Fatal("loopback capability must not use a cookie")
 	}
 	body := response.Body.String()
-	for _, forbidden := range []string{"localStorage", "sessionStorage", "document.cookie", "innerHTML"} {
+	for _, forbidden := range []string{"localStorage", "document.cookie", "innerHTML", "indexedDB", "serviceWorker"} {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("browser asset contains forbidden capability/content primitive %q", forbidden)
 		}
 	}
-	if !strings.Contains(body, "X-Mindline-Session") || !strings.Contains(body, "history.replaceState") {
+	if !strings.Contains(body, "X-Mindline-Session") || !strings.Contains(body, "history.replaceState") || !strings.Contains(body, "sessionStorage") {
 		t.Fatal("browser bootstrap boundary missing")
+	}
+}
+
+func TestWP46_ControlUIRunRoutesAreExplicitAndCASBounded(t *testing.T) {
+	session := newTestSession(t)
+	generation := strings.Repeat("a", 43)
+	settingsGeneration := strings.Repeat("b", 43)
+	createBody, _ := json.Marshal(map[string]any{
+		"expected_selection_version": 0, "expected_selection_generation": generation,
+		"settings_version": 1, "settings_generation": settingsGeneration, "settings_fingerprint": "sha256:settings",
+	})
+	response := httptest.NewRecorder()
+	session.server.Handler().ServeHTTP(response, session.request(http.MethodPost, "/api/runs", "application/json", bytes.NewReader(createBody)))
+	if response.Code != http.StatusCreated || session.app.runAction != "create" || session.app.runExpected.Generation != generation {
+		t.Fatalf("create route = %d action=%s expected=%+v body=%s", response.Code, session.app.runAction, session.app.runExpected, response.Body.String())
+	}
+	runID := "run-20260715T143000Z-aaaaaaaaaaaaaaaaaaaaaaaaaa"
+	selectBody, _ := json.Marshal(map[string]any{"expected_version": 1, "expected_generation": generation, "run_id": runID})
+	response = httptest.NewRecorder()
+	session.server.Handler().ServeHTTP(response, session.request(http.MethodPost, "/api/runs/select", "application/json", bytes.NewReader(selectBody)))
+	if response.Code != http.StatusOK || session.app.runAction != "select" || session.app.runID != runID || session.app.runExpected.Version != 1 {
+		t.Fatalf("select route = %d action=%s run=%s expected=%+v", response.Code, session.app.runAction, session.app.runID, session.app.runExpected)
+	}
+	readableVersion := uint64(2)
+	recoveryBody, _ := json.Marshal(map[string]any{
+		"problem_fingerprint": "sha256:problem", "expected_version": readableVersion,
+		"expected_generation": generation, "acknowledgement": controlrun.RecoveryAcknowledgement, "run_id": "",
+	})
+	response = httptest.NewRecorder()
+	session.server.Handler().ServeHTTP(response, session.request(http.MethodPost, "/api/runs/recover-selection", "application/json", bytes.NewReader(recoveryBody)))
+	if response.Code != http.StatusOK || session.app.runAction != "recover" || session.app.runID != "" || session.app.runExpected.Version != readableVersion {
+		t.Fatalf("recovery route = %d action=%s run=%s expected=%+v body=%s", response.Code, session.app.runAction, session.app.runID, session.app.runExpected, response.Body.String())
+	}
+	duplicateBody := `{"expected_version":1,"expected_version":2,"expected_generation":"` + generation + `","run_id":"` + runID + `"}`
+	response = httptest.NewRecorder()
+	session.server.Handler().ServeHTTP(response, session.request(http.MethodPost, "/api/runs/select", "application/json", bytes.NewReader([]byte(duplicateBody))))
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("duplicate run CAS field status = %d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestWP46_SafeShellAssetsExposeGateMissingAndKeepRunRecovery(t *testing.T) {
+	session := newTestSession(t)
+	for _, asset := range []struct {
+		path    string
+		markers []string
+	}{
+		{path: "/", markers: []string{`id="gate-status"`, `id="create-run"`, `id="run-recovery"`, `id="recover-run-clear"`}},
+		{path: "/app.js", markers: []string{"gate_missing", `data.pre_live_ready`, `"/api/runs/recover-selection"`}},
+	} {
+		request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:43123"+asset.path, nil)
+		request.Host = "127.0.0.1:43123"
+		request.RemoteAddr = "127.0.0.1:49100"
+		response := httptest.NewRecorder()
+		session.server.Handler().ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("asset %s = %d", asset.path, response.Code)
+		}
+		for _, marker := range asset.markers {
+			if !strings.Contains(response.Body.String(), marker) {
+				t.Fatalf("asset %s missing %q", asset.path, marker)
+			}
+		}
+	}
+}
+
+func TestWP46_SettingsConflictReturnsExactCurrentWithoutOverwritingDirtyDraft(t *testing.T) {
+	session := newTestSession(t)
+	currentDraft := controlsettings.DefaultDraft()
+	currentDraft.RoutingPolicy = "Authoritative current routing policy."
+	session.app.saveResult = controlsettings.Snapshot{State: controlsettings.StateSaved, Document: controlsettings.Document{
+		SchemaVersion: controlsettings.SchemaVersion, Version: 7, Generation: strings.Repeat("c", 43),
+		SavedAt: "2026-07-15T14:30:00Z", Fingerprint: "sha256:current", Draft: currentDraft,
+	}}
+	session.app.saveErr = controlsettings.ErrConflict
+	dirtyDraft := controlsettings.DefaultDraft()
+	dirtyDraft.RoutingPolicy = "Unsaved founder edit that must remain in the browser."
+	body, _ := json.Marshal(map[string]any{"expected_version": 6, "expected_generation": strings.Repeat("b", 43), "draft": dirtyDraft})
+	response := httptest.NewRecorder()
+	session.server.Handler().ServeHTTP(response, session.request(http.MethodPut, "/api/settings", "application/json", bytes.NewReader(body)))
+	if response.Code != http.StatusConflict {
+		t.Fatalf("conflict status = %d body=%s", response.Code, response.Body.String())
+	}
+	var payload struct {
+		ErrorCode string                   `json:"error_code"`
+		Changed   string                   `json:"changed"`
+		Current   controlsettings.Document `json:"current"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.ErrorCode != "settings_version_conflict" || payload.Changed != "none" || payload.Current.Version != 7 || payload.Current.Generation != strings.Repeat("c", 43) || payload.Current.Draft.RoutingPolicy != currentDraft.RoutingPolicy {
+		t.Fatalf("unsafe or incomplete conflict projection: %+v", payload)
+	}
+	assetRequest := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:43123/app.js", nil)
+	assetRequest.Host = "127.0.0.1:43123"
+	assetRequest.RemoteAddr = "127.0.0.1:49100"
+	assetResponse := httptest.NewRecorder()
+	session.server.Handler().ServeHTTP(assetResponse, assetRequest)
+	for _, marker := range []string{"const localDraft = collectSettingsDraft();", "settingsBaseline = JSON.parse(encoded);", "Your edits are still here"} {
+		if !strings.Contains(assetResponse.Body.String(), marker) {
+			t.Fatalf("dirty-edit retention marker missing: %q", marker)
+		}
 	}
 }
 
@@ -160,7 +306,7 @@ func TestFounderTruthAssetsUseVerdictSafeAuthorityAndRequiredJudgments(t *testin
 	}
 }
 
-func TestStrategyDefaultsIncludeContentNarrativeIntelligence(t *testing.T) {
+func TestStrategyDefaultsAreServerOwnedNotEmbeddedInHTML(t *testing.T) {
 	session := newTestSession(t)
 	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:43123/", nil)
 	request.Host = "127.0.0.1:43123"
@@ -171,42 +317,15 @@ func TestStrategyDefaultsIncludeContentNarrativeIntelligence(t *testing.T) {
 		t.Fatalf("status %d", response.Code)
 	}
 	body := response.Body.String()
-	contextTag, contextDefault := servedTextarea(t, body, "context-lenses")
-	lenses := processing.ContextLenses(processing.StrategySnapshot{ContextLenses: contextDefault})
-	if len(lenses) != 3 || !strings.HasPrefix(lenses[0], "Product Brain landscape:") || !strings.HasPrefix(lenses[1], "AI-dominant organization design:") || !strings.HasPrefix(lenses[2], "Content and narrative intelligence:") {
-		t.Fatalf("unexpected default lenses: %#v", lenses)
-	}
-	strategy := processing.SealStrategy(processing.StrategySnapshot{
-		StrategyID: "served-default", Version: "1", ContextLenses: contextDefault,
-		RoutingPolicy: "Validated separately below.",
-	})
-	if err := processing.ValidateStrategy(strategy); err != nil {
-		t.Fatalf("served context-lens default is invalid: %v", err)
-	}
-	routingTag, routingDefault := servedTextarea(t, body, "routing-policy")
-	if strings.Contains(contextTag+routingTag, "readonly") || strings.Contains(contextTag+routingTag, "disabled") {
-		t.Fatal("strategy defaults must remain editable")
-	}
-	for _, expected := range []string{
-		"Evaluate each source against every configured lens.",
-		"one source may support multiple outcomes",
-		"selected role as exhaustive",
-		"an original angle",
-		"Treat engagement and comments as signals, not truth.",
-		"Never copy or fabricate.",
-		"does not generate or publish finished content",
-	} {
-		if !strings.Contains(routingDefault, expected) {
-			t.Fatalf("strategy default missing %q", expected)
+	for _, forbidden := range []string{"Product Brain landscape:", "AI-dominant organization design:", "Content and narrative intelligence:", "value=\"5000\"", "value=\"14400\""} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("HTML embeds authoritative setting %q", forbidden)
 		}
 	}
-	for _, expected := range []string{"less-technical audiences", "Product Brain Chain"} {
-		if !strings.Contains(contextDefault, expected) {
-			t.Fatalf("context-lens default missing %q", expected)
+	for _, required := range []string{`id="context-lenses"`, `id="routing-policy"`, `id="settings-status"`, `id="save-settings"`} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("HTML missing settings control %q", required)
 		}
-	}
-	if strings.Contains(routingDefault, "Product Brain") {
-		t.Fatal("routing default must remain destination-neutral")
 	}
 }
 
@@ -280,6 +399,8 @@ func TestServerRejectsHostOriginSessionAndUnknownJSON(t *testing.T) {
 		{name: "session", mutate: func(r *http.Request) { r.Header.Set("X-Mindline-Session", "wrong") }, body: "{}"},
 		{name: "csrf", mutate: func(r *http.Request) { r.Header.Set("X-Mindline-CSRF", "wrong") }, body: "{}"},
 		{name: "unknown field", mutate: func(*http.Request) {}, body: `{"unexpected":true}`},
+		{name: "duplicate field", mutate: func(*http.Request) {}, body: `{"unexpected":true,"unexpected":false}`},
+		{name: "trailing JSON", mutate: func(*http.Request) {}, body: `{} {}`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

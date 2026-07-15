@@ -238,8 +238,7 @@ func (app *App) validatePersistedState(state persistedState) error {
 
 func validateConnectionSnapshot(snapshot integrations.ConnectionSnapshot, provider string, kind integrations.ConnectionKind) error {
 	identity := snapshot.Identity
-	if snapshot.ConnectionID == "" || snapshot.Kind != kind || identity.Provider != provider || identity.WorkspaceID == "" || identity.CapabilityVersion == "" ||
-		snapshot.CreatedAt.IsZero() || snapshot.LastUsedAt.Before(snapshot.CreatedAt) || snapshot.IdleExpiresAt.Before(snapshot.LastUsedAt) || snapshot.AbsoluteExpiresAt.Before(snapshot.CreatedAt) {
+	if snapshot.Kind != kind || identity.Provider != provider || identity.WorkspaceID == "" || identity.CapabilityVersion == "" {
 		return errors.New("persisted integration identity is invalid")
 	}
 	if kind == integrations.ConnectionSlackWebAPI && (identity.ChannelID == "" || identity.CapabilityVersion != acquisitionslack.WebAPIAdapterVersion) {

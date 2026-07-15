@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"regexp"
-	"time"
 
 	acquisitionslack "github.com/synergyai-os/Mindline/internal/acquisition/slack"
 	"github.com/synergyai-os/Mindline/internal/integrations"
@@ -35,8 +34,7 @@ func (productionSlackSourceConnector) Connect(ctx context.Context, registry *int
 		CapabilityVersion: acquisitionslack.WebAPIAdapterVersion,
 	}
 	ref, snapshot, err := registry.Register(integrations.LeaseOptions{
-		Kind: integrations.ConnectionSlackWebAPI, Secret: credential, IdleTTL: 15 * time.Minute,
-		AbsoluteTTL: 2 * time.Hour, Identity: identity,
+		Kind: integrations.ConnectionSlackWebAPI, Secret: credential, Identity: identity,
 	})
 	if err != nil {
 		return nil, err

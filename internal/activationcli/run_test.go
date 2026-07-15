@@ -2,9 +2,13 @@ package activationcli
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -15,22 +19,126 @@ import (
 	acquisitionslack "github.com/synergyai-os/Mindline/internal/acquisition/slack"
 	"github.com/synergyai-os/Mindline/internal/activationapp"
 	"github.com/synergyai-os/Mindline/internal/assurance"
+	"github.com/synergyai-os/Mindline/internal/controlui"
 	"github.com/synergyai-os/Mindline/internal/privateio"
 )
 
-func TestSystemBrowserOpenerRejectsBootstrapURLConfusion(t *testing.T) {
-	for name, target := range map[string]string{
-		"userinfo":       "http://attacker@127.0.0.1:43123/#bootstrap=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		"host":           "http://localhost:43123/#bootstrap=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		"path":           "http://127.0.0.1:43123/other#bootstrap=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		"query":          "http://127.0.0.1:43123/?next=evil#bootstrap=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		"extra_fragment": "http://127.0.0.1:43123/#bootstrap=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&next=evil",
-		"missing_port":   "http://127.0.0.1/#bootstrap=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-	} {
-		t.Run(name, func(t *testing.T) {
-			if err := (systemBrowserOpener{}).Open(target); err == nil {
-				t.Fatalf("unsafe browser target accepted: %s", target)
+func TestWP46_FixedPortCollisionPrecedesMutationAndNeverOpensBrowser(t *testing.T) {
+	occupied, err := net.Listen("tcp4", fixedControlAddress)
+	if err != nil {
+		t.Fatalf("reserve fixed test port: %v", err)
+	}
+	defer occupied.Close()
+
+	root := filepath.Join(t.TempDir(), "must-not-exist")
+	initialized := false
+	dependencies := serveDependencies{
+		resolveRoot:   func() (string, error) { return root, nil },
+		buildRevision: func() (string, error) { return "clean-revision", nil },
+		verifyChannel: func(*os.File) (controlui.PairingConfirmer, error) { return nil, nil },
+		listen:        net.Listen,
+		initialize: func(string, string, string, controlui.PairingConfirmer) (*serveRuntime, error) {
+			initialized = true
+			return nil, errors.New("must not initialize")
+		},
+		serveContext: func() (context.Context, context.CancelFunc) { return context.WithCancel(context.Background()) },
+		httpServer:   controlui.HTTPServer,
+	}
+	var stdout, stderr bytes.Buffer
+	code := runServe(nil, nil, &stdout, &stderr, dependencies)
+	if code == 0 || stdout.Len() != 0 || stderr.String() != "port_occupied\n" {
+		t.Fatalf("collision contract failed: code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if initialized {
+		t.Fatal("fixed-port collision reached durable initialization")
+	}
+	if _, err := os.Lstat(root); !os.IsNotExist(err) {
+		t.Fatalf("collision mutated stable root: %v", err)
+	}
+	if strings.Contains(Usage, "--open") || strings.Contains(Usage, "--receipt") && strings.Contains(Usage, "activation serve --") {
+		t.Fatalf("legacy browser opener or receipt-path serve mode remains in usage: %s", Usage)
+	}
+}
+
+func TestActivationServePrintsOnlyStableURLAfterTCP4Bind(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	bound := false
+	initializedAfterBind := false
+	dependencies := serveDependencies{
+		resolveRoot:   func() (string, error) { return t.TempDir(), nil },
+		buildRevision: func() (string, error) { return "clean-revision", nil },
+		verifyChannel: func(*os.File) (controlui.PairingConfirmer, error) { return nil, nil },
+		listen: func(network, address string) (net.Listener, error) {
+			if network != "tcp4" || address != fixedControlAddress {
+				t.Fatalf("wrong listener contract: %s %s", network, address)
 			}
+			listener, err := net.Listen("tcp4", "127.0.0.1:0")
+			bound = err == nil
+			return listener, err
+		},
+		initialize: func(string, string, string, controlui.PairingConfirmer) (*serveRuntime, error) {
+			initializedAfterBind = bound
+			return &serveRuntime{handler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), close: func() {}}, nil
+		},
+		serveContext: func() (context.Context, context.CancelFunc) { return ctx, func() {} },
+		httpServer:   controlui.HTTPServer,
+	}
+	var stdout, stderr bytes.Buffer
+	if code := runServe(nil, nil, &stdout, &stderr, dependencies); code != 0 {
+		t.Fatalf("serve failed: code=%d stderr=%q", code, stderr.String())
+	}
+	if !initializedAfterBind || stdout.String() != fixedControlURL+"\n" || stderr.Len() != 0 {
+		t.Fatalf("stable startup contract failed: after_bind=%v stdout=%q stderr=%q", initializedAfterBind, stdout.String(), stderr.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := runServe([]string{"--open"}, nil, &stdout, &stderr, dependencies); code == 0 || stdout.Len() != 0 {
+		t.Fatalf("legacy serve flag accepted: code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestActivationInitializerStartsSafeShellWithoutGateReceipt(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		setup func(*testing.T, string)
+	}{
+		{name: "missing"},
+		{name: "invalid", setup: func(t *testing.T, root string) {
+			assuranceRoot := filepath.Join(root, "assurance")
+			if err := privateio.PrepareDir(assuranceRoot); err != nil {
+				t.Fatal(err)
+			}
+			if err := privateio.WriteFile(filepath.Join(assuranceRoot, "pre-live-receipt.json"), []byte("not a valid receipt\n"), true); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			if test.setup != nil {
+				test.setup(t, root)
+			}
+			dependencies := productionServeDependencies()
+			runtime, err := dependencies.initialize(root, "clean-revision", activationapp.DefaultConfigurationFingerprint(), nil)
+			if err != nil {
+				t.Fatalf("%s gate must not prevent safe local shell startup: %v", test.name, err)
+			}
+			if runtime == nil || runtime.handler == nil || runtime.close == nil {
+				t.Fatalf("%s gate did not produce a safe serving runtime", test.name)
+			}
+			state, err := runtime.app.State(context.Background())
+			if err != nil {
+				runtime.close()
+				t.Fatalf("read safe shell state: %v", err)
+			}
+			view, ok := state.(activationapp.View)
+			if !ok || view.RunSelection.State != "none" || view.RunSelection.SelectedRunID != "" {
+				runtime.close()
+				t.Fatalf("fresh stable root selected a legacy run: %#v", state)
+			}
+			runtime.close()
 		})
 	}
 }
@@ -43,6 +151,7 @@ func TestGateReceiptUsesCleanBuildIdentityAndCompleteChecks(t *testing.T) {
 		return &debug.BuildInfo{Settings: []debug.BuildSetting{{Key: "vcs.revision", Value: "commit-test"}, {Key: "vcs.modified", Value: "false"}}}, true
 	}
 	root := t.TempDir()
+	useControlRoot(t, root)
 	runGatePlan = func(workdir, revision, runtimeRoot string) ([]assurance.Check, error) {
 		if workdir == "" || revision != "commit-test" || runtimeRoot != root {
 			t.Fatalf("gate received wrong binding: workdir=%q revision=%q runtime=%q", workdir, revision, runtimeRoot)
@@ -56,10 +165,10 @@ func TestGateReceiptUsesCleanBuildIdentityAndCompleteChecks(t *testing.T) {
 	}
 	defer func() { readBuildInfo = original; runGatePlan = originalGate; verifySourceBinding = originalBinding }()
 	var stdout, stderr bytes.Buffer
-	if code := Run([]string{"gate-receipt", "--runtime", root}, &stdout, &stderr); code != 0 {
+	if code := Run([]string{"gate-receipt"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("gate receipt failed: code=%d stderr=%s", code, stderr.String())
 	}
-	receipt, err := assurance.Load(root, filepath.Join(root, "pre-live-receipt.json"))
+	receipt, err := assurance.Load(root, filepath.Join(root, "assurance", "pre-live-receipt.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,6 +188,7 @@ func TestGateReceiptRejectsSourceBindingChangeDuringChecks(t *testing.T) {
 		return &debug.BuildInfo{Settings: []debug.BuildSetting{{Key: "vcs.revision", Value: "commit-test"}, {Key: "vcs.modified", Value: "false"}}}, true
 	}
 	runGatePlan = func(string, string, string) ([]assurance.Check, error) { return passingChecks(), nil }
+	useControlRoot(t, t.TempDir())
 	bindingCalls := 0
 	verifySourceBinding = func(string, string) (string, error) {
 		bindingCalls++
@@ -89,7 +199,7 @@ func TestGateReceiptRejectsSourceBindingChangeDuringChecks(t *testing.T) {
 	}
 	defer func() { readBuildInfo = original; runGatePlan = originalGate; verifySourceBinding = originalBinding }()
 	var stdout, stderr bytes.Buffer
-	code := Run([]string{"gate-receipt", "--runtime", t.TempDir()}, &stdout, &stderr)
+	code := Run([]string{"gate-receipt"}, &stdout, &stderr)
 	if code == 0 || !strings.Contains(stderr.String(), "source binding changed") {
 		t.Fatalf("source mutation minted authority: code=%d stderr=%s", code, stderr.String())
 	}
@@ -101,8 +211,9 @@ func TestGateReceiptRejectsModifiedBuild(t *testing.T) {
 		return &debug.BuildInfo{Settings: []debug.BuildSetting{{Key: "vcs.revision", Value: "commit-test"}, {Key: "vcs.modified", Value: "true"}}}, true
 	}
 	defer func() { readBuildInfo = original }()
+	useControlRoot(t, t.TempDir())
 	var stdout, stderr bytes.Buffer
-	code := Run([]string{"gate-receipt", "--runtime", t.TempDir()}, &stdout, &stderr)
+	code := Run([]string{"gate-receipt"}, &stdout, &stderr)
 	if code == 0 || !strings.Contains(stderr.String(), "modified") {
 		t.Fatalf("modified build was not rejected: code=%d stderr=%s", code, stderr.String())
 	}
@@ -110,10 +221,17 @@ func TestGateReceiptRejectsModifiedBuild(t *testing.T) {
 
 func TestGateReceiptRejectsCallerSuppliedCheckClaims(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	code := Run([]string{"gate-receipt", "--runtime", t.TempDir(), "--checks", "/tmp/caller-claims.json"}, &stdout, &stderr)
+	code := Run([]string{"gate-receipt", "--checks", "/tmp/caller-claims.json"}, &stdout, &stderr)
 	if code == 0 {
 		t.Fatal("caller-supplied check claims minted pre-live authority")
 	}
+}
+
+func useControlRoot(t *testing.T, root string) {
+	t.Helper()
+	original := resolveControlRoot
+	resolveControlRoot = func() (string, error) { return root, nil }
+	t.Cleanup(func() { resolveControlRoot = original })
 }
 
 func TestBuildSlackManifestBridgesNativeBatchWithoutLeakingContent(t *testing.T) {
@@ -124,7 +242,12 @@ func TestBuildSlackManifestBridgesNativeBatchWithoutLeakingContent(t *testing.T)
 	defer func() { readBuildInfo = original }()
 
 	root := t.TempDir()
+	useControlRoot(t, root)
 	if err := privateio.PrepareDir(root); err != nil {
+		t.Fatal(err)
+	}
+	assuranceRoot := filepath.Join(root, "assurance")
+	if err := privateio.PrepareDir(assuranceRoot); err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
@@ -138,7 +261,7 @@ func TestBuildSlackManifestBridgesNativeBatchWithoutLeakingContent(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	receiptPath := filepath.Join(root, "pre-live-receipt.json")
+	receiptPath := filepath.Join(assuranceRoot, "pre-live-receipt.json")
 	if err := assurance.Write(root, receiptPath, receipt); err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +284,7 @@ func TestBuildSlackManifestBridgesNativeBatchWithoutLeakingContent(t *testing.T)
 	outPath := filepath.Join(root, "slack-manifest.json")
 	var stdout, stderr bytes.Buffer
 	code := RunWithInput([]string{
-		"build-slack-manifest", "--runtime", root, "--receipt", receiptPath, "--out", outPath,
+		"build-slack-manifest", "--out", outPath,
 		"--payload-bytes", fmt.Sprint(len(payload)), "--payload-sha256", fmt.Sprintf("%x", digest[:]),
 	}, bytes.NewReader(payload), &stdout, &stderr)
 	if code != 0 {
@@ -199,8 +322,8 @@ func TestBuildSlackManifestRejectsUnknownInputAndEscapingOutput(t *testing.T) {
 	if _, err := decodeNativeSlackBatch(bytes.NewReader(unknown), int64(len(unknown)), fmt.Sprintf("%x", unknownDigest[:])); err == nil {
 		t.Fatal("unknown native-batch field was accepted")
 	}
-	if _, _, _, _, _, ok := parseBuildSlackManifestArgs([]string{
-		"--runtime", "/tmp/runtime", "--receipt", "/tmp/receipt", "--out", "relative.json",
+	if _, _, _, ok := parseBuildSlackManifestArgs([]string{
+		"--out", "relative.json",
 		"--payload-bytes", "1", "--payload-sha256", strings.Repeat("a", 64),
 	}); ok {
 		t.Fatal("relative manifest output was accepted")

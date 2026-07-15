@@ -4,52 +4,222 @@ let sessionCapability = "";
 let csrfCapability = "";
 let reviewNonce = "";
 let latestState = null;
+let pairingAbort = null;
+let settingsBaseline = null;
+let settingsDirty = false;
+let runSelectionBaseline = null;
+
+const SESSION_STORAGE_KEY = "mindline.session.v1";
+const CSRF_STORAGE_KEY = "mindline.csrf.v1";
+const ORIGIN = "http://127.0.0.1:9876";
+const RUN_RECOVERY_ACKNOWLEDGEMENT = "I understand this changes only the explicit Mindline run selection pointer.";
 
 const byId = (id) => document.getElementById(id);
 
 async function bootstrap() {
-  const params = new URLSearchParams(window.location.hash.slice(1));
-  const token = params.get("bootstrap") || "";
   history.replaceState(null, "", window.location.pathname + window.location.search);
-  if (!token) throw new Error("The private launch capability is missing. Restart Mindline.");
-  const response = await fetch("/api/bootstrap", {
-    method: "POST",
-    headers: {"Content-Type": "application/json", "X-Mindline-Bootstrap": token},
-    body: "{}"
-  });
-  if (!response.ok) throw new Error("Private session bootstrap was rejected.");
-  const data = await response.json();
-  sessionCapability = data.session;
-  csrfCapability = data.csrf;
-  byId("session-status").textContent = "Private local session ready. Credentials will be forgotten when this process stops.";
-  await refresh();
+  sessionCapability = sessionStorage.getItem(SESSION_STORAGE_KEY) || "";
+  csrfCapability = sessionStorage.getItem(CSRF_STORAGE_KEY) || "";
+  if (sessionCapability && csrfCapability) {
+    try {
+      await refresh();
+      showPaired();
+      return;
+    } catch (_) {
+      clearBrowserAuthority();
+    }
+  }
+  showLocked();
 }
 
 function headers(json = true) {
-  const value = {"X-Mindline-Session": sessionCapability, "X-Mindline-CSRF": csrfCapability};
+  const value = {"X-Mindline-Origin": ORIGIN, "X-Mindline-Session": sessionCapability, "X-Mindline-CSRF": csrfCapability};
   if (json) value["Content-Type"] = "application/json";
   return value;
 }
 
-async function api(path, body = {}) {
-  const response = await fetch(path, {method: "POST", headers: headers(true), body: JSON.stringify(body)});
+async function api(path, body = {}, method = "POST", localAuthority = null) {
+  const requestHeaders = headers(true);
+  if (localAuthority) {
+    requestHeaders["X-Mindline-Session"] = localAuthority.session;
+    requestHeaders["X-Mindline-CSRF"] = localAuthority.csrf;
+  }
+  const response = await fetch(path, {method, headers: requestHeaders, body: JSON.stringify(body)});
   const data = await response.json();
-  if (!response.ok) throw new Error(data.error || "operation_blocked");
+  if (!response.ok) {
+    if (response.status === 401 || data.error_code === "session_stale" || data.error === "unauthorized") {
+      clearBrowserAuthority();
+      showLocked();
+    }
+    const error = new Error(data.user_message || data.error_code || data.error || "operation_blocked");
+    error.payload = data;
+    error.status = response.status;
+    throw error;
+  }
   return data;
 }
 
 async function refresh() {
-  const response = await fetch("/api/state", {headers: {"X-Mindline-Session": sessionCapability}});
+  const response = await fetch("/api/state", {headers: {"X-Mindline-Origin": ORIGIN, "X-Mindline-Session": sessionCapability}});
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || "state_unavailable");
   byId("state").textContent = JSON.stringify(data, null, 2);
 	latestState = data;
+	hydrateSettings(data.settings);
+	renderRunState(data);
 	renderGuidedState(data);
 	const operations = Number(data.destination && data.destination.operation_count || 0);
 	if (operations > 0) {
 		byId("max-writes").value = String(operations);
 		byId("max-attempts").value = String(Math.max(operations, operations * 2));
 	}
+}
+
+function clearBrowserAuthority() {
+  sessionStorage.removeItem(SESSION_STORAGE_KEY);
+  sessionStorage.removeItem(CSRF_STORAGE_KEY);
+  sessionCapability = "";
+  csrfCapability = "";
+  reviewNonce = "";
+  latestState = null;
+  runSelectionBaseline = null;
+  byId("state").textContent = "";
+  byId("proof-items").replaceChildren();
+  byId("batch-preview").textContent = "";
+}
+
+function showLocked() {
+  byId("private-workspace").hidden = true;
+  byId("pairing-panel").hidden = false;
+  byId("lock-session").hidden = true;
+  byId("session-status").textContent = "This local Mindline window is locked.";
+}
+
+function showPaired() {
+  byId("pairing-panel").hidden = true;
+  byId("pairing-code-panel").hidden = true;
+  byId("private-workspace").hidden = false;
+  byId("lock-session").hidden = false;
+  byId("session-status").textContent = "Private local session ready. Provider credentials remain only in this process.";
+}
+
+async function pairBrowser() {
+  if (pairingAbort) pairingAbort.abort();
+  pairingAbort = new AbortController();
+  byId("pair").disabled = true;
+  byId("session-status").textContent = "Creating a five-minute pairing code…";
+  try {
+    const response = await fetch("/api/session/pair", {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-Mindline-Origin": ORIGIN},
+      body: "{}",
+      signal: pairingAbort.signal
+    });
+    if (!response.ok || !response.body) throw new Error("Pairing is unavailable. Restart Mindline from Codex.");
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffered = "";
+    while (true) {
+      const result = await reader.read();
+      buffered += decoder.decode(result.value || new Uint8Array(), {stream: !result.done});
+      const lines = buffered.split("\n");
+      buffered = lines.pop() || "";
+      for (const line of lines) {
+        if (!line) continue;
+        const frame = JSON.parse(line);
+        if (frame.type === "challenge") {
+          byId("pairing-code").textContent = frame.challenge;
+          byId("pairing-code-panel").hidden = false;
+          byId("session-status").textContent = "Confirm the exact code through Codex.";
+        } else if (frame.type === "paired") {
+          sessionCapability = frame.session;
+          csrfCapability = frame.csrf;
+          sessionStorage.setItem(SESSION_STORAGE_KEY, sessionCapability);
+          sessionStorage.setItem(CSRF_STORAGE_KEY, csrfCapability);
+          showPaired();
+          await refresh();
+          return;
+        }
+      }
+      if (result.done) break;
+    }
+    throw new Error("Pairing ended before confirmation. Create a new code.");
+  } finally {
+    byId("pair").disabled = false;
+    pairingAbort = null;
+  }
+}
+
+function settingsDocument(settings) {
+  if (!settings) return null;
+  return settings.document || settings.snapshot || settings;
+}
+
+function hydrateSettings(settings) {
+  const document = settingsDocument(settings);
+  const draft = document && document.draft;
+  if (!draft) return;
+  if (!settingsDirty) {
+    settingsBaseline = JSON.parse(JSON.stringify(document));
+    byId("context-lenses").value = (draft.context_lenses || []).join("\n\n");
+    byId("routing-policy").value = draft.routing_policy || "";
+    const limits = draft.drain_policy || {};
+    byId("drain-network").value = String(limits.maximum_network_requests ?? "");
+    byId("drain-wall").value = String(limits.maximum_wall_time_seconds ?? "");
+    byId("drain-cost").value = String(limits.maximum_cost_microunits ?? "");
+    byId("drain-retries").value = String(limits.maximum_retry_attempts ?? "");
+    byId("drain-manual").value = String(limits.manual_support_tolerance ?? "");
+  }
+  for (const field of byId("strategy-form").querySelectorAll("textarea,input,button")) field.disabled = false;
+  const state = settings.state || (document.version > 0 ? "saved" : "defaults");
+  byId("settings-status").textContent = state === "saved"
+    ? `Saved settings version ${document.version} at ${document.saved_at}. These values survive restarts; credentials do not.`
+    : "Server-owned defaults loaded. They are editable but not saved yet.";
+}
+
+function collectSettingsDraft() {
+  const current = settingsBaseline && settingsBaseline.draft || {};
+  return {
+    context_lenses: byId("context-lenses").value.split(/\n+/).map((value) => value.trim()).filter(Boolean),
+    routing_policy: byId("routing-policy").value.trim(),
+    drain_policy: {
+      maximum_network_requests: Number(byId("drain-network").value),
+      maximum_wall_time_seconds: Number(byId("drain-wall").value),
+      maximum_cost_microunits: Number(byId("drain-cost").value),
+      maximum_retry_attempts: Number(byId("drain-retries").value),
+      manual_support_tolerance: Number(byId("drain-manual").value)
+    },
+    adapter_defaults: current.adapter_defaults || [],
+    expected_source_identity: current.expected_source_identity || null,
+    expected_destination_identity: current.expected_destination_identity || null
+  };
+}
+
+function renderRunState(data) {
+  const selection = data.run_selection || {state: "none", version: 0, generation: ""};
+  if (!selection.state && data.run && data.run.run_id) {
+    selection.state = "compatible_selected";
+    selection.selected_run_id = data.run.run_id;
+  }
+  runSelectionBaseline = JSON.parse(JSON.stringify(selection));
+  const settings = settingsDocument(data.settings);
+  const savedSettings = settings && Number(settings.version) > 0 && Boolean(settings.fingerprint);
+  const active = selection.state === "compatible_selected";
+  const blocked = selection.state === "blocked";
+  const incompatible = selection.state === "incompatible_preserved";
+  let status = "No proof is selected. Settings remain available; source and destination actions stay blocked.";
+  if (active) status = `Selected proof ${selection.selected_run_id}. Selection revision ${selection.version}; no provider authority comes from this pointer.`;
+  if (incompatible) status = `Prior proof ${selection.selected_run_id} is preserved but incompatible with this build. Start a new proof from saved settings or select another exact run.`;
+  if (blocked) status = `Run selection is blocked (${selection.reason_code || "recovery required"}). Mindline will not infer or open another run.`;
+  byId("run-status").textContent = status;
+  byId("create-run").disabled = blocked || !savedSettings || settingsDirty || !Boolean(data.pre_live_ready);
+  byId("select-run-form").querySelector("button").disabled = blocked;
+  byId("run-recovery").hidden = !blocked || !selection.problem_fingerprint;
+  byId("run-recovery-message").textContent = selection.problem_fingerprint
+    ? `Recovery requires exact problem ${selection.problem_fingerprint}. Backup available: ${Boolean(selection.backup_available)}. No run evidence will be changed.`
+    : "";
+  byId("recover-run-explicit").disabled = !byId("select-run-id").value.trim();
+  byId("use-settings").disabled = !active || settingsDirty || !savedSettings || !Boolean(data.pre_live_ready);
 }
 
 function setSummary(id, message) { byId(id).textContent = message; }
@@ -89,6 +259,14 @@ function renderGuidedState(data) {
   const drain = data.drain || {};
   const identity = connections.destination_identity || {};
   const sourceIdentity = connections.source_identity || {};
+  const gateReady = Boolean(data.pre_live_ready);
+  const runReady = !data.run_selection || !data.run_selection.state || data.run_selection.state === "compatible_selected";
+  byId("gate-status").textContent = gateReady
+    ? "Live gate ready. Provider credentials remain session-only and every live action still requires explicit input."
+    : "gate_missing: settings, run-selection recovery, and read-only evidence remain available; Slack, import, provider credentials, and new proof actions are disabled.";
+  for (const id of ["slack-source-form", "slack-drain-form", "import-form", "destination-form"]) {
+    for (const field of byId(id).querySelectorAll("input,button")) field.disabled = !gateReady;
+  }
   setSummary("connections-summary", `Slack source ${connections.source_connected ? `verified as workspace ${sourceIdentity.workspace_id || "unknown"}, channel ${sourceIdentity.channel_id || "unknown"}` : "not connected"}; inventory ${connections.source_imported ? "adopted" : "not imported"}; Product Brain ${connections.destination_connected ? `verified as ${identity.provider || "unknown provider"} workspace ${identity.workspace_id || "unknown"}, key ${identity.key_id || "unknown"}` : "not connected"}. Credentials are session-only.`);
   setSummary("inventory-summary", inventory.frozen
     ? `Frozen source ${inventory.source_identity || "unknown"} to ${inventory.watermark || "unknown watermark"}: ${inventory.source_records} Slack records → ${inventory.url_occurrences} URL occurrences → ${inventory.canonical_items} canonical items. ${inventory.selected_items} selected; ${inventory.unselected_items} durably unprocessed. Import ${inventory.file_name || "unnamed"}: ${inventory.file_bytes || 0} bytes; declared ${JSON.stringify(inventory.declared_counts || {})}; observed ${JSON.stringify(inventory.observed_counts || {})}; ${inventory.omission_count || 0} count omissions; ${inventory.duplicate_occurrences || 0} duplicate occurrences.`
@@ -107,19 +285,21 @@ function renderGuidedState(data) {
     return `${stage.stage}: ${stage.verdict}. ${authority}${blockers ? ` Blockers: ${blockers}.` : ""}${conditions ? ` Conditions: ${conditions}.` : ""}`;
   });
   setSummary("drain-summary", `${stageLines.join("\n")} Full queue accounted: ${Boolean(drain.full_inventory_queued)}. Remainder processed: ${Boolean(drain.processed_remainder)}.`);
-  renderProofItems(proof.items || []);
-  byId("freeze").disabled = !(connections.source_imported && data.strategy && data.strategy.configured) || Boolean(inventory.frozen);
-  byId("prove").disabled = !inventory.frozen || Boolean(proof.started);
-  byId("preview-form").querySelector("button").disabled = !(proof.completed && connections.destination_connected);
+  renderProofItems(proof.items || [], gateReady);
+  byId("freeze").disabled = !gateReady || !runReady || !(connections.source_imported && data.strategy && data.strategy.configured) || Boolean(inventory.frozen);
+  byId("prove").disabled = !gateReady || !inventory.frozen || Boolean(proof.started);
+  byId("preview-form").querySelector("button").disabled = !gateReady || !(proof.completed && connections.destination_connected);
   const experimental = stages.find((stage) => stage.stage === "READY_TO_EXPERIMENTAL_DRAIN") || {};
-  byId("confirm-drain").disabled = experimental.verdict !== "CONDITIONAL";
-  byId("cancel-delivery").disabled = !destination.approval_fingerprint || Boolean(destination.cancellation_fingerprint);
-  byId("resume-delivery").disabled = !destination.approval_fingerprint || destination.delivery_status === "completed" || destination.delivery_status === "zero_draft_activation_recorded" || Boolean(destination.cancellation_fingerprint);
-  byId("disconnect").disabled = !connections.destination_connected;
-  byId("disconnect-slack").disabled = !connections.source_connected;
-	byId("slack-source-form").querySelector('button[type="submit"]').disabled = !(data.strategy && data.strategy.configured) || connections.source_imported;
-  byId("slack-drain-form").querySelector('button[type="submit"]').disabled = !connections.source_connected || connections.source_imported;
-  byId("destination-form").querySelector("button").disabled = Boolean(data.delivery_in_flight);
+  byId("confirm-drain").disabled = !gateReady || experimental.verdict !== "CONDITIONAL";
+  byId("cancel-delivery").disabled = !gateReady || !destination.approval_fingerprint || Boolean(destination.cancellation_fingerprint);
+  byId("resume-delivery").disabled = !gateReady || !destination.approval_fingerprint || destination.delivery_status === "completed" || destination.delivery_status === "zero_draft_activation_recorded" || Boolean(destination.cancellation_fingerprint);
+  byId("disconnect").disabled = !gateReady || !connections.destination_connected;
+  byId("disconnect-slack").disabled = !gateReady || !connections.source_connected;
+	byId("founder-form").querySelector('button[type="submit"]').disabled = !gateReady;
+	byId("slack-source-form").querySelector('button[type="submit"]').disabled = !gateReady || !runReady || !(data.strategy && data.strategy.configured) || connections.source_imported;
+  byId("slack-drain-form").querySelector('button[type="submit"]').disabled = !gateReady || !connections.source_connected || connections.source_imported;
+  byId("import-form").querySelector("button").disabled = !gateReady || !runReady;
+  byId("destination-form").querySelector("button").disabled = !gateReady || !runReady || Boolean(data.delivery_in_flight);
 	if (destination.approval_fingerprint && destination.batch_preview) {
 		renderBatchPreview(destination.batch_preview);
 		byId("batch-preview").textContent = JSON.stringify(destination.batch_preview, null, 2);
@@ -146,7 +326,7 @@ function renderGuidedState(data) {
   }
 }
 
-function renderProofItems(items) {
+function renderProofItems(items, mutationsEnabled = true) {
   const container = byId("proof-items");
   container.replaceChildren();
   for (const item of items) {
@@ -208,6 +388,7 @@ function renderProofItems(items) {
     }
     const manualLabel = document.createElement("label"); manualLabel.textContent = "Manual-support outcome"; manualLabel.append(manualOutcome);
     form.append(roleLabel, dispositionLabel, rationaleLabel, manualLabel, submit);
+    if (!mutationsEnabled) for (const field of form.querySelectorAll("select,textarea,button")) field.disabled = true;
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       const decision = role.value === item.proposed_role && disposition.value === item.proposed_disposition ? "accept" : "revise";
@@ -279,18 +460,120 @@ byId("disconnect-slack").addEventListener("click", () => api("/api/commands/disc
 byId("strategy-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   try {
-    await api("/api/commands/save-strategy", {
-      context_lenses: byId("context-lenses").value,
-      routing_policy: byId("routing-policy").value,
-      maximum_network_requests: Number(byId("drain-network").value),
-      maximum_wall_time_seconds: Number(byId("drain-wall").value),
-      maximum_cost_microunits: Number(byId("drain-cost").value),
-      maximum_retry_attempts: Number(byId("drain-retries").value),
-      manual_support_tolerance: Number(byId("drain-manual").value)
+    if (!settingsBaseline) throw new Error("Authoritative settings are not loaded yet.");
+    const result = await api("/api/settings", {
+      expected_version: settingsBaseline.version,
+      expected_generation: settingsBaseline.generation,
+      draft: collectSettingsDraft()
+    }, "PUT");
+    settingsDirty = false;
+    byId("settings-conflict").hidden = true;
+    hydrateSettings(result.settings || result);
+    notice("Settings saved for future visits and proofs. No credential was stored.");
+    await refresh();
+  } catch (error) {
+    if (error.status === 409 && error.payload && (error.payload.error_code === "settings_version_conflict" || error.payload.error === "settings_version_conflict")) {
+      byId("settings-conflict").hidden = false;
+      byId("settings-conflict-message").textContent = error.payload.user_message || "Saved settings changed elsewhere. Your edits are still here.";
+      if (error.payload.current) byId("settings-conflict").dataset.current = JSON.stringify(error.payload.current);
+    }
+    fail(error);
+  }
+});
+
+for (const field of byId("strategy-form").querySelectorAll("textarea,input")) {
+  field.addEventListener("input", () => {
+    settingsDirty = true;
+    byId("create-run").disabled = true;
+    byId("use-settings").disabled = true;
+  });
+}
+
+byId("select-run-id").addEventListener("input", () => {
+  byId("recover-run-explicit").disabled = !byId("select-run-id").value.trim();
+});
+
+byId("create-run").addEventListener("click", async () => {
+  try {
+    if (!runSelectionBaseline || !settingsBaseline || settingsDirty) throw new Error("Save settings and refresh the explicit run selection first.");
+    await api("/api/runs", {
+      expected_selection_version: runSelectionBaseline.version,
+      expected_selection_generation: runSelectionBaseline.generation,
+      settings_version: settingsBaseline.version,
+      settings_generation: settingsBaseline.generation,
+      settings_fingerprint: settingsBaseline.fingerprint
     });
-    notice("Immutable strategy version saved.");
+    notice("A new immutable proof was created from the exact saved settings and explicitly selected.");
     await refresh();
   } catch (error) { fail(error); }
+});
+
+byId("select-run-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  try {
+    if (!runSelectionBaseline) throw new Error("Run selection is not loaded.");
+    await api("/api/runs/select", {
+      expected_version: runSelectionBaseline.version,
+      expected_generation: runSelectionBaseline.generation,
+      run_id: byId("select-run-id").value.trim()
+    });
+    notice("The exact run pointer changed. Mindline did not infer a latest run or grant provider authority.");
+    await refresh();
+  } catch (error) { fail(error); }
+});
+
+async function recoverRunSelection(runID) {
+  if (!runSelectionBaseline || !runSelectionBaseline.problem_fingerprint) throw new Error("No exact run-selection recovery problem is loaded.");
+  const action = runID ? `replace the pointer with ${runID}` : "clear the corrupt pointer";
+  if (!window.confirm(`Acknowledge recovery and ${action}? Run evidence will remain unchanged.`)) return;
+  const readable = Boolean(runSelectionBaseline.readable_generation);
+  await api("/api/runs/recover-selection", {
+    problem_fingerprint: runSelectionBaseline.problem_fingerprint,
+    expected_version: readable ? runSelectionBaseline.readable_version : null,
+    expected_generation: readable ? runSelectionBaseline.readable_generation : "",
+    acknowledgement: RUN_RECOVERY_ACKNOWLEDGEMENT,
+    run_id: runID
+  });
+  notice("The non-authorizing run pointer was recovered explicitly; run evidence was not changed.");
+  await refresh();
+}
+
+byId("recover-run-clear").addEventListener("click", () => recoverRunSelection("").catch(fail));
+byId("recover-run-explicit").addEventListener("click", () => recoverRunSelection(byId("select-run-id").value.trim()).catch(fail));
+
+byId("use-settings").addEventListener("click", async () => {
+  try {
+    if (settingsDirty) throw new Error("Save these edits before using them for a proof.");
+    if (!settingsBaseline || !settingsBaseline.fingerprint) throw new Error("Save settings before using them for a proof.");
+    await api("/api/commands/use-settings-for-proof", {
+      settings_version: settingsBaseline.version,
+      settings_generation: settingsBaseline.generation,
+      settings_fingerprint: settingsBaseline.fingerprint
+    });
+    notice("The exact saved settings were applied to the open proof without changing any sealed proof.");
+    await refresh();
+  } catch (error) { fail(error); }
+});
+
+byId("reload-settings").addEventListener("click", () => {
+  const encoded = byId("settings-conflict").dataset.current || "";
+  if (!encoded) return;
+  settingsDirty = false;
+  hydrateSettings({state: "saved", document: JSON.parse(encoded)});
+  byId("settings-conflict").hidden = true;
+  notice("Your local edits were discarded and the saved version was loaded.");
+});
+
+byId("rebase-settings").addEventListener("click", () => {
+  const encoded = byId("settings-conflict").dataset.current || "";
+  if (!encoded) return;
+  const localDraft = collectSettingsDraft();
+  settingsBaseline = JSON.parse(encoded);
+  byId("context-lenses").value = (localDraft.context_lenses || []).join("\n\n");
+  byId("routing-policy").value = localDraft.routing_policy;
+  settingsDirty = true;
+  byId("settings-conflict").hidden = true;
+  notice("Your edits now target the reviewed saved version. Choose Save settings to retry the exact CAS.");
 });
 
 byId("freeze").addEventListener("click", () => api("/api/commands/freeze-inventory").then(refresh).catch(fail));
@@ -299,7 +582,29 @@ byId("refresh").addEventListener("click", () => refresh().catch(fail));
 byId("confirm-drain").addEventListener("click", () => api("/api/commands/confirm-drain").then(refresh).catch(fail));
 byId("help").addEventListener("click", async () => {
   byId("help-text").hidden = false;
-  try { await api("/api/discovery/help"); } catch (error) { fail(error); }
+  if (sessionCapability) {
+    try { await api("/api/discovery/help"); } catch (error) { fail(error); }
+  }
+});
+byId("pair").addEventListener("click", () => pairBrowser().catch(fail));
+byId("copy-pairing-code").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(byId("pairing-code").textContent);
+    notice("Exact pairing code copied.");
+  } catch (_) {
+    notice("Copy was unavailable; select the exact code shown above.");
+  }
+});
+byId("lock-session").addEventListener("click", async () => {
+  const authority = {session: sessionCapability, csrf: csrfCapability};
+  clearBrowserAuthority();
+  showLocked();
+  try {
+    await api("/api/session/lock", {}, "POST", authority);
+    byId("session-status").textContent = "This browser is locked. Slack and Product Brain connections remain process-only until explicitly disconnected or Mindline stops.";
+  } catch (_) {
+    byId("session-status").textContent = "Lock acknowledgement was not received. Stop Mindline to guarantee revocation.";
+  }
 });
 byId("disconnect").addEventListener("click", () => api("/api/commands/disconnect").then(refresh).catch(fail));
 byId("resume-delivery").addEventListener("click", async () => {

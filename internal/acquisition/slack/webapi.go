@@ -8,7 +8,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/synergyai-os/Mindline/internal/acquisition"
 	"github.com/synergyai-os/Mindline/internal/assurance"
@@ -77,8 +76,8 @@ func (drain WebAPIDrain) DrainSynthetic(ctx context.Context, identity WebAPIIden
 	return manifest, err
 }
 
-func (drain WebAPIDrain) DrainAuthorized(ctx context.Context, identity WebAPIIdentity, oldest, latest string, receipt assurance.Receipt, commit, configuration string, now time.Time, maxAge time.Duration) (ExternalManifest, error) {
-	if err := assurance.Validate(receipt, commit, configuration, now, maxAge); err != nil {
+func (drain WebAPIDrain) DrainAuthorized(ctx context.Context, identity WebAPIIdentity, oldest, latest string, receipt assurance.Receipt, commit, configuration string) (ExternalManifest, error) {
+	if err := assurance.Validate(receipt, commit, configuration); err != nil {
 		return ExternalManifest{}, err
 	}
 	if drain.CheckpointStore == nil {
@@ -91,7 +90,7 @@ func (drain WebAPIDrain) DrainAuthorized(ctx context.Context, identity WebAPIIde
 	input.DataClass = DataClassPrivateRuntime
 	// The completed checkpoint remains durable until the caller has durably
 	// adopted the manifest. Building a manifest is not itself adoption.
-	return BuildAuthorizedExternalManifest(input, receipt, commit, configuration, now, maxAge)
+	return BuildAuthorizedExternalManifest(input, receipt, commit, configuration)
 }
 
 func (drain WebAPIDrain) collect(ctx context.Context, identity WebAPIIdentity, oldest, latest string) (BuildInput, WebAPICheckpointScope, error) {

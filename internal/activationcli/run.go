@@ -9,9 +9,8 @@ import (
 	"fmt"
 	"io"
 	"net"
-	neturl "net/url"
+	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
@@ -24,24 +23,35 @@ import (
 	"github.com/synergyai-os/Mindline/internal/activationapp"
 	"github.com/synergyai-os/Mindline/internal/assurance"
 	"github.com/synergyai-os/Mindline/internal/controlui"
+	"github.com/synergyai-os/Mindline/internal/operatorchannel"
 	"github.com/synergyai-os/Mindline/internal/privateio"
 )
 
-const Usage = "usage: mindline activation config-fingerprint\nusage: mindline activation gate-receipt --runtime <private-dir>\nusage: mindline activation build-slack-manifest --runtime <private-dir> --receipt <receipt.json> --out <manifest.json> --payload-bytes <n> --payload-sha256 <hex>\nusage: mindline activation serve --runtime <private-dir> --receipt <receipt.json> --open\n"
+const Usage = "usage: mindline activation config-fingerprint\nusage: mindline activation gate-receipt\nusage: mindline activation build-slack-manifest --out <manifest.json> --payload-bytes <n> --payload-sha256 <hex>\nusage: mindline activation serve\n"
 
 const (
 	maximumNativeBatchSize = int64(64 << 20)
+	fixedControlAddress    = "127.0.0.1:9876"
+	fixedControlURL        = "http://127.0.0.1:9876/"
 )
 
 var readBuildInfo = debug.ReadBuildInfo
 var runGatePlan = assurance.RunFixedGate
 var verifySourceBinding = assurance.VerifySourceBinding
+var resolveControlRoot = privateio.DefaultControlPlaneRoot
 
 func Run(args []string, stdout, stderr io.Writer) int {
-	return RunWithInput(args, strings.NewReader(""), stdout, stderr)
+	return RunWithInputs(args, strings.NewReader(""), os.Stdin, stdout, stderr)
 }
 
 func RunWithInput(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	return RunWithInputs(args, stdin, nil, stdout, stderr)
+}
+
+// RunWithInputs keeps the generic native-source stream separate from the
+// launcher-owned operator channel. Only the latter may authorize browser
+// pairing for the serving command.
+func RunWithInputs(args []string, nativeInput io.Reader, operatorInput *os.File, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprint(stderr, Usage)
 		return 1
@@ -57,9 +67,9 @@ func RunWithInput(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 	case "gate-receipt":
 		return runGateReceipt(args[1:], stdout, stderr)
 	case "build-slack-manifest":
-		return runBuildSlackManifest(args[1:], stdin, stdout, stderr)
+		return runBuildSlackManifest(args[1:], nativeInput, stdout, stderr)
 	case "serve":
-		return runServe(args[1:], stdout, stderr)
+		return runServe(args[1:], operatorInput, stdout, stderr, productionServeDependencies())
 	default:
 		fmt.Fprint(stderr, Usage)
 		return 1
@@ -75,11 +85,17 @@ type manifestBuildSummary struct {
 }
 
 func runBuildSlackManifest(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	runtimeRoot, receiptPath, outPath, payloadBytes, payloadDigest, ok := parseBuildSlackManifestArgs(args)
+	outPath, payloadBytes, payloadDigest, ok := parseBuildSlackManifestArgs(args)
 	if !ok {
 		fmt.Fprint(stderr, Usage)
 		return 1
 	}
+	runtimeRoot, err := resolveControlRoot()
+	if err != nil || !filepath.IsAbs(runtimeRoot) {
+		fmt.Fprintln(stderr, "Slack manifest blocked: stable control root unavailable")
+		return 2
+	}
+	receiptPath := filepath.Join(runtimeRoot, "assurance", "pre-live-receipt.json")
 	revision, err := cleanBuildRevision()
 	if err != nil {
 		fmt.Fprintf(stderr, "Slack manifest blocked: %v\n", err)
@@ -91,7 +107,7 @@ func runBuildSlackManifest(args []string, stdin io.Reader, stdout, stderr io.Wri
 		return 2
 	}
 	configuration := activationapp.DefaultConfigurationFingerprint()
-	if err := assurance.Validate(receipt, revision, configuration, time.Now().UTC(), 30*time.Minute); err != nil {
+	if err := assurance.Validate(receipt, revision, configuration); err != nil {
 		fmt.Fprintf(stderr, "Slack manifest blocked: %v\n", err)
 		return 2
 	}
@@ -104,7 +120,7 @@ func runBuildSlackManifest(args []string, stdin io.Reader, stdout, stderr io.Wri
 		fmt.Fprintf(stderr, "Slack manifest blocked: %v\n", err)
 		return 2
 	}
-	manifest, err := acquisitionslack.BuildAuthorizedExternalManifestFromNativeBatch(batch, receipt, revision, configuration, time.Now().UTC(), 30*time.Minute)
+	manifest, err := acquisitionslack.BuildAuthorizedExternalManifestFromNativeBatch(batch, receipt, revision, configuration)
 	if err != nil {
 		fmt.Fprintf(stderr, "Slack manifest blocked: %v\n", err)
 		return 2
@@ -178,10 +194,14 @@ func validateManifestOutputPath(root, outPath string) error {
 }
 
 func runGateReceipt(args []string, stdout, stderr io.Writer) int {
-	runtimeRoot, ok := parseOnePath(args, "--runtime")
-	if !ok {
+	if len(args) != 0 {
 		fmt.Fprint(stderr, Usage)
 		return 1
+	}
+	runtimeRoot, err := resolveControlRoot()
+	if err != nil || !filepath.IsAbs(runtimeRoot) {
+		fmt.Fprintln(stderr, "pre-live receipt blocked: stable control root unavailable")
+		return 2
 	}
 	revision, err := cleanBuildRevision()
 	if err != nil {
@@ -189,6 +209,11 @@ func runGateReceipt(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if err := privateio.PrepareDir(runtimeRoot); err != nil {
+		fmt.Fprintf(stderr, "pre-live receipt blocked: %v\n", err)
+		return 2
+	}
+	assuranceRoot := filepath.Join(runtimeRoot, "assurance")
+	if err := privateio.PrepareDir(assuranceRoot); err != nil {
 		fmt.Fprintf(stderr, "pre-live receipt blocked: %v\n", err)
 		return 2
 	}
@@ -221,7 +246,7 @@ func runGateReceipt(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "pre-live receipt blocked: %v\n", err)
 		return 2
 	}
-	path := filepath.Join(runtimeRoot, "pre-live-receipt.json")
+	path := filepath.Join(assuranceRoot, "pre-live-receipt.json")
 	if err := assurance.Write(runtimeRoot, path, receipt); err != nil {
 		fmt.Fprintf(stderr, "pre-live receipt blocked: %v\n", err)
 		return 2
@@ -230,122 +255,175 @@ func runGateReceipt(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func parseOnePath(args []string, flag string) (string, bool) {
-	if len(args) != 2 || args[0] != flag || strings.TrimSpace(args[1]) == "" || !filepath.IsAbs(args[1]) {
-		return "", false
-	}
-	return filepath.Clean(args[1]), true
+type serveRuntime struct {
+	handler http.Handler
+	close   func()
+	app     *activationapp.App
 }
 
-func runServe(args []string, stdout, stderr io.Writer) int {
-	runtimeRoot, receiptPath, ok := parseServePaths(args)
-	if !ok {
+type serveDependencies struct {
+	resolveRoot   func() (string, error)
+	buildRevision func() (string, error)
+	verifyChannel func(*os.File) (controlui.PairingConfirmer, error)
+	listen        func(string, string) (net.Listener, error)
+	initialize    func(string, string, string, controlui.PairingConfirmer) (*serveRuntime, error)
+	serveContext  func() (context.Context, context.CancelFunc)
+	httpServer    func(net.Listener, http.Handler) *http.Server
+}
+
+func productionServeDependencies() serveDependencies {
+	return serveDependencies{
+		resolveRoot:   resolveControlRoot,
+		buildRevision: cleanBuildRevision,
+		verifyChannel: func(input *os.File) (controlui.PairingConfirmer, error) {
+			verified, err := (operatorchannel.AnonymousPipeVerifier{}).Verify(input)
+			if err != nil {
+				return nil, err
+			}
+			return controlui.NewOperatorPairingConfirmer(verified), nil
+		},
+		listen: net.Listen,
+		initialize: func(runtimeRoot, revision, configuration string, pairing controlui.PairingConfirmer) (*serveRuntime, error) {
+			receiptPath := filepath.Join(runtimeRoot, "assurance", "pre-live-receipt.json")
+			var receipt *assurance.Receipt
+			loadedReceipt, loadErr := assurance.Load(runtimeRoot, receiptPath)
+			if loadErr == nil && assurance.Validate(loadedReceipt, revision, configuration) == nil {
+				receipt = &loadedReceipt
+			}
+			app, err := activationapp.New(activationapp.Options{
+				ControlRoot: runtimeRoot, Commit: revision, ConfigurationFingerprint: configuration,
+				PreLiveReceipt: receipt,
+			})
+			if err != nil {
+				return nil, err
+			}
+			server, err := controlui.New(app, controlui.Options{
+				ExpectedHost: fixedControlAddress,
+				Origin:       "http://" + fixedControlAddress,
+				RuntimeRoot:  runtimeRoot,
+				Pairing:      pairing,
+			})
+			if err != nil {
+				app.Close()
+				return nil, err
+			}
+			return &serveRuntime{handler: server.Handler(), close: app.Close, app: app}, nil
+		},
+		serveContext: func() (context.Context, context.CancelFunc) {
+			return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		},
+		httpServer: controlui.HTTPServer,
+	}
+}
+
+func runServe(args []string, operatorInput *os.File, stdout, stderr io.Writer, dependencies serveDependencies) int {
+	if len(args) != 0 {
 		fmt.Fprint(stderr, Usage)
 		return 1
 	}
-	revision, err := cleanBuildRevision()
-	if err != nil {
-		fmt.Fprintf(stderr, "activation blocked: %v\n", err)
+	if dependencies.resolveRoot == nil || dependencies.buildRevision == nil || dependencies.verifyChannel == nil || dependencies.listen == nil || dependencies.initialize == nil || dependencies.serveContext == nil || dependencies.httpServer == nil {
+		fmt.Fprintln(stderr, "activation_unavailable")
 		return 2
 	}
-	receipt, err := assurance.Load(runtimeRoot, receiptPath)
+
+	// Everything before Listen is read-only and side-effect free. In
+	// particular, resolving the default root does not create it.
+	pairing, err := dependencies.verifyChannel(operatorInput)
 	if err != nil {
-		fmt.Fprintf(stderr, "activation blocked: %v\n", err)
+		fmt.Fprintln(stderr, "operator_channel_unavailable")
 		return 2
 	}
-	app, err := activationapp.New(activationapp.Options{
-		RuntimeRoot: runtimeRoot, Commit: revision, ConfigurationFingerprint: activationapp.DefaultConfigurationFingerprint(),
-		PreLiveReceipt: &receipt, ReceiptMaxAge: 30 * time.Minute,
-	})
-	if err != nil {
-		fmt.Fprintf(stderr, "activation blocked: %v\n", err)
+	runtimeRoot, err := dependencies.resolveRoot()
+	if err != nil || !filepath.IsAbs(runtimeRoot) {
+		fmt.Fprintln(stderr, "activation_unavailable")
 		return 2
 	}
-	defer app.Close()
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	revision, err := dependencies.buildRevision()
+	if err != nil {
+		fmt.Fprintln(stderr, "activation_unavailable")
+		return 2
+	}
+	configuration := activationapp.DefaultConfigurationFingerprint()
+
+	listener, err := dependencies.listen("tcp4", fixedControlAddress)
+	if err != nil {
+		fmt.Fprintln(stderr, "port_occupied")
+		return 2
+	}
+	defer listener.Close()
+
+	// Durable initialization is intentionally downstream of the successful
+	// fixed-port bind so a collision cannot migrate, recover, select, or write.
+	runtime, err := dependencies.initialize(filepath.Clean(runtimeRoot), revision, configuration, pairing)
+	if err != nil || runtime == nil || runtime.handler == nil || runtime.close == nil {
+		fmt.Fprintln(stderr, "activation_unavailable")
+		return 2
+	}
+	defer runtime.close()
+
+	ctx, stop := dependencies.serveContext()
 	defer stop()
-	running, err := controlui.Launch(ctx, app, runtimeRoot, systemBrowserOpener{})
-	if err != nil {
-		fmt.Fprintf(stderr, "activation blocked: %v\n", err)
+	httpServer := dependencies.httpServer(listener, runtime.handler)
+	if httpServer == nil {
+		fmt.Fprintln(stderr, "activation_unavailable")
 		return 2
 	}
-	defer running.Shutdown(context.Background())
-	_ = json.NewEncoder(stdout).Encode(map[string]any{"safe_url": running.SafeDisplayURL(), "runtime_root": runtimeRoot})
-	<-ctx.Done()
-	return 0
-}
+	serveErrors := make(chan error, 1)
+	go func() {
+		serveErrors <- httpServer.Serve(listener)
+	}()
 
-func parseServePaths(args []string) (string, string, bool) {
-	if len(args) == 5 && args[4] == "--open" {
-		return parseTwoPaths(args[:4], "--runtime", "--receipt")
-	}
-	if len(args) == 5 && args[0] == "--open" {
-		return parseTwoPaths(args[1:], "--runtime", "--receipt")
-	}
-	return "", "", false
-}
+	// This is the only successful startup output. It is stable, contains no
+	// fragment or capability, and never triggers a browser process.
+	fmt.Fprint(stdout, fixedControlURL+"\n")
 
-type systemBrowserOpener struct{}
-
-func (systemBrowserOpener) Open(url string) error {
-	target, err := neturl.Parse(url)
-	if err != nil || target.Scheme != "http" || target.Hostname() != "127.0.0.1" || target.User != nil || target.Path != "/" || target.RawQuery != "" || target.Port() == "" || target.Host != net.JoinHostPort("127.0.0.1", target.Port()) {
-		return errors.New("refusing unsafe browser bootstrap target")
-	}
-	fragment, err := neturl.ParseQuery(target.Fragment)
-	if err != nil || len(fragment) != 1 || len(fragment["bootstrap"]) != 1 || len(fragment.Get("bootstrap")) < 32 {
-		return errors.New("refusing unsafe browser bootstrap target")
-	}
-	return exec.Command("/usr/bin/open", url).Run()
-}
-
-func parseTwoPaths(args []string, firstFlag, secondFlag string) (string, string, bool) {
-	if len(args) != 4 {
-		return "", "", false
-	}
-	values := map[string]string{}
-	for index := 0; index < len(args); index += 2 {
-		if args[index] != firstFlag && args[index] != secondFlag || strings.TrimSpace(args[index+1]) == "" {
-			return "", "", false
+	code := 0
+	select {
+	case <-ctx.Done():
+	case serveErr := <-serveErrors:
+		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			fmt.Fprintln(stderr, "activation_unavailable")
+			code = 2
 		}
-		values[args[index]] = args[index+1]
 	}
-	first, second := values[firstFlag], values[secondFlag]
-	if first == "" || second == "" || !filepath.IsAbs(first) || !filepath.IsAbs(second) {
-		return "", "", false
+	shutdownContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := httpServer.Shutdown(shutdownContext); err != nil && code == 0 {
+		fmt.Fprintln(stderr, "activation_unavailable")
+		code = 2
 	}
-	return filepath.Clean(first), filepath.Clean(second), true
+	return code
 }
 
-func parseBuildSlackManifestArgs(args []string) (string, string, string, int64, string, bool) {
-	if len(args) != 10 {
-		return "", "", "", 0, "", false
+func parseBuildSlackManifestArgs(args []string) (string, int64, string, bool) {
+	if len(args) != 6 {
+		return "", 0, "", false
 	}
-	allowed := map[string]bool{"--runtime": true, "--receipt": true, "--out": true, "--payload-bytes": true, "--payload-sha256": true}
+	allowed := map[string]bool{"--out": true, "--payload-bytes": true, "--payload-sha256": true}
 	values := map[string]string{}
 	for index := 0; index < len(args); index += 2 {
 		flag := args[index]
 		if !allowed[flag] || strings.TrimSpace(args[index+1]) == "" {
-			return "", "", "", 0, "", false
+			return "", 0, "", false
 		}
 		if values[flag] != "" {
-			return "", "", "", 0, "", false
+			return "", 0, "", false
 		}
 		values[flag] = args[index+1]
 	}
-	runtimeRoot, receiptPath, outPath := values["--runtime"], values["--receipt"], values["--out"]
+	outPath := values["--out"]
 	payloadBytes, err := strconv.ParseInt(values["--payload-bytes"], 10, 64)
 	payloadDigest := strings.ToLower(values["--payload-sha256"])
-	if runtimeRoot == "" || receiptPath == "" || outPath == "" || !filepath.IsAbs(runtimeRoot) || !filepath.IsAbs(receiptPath) || !filepath.IsAbs(outPath) ||
+	if outPath == "" || !filepath.IsAbs(outPath) ||
 		err != nil || payloadBytes <= 0 || payloadBytes > maximumNativeBatchSize || len(payloadDigest) != sha256.Size*2 {
-		return "", "", "", 0, "", false
+		return "", 0, "", false
 	}
 	for _, character := range payloadDigest {
 		if character < '0' || character > '9' && character < 'a' || character > 'f' {
-			return "", "", "", 0, "", false
+			return "", 0, "", false
 		}
 	}
-	return filepath.Clean(runtimeRoot), filepath.Clean(receiptPath), filepath.Clean(outPath), payloadBytes, payloadDigest, true
+	return filepath.Clean(outPath), payloadBytes, payloadDigest, true
 }
 
 func cleanBuildRevision() (string, error) {

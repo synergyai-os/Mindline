@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"time"
 
 	"github.com/synergyai-os/Mindline/internal/acquisition"
 	"github.com/synergyai-os/Mindline/internal/assurance"
@@ -76,8 +75,8 @@ func DecodeExternalInventory(reader io.Reader, maximumBytes int64) (ImportResult
 // DecodeAuthorizedExternalInventory is the sole private-input extension. It
 // validates the exact commit/configuration-bound pre-live receipt before the
 // private data class can cross the source-adapter boundary.
-func DecodeAuthorizedExternalInventory(reader io.Reader, maximumBytes int64, receipt assurance.Receipt, expectedCommit, expectedConfiguration string, now time.Time, maxAge time.Duration) (ImportResult, error) {
-	if err := assurance.Validate(receipt, expectedCommit, expectedConfiguration, now, maxAge); err != nil {
+func DecodeAuthorizedExternalInventory(reader io.Reader, maximumBytes int64, receipt assurance.Receipt, expectedCommit, expectedConfiguration string) (ImportResult, error) {
+	if err := assurance.Validate(receipt, expectedCommit, expectedConfiguration); err != nil {
 		return ImportResult{}, importError("pre_live_authority", err)
 	}
 	manifest, err := decodeExternalManifest(reader, maximumBytes)

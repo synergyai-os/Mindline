@@ -100,7 +100,7 @@ func (app *App) DrainSlackSource(ctx context.Context, oldest, latest string) (an
 	}
 	receipt := *app.receipt
 	policy := *app.state.DrainPolicy
-	commit, configuration, now, maxAge := app.commit, app.configuration, app.now(), app.receiptMaxAge
+	commit, configuration, now := app.commit, app.configuration, app.now()
 	app.mu.Unlock()
 
 	checkpointStore, err := acquisitionslack.NewFileWebAPICheckpointStore(filepath.Join(app.runtimeRoot, "slack-web-api-checkpoints"))
@@ -128,7 +128,7 @@ func (app *App) DrainSlackSource(ctx context.Context, oldest, latest string) (an
 	}
 	manifest, err := (acquisitionslack.WebAPIDrain{Client: client, CheckpointStore: checkpointStore}).DrainAuthorized(
 		ctx, acquisitionslack.WebAPIIdentity{WorkspaceID: identity.WorkspaceID, ChannelID: identity.ChannelID}, window.Oldest, window.Latest,
-		receipt, commit, configuration, now, maxAge,
+		receipt, commit, configuration,
 	)
 	if err != nil {
 		return nil, err

@@ -133,7 +133,7 @@ func TestLeasedSlackHTTPClientRechecksSessionLeaseBeforeEveryAttempt(t *testing.
 	identity := integrations.VerifiedIdentity{Provider: "slack", WorkspaceID: "T-proof", ChannelID: "C-proof", CapabilityVersion: WebAPIAdapterVersion}
 	ref, _, err := registry.Register(integrations.LeaseOptions{
 		Kind: integrations.ConnectionSlackWebAPI, Secret: []byte("xoxp-synthetic-session-token"),
-		IdleTTL: time.Minute, AbsoluteTTL: time.Hour, Identity: identity,
+		Identity: identity,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -167,7 +167,7 @@ func TestDurablyBudgetedLeasedClientCannotResetRequestOrCostBudgetOnRestart(t *t
 	identity := integrations.VerifiedIdentity{Provider: "slack", WorkspaceID: "T-proof", ChannelID: "C-proof", CapabilityVersion: WebAPIAdapterVersion}
 	ref, _, err := registry.Register(integrations.LeaseOptions{
 		Kind: integrations.ConnectionSlackWebAPI, Secret: []byte("xoxp-synthetic-session-token"),
-		IdleTTL: time.Minute, AbsoluteTTL: time.Hour, Identity: identity,
+		Identity: identity,
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -93,7 +93,13 @@ func NewLeasedSlackHTTPClient(registry *integrations.Registry, ref integrations.
 		return nil, err
 	}
 	result.useSecret = func(ctx context.Context, call func(context.Context, []byte) error) error {
-		return registry.Use(ctx, ref, identity, call)
+		return registry.Use(ctx, ref, identity, func(callContext context.Context, secret []byte) error {
+			err := call(callContext, secret)
+			if errors.Is(err, ErrSlackRevoked) {
+				return errors.Join(err, integrations.ErrCredentialRejected)
+			}
+			return err
+		})
 	}
 	return result, nil
 }
@@ -109,7 +115,13 @@ func NewDurablyBudgetedLeasedSlackHTTPClient(registry *integrations.Registry, re
 		return nil, err
 	}
 	result.useSecret = func(ctx context.Context, call func(context.Context, []byte) error) error {
-		return registry.Use(ctx, ref, identity, call)
+		return registry.Use(ctx, ref, identity, func(callContext context.Context, secret []byte) error {
+			err := call(callContext, secret)
+			if errors.Is(err, ErrSlackRevoked) {
+				return errors.Join(err, integrations.ErrCredentialRejected)
+			}
+			return err
+		})
 	}
 	return result, nil
 }

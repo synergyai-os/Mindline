@@ -19,6 +19,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/synergyai-os/Mindline/internal/controlrun"
+	"github.com/synergyai-os/Mindline/internal/controlsettings"
 	"github.com/synergyai-os/Mindline/internal/privateio"
 )
 
@@ -31,8 +33,9 @@ const (
 var assets embed.FS
 
 var (
-	ErrUnauthorized = errors.New("unauthorized")
-	ErrInvalidInput = errors.New("invalid_input")
+	ErrUnauthorized          = errors.New("unauthorized")
+	ErrInvalidInput          = errors.New("invalid_input")
+	ErrPairingInputMalformed = errors.New("pairing input malformed")
 )
 
 type Command struct {
@@ -124,6 +127,13 @@ type Application interface {
 	ImportExternalInventory(context.Context, string, string) (any, error)
 	PreviewBatch(context.Context, int, int) (BatchPreview, error)
 	ApproveBatch(context.Context, HumanApproval) (any, error)
+	SaveSettings(context.Context, controlsettings.Revision, controlsettings.Draft) (controlsettings.Snapshot, error)
+}
+
+type RunApplication interface {
+	CreateRun(context.Context, controlrun.Revision, controlsettings.Revision, string) (controlrun.Snapshot, error)
+	SelectRun(context.Context, controlrun.Revision, string) (controlrun.Snapshot, error)
+	RecoverRunSelection(context.Context, string, *controlrun.Revision, string, string) (controlrun.Snapshot, error)
 }
 
 type Options struct {
@@ -131,6 +141,14 @@ type Options struct {
 	Origin       string
 	RuntimeRoot  string
 	Now          func() time.Time
+	Pairing      PairingConfirmer
+}
+
+// PairingConfirmer is the narrow operator-channel port. Production supplies
+// the verified anonymous launcher pipe; tests may inject a deterministic
+// confirmer. The challenge is non-authorizing until this call succeeds.
+type PairingConfirmer interface {
+	ConfirmPairing(context.Context, string) error
 }
 
 type Server struct {
@@ -141,9 +159,13 @@ type Server struct {
 	now          func() time.Time
 
 	mu             sync.Mutex
-	bootstrap      string
 	session        string
 	csrf           string
+	serverInstance string
+	pairing        PairingConfirmer
+	pairingPending bool
+	pairingBlocked bool
+	pairingStarts  []time.Time
 	humanAuthority *HumanAuthority
 	reviewNonces   map[string]reviewNonce
 	startedAt      time.Time
@@ -174,10 +196,6 @@ func New(app Application, options Options) (*Server, error) {
 	if err := privateio.ValidateContained(options.RuntimeRoot, options.RuntimeRoot); err != nil {
 		return nil, err
 	}
-	bootstrap, err := randomToken(32)
-	if err != nil {
-		return nil, err
-	}
 	authority := app.ControlUIAuthority()
 	if authority == nil {
 		return nil, errors.New("control UI human authority unavailable")
@@ -186,13 +204,11 @@ func New(app Application, options Options) (*Server, error) {
 	if now == nil {
 		now = time.Now
 	}
-	return &Server{app: app, expectedHost: options.ExpectedHost, origin: options.Origin, runtimeRoot: options.RuntimeRoot, now: now, bootstrap: bootstrap, humanAuthority: authority, reviewNonces: map[string]reviewNonce{}, startedAt: now().UTC(), actionCounts: map[string]int{}}, nil
-}
-
-func (s *Server) BootstrapFragment() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return "bootstrap=" + s.bootstrap
+	instance, err := randomToken(16)
+	if err != nil {
+		return nil, err
+	}
+	return &Server{app: app, expectedHost: options.ExpectedHost, origin: options.Origin, runtimeRoot: options.RuntimeRoot, now: now, pairing: options.Pairing, serverInstance: instance, humanAuthority: authority, reviewNonces: map[string]reviewNonce{}, startedAt: now().UTC(), actionCounts: map[string]int{}}, nil
 }
 
 func (s *Server) Handler() http.Handler {
@@ -200,14 +216,19 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /", s.handleAsset("assets/index.html", "text/html; charset=utf-8"))
 	mux.HandleFunc("GET /app.js", s.handleAsset("assets/app.js", "text/javascript; charset=utf-8"))
 	mux.HandleFunc("GET /style.css", s.handleAsset("assets/style.css", "text/css; charset=utf-8"))
-	mux.HandleFunc("POST /api/bootstrap", s.handleBootstrap)
+	mux.HandleFunc("POST /api/session/pair", s.handlePair)
+	mux.HandleFunc("POST /api/session/lock", s.handleLock)
 	mux.HandleFunc("GET /api/state", s.handleState)
+	mux.HandleFunc("PUT /api/settings", s.handleSaveSettings)
+	mux.HandleFunc("POST /api/runs", s.handleCreateRun)
+	mux.HandleFunc("POST /api/runs/select", s.handleSelectRun)
+	mux.HandleFunc("POST /api/runs/recover-selection", s.handleRecoverRunSelection)
 	mux.HandleFunc("POST /api/import/external-slack", s.handleImport)
 	mux.HandleFunc("POST /api/commands/connect-slack-source", s.handleConnectSlackSource)
 	mux.HandleFunc("POST /api/commands/drain-slack-source", s.handleDrainSlackSource)
 	mux.HandleFunc("POST /api/commands/disconnect-slack-source", s.handleDisconnectSlackSource)
 	mux.HandleFunc("POST /api/commands/connect-destination", s.handleConnectDestination)
-	mux.HandleFunc("POST /api/commands/save-strategy", s.handleSaveStrategy)
+	mux.HandleFunc("POST /api/commands/use-settings-for-proof", s.handleUseSettingsForProof)
 	mux.HandleFunc("POST /api/commands/freeze-inventory", s.handleEmptyCommand("freeze_inventory"))
 	mux.HandleFunc("POST /api/commands/start-proof", s.handleEmptyCommand("start_proof"))
 	mux.HandleFunc("POST /api/commands/review-item", s.handleReviewItem)
@@ -317,7 +338,7 @@ func (s *Server) handleAsset(path, contentType string) http.HandlerFunc {
 	}
 }
 
-func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handlePair(w http.ResponseWriter, r *http.Request) {
 	if !s.requireOrigin(r) {
 		writeError(w, http.StatusForbidden, "forbidden")
 		return
@@ -329,27 +350,89 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 	if decodeStrictJSON(w, r, &struct{}{}, 256) != nil {
 		return
 	}
-	presented := r.Header.Get("X-Mindline-Bootstrap")
+	if s.pairing == nil {
+		writeError(w, http.StatusServiceUnavailable, "pairing_channel_unavailable")
+		return
+	}
+	now := s.now()
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.bootstrap == "" || !constantEqual(presented, s.bootstrap) {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
+	retained := s.pairingStarts[:0]
+	for _, started := range s.pairingStarts {
+		if now.Sub(started) < time.Minute {
+			retained = append(retained, started)
+		}
+	}
+	s.pairingStarts = retained
+	if s.pairingBlocked || s.pairingPending || len(s.pairingStarts) >= 3 {
+		s.mu.Unlock()
+		writeError(w, http.StatusTooManyRequests, "pairing_channel_unavailable")
+		return
+	}
+	s.pairingStarts = append(s.pairingStarts, now)
+	s.pairingPending = true
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.pairingPending = false
+		s.mu.Unlock()
+	}()
+
+	challenge, err := randomToken(16)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "local_state_failure")
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{"type": "challenge", "challenge": challenge, "expires_in_seconds": 300})
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		return
+	}
+	flusher.Flush()
+	pairContext, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	defer cancel()
+	if err := s.pairing.ConfirmPairing(pairContext, challenge); err != nil {
+		if errors.Is(err, ErrPairingInputMalformed) {
+			s.mu.Lock()
+			s.pairingBlocked = true
+			s.mu.Unlock()
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"type": "error", "error_code": "pairing_expired"})
+		flusher.Flush()
 		return
 	}
 	session, err := randomToken(32)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "local_state_failure")
 		return
 	}
 	csrf, err := randomToken(32)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "local_state_failure")
 		return
 	}
-	s.bootstrap = ""
+	s.mu.Lock()
 	s.session = session
 	s.csrf = csrf
-	writeJSON(w, http.StatusOK, map[string]string{"session": session, "csrf": csrf})
+	s.reviewNonces = map[string]reviewNonce{}
+	instance := s.serverInstance
+	s.mu.Unlock()
+	_ = json.NewEncoder(w).Encode(map[string]string{"type": "paired", "session": session, "csrf": csrf, "server_instance": instance})
+	flusher.Flush()
+}
+
+func (s *Server) handleLock(w http.ResponseWriter, r *http.Request) {
+	if !s.requireMutation(w, r, true) {
+		return
+	}
+	if decodeStrictJSON(w, r, &struct{}{}, 256) != nil {
+		return
+	}
+	s.mu.Lock()
+	s.session = ""
+	s.csrf = ""
+	s.reviewNonces = map[string]reviewNonce{}
+	s.mu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]any{"changed": "browser_session_revoked", "provider_leases_revoked": false})
 }
 
 func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
@@ -363,6 +446,178 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, state)
+}
+
+type saveSettingsRequest struct {
+	ExpectedVersion    uint64                `json:"expected_version"`
+	ExpectedGeneration string                `json:"expected_generation"`
+	Draft              controlsettings.Draft `json:"draft"`
+}
+
+func (s *Server) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
+	if !s.requireMutation(w, r, true) {
+		return
+	}
+	var request saveSettingsRequest
+	if decodeStrictJSON(w, r, &request, maxJSONBytes) != nil {
+		return
+	}
+	result, err := s.app.SaveSettings(r.Context(), controlsettings.Revision{Version: request.ExpectedVersion, Generation: request.ExpectedGeneration}, request.Draft)
+	if err != nil {
+		s.recordFailure()
+		if errors.Is(err, controlsettings.ErrConflict) {
+			writeSettingsConflict(w, result.Document)
+			return
+		}
+		if errors.Is(err, controlsettings.ErrRecoveryRequired) {
+			writeError(w, http.StatusConflict, "settings_corrupt")
+			return
+		}
+		writeError(w, http.StatusBadRequest, "invalid_input")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"settings": result, "changed": "settings_saved"})
+}
+
+type useSettingsForProofRequest struct {
+	SettingsVersion     uint64 `json:"settings_version"`
+	SettingsGeneration  string `json:"settings_generation"`
+	SettingsFingerprint string `json:"settings_fingerprint"`
+}
+
+type createRunRequest struct {
+	ExpectedSelectionVersion    uint64 `json:"expected_selection_version"`
+	ExpectedSelectionGeneration string `json:"expected_selection_generation"`
+	SettingsVersion             uint64 `json:"settings_version"`
+	SettingsGeneration          string `json:"settings_generation"`
+	SettingsFingerprint         string `json:"settings_fingerprint"`
+}
+
+func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
+	if !s.requireMutation(w, r, true) {
+		return
+	}
+	var request createRunRequest
+	if decodeStrictJSON(w, r, &request, 4096) != nil {
+		return
+	}
+	if strings.TrimSpace(request.ExpectedSelectionGeneration) == "" || request.SettingsVersion == 0 || strings.TrimSpace(request.SettingsGeneration) == "" || strings.TrimSpace(request.SettingsFingerprint) == "" {
+		writeError(w, http.StatusBadRequest, "invalid_input")
+		return
+	}
+	application, ok := s.app.(RunApplication)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "run_control_unavailable")
+		return
+	}
+	result, err := application.CreateRun(r.Context(),
+		controlrun.Revision{Version: request.ExpectedSelectionVersion, Generation: request.ExpectedSelectionGeneration},
+		controlsettings.Revision{Version: request.SettingsVersion, Generation: request.SettingsGeneration},
+		request.SettingsFingerprint,
+	)
+	if err != nil {
+		s.writeRunError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"run_selection": result, "changed": "run_created_and_selected"})
+}
+
+type selectRunRequest struct {
+	ExpectedVersion    uint64 `json:"expected_version"`
+	ExpectedGeneration string `json:"expected_generation"`
+	RunID              string `json:"run_id"`
+}
+
+func (s *Server) handleSelectRun(w http.ResponseWriter, r *http.Request) {
+	if !s.requireMutation(w, r, true) {
+		return
+	}
+	var request selectRunRequest
+	if decodeStrictJSON(w, r, &request, 4096) != nil {
+		return
+	}
+	if strings.TrimSpace(request.ExpectedGeneration) == "" || strings.TrimSpace(request.RunID) == "" {
+		writeError(w, http.StatusBadRequest, "invalid_input")
+		return
+	}
+	application, ok := s.app.(RunApplication)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "run_control_unavailable")
+		return
+	}
+	result, err := application.SelectRun(r.Context(), controlrun.Revision{Version: request.ExpectedVersion, Generation: request.ExpectedGeneration}, request.RunID)
+	if err != nil {
+		s.writeRunError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"run_selection": result, "changed": "run_selected"})
+}
+
+type recoverRunSelectionRequest struct {
+	ProblemFingerprint string  `json:"problem_fingerprint"`
+	ExpectedVersion    *uint64 `json:"expected_version"`
+	ExpectedGeneration string  `json:"expected_generation"`
+	Acknowledgement    string  `json:"acknowledgement"`
+	RunID              string  `json:"run_id"`
+}
+
+func (s *Server) handleRecoverRunSelection(w http.ResponseWriter, r *http.Request) {
+	if !s.requireMutation(w, r, true) {
+		return
+	}
+	var request recoverRunSelectionRequest
+	if decodeStrictJSON(w, r, &request, 4096) != nil {
+		return
+	}
+	if strings.TrimSpace(request.ProblemFingerprint) == "" || request.Acknowledgement != controlrun.RecoveryAcknowledgement || (request.ExpectedVersion == nil) != (request.ExpectedGeneration == "") {
+		writeError(w, http.StatusBadRequest, "invalid_input")
+		return
+	}
+	var expected *controlrun.Revision
+	if request.ExpectedVersion != nil {
+		revision := controlrun.Revision{Version: *request.ExpectedVersion, Generation: request.ExpectedGeneration}
+		expected = &revision
+	}
+	application, ok := s.app.(RunApplication)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "run_control_unavailable")
+		return
+	}
+	result, err := application.RecoverRunSelection(r.Context(), request.ProblemFingerprint, expected, request.Acknowledgement, request.RunID)
+	if err != nil {
+		s.writeRunError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"run_selection": result, "changed": "run_selection_recovered"})
+}
+
+func (s *Server) writeRunError(w http.ResponseWriter, err error) {
+	s.recordFailure()
+	switch {
+	case errors.Is(err, controlrun.ErrConflict), errors.Is(err, controlsettings.ErrConflict):
+		writeError(w, http.StatusConflict, "version_conflict")
+	case errors.Is(err, controlrun.ErrRecoveryRequired):
+		writeError(w, http.StatusConflict, "run_selection_recovery_required")
+	case errors.Is(err, controlrun.ErrInvalid), errors.Is(err, controlrun.ErrRunNotFound):
+		writeError(w, http.StatusBadRequest, "invalid_input")
+	default:
+		writeError(w, http.StatusConflict, safeCategory(err))
+	}
+}
+
+func (s *Server) handleUseSettingsForProof(w http.ResponseWriter, r *http.Request) {
+	if !s.requireMutation(w, r, true) {
+		return
+	}
+	var request useSettingsForProofRequest
+	if decodeStrictJSON(w, r, &request, 4096) != nil {
+		return
+	}
+	if request.SettingsVersion == 0 || strings.TrimSpace(request.SettingsGeneration) == "" || strings.TrimSpace(request.SettingsFingerprint) == "" {
+		writeError(w, http.StatusBadRequest, "invalid_input")
+		return
+	}
+	s.execute(w, r, Command{Kind: "use_settings_for_proof", Payload: request})
 }
 
 func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
@@ -721,13 +976,27 @@ func (s *Server) discoveryMetrics(valueObserved bool) DiscoveryMetrics {
 
 func (s *Server) requestBoundary(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Host != s.expectedHost || !remoteIsLoopback(r.RemoteAddr) {
+		if r.Host != s.expectedHost || !remoteIsTCP4Loopback(r.RemoteAddr) || r.URL.RawQuery != "" || r.URL.ForceQuery || len(r.Cookies()) != 0 || r.Header.Get("Authorization") != "" || r.Method == http.MethodOptions {
 			writeError(w, http.StatusForbidden, "forbidden")
 			return
 		}
 		if r.Header.Get("Access-Control-Request-Method") != "" {
 			writeError(w, http.StatusForbidden, "forbidden")
 			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/") && r.Header.Get("X-Mindline-Origin") != s.origin {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
+		if r.Method == http.MethodGet {
+			if origin := r.Header.Get("Origin"); origin != "" && origin != s.origin {
+				writeError(w, http.StatusForbidden, "forbidden")
+				return
+			}
+			if referer := r.Header.Get("Referer"); referer != "" && !strings.HasPrefix(referer, s.origin+"/") {
+				writeError(w, http.StatusForbidden, "forbidden")
+				return
+			}
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -776,16 +1045,14 @@ func (s *Server) requireCSRF(r *http.Request) bool {
 
 func decodeStrictJSON(w http.ResponseWriter, r *http.Request, target any, limit int64) error {
 	r.Body = http.MaxBytesReader(w, r.Body, limit)
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
+	data, err := io.ReadAll(r.Body)
+	if err != nil || len(data) == 0 || int64(len(data)) > limit {
 		writeError(w, http.StatusBadRequest, "invalid_input")
-		return err
+		return ErrInvalidInput
 	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
+	if err := privateio.DecodeJSONStrict(data, target); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_input")
-		return errors.New("trailing JSON")
+		return ErrInvalidInput
 	}
 	return nil
 }
@@ -798,7 +1065,49 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 
 func writeError(w http.ResponseWriter, status int, category string) {
 	correlation, _ := randomToken(8)
-	writeJSON(w, status, map[string]string{"error": category, "correlation_id": correlation})
+	writeJSON(w, status, map[string]any{"error": category, "error_code": category, "user_message": safeMessage(category), "changed": "none", "retryable": status >= 500 || status == http.StatusConflict || status == http.StatusTooManyRequests, "recovery_action": safeRecovery(category), "correlation_id": correlation})
+}
+
+func writeSettingsConflict(w http.ResponseWriter, current controlsettings.Document) {
+	correlation, _ := randomToken(8)
+	category := "settings_version_conflict"
+	writeJSON(w, http.StatusConflict, map[string]any{
+		"error": category, "error_code": category, "user_message": safeMessage(category),
+		"changed": "none", "retryable": true, "recovery_action": safeRecovery(category),
+		"correlation_id": correlation, "current": current,
+	})
+}
+
+func safeMessage(category string) string {
+	switch category {
+	case "session_stale", "unauthorized":
+		return "This browser session is no longer valid. Pair again."
+	case "pairing_expired":
+		return "The pairing code expired or was not confirmed. Create a new code."
+	case "pairing_channel_unavailable":
+		return "The Codex pairing channel is unavailable. Restart Mindline from Codex."
+	case "settings_version_conflict":
+		return "Saved settings changed elsewhere. Your edits were not overwritten."
+	case "port_occupied":
+		return "Mindline could not start because 127.0.0.1:9876 is already in use."
+	case "invalid_input":
+		return "Review the highlighted input and try again."
+	default:
+		return "Mindline blocked the operation without changing durable state."
+	}
+}
+
+func safeRecovery(category string) string {
+	switch category {
+	case "session_stale", "unauthorized":
+		return "pair_again"
+	case "pairing_expired":
+		return "create_new_code"
+	case "settings_version_conflict":
+		return "review_conflict"
+	default:
+		return "retry_or_review"
+	}
 }
 
 func safeCategory(err error) string {
@@ -827,13 +1136,13 @@ func constantEqual(actual, expected string) bool {
 	return subtle.ConstantTimeCompare([]byte(actual), []byte(expected)) == 1
 }
 
-func remoteIsLoopback(remote string) bool {
+func remoteIsTCP4Loopback(remote string) bool {
 	host, _, err := net.SplitHostPort(remote)
 	if err != nil {
 		return false
 	}
 	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+	return ip != nil && ip.To4() != nil && ip.IsLoopback()
 }
 
 func isJSON(value string) bool {

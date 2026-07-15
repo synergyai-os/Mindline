@@ -21,6 +21,7 @@ const (
 var (
 	ErrInvalidReadLimit  = errors.New("private read limit must be positive")
 	ErrReadLimitExceeded = errors.New("private read limit exceeded")
+	ErrInvalidJSON       = errors.New("private JSON is invalid")
 )
 
 // ValidateContained requires every supplied path to resolve beneath root. It also
@@ -232,16 +233,7 @@ func ReadJSONStrictBounded(root, path string, maxBytes int64, target any) error 
 	if err != nil {
 		return err
 	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		return fmt.Errorf("decode %s: %w", filepath.Base(path), err)
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		if err == nil {
-			return fmt.Errorf("decode %s: trailing JSON", filepath.Base(path))
-		}
+	if err := DecodeJSONStrict(data, target); err != nil {
 		return fmt.Errorf("decode %s: %w", filepath.Base(path), err)
 	}
 	return nil
@@ -254,17 +246,94 @@ func ReadJSONStrict(root, path string, target any) error {
 	if err != nil {
 		return err
 	}
+	if err := DecodeJSONStrict(data, target); err != nil {
+		return fmt.Errorf("decode %s: %w", filepath.Base(path), err)
+	}
+	return nil
+}
+
+// DecodeJSONStrict applies the closed JSON contract shared by durable control
+// documents. In addition to unknown fields and trailing data, it rejects
+// duplicate object keys before decoding into target.
+func DecodeJSONStrict(data []byte, target any) error {
+	if err := rejectDuplicateJSONKeys(data); err != nil {
+		return ErrInvalidJSON
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(target); err != nil {
-		return fmt.Errorf("decode %s: %w", filepath.Base(path), err)
+		return ErrInvalidJSON
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); err != io.EOF {
-		if err == nil {
-			return fmt.Errorf("decode %s: trailing JSON", filepath.Base(path))
+		return ErrInvalidJSON
+	}
+	return nil
+}
+
+func rejectDuplicateJSONKeys(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := consumeJSONValue(decoder, 0); err != nil {
+		return err
+	}
+	if token, err := decoder.Token(); err != io.EOF {
+		if err == nil || token != nil {
+			return errors.New("trailing JSON is not allowed")
 		}
-		return fmt.Errorf("decode %s: %w", filepath.Base(path), err)
+		return err
+	}
+	return nil
+}
+
+func consumeJSONValue(decoder *json.Decoder, depth int) error {
+	if depth > 128 {
+		return errors.New("JSON nesting limit exceeded")
+	}
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch delimiter {
+	case '{':
+		seen := make(map[string]struct{})
+		for decoder.More() {
+			nameToken, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			name, ok := nameToken.(string)
+			if !ok {
+				return errors.New("invalid JSON object key")
+			}
+			if _, duplicate := seen[name]; duplicate {
+				return errors.New("duplicate JSON object key")
+			}
+			seen[name] = struct{}{}
+			if err := consumeJSONValue(decoder, depth+1); err != nil {
+				return err
+			}
+		}
+		closing, err := decoder.Token()
+		if err != nil || closing != json.Delim('}') {
+			return errors.New("invalid JSON object")
+		}
+	case '[':
+		for decoder.More() {
+			if err := consumeJSONValue(decoder, depth+1); err != nil {
+				return err
+			}
+		}
+		closing, err := decoder.Token()
+		if err != nil || closing != json.Delim(']') {
+			return errors.New("invalid JSON array")
+		}
+	default:
+		return errors.New("invalid JSON delimiter")
 	}
 	return nil
 }

@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/synergyai-os/Mindline/internal/acquisition"
 	"github.com/synergyai-os/Mindline/internal/assurance"
@@ -44,8 +43,8 @@ func BuildExternalManifest(input BuildInput) (ExternalManifest, error) {
 	return buildExternalManifest(input, false)
 }
 
-func BuildAuthorizedExternalManifest(input BuildInput, receipt assurance.Receipt, expectedCommit, expectedConfiguration string, now time.Time, maxAge time.Duration) (ExternalManifest, error) {
-	if err := assurance.Validate(receipt, expectedCommit, expectedConfiguration, now, maxAge); err != nil {
+func BuildAuthorizedExternalManifest(input BuildInput, receipt assurance.Receipt, expectedCommit, expectedConfiguration string) (ExternalManifest, error) {
+	if err := assurance.Validate(receipt, expectedCommit, expectedConfiguration); err != nil {
 		return ExternalManifest{}, errors.New("pre-live authority rejected private Slack build")
 	}
 	if input.DataClass != DataClassPrivateRuntime {

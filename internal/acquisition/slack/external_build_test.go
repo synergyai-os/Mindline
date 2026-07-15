@@ -156,7 +156,7 @@ func TestPrivateManifestBuildRequiresCommitBoundReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := BuildAuthorizedExternalManifest(input, receipt, "commit-1", "config-1", now, time.Minute); err != nil {
+	if _, err := BuildAuthorizedExternalManifest(input, receipt, "commit-1", "config-1"); err != nil {
 		t.Fatal(err)
 	}
 }

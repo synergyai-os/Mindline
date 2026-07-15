@@ -181,17 +181,6 @@ func (app *App) approveBatch(ctx context.Context, approval controlui.HumanApprov
 	}
 	transport := app.connection.Transport
 	deadline := expiresAt.UTC()
-	if !app.synthetic && app.receipt != nil {
-		generatedAt, parseErr := time.Parse(time.RFC3339Nano, app.receipt.GeneratedAt)
-		if parseErr != nil {
-			app.mu.Unlock()
-			return nil, errors.New("pre-live gate timestamp rejected")
-		}
-		gateDeadline := generatedAt.UTC().Add(app.receiptMaxAge)
-		if gateDeadline.Before(deadline) {
-			deadline = gateDeadline
-		}
-	}
 	deliveryCtx, cancel := context.WithDeadline(ctx, deadline)
 	app.deliveryInFlight = true
 	app.deliveryCancel = cancel
@@ -254,17 +243,6 @@ func (app *App) resumeApprovedDelivery(ctx context.Context, command controlui.Co
 	transport := app.connection.Transport
 	verifier := &oneTimeHumanVerifier{fingerprint: batch.HumanInitiationEvidence.Fingerprint}
 	deadline := app.now().UTC().Add(5 * time.Minute)
-	if !app.synthetic && app.receipt != nil {
-		generatedAt, err := time.Parse(time.RFC3339Nano, app.receipt.GeneratedAt)
-		if err != nil {
-			app.mu.Unlock()
-			return nil, errors.New("pre-live gate timestamp rejected")
-		}
-		gateDeadline := generatedAt.UTC().Add(app.receiptMaxAge)
-		if gateDeadline.Before(deadline) {
-			deadline = gateDeadline
-		}
-	}
 	deliveryCtx, cancel := context.WithDeadline(ctx, deadline)
 	app.deliveryInFlight, app.deliveryCancel = true, cancel
 	app.mu.Unlock()

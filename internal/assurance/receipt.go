@@ -2,10 +2,12 @@ package assurance
 
 import (
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -14,7 +16,7 @@ import (
 	"github.com/synergyai-os/Mindline/internal/privateio"
 )
 
-const PreLiveReceiptSchema = "mindline-pre-live-gate-receipt/v0.1"
+const PreLiveReceiptSchema = "mindline-pre-live-gate-receipt/v0.2"
 
 var RequiredChecks = []string{
 	"go_test",
@@ -46,6 +48,7 @@ type Receipt struct {
 	Commit                   string  `json:"commit"`
 	ConfigurationFingerprint string  `json:"configuration_fingerprint"`
 	SourceBindingFingerprint string  `json:"source_binding_fingerprint"`
+	BuildArtifactFingerprint string  `json:"build_artifact_fingerprint"`
 	GeneratedAt              string  `json:"generated_at"`
 	Checks                   []Check `json:"checks"`
 	RunnerVersion            string  `json:"runner_version"`
@@ -56,11 +59,16 @@ type Receipt struct {
 }
 
 func Build(commit, configurationFingerprint, sourceBindingFingerprint string, generatedAt time.Time, checks []Check) (Receipt, error) {
+	artifactFingerprint, err := currentExecutableFingerprint()
+	if err != nil {
+		return Receipt{}, errors.New("pre-live executable binding unavailable")
+	}
 	receipt := Receipt{
 		SchemaVersion:            PreLiveReceiptSchema,
 		Commit:                   strings.TrimSpace(commit),
 		ConfigurationFingerprint: strings.TrimSpace(configurationFingerprint),
 		SourceBindingFingerprint: strings.TrimSpace(sourceBindingFingerprint),
+		BuildArtifactFingerprint: artifactFingerprint,
 		GeneratedAt:              generatedAt.UTC().Format(time.RFC3339Nano),
 		Checks:                   append([]Check{}, checks...),
 		RunnerVersion:            FixedGateRunnerVersion,
@@ -87,7 +95,7 @@ func validSHA256Fingerprint(value string) bool {
 	return err == nil
 }
 
-func Validate(receipt Receipt, expectedCommit, expectedConfiguration string, now time.Time, maxAge time.Duration) error {
+func Validate(receipt Receipt, expectedCommit, expectedConfiguration string) error {
 	if receipt.SchemaVersion != PreLiveReceiptSchema || receipt.Fingerprint == "" || receipt.Fingerprint != fingerprint(receipt) {
 		return errors.New("invalid pre-live gate receipt")
 	}
@@ -97,9 +105,12 @@ func Validate(receipt Receipt, expectedCommit, expectedConfiguration string, now
 	if receipt.Commit != strings.TrimSpace(expectedCommit) || receipt.ConfigurationFingerprint != strings.TrimSpace(expectedConfiguration) {
 		return errors.New("pre-live gate binding drift")
 	}
-	generatedAt, err := time.Parse(time.RFC3339Nano, receipt.GeneratedAt)
-	if err != nil || generatedAt.After(now.UTC()) || maxAge <= 0 || now.UTC().Sub(generatedAt) > maxAge {
-		return errors.New("pre-live gate receipt expired")
+	if _, err := time.Parse(time.RFC3339Nano, receipt.GeneratedAt); err != nil {
+		return errors.New("pre-live gate generated time is invalid")
+	}
+	actualArtifact, err := currentExecutableFingerprint()
+	if err != nil || !constantTimeEqual(receipt.BuildArtifactFingerprint, actualArtifact) {
+		return errors.New("pre-live gate executable binding drift")
 	}
 	if !receipt.PrivateDataAuthorized || !receipt.RealCredentialAuthorized || !receipt.RealTransportAuthorized {
 		return errors.New("pre-live gate authority incomplete")
@@ -107,8 +118,33 @@ func Validate(receipt Receipt, expectedCommit, expectedConfiguration string, now
 	return validateChecks(receipt.Checks)
 }
 
+func currentExecutableFingerprint() (string, error) {
+	path, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	path, err = filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return "", errors.New("executable is not a regular file")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(digest[:]), nil
+}
+
+func constantTimeEqual(left, right string) bool {
+	return len(left) == len(right) && subtle.ConstantTimeCompare([]byte(left), []byte(right)) == 1
+}
+
 func Write(root, path string, receipt Receipt) error {
-	if err := Validate(receipt, receipt.Commit, receipt.ConfigurationFingerprint, mustTime(receipt.GeneratedAt), time.Nanosecond); err != nil {
+	if err := Validate(receipt, receipt.Commit, receipt.ConfigurationFingerprint); err != nil {
 		return err
 	}
 	if err := privateio.ValidateContained(root, filepath.Dir(path)); err != nil {
@@ -154,9 +190,4 @@ func fingerprint(receipt Receipt) string {
 	data, _ := json.Marshal(receipt)
 	digest := sha256.Sum256(data)
 	return hex.EncodeToString(digest[:])
-}
-
-func mustTime(value string) time.Time {
-	parsed, _ := time.Parse(time.RFC3339Nano, value)
-	return parsed
 }

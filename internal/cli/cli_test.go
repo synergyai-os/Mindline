@@ -3,11 +3,26 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 )
+
+func TestActivationOperatorInputRemainsAnOSFileSeparateFromNativeSourceInput(t *testing.T) {
+	native := strings.NewReader("native-source-frame")
+	runner := NewRunnerWithInput(NewMemoryFS(), native)
+	if runner.nativeInput != native {
+		t.Fatal("native source input was not retained")
+	}
+	if runner.operatorInput != os.Stdin {
+		t.Fatal("generic native source input replaced the production operator channel")
+	}
+	if strings.Contains(usage, "activation serve --") || !strings.Contains(usage, "usage: mindline activation serve\n") {
+		t.Fatalf("activation serve usage exposes a legacy flag: %s", usage)
+	}
+}
 
 func TestProcessPrintsDeterministicEnvelopeToStdoutByDefault(t *testing.T) {
 	fs := NewMemoryFS()

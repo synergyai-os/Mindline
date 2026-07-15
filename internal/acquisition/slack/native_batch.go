@@ -3,7 +3,6 @@ package slack
 import (
 	"errors"
 	"strings"
-	"time"
 
 	"github.com/synergyai-os/Mindline/internal/assurance"
 )
@@ -34,8 +33,8 @@ type NativeBatch struct {
 	Messages                  []NativeMessage `json:"messages"`
 }
 
-func BuildAuthorizedExternalManifestFromNativeBatch(batch NativeBatch, receipt assurance.Receipt, commit, configuration string, now time.Time, maxAge time.Duration) (ExternalManifest, error) {
-	if err := assurance.Validate(receipt, commit, configuration, now, maxAge); err != nil {
+func BuildAuthorizedExternalManifestFromNativeBatch(batch NativeBatch, receipt assurance.Receipt, commit, configuration string) (ExternalManifest, error) {
+	if err := assurance.Validate(receipt, commit, configuration); err != nil {
 		return ExternalManifest{}, errors.New("pre-live authority rejected private Slack batch")
 	}
 	if err := validateNativeBatch(batch); err != nil {
@@ -51,7 +50,7 @@ func BuildAuthorizedExternalManifestFromNativeBatch(batch NativeBatch, receipt a
 		Watermark:      batch.Watermark,
 		Messages:       batch.Messages,
 		DataClass:      DataClassPrivateRuntime,
-	}, receipt, commit, configuration, now, maxAge)
+	}, receipt, commit, configuration)
 }
 
 func validateNativeBatch(batch NativeBatch) error {

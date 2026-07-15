@@ -2,11 +2,14 @@ package activationapp
 
 import (
 	"context"
+	"io"
 	"time"
 
 	"github.com/synergyai-os/Mindline/internal/acquisition"
 	acquisitionslack "github.com/synergyai-os/Mindline/internal/acquisition/slack"
 	"github.com/synergyai-os/Mindline/internal/assurance"
+	"github.com/synergyai-os/Mindline/internal/controlrun"
+	"github.com/synergyai-os/Mindline/internal/controlsettings"
 	"github.com/synergyai-os/Mindline/internal/controlui"
 	"github.com/synergyai-os/Mindline/internal/integrations"
 	"github.com/synergyai-os/Mindline/internal/orchestration"
@@ -17,7 +20,7 @@ import (
 )
 
 const (
-	StateSchemaVersion        = "mindline-trusted-activation-state/v0.3"
+	StateSchemaVersion        = "mindline-trusted-activation-state/v0.4"
 	FounderReviewSchema       = "mindline-founder-review/v0.1"
 	ZeroDeliveryReceiptSchema = "mindline-zero-delivery-receipt/v0.1"
 	QueueProjectionSchema     = "mindline-frozen-activation-queue/v0.1"
@@ -30,16 +33,19 @@ const (
 )
 
 type Options struct {
+	ControlRoot              string
 	RuntimeRoot              string
 	RunID                    orchestration.RunID
 	Commit                   string
 	ConfigurationFingerprint string
 	PreLiveReceipt           *assurance.Receipt
-	ReceiptMaxAge            time.Duration
 	SyntheticOnly            bool
 	Now                      func() time.Time
 	Connector                DestinationConnector
 	SourceConnector          SlackSourceConnector
+	SettingsRepository       controlsettings.RepositoryPort
+	RunRepository            controlrun.RepositoryPort
+	RunEntropy               io.Reader
 }
 
 type DestinationConnector interface {
@@ -103,6 +109,9 @@ type persistedState struct {
 	KnownDestination      *integrations.ConnectionSnapshot      `json:"known_destination,omitempty"`
 	KnownSource           *integrations.ConnectionSnapshot      `json:"known_source,omitempty"`
 	SlackDrainWindow      *SlackDrainWindow                     `json:"slack_drain_window,omitempty"`
+	SettingsVersion       uint64                                `json:"settings_version,omitempty"`
+	SettingsGeneration    string                                `json:"settings_generation,omitempty"`
+	SettingsFingerprint   string                                `json:"settings_fingerprint,omitempty"`
 }
 
 // SlackDrainWindow is the durable, non-secret source scope reserved before
@@ -209,18 +218,43 @@ type ZeroDeliveryReceipt struct {
 }
 
 type View struct {
-	SchemaVersion    string          `json:"schema_version"`
-	Mode             string          `json:"mode"`
-	PreLiveReady     bool            `json:"pre_live_ready"`
-	Run              RunView         `json:"run"`
-	Connections      ConnectionView  `json:"connections"`
-	Strategy         StrategyView    `json:"strategy"`
-	Inventory        InventoryView   `json:"inventory"`
-	Proof            ProofView       `json:"proof"`
-	Destination      DestinationView `json:"destination"`
-	Founder          FounderView     `json:"founder"`
-	Drain            DrainView       `json:"drain"`
-	DeliveryInFlight bool            `json:"delivery_in_flight"`
+	SchemaVersion    string                   `json:"schema_version"`
+	Mode             string                   `json:"mode"`
+	PreLiveReady     bool                     `json:"pre_live_ready"`
+	Run              RunView                  `json:"run"`
+	Connections      ConnectionView           `json:"connections"`
+	Strategy         StrategyView             `json:"strategy"`
+	Inventory        InventoryView            `json:"inventory"`
+	Proof            ProofView                `json:"proof"`
+	Destination      DestinationView          `json:"destination"`
+	Founder          FounderView              `json:"founder"`
+	Drain            DrainView                `json:"drain"`
+	DeliveryInFlight bool                     `json:"delivery_in_flight"`
+	Settings         controlsettings.Snapshot `json:"settings"`
+	RunSelection     RunSelectionView         `json:"run_selection"`
+	ActiveStrategy   ActiveStrategyView       `json:"active_strategy"`
+}
+
+type RunSelectionView struct {
+	State              string `json:"state"`
+	Version            uint64 `json:"version"`
+	Generation         string `json:"generation"`
+	SelectedRunID      string `json:"selected_run_id,omitempty"`
+	SafePriorRun       string `json:"safe_prior_run_reference,omitempty"`
+	ReasonCode         string `json:"reason_code,omitempty"`
+	ProblemFingerprint string `json:"problem_fingerprint,omitempty"`
+	ReadableVersion    uint64 `json:"readable_version,omitempty"`
+	ReadableGeneration string `json:"readable_generation,omitempty"`
+	BackupAvailable    bool   `json:"backup_available,omitempty"`
+}
+
+type ActiveStrategyView struct {
+	State              string   `json:"state"`
+	SettingsVersion    uint64   `json:"settings_version,omitempty"`
+	SettingsGeneration string   `json:"settings_generation,omitempty"`
+	Fingerprint        string   `json:"fingerprint,omitempty"`
+	ExactLenses        []string `json:"context_lenses,omitempty"`
+	RoutingPolicy      string   `json:"routing_policy,omitempty"`
 }
 
 type RunView struct {
@@ -350,6 +384,12 @@ type saveStrategyPayload struct {
 	MaximumCostMicrounits  int64  `json:"maximum_cost_microunits"`
 	MaximumRetryAttempts   int    `json:"maximum_retry_attempts"`
 	ManualSupportTolerance int    `json:"manual_support_tolerance"`
+}
+
+type useSettingsPayload struct {
+	SettingsVersion     uint64 `json:"settings_version"`
+	SettingsGeneration  string `json:"settings_generation"`
+	SettingsFingerprint string `json:"settings_fingerprint"`
 }
 
 type reviewItemPayload struct {

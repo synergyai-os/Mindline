@@ -5,7 +5,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/synergyai-os/Mindline/internal/assurance"
 )
@@ -33,7 +32,7 @@ func TestNativeBatchOwnsOccurrenceDerivationNotConnector(t *testing.T) {
 func TestNativeBatchRejectsAuthorityBeforePrivateValidation(t *testing.T) {
 	_, err := BuildAuthorizedExternalManifestFromNativeBatch(
 		NativeBatch{Messages: []NativeMessage{{Text: "private-sentinel"}}},
-		assurance.Receipt{}, "commit", "configuration", time.Now().UTC(), time.Minute,
+		assurance.Receipt{}, "commit", "configuration",
 	)
 	if err == nil || !strings.Contains(err.Error(), "authority") || strings.Contains(err.Error(), "private-sentinel") {
 		t.Fatalf("private batch crossed authority boundary: %v", err)

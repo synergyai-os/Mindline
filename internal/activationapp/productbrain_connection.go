@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"strings"
-	"time"
 
 	"github.com/synergyai-os/Mindline/internal/integrations"
 	"github.com/synergyai-os/Mindline/internal/productbrain"
@@ -43,7 +42,6 @@ func (productionConnector) Connect(ctx context.Context, registry *integrations.R
 	}
 	ref, snapshot, err := registry.Register(integrations.LeaseOptions{
 		Kind: integrations.ConnectionProductBrain, Secret: credential, Identity: identity,
-		IdleTTL: 20 * time.Minute, AbsoluteTTL: 2 * time.Hour,
 	})
 	if err != nil {
 		return nil, err
@@ -96,6 +94,10 @@ func withAKI[T any](ctx context.Context, transport *sessionTransport, call func(
 			return err
 		}
 		result, err = call(callContext, aki)
+		var transportError *productbrain.TransportError
+		if errors.As(err, &transportError) && (transportError.Category == "unauthorized" || transportError.Category == "forbidden") {
+			return errors.Join(err, integrations.ErrCredentialRejected)
+		}
 		return err
 	})
 	return result, err

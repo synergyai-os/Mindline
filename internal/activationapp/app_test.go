@@ -19,12 +19,117 @@ import (
 	"github.com/synergyai-os/Mindline/internal/acquisition"
 	acquisitionslack "github.com/synergyai-os/Mindline/internal/acquisition/slack"
 	"github.com/synergyai-os/Mindline/internal/assurance"
+	"github.com/synergyai-os/Mindline/internal/controlrun"
+	"github.com/synergyai-os/Mindline/internal/controlsettings"
 	"github.com/synergyai-os/Mindline/internal/controlui"
 	"github.com/synergyai-os/Mindline/internal/integrations"
 	"github.com/synergyai-os/Mindline/internal/orchestration"
 	"github.com/synergyai-os/Mindline/internal/productbrain"
 	"github.com/synergyai-os/Mindline/internal/routing"
 )
+
+func TestWP46_StableSettingsOnlyShellCreatesExplicitProviderFreeRunAndRestarts(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "stable-control")
+	now := time.Date(2026, 7, 15, 14, 30, 0, 0, time.UTC)
+	transport := newMemoryTransport()
+	options := Options{
+		ControlRoot: root, SyntheticOnly: true, Now: func() time.Time { return now },
+		Connector: fakeConnector{transport: transport}, RunEntropy: strings.NewReader(strings.Repeat("r", 64)),
+	}
+	app, err := New(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initialAny, err := app.State(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial := initialAny.(View)
+	if initial.RunSelection.State != "none" || initial.Run.RunID != "" || app.service != nil || app.runtimeRoot != "" {
+		t.Fatalf("startup opened an implicit run: %+v", initial)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "runs")); !os.IsNotExist(err) {
+		t.Fatal("settings-only startup created run storage")
+	}
+	saved, err := app.SaveSettings(context.Background(), initial.Settings.Document.Revision(), initial.Settings.Document.Draft)
+	if err != nil || saved.State != controlsettings.StateSaved {
+		t.Fatalf("settings-only save = %+v, %v", saved, err)
+	}
+	selection, err := app.CreateRun(context.Background(),
+		controlrun.Revision{Version: initial.RunSelection.Version, Generation: initial.RunSelection.Generation},
+		saved.Document.Revision(), saved.Document.Fingerprint,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selection.Document.SelectedRunID == "" || selection.State != controlrun.StateSelected {
+		t.Fatalf("new run was not explicitly selected: %+v", selection)
+	}
+	activeAny, err := app.State(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	active := activeAny.(View)
+	if active.RunSelection.State != "compatible_selected" || string(active.Run.RunID) != selection.Document.SelectedRunID || active.ActiveStrategy.SettingsVersion != saved.Document.Version || active.ActiveStrategy.SettingsGeneration != saved.Document.Generation {
+		t.Fatalf("exact settings were not snapshotted into selected v0.4 run: %+v", active)
+	}
+	if transport.mutationCalls != 0 || active.Connections.SourceConnected || active.Connections.DestinationConnected {
+		t.Fatal("run creation performed a provider operation")
+	}
+	runRoot := filepath.Join(root, "runs", selection.Document.SelectedRunID)
+	if _, err := os.Lstat(filepath.Join(runRoot, stateFilename)); err != nil {
+		t.Fatal(err)
+	}
+	app.Close()
+
+	restarted, err := New(Options{
+		ControlRoot: root, SyntheticOnly: true, Now: func() time.Time { return now.Add(30 * 24 * time.Hour) },
+		Connector: fakeConnector{transport: newMemoryTransport()}, RunEntropy: strings.NewReader(strings.Repeat("s", 64)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	restartedAny, err := restarted.State(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloaded := restartedAny.(View)
+	if reloaded.RunSelection.State != "compatible_selected" || reloaded.RunSelection.SelectedRunID != selection.Document.SelectedRunID || reloaded.Settings.Document.Fingerprint != saved.Document.Fingerprint || reloaded.ActiveStrategy.SettingsGeneration != saved.Document.Generation {
+		t.Fatalf("stable restart lost explicit run or settings: %+v", reloaded)
+	}
+}
+
+func TestWP46_StableGateMissingKeepsSettingsShellAndBlocksNewProof(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "stable-control")
+	app, err := New(Options{ControlRoot: root, Now: time.Now, RunEntropy: strings.NewReader(strings.Repeat("g", 64))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Close()
+	stateAny, err := app.State(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := stateAny.(View)
+	if state.PreLiveReady || state.RunSelection.State != "none" || state.Settings.State != controlsettings.StateDefaults {
+		t.Fatalf("gate-missing shell projection = %+v", state)
+	}
+	saved, err := app.SaveSettings(context.Background(), state.Settings.Document.Revision(), state.Settings.Document.Draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = app.CreateRun(context.Background(),
+		controlrun.Revision{Version: state.RunSelection.Version, Generation: state.RunSelection.Generation},
+		saved.Document.Revision(), saved.Document.Fingerprint,
+	)
+	if err == nil || !strings.Contains(err.Error(), "live gate required") {
+		t.Fatalf("gate-missing new proof = %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "runs")); !os.IsNotExist(err) {
+		t.Fatal("gate-missing new proof created run evidence")
+	}
+}
 
 func TestSyntheticActivationFreezesFullQueueAndDeliversOnlySealedProof(t *testing.T) {
 	root := t.TempDir()
@@ -176,12 +281,18 @@ func TestPreSTD20ActivationStateRequiresRebuildBeforeFingerprintValidation(t *te
 	}
 }
 
-func TestLiveModeRequiresCommitBoundCompleteReceipt(t *testing.T) {
+func TestLiveModeAllowsSafeShellButRequiresCommitBoundCompleteReceiptForTransport(t *testing.T) {
 	root := t.TempDir()
 	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
-	if _, err := New(Options{RuntimeRoot: root, Now: func() time.Time { return now }}); err == nil {
-		t.Fatal("live mode started without a receipt")
+	safeShell, err := New(Options{RuntimeRoot: root, Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatalf("safe shell was blocked by a missing receipt: %v", err)
 	}
+	state, err := safeShell.State(context.Background())
+	if err != nil || state.(View).PreLiveReady {
+		t.Fatalf("missing receipt granted live transport: state=%+v err=%v", state, err)
+	}
+	safeShell.Close()
 	checks := make([]assurance.Check, 0, len(assurance.RequiredChecks))
 	for _, name := range assurance.RequiredChecks {
 		checks = append(checks, assurance.Check{Name: name, ToolVersion: "synthetic-test", Outcome: "pass", EvidenceFingerprint: "sha256:test-" + name})
@@ -429,21 +540,12 @@ func TestControlUIOneTimeCeremonyAuthorizesExactDelivery(t *testing.T) {
 		}
 	}
 	reviewAllSelected(t, app)
-	server, err := controlui.New(app, controlui.Options{ExpectedHost: "127.0.0.1:43125", Origin: "http://127.0.0.1:43125", RuntimeRoot: root, Now: func() time.Time { return now }})
+	server, err := controlui.New(app, controlui.Options{ExpectedHost: "127.0.0.1:43125", Origin: "http://127.0.0.1:43125", RuntimeRoot: root, Now: func() time.Time { return now }, Pairing: immediatePairingConfirmer{}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	bootstrap := strings.TrimPrefix(server.BootstrapFragment(), "bootstrap=")
-	response := uiRequest(t, server, http.MethodPost, "/api/bootstrap", strings.NewReader("{}"), map[string]string{"Content-Type": "application/json", "X-Mindline-Bootstrap": bootstrap})
-	if response.Code != http.StatusOK {
-		t.Fatalf("bootstrap failed: %d %s", response.Code, response.Body.String())
-	}
-	var session map[string]string
-	if err := json.Unmarshal(response.Body.Bytes(), &session); err != nil {
-		t.Fatal(err)
-	}
-	headers := map[string]string{"Content-Type": "application/json", "X-Mindline-Session": session["session"], "X-Mindline-CSRF": session["csrf"]}
-	response = uiRequest(t, server, http.MethodPost, "/api/commands/preview-batch", strings.NewReader(`{"maximum_destination_writes":3,"maximum_mutation_attempts":6}`), headers)
+	headers := pairControlUIServer(t, server)
+	response := uiRequest(t, server, http.MethodPost, "/api/commands/preview-batch", strings.NewReader(`{"maximum_destination_writes":3,"maximum_mutation_attempts":6}`), headers)
 	if response.Code != http.StatusOK {
 		t.Fatalf("preview failed: %d %s", response.Code, response.Body.String())
 	}
@@ -505,21 +607,12 @@ func TestControlUIFreshGestureResumesOnlyExistingSealedBatch(t *testing.T) {
 	approvalFingerprint := app.state.Approval.Fingerprint
 	clock = clock.Add(10 * time.Second)
 	capture := &capturingApplication{App: app}
-	server, err := controlui.New(capture, controlui.Options{ExpectedHost: "127.0.0.1:43125", Origin: "http://127.0.0.1:43125", RuntimeRoot: root, Now: func() time.Time { return clock }})
+	server, err := controlui.New(capture, controlui.Options{ExpectedHost: "127.0.0.1:43125", Origin: "http://127.0.0.1:43125", RuntimeRoot: root, Now: func() time.Time { return clock }, Pairing: immediatePairingConfirmer{}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	bootstrap := strings.TrimPrefix(server.BootstrapFragment(), "bootstrap=")
-	response := uiRequest(t, server, http.MethodPost, "/api/bootstrap", strings.NewReader("{}"), map[string]string{"Content-Type": "application/json", "X-Mindline-Bootstrap": bootstrap})
-	if response.Code != http.StatusOK {
-		t.Fatalf("bootstrap failed: %d %s", response.Code, response.Body.String())
-	}
-	var session map[string]string
-	if err := json.Unmarshal(response.Body.Bytes(), &session); err != nil {
-		t.Fatal(err)
-	}
-	headers := map[string]string{"Content-Type": "application/json", "X-Mindline-Session": session["session"], "X-Mindline-CSRF": session["csrf"]}
-	response = uiRequest(t, server, http.MethodPost, "/api/commands/resume-delivery", strings.NewReader("{}"), headers)
+	headers := pairControlUIServer(t, server)
+	response := uiRequest(t, server, http.MethodPost, "/api/commands/resume-delivery", strings.NewReader("{}"), headers)
 	if response.Code != http.StatusOK || capture.command.Kind != "resume_delivery" || capture.command.HumanAction == nil {
 		t.Fatalf("control UI did not mint the fresh resume gesture: status=%d body=%s command=%+v", response.Code, response.Body.String(), capture.command)
 	}
@@ -620,6 +713,36 @@ func uiRequest(t *testing.T, server *controlui.Server, method, path string, body
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
 	return response
+}
+
+type immediatePairingConfirmer struct{}
+
+func (immediatePairingConfirmer) ConfirmPairing(context.Context, string) error { return nil }
+
+func pairControlUIServer(t *testing.T, server *controlui.Server) map[string]string {
+	t.Helper()
+	response := uiRequest(t, server, http.MethodPost, "/api/session/pair", strings.NewReader("{}"), map[string]string{
+		"Content-Type":      "application/json",
+		"X-Mindline-Origin": "http://127.0.0.1:43125",
+	})
+	if response.Code != http.StatusOK {
+		t.Fatalf("pairing failed: %d %s", response.Code, response.Body.String())
+	}
+	decoder := json.NewDecoder(response.Body)
+	var challenge map[string]any
+	if err := decoder.Decode(&challenge); err != nil || challenge["type"] != "challenge" {
+		t.Fatalf("invalid pairing challenge: %v err=%v", challenge, err)
+	}
+	var paired map[string]string
+	if err := decoder.Decode(&paired); err != nil || paired["type"] != "paired" || paired["session"] == "" || paired["csrf"] == "" {
+		t.Fatalf("invalid paired session: %v err=%v", paired, err)
+	}
+	return map[string]string{
+		"Content-Type":       "application/json",
+		"X-Mindline-Origin":  "http://127.0.0.1:43125",
+		"X-Mindline-Session": paired["session"],
+		"X-Mindline-CSRF":    paired["csrf"],
+	}
 }
 
 func syntheticManifest(t *testing.T, count int, withEvidence bool) acquisitionslack.ExternalManifest {
@@ -737,8 +860,7 @@ type fakeConnector struct{ transport *memoryTransport }
 
 func (connector fakeConnector) Connect(_ context.Context, _ *integrations.Registry, _ []byte) (*DestinationConnection, error) {
 	capability, _ := connector.transport.ResolveWorkspace(context.Background())
-	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
-	snapshot := integrations.ConnectionSnapshot{ConnectionID: "conn-synthetic", Kind: integrations.ConnectionProductBrain, Identity: integrations.VerifiedIdentity{Provider: "product_brain", WorkspaceID: capability.ID, KeyID: capability.KeyID, CapabilityVersion: "aki/v0.2"}, CreatedAt: now, LastUsedAt: now, IdleExpiresAt: now.Add(time.Hour), AbsoluteExpiresAt: now.Add(2 * time.Hour)}
+	snapshot := integrations.ConnectionSnapshot{Kind: integrations.ConnectionProductBrain, Identity: integrations.VerifiedIdentity{Provider: "product_brain", WorkspaceID: capability.ID, KeyID: capability.KeyID, CapabilityVersion: "aki/v0.2"}}
 	return &DestinationConnection{Snapshot: snapshot, Capability: capability, Transport: connector.transport, Disconnect: func() error { return nil }}, nil
 }
 
@@ -751,9 +873,8 @@ type fakeSlackSourceConnector struct {
 func (connector *fakeSlackSourceConnector) Connect(_ context.Context, _ *integrations.Registry, _ []byte, channelID string, budgets acquisitionslack.SlackHTTPBudgets) (*SlackSourceConnection, error) {
 	connector.budgets = budgets
 	snapshot := integrations.ConnectionSnapshot{
-		ConnectionID: "slack-" + connector.now.Format("150405"), Kind: integrations.ConnectionSlackWebAPI,
-		Identity:  integrations.VerifiedIdentity{Provider: "slack", WorkspaceID: "T-PROOF", ChannelID: channelID, CapabilityVersion: acquisitionslack.WebAPIAdapterVersion},
-		CreatedAt: connector.now, LastUsedAt: connector.now, IdleExpiresAt: connector.now.Add(time.Hour), AbsoluteExpiresAt: connector.now.Add(2 * time.Hour),
+		Kind:     integrations.ConnectionSlackWebAPI,
+		Identity: integrations.VerifiedIdentity{Provider: "slack", WorkspaceID: "T-PROOF", ChannelID: channelID, CapabilityVersion: acquisitionslack.WebAPIAdapterVersion},
 	}
 	return &SlackSourceConnection{Snapshot: snapshot, Client: connector.client, Disconnect: func() error { return nil }}, nil
 }

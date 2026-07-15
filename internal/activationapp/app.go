@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,6 +16,8 @@ import (
 	"github.com/synergyai-os/Mindline/internal/acquisition"
 	acquisitionslack "github.com/synergyai-os/Mindline/internal/acquisition/slack"
 	"github.com/synergyai-os/Mindline/internal/assurance"
+	"github.com/synergyai-os/Mindline/internal/controlrun"
+	"github.com/synergyai-os/Mindline/internal/controlsettings"
 	"github.com/synergyai-os/Mindline/internal/controlui"
 	"github.com/synergyai-os/Mindline/internal/integrations"
 	"github.com/synergyai-os/Mindline/internal/orchestration"
@@ -32,6 +35,7 @@ const (
 
 type App struct {
 	mu                   sync.Mutex
+	controlRoot          string
 	runtimeRoot          string
 	now                  func() time.Time
 	synthetic            bool
@@ -39,10 +43,13 @@ type App struct {
 	commit               string
 	configuration        string
 	receipt              *assurance.Receipt
-	receiptMaxAge        time.Duration
 	connector            DestinationConnector
 	sourceConnector      SlackSourceConnector
 	registry             *integrations.Registry
+	settings             controlsettings.RepositoryPort
+	runSelection         controlrun.RepositoryPort
+	runEntropy           io.Reader
+	runBlockerCode       string
 	connection           *DestinationConnection
 	sourceConnection     *SlackSourceConnection
 	profile              *productbrain.DeliveryProfile
@@ -76,6 +83,9 @@ func DefaultConfigurationFingerprint() string {
 }
 
 func New(options Options) (*App, error) {
+	if strings.TrimSpace(options.ControlRoot) != "" || options.RunRepository != nil {
+		return newStableControlApp(options)
+	}
 	if strings.TrimSpace(options.RuntimeRoot) == "" {
 		return nil, errors.New("missing private runtime root")
 	}
@@ -95,15 +105,11 @@ func New(options Options) (*App, error) {
 		configuration = DefaultConfigurationFingerprint()
 	}
 	preLiveReady := false
-	receiptMaxAge := options.ReceiptMaxAge
-	if receiptMaxAge <= 0 {
-		receiptMaxAge = 30 * time.Minute
-	}
-	if !options.SyntheticOnly {
-		if options.PreLiveReceipt == nil || strings.TrimSpace(options.Commit) == "" {
-			return nil, errors.New("pre-live gate receipt required")
+	if !options.SyntheticOnly && options.PreLiveReceipt != nil {
+		if strings.TrimSpace(options.Commit) == "" {
+			return nil, errors.New("pre-live gate commit binding required")
 		}
-		if err := assurance.Validate(*options.PreLiveReceipt, options.Commit, configuration, now(), receiptMaxAge); err != nil {
+		if err := assurance.Validate(*options.PreLiveReceipt, options.Commit, configuration); err != nil {
 			return nil, err
 		}
 		preLiveReady = true
@@ -119,6 +125,14 @@ func New(options Options) (*App, error) {
 	if sourceConnector == nil {
 		sourceConnector = productionSlackSourceConnector{}
 	}
+	settings := options.SettingsRepository
+	if settings == nil {
+		createdSettings, settingsErr := controlsettings.NewRepository(options.RuntimeRoot, controlSettingsOptions(now))
+		if settingsErr != nil {
+			return nil, settingsErr
+		}
+		settings = createdSettings
+	}
 	journal, err := runjournal.NewStore(filepath.Join(options.RuntimeRoot, "run-journal"), runjournal.StoreOptions{})
 	if err != nil {
 		return nil, err
@@ -129,8 +143,8 @@ func New(options Options) (*App, error) {
 	}
 	app := &App{
 		runtimeRoot: options.RuntimeRoot, now: now, synthetic: options.SyntheticOnly, preLiveReady: preLiveReady,
-		commit: strings.TrimSpace(options.Commit), configuration: configuration, receipt: options.PreLiveReceipt, receiptMaxAge: receiptMaxAge,
-		connector: connector, sourceConnector: sourceConnector, registry: integrations.NewSessionRegistry(integrations.RegistryOptions{Now: now}), journal: journal,
+		commit: strings.TrimSpace(options.Commit), configuration: configuration, receipt: options.PreLiveReceipt,
+		connector: connector, sourceConnector: sourceConnector, registry: integrations.NewSessionRegistry(integrations.RegistryOptions{}), settings: settings, journal: journal,
 		humanAuthority: humanAuthority,
 		state:          persistedState{SchemaVersion: StateSchemaVersion, RunID: runID, BuildCommit: strings.TrimSpace(options.Commit), Configuration: configuration},
 	}
@@ -163,7 +177,7 @@ func New(options Options) (*App, error) {
 		app.registry.Shutdown()
 		return nil, err
 	}
-	if !options.SyntheticOnly {
+	if !options.SyntheticOnly && preLiveReady && options.PreLiveReceipt != nil {
 		if err := app.commitAuthorityLocked(context.Background(), "pre_live_authorization", options.PreLiveReceipt.Fingerprint); err != nil {
 			app.stopLeaseRenewal()
 			_ = app.leaseManager.Release(context.Background(), app.lease)
@@ -311,6 +325,9 @@ func (app *App) ControlUIAuthority() *controlui.HumanAuthority { return app.huma
 func (app *App) ImportExternalInventory(ctx context.Context, path, displayName string) (any, error) {
 	app.mu.Lock()
 	defer app.mu.Unlock()
+	if app.service == nil || app.state.RunID == "" {
+		return nil, errExplicitRunRequired
+	}
 	displayName = filepath.Base(strings.TrimSpace(displayName))
 	if displayName == "" || displayName == "." || len(displayName) > 255 {
 		return nil, errors.New("invalid inventory display name")
@@ -338,7 +355,7 @@ func (app *App) ImportExternalInventory(ctx context.Context, path, displayName s
 	if app.synthetic {
 		result, err = acquisitionslack.DecodeExternalInventory(file, acquisitionslack.DefaultMaximumBytes)
 	} else if app.receipt != nil {
-		result, err = acquisitionslack.DecodeAuthorizedExternalInventory(file, acquisitionslack.DefaultMaximumBytes, *app.receipt, app.commit, app.configuration, app.now(), app.receiptMaxAge)
+		result, err = acquisitionslack.DecodeAuthorizedExternalInventory(file, acquisitionslack.DefaultMaximumBytes, *app.receipt, app.commit, app.configuration)
 	} else {
 		err = errors.New("pre-live gate required")
 	}
@@ -392,7 +409,7 @@ func (app *App) connectDestination(ctx context.Context, payload any) (any, error
 		return nil, errors.New("destination connection blocked")
 	}
 	app.mu.Lock()
-	if app.deliveryInFlight || !app.transportAuthorizedLocked() {
+	if app.service == nil || app.state.RunID == "" || app.connector == nil || app.deliveryInFlight || !app.transportAuthorizedLocked() {
 		app.mu.Unlock()
 		return nil, errors.New("destination connection blocked")
 	}
@@ -472,6 +489,14 @@ func (app *App) connectDestination(ctx context.Context, payload any) (any, error
 }
 
 func (app *App) Execute(ctx context.Context, command controlui.Command) (any, error) {
+	if command.Kind == "connect_destination" || command.Kind == "resume_delivery" {
+		app.mu.Lock()
+		active := app.service != nil && app.state.RunID != ""
+		app.mu.Unlock()
+		if !active {
+			return nil, errExplicitRunRequired
+		}
+	}
 	if command.Kind == "connect_destination" {
 		return app.connectDestination(ctx, command.Payload)
 	}
@@ -480,12 +505,21 @@ func (app *App) Execute(ctx context.Context, command controlui.Command) (any, er
 	}
 	app.mu.Lock()
 	defer app.mu.Unlock()
+	if app.service == nil || app.state.RunID == "" {
+		return nil, errExplicitRunRequired
+	}
 	if command.Kind == "review_item" || command.Kind == "founder_review" || command.Kind == "confirm_experimental_drain" {
 		if !app.verifyHumanActionLocked(command) {
 			return nil, errors.New("human browser action rejected")
 		}
 	}
 	switch command.Kind {
+	case "use_settings_for_proof":
+		var payload useSettingsPayload
+		if err := decodePayload(command.Payload, &payload); err != nil {
+			return nil, err
+		}
+		return app.applySettingsLocked(ctx, payload)
 	case "save_strategy":
 		var payload saveStrategyPayload
 		if err := decodePayload(command.Payload, &payload); err != nil || strings.TrimSpace(payload.ContextLenses) == "" || strings.TrimSpace(payload.RoutingPolicy) == "" {
@@ -780,7 +814,7 @@ func (app *App) transportAuthorizedLocked() bool {
 	if app.synthetic {
 		return true
 	}
-	return app.preLiveReady && app.receipt != nil && assurance.Validate(*app.receipt, app.commit, app.configuration, app.now(), app.receiptMaxAge) == nil
+	return app.preLiveReady && app.receipt != nil && assurance.Validate(*app.receipt, app.commit, app.configuration) == nil
 }
 
 func (app *App) resetAfterInventoryLocked() {
@@ -823,7 +857,7 @@ func (app *App) resetDestinationArtifactsLocked() {
 }
 
 func (app *App) viewLocked(ctx context.Context) (View, error) {
-	aggregate, err := app.service.Get(ctx, app.state.RunID)
+	settings, err := app.settings.Load(ctx)
 	if err != nil {
 		return View{}, err
 	}
@@ -831,12 +865,31 @@ func (app *App) viewLocked(ctx context.Context) (View, error) {
 	if app.synthetic {
 		mode = "synthetic"
 	}
-	view := View{SchemaVersion: StateSchemaVersion, Mode: mode, PreLiveReady: app.transportAuthorizedLocked(), Run: RunView{RunID: app.state.RunID, State: aggregate.State, Version: aggregate.Version}}
+	view := View{SchemaVersion: StateSchemaVersion, Mode: mode, PreLiveReady: app.transportAuthorizedLocked(), Settings: settings}
+	view.ActiveStrategy.State = "absent"
+	view.Connections.SessionOnly = true
+	if app.runSelection != nil {
+		selection, err := app.runSelection.Load(ctx)
+		if err != nil {
+			return View{}, err
+		}
+		view.RunSelection = app.runSelectionView(selection)
+		if app.service == nil {
+			return view, nil
+		}
+	}
+	if app.service == nil {
+		return View{}, errExplicitRunRequired
+	}
+	aggregate, err := app.service.Get(ctx, app.state.RunID)
+	if err != nil {
+		return View{}, err
+	}
+	view.Run = RunView{RunID: app.state.RunID, State: aggregate.State, Version: aggregate.Version}
 	view.DeliveryInFlight = app.deliveryInFlight
 	view.Connections.SourceImported = app.state.Inventory != nil
 	view.Connections.SourceConnected = app.sourceConnection != nil
 	view.Connections.DestinationConnected = app.connection != nil
-	view.Connections.SessionOnly = true
 	if app.connection != nil {
 		identity := app.connection.Snapshot.Identity
 		view.Connections.DestinationIdentity = &identity
@@ -850,6 +903,10 @@ func (app *App) viewLocked(ctx context.Context) (View, error) {
 	}
 	if app.state.Strategy != nil {
 		view.Strategy = StrategyView{Configured: true, Fingerprint: app.state.Strategy.Fingerprint, ContextLenses: app.state.Strategy.ContextLenses, RoutingPolicy: app.state.Strategy.RoutingPolicy}
+		view.ActiveStrategy = ActiveStrategyView{State: "open", SettingsVersion: app.state.SettingsVersion, SettingsGeneration: app.state.SettingsGeneration, Fingerprint: app.state.Strategy.Fingerprint, ExactLenses: processing.ContextLenses(*app.state.Strategy), RoutingPolicy: app.state.Strategy.RoutingPolicy}
+		if app.state.Sample != nil {
+			view.ActiveStrategy.State = "sealed"
+		}
 		if app.state.DrainPolicy != nil {
 			copyPolicy := *app.state.DrainPolicy
 			view.Strategy.DrainPolicy = &copyPolicy

@@ -199,11 +199,11 @@ func TestAuthorizedExternalInventoryRequiresExactPreLiveReceipt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := DecodeAuthorizedExternalInventory(bytes.NewReader(payload), int64(len(payload)), receipt, "commit-1", "config-1", now, time.Minute)
+	result, err := DecodeAuthorizedExternalInventory(bytes.NewReader(payload), int64(len(payload)), receipt, "commit-1", "config-1")
 	if err != nil || result.DataClass != DataClassPrivateRuntime {
 		t.Fatalf("authorized private inventory failed: result=%+v err=%v", result, err)
 	}
-	if _, err := DecodeAuthorizedExternalInventory(bytes.NewReader(payload), int64(len(payload)), receipt, "commit-drift", "config-1", now, time.Minute); err == nil {
+	if _, err := DecodeAuthorizedExternalInventory(bytes.NewReader(payload), int64(len(payload)), receipt, "commit-drift", "config-1"); err == nil {
 		t.Fatal("commit-drifted private authority was accepted")
 	}
 }
@@ -223,7 +223,7 @@ func TestAuthorizedExternalInventoryRejectsCallerControlledPrivateClassification
 			manifest.DataClass = DataClassPrivateRuntime
 			manifest = SealExternalManifest(manifest)
 			payload, _ := json.Marshal(manifest)
-			_, err := DecodeAuthorizedExternalInventory(bytes.NewReader(payload), int64(len(payload)), receipt, "commit-1", "config-1", now, time.Minute)
+			_, err := DecodeAuthorizedExternalInventory(bytes.NewReader(payload), int64(len(payload)), receipt, "commit-1", "config-1")
 			var importErr *ImportError
 			if !errors.As(err, &importErr) || importErr.Category != "source_classification" {
 				t.Fatalf("caller-controlled private classification was accepted: %v", err)
@@ -243,7 +243,7 @@ func TestAuthorizedExternalInventoryRequiresManualEvidenceForAuthenticatedAndUnk
 			manifest.DataClass = DataClassPrivateRuntime
 			manifest = SealExternalManifest(manifest)
 			payload, _ := json.Marshal(manifest)
-			_, err := DecodeAuthorizedExternalInventory(bytes.NewReader(payload), int64(len(payload)), receipt, "commit-1", "config-1", now, time.Minute)
+			_, err := DecodeAuthorizedExternalInventory(bytes.NewReader(payload), int64(len(payload)), receipt, "commit-1", "config-1")
 			var importErr *ImportError
 			if !errors.As(err, &importErr) || importErr.Category != "manual_evidence_required" {
 				t.Fatalf("public complete evidence bypassed manual policy: %v", err)
@@ -261,7 +261,7 @@ func TestAuthorizedExternalInventoryRejectsPrivateObservedURLMappedToPublicCanon
 	manifest.DataClass = DataClassPrivateRuntime
 	manifest = SealExternalManifest(manifest)
 	payload, _ := json.Marshal(manifest)
-	_, err := DecodeAuthorizedExternalInventory(bytes.NewReader(payload), int64(len(payload)), receipt, "commit-1", "config-1", now, time.Minute)
+	_, err := DecodeAuthorizedExternalInventory(bytes.NewReader(payload), int64(len(payload)), receipt, "commit-1", "config-1")
 	var importErr *ImportError
 	if !errors.As(err, &importErr) || importErr.Category != "source_classification" {
 		t.Fatalf("private observed URL was laundered through a public canonical item: %v", err)
@@ -286,7 +286,7 @@ func TestAuthorizedExternalInventoryAllowsDerivedPublicAndManualEvidence(t *test
 		manifest.DataClass = DataClassPrivateRuntime
 		manifest = SealExternalManifest(manifest)
 		payload, _ := json.Marshal(manifest)
-		if _, err := DecodeAuthorizedExternalInventory(bytes.NewReader(payload), int64(len(payload)), receipt, "commit-1", "config-1", now, time.Minute); err != nil {
+		if _, err := DecodeAuthorizedExternalInventory(bytes.NewReader(payload), int64(len(payload)), receipt, "commit-1", "config-1"); err != nil {
 			t.Fatalf("derived provider policy rejected safe evidence for %s: %v", test.target, err)
 		}
 	}

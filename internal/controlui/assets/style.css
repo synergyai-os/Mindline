@@ -13,6 +13,7 @@ textarea { min-height: 110px; resize: vertical; }
 button { width: fit-content; border: 0; border-radius: 999px; padding: 10px 18px; background: #1f6b49; color: white; font-weight: 700; cursor: pointer; }
 button:hover { background: #174e37; }
 button:disabled { cursor: not-allowed; opacity: .45; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 3px solid #f0b84b; outline-offset: 3px; }
 .secondary { color: #244436; background: #e4ece7; }
 .secondary:hover { background: #d3e1d8; }
 .actions { display: flex; flex-wrap: wrap; gap: 12px; }
@@ -29,4 +30,15 @@ button:disabled { cursor: not-allowed; opacity: .45; }
 .pill { display: inline-block; margin: 3px 5px 3px 0; padding: 3px 8px; border-radius: 999px; background: #e7eee9; font-size: .84rem; }
 pre { overflow: auto; padding: 16px; border-radius: 10px; background: #eef2ee; white-space: pre-wrap; overflow-wrap: anywhere; }
 #notice { min-height: 1.5em; color: #7b2d17; font-weight: 650; }
+#pairing-code { display: block; margin: 12px 0; padding: 12px 14px; border: 2px solid currentColor; border-radius: 8px; font: 700 1.25rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; overflow-wrap: anywhere; user-select: all; }
 [hidden] { display: none !important; }
+
+@media (max-width: 540px) {
+  main { width: min(100% - 20px, 920px); padding-top: 10px; }
+  header, section { padding: 18px; border-radius: 12px; }
+  button { max-width: 100%; white-space: normal; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+}
