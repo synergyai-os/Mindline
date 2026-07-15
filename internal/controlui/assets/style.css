@@ -18,7 +18,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .secondary:hover { background: #d3e1d8; }
 .actions { display: flex; flex-wrap: wrap; gap: 12px; }
 .danger-actions { margin-top: 18px; }
-.summary { margin-top: 16px; padding: 14px 16px; border-left: 4px solid #739982; background: #f4f8f5; border-radius: 8px; overflow-wrap: anywhere; }
+.summary { margin-top: 16px; padding: 14px 16px; border-left: 4px solid #739982; background: #f4f8f5; color: #17201b; border-radius: 8px; overflow-wrap: anywhere; }
 .summary:empty { display: none; }
 .cards { display: grid; gap: 16px; margin-top: 20px; }
 .card { padding: 18px; border: 1px solid #ccd7d0; border-radius: 12px; background: #fbfdfb; }

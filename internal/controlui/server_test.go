@@ -178,6 +178,21 @@ func TestServerBootstrapUsesHeadersAndNoCookies(t *testing.T) {
 	}
 }
 
+func TestSummaryPanelsOwnReadableForegroundOnLightBackground(t *testing.T) {
+	session := newTestSession(t)
+	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:43123/style.css", nil)
+	request.Host = "127.0.0.1:43123"
+	request.RemoteAddr = "127.0.0.1:49100"
+	response := httptest.NewRecorder()
+	session.server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status %d", response.Code)
+	}
+	if !strings.Contains(response.Body.String(), "background: #f4f8f5; color: #17201b;") {
+		t.Fatal("light summary panels must explicitly own a dark foreground color")
+	}
+}
+
 func TestWP46_ControlUIRunRoutesAreExplicitAndCASBounded(t *testing.T) {
 	session := newTestSession(t)
 	generation := strings.Repeat("a", 43)
