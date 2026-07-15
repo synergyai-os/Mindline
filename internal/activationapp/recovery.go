@@ -39,6 +39,9 @@ func (app *App) proveRecoveryLocked(ctx context.Context) error {
 	if err := privateio.ReadJSONStrictBounded(app.runtimeRoot, path, maximumActivationStateBytes, &recovered); err != nil {
 		return err
 	}
+	if recovered.SchemaVersion != StateSchemaVersion {
+		return errors.New("recovered activation state requires rebuild after STD-20")
+	}
 	if recovered.Fingerprint != rebuilt.LatestAuthorityProjection || recovered.Inventory == nil || recovered.Sample == nil || recovered.Queue == nil {
 		return errors.New("recovered authority projection is incomplete")
 	}

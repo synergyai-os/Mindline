@@ -8,9 +8,14 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/synergyai-os/Mindline/internal/routing"
 )
 
-const ArtifactSchema = "mindline-retrieval-artifact/v0.1"
+const (
+	ArtifactSchema                     = "mindline-retrieval-artifact/v0.1"
+	SensitiveRedactedMissingnessReason = "secret_bearing_url_withheld"
+)
 
 type State string
 
@@ -28,6 +33,7 @@ const (
 	OriginImportedReplay   EvidenceOrigin = "imported_replay"
 	OriginLiveRetrieval    EvidenceOrigin = "live_retrieval"
 	OriginSyntheticFixture EvidenceOrigin = "synthetic_fixture"
+	OriginSourcePolicy     EvidenceOrigin = "source_policy"
 )
 
 type AccessClass string
@@ -91,9 +97,18 @@ func ValidateArtifact(artifact Artifact) error {
 	if artifact.SchemaVersion != ArtifactSchema || strings.TrimSpace(artifact.CanonicalItemID) == "" || strings.TrimSpace(artifact.Strategy) == "" || strings.TrimSpace(artifact.Format) == "" {
 		return errors.New("invalid retrieval artifact identity")
 	}
-	parsed, err := url.Parse(artifact.CanonicalURL)
-	if err != nil || parsed.Hostname() == "" || parsed.User != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return errors.New("invalid retrieval canonical URL")
+	redactedManual := artifact.CanonicalURL == "" && artifact.SecretLike && artifact.State == StateNotAttempted && artifact.Access == AccessUnsupported && artifact.Origin == OriginSourcePolicy
+	if artifact.Origin == OriginSourcePolicy && !redactedManual {
+		return errors.New("source-policy retrieval must be content-free and sensitive-redacted")
+	}
+	if redactedManual && (artifact.Strategy != "manual_support" || artifact.Format != "sensitive_redacted" || artifact.RetrievedAt != "" || artifact.Metadata != (PublicMetadata{}) || len(artifact.Excerpts) != 0 || len(artifact.RelatedURLs) != 0 || len(artifact.Missingness) != 1 || artifact.Missingness[0] != SensitiveRedactedMissingnessReason) {
+		return errors.New("sensitive-redacted retrieval must use the exact content-free envelope")
+	}
+	if !redactedManual {
+		parsed, err := url.Parse(artifact.CanonicalURL)
+		if err != nil || parsed.Hostname() == "" || parsed.User != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+			return errors.New("invalid retrieval canonical URL")
+		}
 	}
 	switch artifact.State {
 	case StateComplete, StatePartial, StateInaccessible, StateFailed, StateNotAttempted:
@@ -101,7 +116,7 @@ func ValidateArtifact(artifact Artifact) error {
 		return errors.New("invalid retrieval state")
 	}
 	switch artifact.Origin {
-	case OriginImportedReplay, OriginLiveRetrieval, OriginSyntheticFixture:
+	case OriginImportedReplay, OriginLiveRetrieval, OriginSyntheticFixture, OriginSourcePolicy:
 	default:
 		return errors.New("invalid retrieval evidence origin")
 	}
@@ -135,8 +150,8 @@ func ValidateArtifact(artifact Artifact) error {
 		return errors.New("complete retrieval requires public evidence")
 	}
 	for _, related := range artifact.RelatedURLs {
-		parsed, err := url.Parse(related.URL)
-		if err != nil || parsed.Hostname() == "" || parsed.User != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || related.Relation != "source_links_to" || !excerptIDs[related.DiscoveryEvidenceRef] {
+		safeURL, storageState, err := routing.PrepareURLForStorage(related.URL)
+		if err != nil || storageState == routing.URLStorageSensitiveRedacted || safeURL != related.URL || related.Relation != "source_links_to" || !excerptIDs[related.DiscoveryEvidenceRef] {
 			return errors.New("invalid related retrieval evidence")
 		}
 	}

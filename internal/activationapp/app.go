@@ -713,7 +713,10 @@ func (app *App) loadState() error {
 	}
 	fingerprint := state.Fingerprint
 	state.Fingerprint = ""
-	if state.SchemaVersion != StateSchemaVersion || state.RunID == "" || fingerprint == "" || fingerprint != acquisition.Fingerprint(state) {
+	if state.SchemaVersion != StateSchemaVersion {
+		return errors.New("activation state requires rebuild after STD-20")
+	}
+	if state.RunID == "" || fingerprint == "" || fingerprint != acquisition.Fingerprint(state) {
 		return errors.New("activation state fingerprint mismatch")
 	}
 	if state.RunID != app.state.RunID || state.BuildCommit != app.commit || state.Configuration != app.configuration {
@@ -892,6 +895,16 @@ func (app *App) viewLocked(ctx context.Context) (View, error) {
 	for _, review := range app.state.Reviews {
 		reviews[review.CanonicalItemID] = review
 	}
+	sourceRecords := map[string]acquisition.SourceRecord{}
+	occurrences := map[string]acquisition.URLOccurrence{}
+	if app.state.ProofInventory != nil {
+		for _, record := range app.state.ProofInventory.SourceRecords {
+			sourceRecords[record.SourceRecordID] = record
+		}
+		for _, occurrence := range app.state.ProofInventory.URLOccurrences {
+			occurrences[occurrence.URLOccurrenceID] = occurrence
+		}
+	}
 	if app.state.ProofInventory != nil {
 		for _, item := range app.state.ProofInventory.CanonicalItems {
 			artifact, proposal, review := artifacts[item.CanonicalItemID], proposals[item.CanonicalItemID], reviews[item.CanonicalItemID]
@@ -907,6 +920,15 @@ func (app *App) viewLocked(ctx context.Context) (View, error) {
 				DestinationMapping: destinationMapping(proposal.Judgment.SemanticAssessment.PrimaryRole), ReviewStatus: "awaiting_operator_review",
 			}
 			entry.Missingness = append(entry.Missingness, proposal.Judgment.SemanticAssessment.Missingness...)
+			seenOccurrences := map[string]bool{}
+			for _, occurrenceID := range item.URLOccurrenceIDs {
+				occurrence := occurrences[occurrenceID]
+				record := sourceRecords[occurrence.SourceRecordID]
+				if record.SourceRecordID != "" && !seenOccurrences[occurrenceID] {
+					entry.SourceReferences = append(entry.SourceReferences, SourceReferenceView{NativeMessageID: record.NativeMessageID, NativeTimestamp: record.NativeTimestamp, URLOrdinal: occurrence.SourceOrdinal})
+					seenOccurrences[occurrenceID] = true
+				}
+			}
 			for _, excerpt := range artifact.Excerpts {
 				entry.Excerpts = append(entry.Excerpts, EvidenceExcerptView{Text: excerpt.Text, Locator: excerpt.Locator})
 			}

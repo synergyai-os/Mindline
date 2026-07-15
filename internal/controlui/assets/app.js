@@ -157,8 +157,14 @@ function renderProofItems(items) {
     card.append(title);
     const meta = document.createElement("p");
     meta.className = "meta";
-    meta.textContent = `${item.author || "Unknown author"} · ${item.format} · retrieval ${item.retrieval_state} · evidence ${item.evidence_origin || "unknown"} · ${item.canonical_url}`;
+    meta.textContent = `${item.author || "Unknown author"} · ${item.format} · retrieval ${item.retrieval_state} · evidence ${item.evidence_origin || "unknown"} · ${item.canonical_url || "Sensitive URL withheld; inspect the original source item"}`;
     card.append(meta);
+    if (!item.canonical_url && (item.source_references || []).length) {
+      const source = document.createElement("p");
+      source.className = "meta";
+      source.textContent = `Original Slack source: ${(item.source_references || []).map((ref) => `${ref.native_message_id} at ${ref.native_timestamp} (link ${ref.url_ordinal + 1})`).join(", ")}`;
+      card.append(source);
+    }
     for (const excerpt of item.excerpts || []) {
       const quote = document.createElement("blockquote");
       quote.textContent = `${excerpt.text} — ${excerpt.locator}`;

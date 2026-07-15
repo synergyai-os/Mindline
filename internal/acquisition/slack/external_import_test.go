@@ -29,6 +29,26 @@ func TestDecodeExternalInventoryPreservesOccurrenceCompleteAccounting(t *testing
 	if result.Snapshot.CanonicalItems[0].URLOccurrenceIDs[0] != "occ-1" || result.Snapshot.CanonicalItems[0].URLOccurrenceIDs[1] != "occ-2" {
 		t.Fatalf("reverse occurrence accounting changed: %+v", result.Snapshot.CanonicalItems[0])
 	}
+	if result.Snapshot.SchemaVersion != acquisition.InventorySnapshotSchema {
+		t.Fatalf("external v2 did not adopt the current normalized inventory schema: %s", result.Snapshot.SchemaVersion)
+	}
+}
+
+func TestExternalInventoryV1RequiresNativeRebuild(t *testing.T) {
+	for _, singleOccurrence := range []bool{true, false} {
+		manifest := validManifest()
+		if singleOccurrence {
+			manifest.SourceRecords = manifest.SourceRecords[:1]
+			manifest.URLOccurrences = manifest.URLOccurrences[:1]
+			manifest.CanonicalItems[0].URLOccurrenceIDs = manifest.CanonicalItems[0].URLOccurrenceIDs[:1]
+		}
+		manifest.SchemaVersion = "external_slack_inventory/v1"
+		_, err := ValidateExternalManifest(manifest)
+		var importErr *ImportError
+		if !errors.As(err, &importErr) || importErr.Category != "requires_rebuild_after_STD20" {
+			t.Fatalf("pre-STD-20 manifest was not rejected at the schema boundary (single=%t): %v", singleOccurrence, err)
+		}
+	}
 }
 
 func TestDecodeExternalInventoryRejectsUnknownTrailingAndOrphanData(t *testing.T) {
@@ -55,6 +75,102 @@ func TestDecodeExternalInventoryRejectsUnknownTrailingAndOrphanData(t *testing.T
 		if !errors.As(err, &importErr) || importErr.Category != "canonical_only_legacy" {
 			t.Fatalf("wrong legacy failure category: %v", err)
 		}
+	}
+}
+
+func TestExternalInventoryRejectsUnsanitizedObservedURL(t *testing.T) {
+	manifest := validManifest()
+	manifest.URLOccurrences[0].ObservedURL = "https://example.com/article?token=synthetic-value"
+	manifest = SealExternalManifest(manifest)
+	_, err := ValidateExternalManifest(manifest)
+	var importErr *ImportError
+	if !errors.As(err, &importErr) || importErr.Category != "unsafe_observed_url" {
+		t.Fatalf("unsafe observed URL was not rejected at import: %v", err)
+	}
+}
+
+func TestExternalInventoryRejectsUnsanitizedCanonicalURL(t *testing.T) {
+	manifest := validManifest()
+	unsafe := "https://example.com/article?token=synthetic-value"
+	manifest.CanonicalItems[0].CanonicalURL = unsafe
+	for index := range manifest.URLOccurrences {
+		manifest.URLOccurrences[index].ObservedURL = "https://example.com/article"
+	}
+	manifest = SealExternalManifest(manifest)
+	_, err := ValidateExternalManifest(manifest)
+	var importErr *ImportError
+	if !errors.As(err, &importErr) || importErr.Category != "unsafe_canonical_url" {
+		t.Fatalf("unsafe canonical URL was not rejected at import: %v", err)
+	}
+}
+
+func TestExternalInventoryRejectsEvidenceOnSensitiveRedactedItem(t *testing.T) {
+	manifest, err := BuildExternalManifest(BuildInput{
+		WorkspaceID: "T-synthetic", ChannelID: "C-synthetic", LowerInclusive: "1700000000.000001", UpperInclusive: "1700000000.000001", Watermark: "1700000000.000001", DataClass: DataClassSynthetic,
+		Messages: []NativeMessage{{NativeMessageID: "m-1", Timestamp: "1700000000.000001", Text: "https://example.com/shared?token=synthetic-value"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := manifest.CanonicalItems[0]
+	manifest.ImportedEvidence = []acquisition.ImportedEvidence{{
+		CanonicalItemID: item.CanonicalItemID, State: "not_attempted", AccessClass: "unsupported", Missingness: []string{"free-form source material"},
+	}}
+	manifest = SealExternalManifest(manifest)
+	_, err = ValidateExternalManifest(manifest)
+	var importErr *ImportError
+	if !errors.As(err, &importErr) || importErr.Category != "imported_evidence" {
+		t.Fatalf("sensitive-redacted imported evidence was not rejected: %v", err)
+	}
+}
+
+func TestExternalInventoryRejectsTamperedSensitiveRedactionIdentity(t *testing.T) {
+	manifest, err := BuildExternalManifest(BuildInput{
+		WorkspaceID: "T-synthetic", ChannelID: "C-synthetic", LowerInclusive: "1700000000.000001", UpperInclusive: "1700000000.000001", Watermark: "1700000000.000001", DataClass: DataClassSynthetic,
+		Messages: []NativeMessage{{NativeMessageID: "m-1", Timestamp: "1700000000.000001", Text: "https://example.com/shared?token=synthetic-value"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.URLOccurrences[0].SourceOrdinal++
+	manifest = SealExternalManifest(manifest)
+	_, err = ValidateExternalManifest(manifest)
+	var importErr *ImportError
+	if !errors.As(err, &importErr) || importErr.Category != "sensitive_redaction_identity" {
+		t.Fatalf("tampered sensitive-redacted ordinal was not rejected: %v", err)
+	}
+}
+
+func TestExternalInventoryRejectsRedactedItemWithOrdinaryOccurrence(t *testing.T) {
+	manifest, err := BuildExternalManifest(BuildInput{
+		WorkspaceID: "T-synthetic", ChannelID: "C-synthetic", LowerInclusive: "1700000000.000001", UpperInclusive: "1700000000.000001", Watermark: "1700000000.000001", DataClass: DataClassSynthetic,
+		Messages: []NativeMessage{{NativeMessageID: "m-1", Timestamp: "1700000000.000001", Text: "https://example.com/shared?token=synthetic-value"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.URLOccurrences[0].SanitizationState = ""
+	manifest.URLOccurrences[0].ObservedURL = "https://example.com/public"
+	manifest = SealExternalManifest(manifest)
+	_, err = ValidateExternalManifest(manifest)
+	var importErr *ImportError
+	if !errors.As(err, &importErr) || importErr.Category != "inventory_invariants" {
+		t.Fatalf("ordinary occurrence was allowed to reference a redacted item: %v", err)
+	}
+}
+
+func TestExternalInventoryRejectsUnsafeRelatedURL(t *testing.T) {
+	manifest := validManifest()
+	evidence := publicCompleteEvidence(manifest.CanonicalItems[0])
+	evidence.RelatedURLs = []acquisition.ImportedRelated{{
+		URL: "https://example.com/related/" + "xoxb" + "-synthetic", Relation: "source_links_to", DiscoveryEvidenceRef: "excerpt-1", SemanticallyRelevant: true,
+	}}
+	manifest.ImportedEvidence = []acquisition.ImportedEvidence{evidence}
+	manifest = SealExternalManifest(manifest)
+	_, err := ValidateExternalManifest(manifest)
+	var importErr *ImportError
+	if !errors.As(err, &importErr) || importErr.Category != "imported_evidence" {
+		t.Fatalf("unsafe related URL crossed the acquisition boundary: %v", err)
 	}
 }
 

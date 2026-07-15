@@ -25,6 +25,40 @@ func TestImportedEvidenceIsAlwaysReplayLabelled(t *testing.T) {
 	if artifact.Origin != OriginImportedReplay || artifact.State != StateComplete {
 		t.Fatalf("imported evidence lost replay label: %+v", artifact)
 	}
+	unsafeRelated := artifact
+	unsafeRelated.RelatedURLs = []RelatedURL{{URL: "https://example.com/related?token=synthetic-value", Relation: "source_links_to", DiscoveryEvidenceRef: "evidence-1", SemanticallyRelevant: true}}
+	if err := ValidateArtifact(unsafeRelated); err == nil {
+		t.Fatal("retrieval artifact accepted an unsafe related URL")
+	}
+}
+
+func TestSensitiveRedactedArtifactIsContentFreeAndNotAttempted(t *testing.T) {
+	request := Request{CanonicalItemID: "withheld-1", Strategy: "manual_support", Format: "sensitive_redacted"}
+	artifact := MissingArtifact(request, StateNotAttempted, AccessUnsupported, OriginSourcePolicy, SensitiveRedactedMissingnessReason)
+	artifact.SecretLike = true
+	if err := ValidateArtifact(artifact); err != nil {
+		t.Fatal(err)
+	}
+	withURL := artifact
+	withURL.CanonicalURL = "https://example.com/"
+	if err := ValidateArtifact(withURL); err == nil {
+		t.Fatal("source-policy evidence accepted a URL")
+	}
+	withoutMarker := artifact
+	withoutMarker.SecretLike = false
+	if err := ValidateArtifact(withoutMarker); err == nil {
+		t.Fatal("content-free artifact without sensitive-redacted authority was accepted")
+	}
+	withMetadata := artifact
+	withMetadata.Metadata.Title = "must not persist"
+	if err := ValidateArtifact(withMetadata); err == nil {
+		t.Fatal("sensitive-redacted artifact accepted source metadata")
+	}
+	withFreeFormReason := artifact
+	withFreeFormReason.Missingness = []string{"operator supplied text"}
+	if err := ValidateArtifact(withFreeFormReason); err == nil {
+		t.Fatal("sensitive-redacted artifact accepted free-form missingness")
+	}
 }
 
 func TestSyntheticBrokerRejectsLiveConstructionAndUnsafeTargets(t *testing.T) {

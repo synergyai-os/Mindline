@@ -102,6 +102,80 @@ func TestSyntheticActivationFreezesFullQueueAndDeliversOnlySealedProof(t *testin
 	}
 }
 
+func TestSensitiveRedactedOccurrenceIsReviewedButCannotReachDestination(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	transport := newMemoryTransport()
+	app, err := New(withTestHuman(Options{RuntimeRoot: root, SyntheticOnly: true, Now: func() time.Time { return now }, Connector: fakeConnector{transport: transport}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Close()
+	manifest, err := acquisitionslack.BuildExternalManifest(acquisitionslack.BuildInput{
+		WorkspaceID: "T-synthetic", ChannelID: "C-synthetic", LowerInclusive: "1700000000.000001", UpperInclusive: "1700000000.000001", Watermark: "1700000000.000001", DataClass: acquisitionslack.DataClassSynthetic,
+		Messages: []acquisitionslack.NativeMessage{{NativeMessageID: "message-sensitive", Timestamp: "1700000000.000001", Text: "https://example.com/shared/" + "xoxb" + "-synthetic-value"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal(manifest)
+	if strings.Contains(string(payload), "synthetic-value") || strings.Contains(string(payload), "amp;token") {
+		t.Fatal("secret-bearing URL material reached the serialized inventory")
+	}
+	manifestPath := filepath.Join(root, "sensitive-redacted.json")
+	if err := os.WriteFile(manifestPath, payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.ImportExternalInventory(context.Background(), manifestPath, filepath.Base(manifestPath)); err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range []controlui.Command{
+		{Kind: "save_strategy", Payload: testStrategyPayload("Product strategy", "Hold sources without public evidence.")},
+		{Kind: "connect_destination", Payload: []byte("pb_sk_SYNTHETIC_REDACTED")},
+		{Kind: "freeze_inventory", Payload: struct{}{}},
+		{Kind: "start_proof", Payload: struct{}{}},
+	} {
+		if _, err := app.Execute(context.Background(), command); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stateAny, _ := app.State(context.Background())
+	state := stateAny.(View)
+	if len(state.Proof.Items) != 1 || !state.Proof.Items[0].RequiresManualReview || state.Proof.Items[0].CanonicalURL != "" || len(state.Proof.Items[0].SourceReferences) != 1 {
+		t.Fatalf("redacted item did not reach the content-free manual queue: %+v", state.Proof.Items)
+	}
+	item := state.Proof.Items[0]
+	if item.SourceReferences[0].NativeMessageID != "message-sensitive" || item.SourceReferences[0].URLOrdinal != 0 {
+		t.Fatalf("redacted item lost content-free source provenance: %+v", item.SourceReferences)
+	}
+	if _, err := executeHumanTest(app, "review_item", map[string]string{
+		"item_id": item.CanonicalItemID, "decision": "revise", "role": "evidence_backed_finding", "disposition": "promote",
+		"rationale": "Attempted promotion without evidence.", "manual_support_outcome": "queued_for_manual_processing",
+	}); err == nil {
+		t.Fatal("sensitive-redacted item was promotable without evidence")
+	}
+	reviewAllSelected(t, app)
+	preview, err := app.PreviewBatch(context.Background(), 1, 1)
+	if err != nil || preview.OperationCount != 0 || transport.mutationCalls != 0 {
+		t.Fatalf("sensitive-redacted item reached the destination boundary: preview=%+v calls=%d err=%v", preview, transport.mutationCalls, err)
+	}
+}
+
+func TestPreSTD20ActivationStateRequiresRebuildBeforeFingerprintValidation(t *testing.T) {
+	root := t.TempDir()
+	oldState := []byte(`{"schema_version":"mindline-trusted-activation-state/v0.2","fingerprint":"old-state","run_id":"trusted-slack-activation","configuration_fingerprint":"old-configuration"}`)
+	if err := os.WriteFile(filepath.Join(root, stateFilename), oldState, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	app, err := New(withTestHuman(Options{RuntimeRoot: root, SyntheticOnly: true, Connector: fakeConnector{transport: newMemoryTransport()}}))
+	if app != nil {
+		app.Close()
+	}
+	if err == nil || !strings.Contains(err.Error(), "requires rebuild after STD-20") {
+		t.Fatalf("old activation state did not fail at the explicit rebuild boundary: %v", err)
+	}
+}
+
 func TestLiveModeRequiresCommitBoundCompleteReceipt(t *testing.T) {
 	root := t.TempDir()
 	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
@@ -583,6 +657,8 @@ func syntheticManifest(t *testing.T, count int, withEvidence bool) acquisitionsl
 		{Check: "url_occurrence_denominator", Status: "pass", Count: count},
 		{Check: "canonical_item_denominator", Status: "pass", Count: count},
 		{Check: "bidirectional_occurrence_accounting", Status: "pass", Count: count},
+		{Check: "sensitive_redacted_url_occurrences", Status: "pass", Count: 0},
+		{Check: "non_semantic_url_sanitizations", Status: "pass", Count: 0},
 	}
 	return acquisitionslack.SealExternalManifest(manifest)
 }

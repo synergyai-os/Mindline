@@ -21,6 +21,9 @@ Mindline owns and derives:
 
 - every URL occurrence;
 - canonical URLs and canonical item identities;
+- the deny-by-default durable URL decision: provider-allowlisted public identity,
+  non-semantic component removal, or a content-free `sensitive_redacted`
+  occurrence;
 - retrieval strategy, format, and strata;
 - completeness evidence and the sealed content fingerprint;
 - resource caps and the destination-neutral inventory.
@@ -75,6 +78,16 @@ mindline activation build-slack-manifest \
 
 Native content crosses only standard input. The normalized output is a
 no-replace `0600` private artifact and does not retain raw message text; it
-retains native provenance fingerprints and URL occurrences. Current hard caps
+retains native provenance fingerprints and URL occurrence accounting using
+`external_slack_inventory/v2`. Pre-STD-20 v1 inventories must be rebuilt from
+their native source and are never migrated. Source content fingerprints replace
+every lexical URL with its ordinal placeholder before hashing, so no URL or
+URL-derived digest crosses the persistence boundary. A URL
+with userinfo, ambiguous query serialization, or any non-allowlisted query
+parameter is never persisted, hashed as a URL identity, fetched, routed, or
+delivered. Instead, Mindline keeps one content-free manual occurrence linked to
+the native source record and ordinal. Known, provider-scoped marketing
+parameters may be removed while preserving safe public identity; links with
+fragments are withheld as content-free sensitive occurrences. Current hard caps
 are 64 MiB per frame, 20,000 native messages, 50,000 extracted URL occurrences,
 and 64 MiB for the resulting import artifact.

@@ -29,7 +29,11 @@ func buildRoutingGraph(payload Payload, artifacts routing.LinkArtifacts) (routin
 	}
 	artifactByCanonical := map[string]routing.LinkArtifact{}
 	for _, artifact := range artifacts.Items {
-		canonical, err := routing.CanonicalizeURL(artifact.CanonicalURL)
+		safeURL, storageState, err := routing.PrepareURLForStorage(artifact.CanonicalURL)
+		if err != nil || storageState == routing.URLStorageSensitiveRedacted {
+			return routing.SourceGraph{}, errors.New("unsafe enrichment canonical URL")
+		}
+		canonical, err := routing.CanonicalizeURL(safeURL)
 		if err != nil {
 			return routing.SourceGraph{}, errors.New("invalid enrichment canonical URL")
 		}
@@ -52,7 +56,10 @@ func buildRoutingGraph(payload Payload, artifacts routing.LinkArtifacts) (routin
 		if len(urls) != 1 {
 			return routing.SourceGraph{}, fmt.Errorf("Slack routing record %d must contain exactly one URL", index+1)
 		}
-		observed := strings.TrimRight(urls[0], ".,;:!?)]}")
+		observed, storageState, err := routing.PrepareURLForStorage(urls[0])
+		if err != nil || storageState == routing.URLStorageSensitiveRedacted {
+			return routing.SourceGraph{}, fmt.Errorf("unsafe Slack routing URL at record %d", index+1)
+		}
 		canonical, err := routing.CanonicalizeURL(observed)
 		if err != nil {
 			return routing.SourceGraph{}, fmt.Errorf("invalid Slack routing URL at record %d", index+1)
@@ -90,7 +97,11 @@ func buildRoutingGraph(payload Payload, artifacts routing.LinkArtifacts) (routin
 			if related.Relation != "source_links_to" || !slackArtifactHasEvidence(artifact, related.DiscoveryEvidenceRef) {
 				return routing.SourceGraph{}, errors.New("invalid related URL evidence")
 			}
-			canonical, err := routing.CanonicalizeURL(related.URL)
+			safeRelated, storageState, err := routing.PrepareURLForStorage(related.URL)
+			if err != nil || storageState == routing.URLStorageSensitiveRedacted {
+				return routing.SourceGraph{}, errors.New("unsafe related URL")
+			}
+			canonical, err := routing.CanonicalizeURL(safeRelated)
 			if err != nil {
 				return routing.SourceGraph{}, errors.New("invalid related URL")
 			}

@@ -39,6 +39,15 @@ func TestCompileRoutingPreservesDuplicateOccurrencesAndAdmitsOneHop(t *testing.T
 	}
 }
 
+func TestCompileRoutingRejectsSecretBearingPath(t *testing.T) {
+	unsafe := "https://example.com/tool/" + "xoxb" + "-synthetic"
+	payload := Payload{Source: Source{AdapterID: "slack", ChannelID: "private-channel"}, Messages: []Message{{TS: "1700000000.000001", User: "u", Text: unsafe}}}
+	artifacts := routing.LinkArtifacts{SchemaVersion: routing.LinkArtifactsSchema, Items: []routing.LinkArtifact{{CanonicalURL: "https://example.com/tool", State: "not_attempted"}}}
+	if _, err := CompileRouting(payload, artifacts, routing.LensProfile{}, routing.Judgments{}); err == nil {
+		t.Fatal("secret-bearing path reached the routing graph")
+	}
+}
+
 func slackRoutingJudgment(id, role, summary, evidence, disposition string) routing.SourceJudgment {
 	return routing.SourceJudgment{CanonicalURLID: id, LensResults: []routing.LensResult{{LensID: "building-product", Result: "matched", Confidence: .8, Rationale: "The public evidence is relevant.", EvidenceRefs: []string{evidence}}, {LensID: "team-design", Result: "not_matched", Confidence: .8, Rationale: "The public evidence is not about teams.", EvidenceRefs: []string{evidence}}}, SemanticAssessment: routing.SemanticAssessment{PrimaryRole: role, Summary: summary, Confidence: .8, EvidenceRefs: []string{evidence}}, Disposition: disposition, DispositionRationale: "The explicit operator judgment selects this disposition."}
 }

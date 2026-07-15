@@ -18,6 +18,8 @@ The browser is the only credential-entry and approval surface. Slack and Product
 
 Credential-owning ingestion connectors can instead hand Mindline a bounded native Slack batch without exporting OAuth material. The versioned connector contract and ownership boundary are documented in [docs/native-slack-batch-v1.md](docs/native-slack-batch-v1.md); connectors declare native completeness while Mindline owns URL occurrence extraction and normalization.
 
+URL persistence is deny-by-default. Provider-allowlisted public identity parameters may be retained and known provider-scoped non-semantic query components may be removed. Userinfo, fragments, ambiguous queries, and all other query-bearing links remain counted as content-free `sensitive_redacted` manual items; they cannot enter retrieval, the destination-neutral routing graph, or a Product Brain batch.
+
 Live controls are unavailable until a clean, commit-bound build passes the fixed pre-live gate. From a clean checkout, with the pinned security tools available on `PATH`:
 
 ```bash

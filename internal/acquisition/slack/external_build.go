@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/synergyai-os/Mindline/internal/acquisition"
 	"github.com/synergyai-os/Mindline/internal/assurance"
@@ -79,6 +78,8 @@ func buildExternalManifest(input BuildInput, privateAuthorized bool) (ExternalMa
 		SourceScope: scope, Watermark: input.Watermark,
 	}
 	items := map[string]*acquisition.InventoryItem{}
+	sensitiveRedactions := 0
+	nonSemanticSanitizations := 0
 	for _, message := range messages {
 		if strings.TrimSpace(message.NativeMessageID) == "" || strings.TrimSpace(message.Timestamp) == "" {
 			return ExternalManifest{}, errors.New("invalid Slack native message identity")
@@ -87,21 +88,44 @@ func buildExternalManifest(input BuildInput, privateAuthorized bool) (ExternalMa
 		if state == "" {
 			state = "original"
 		}
-		digest := sha256.Sum256([]byte(message.Text))
+		digest := fingerprintSourceText(message.Text)
 		sourceID := stableSourceID("source", message.NativeMessageID, message.Timestamp)
 		if message.AttachmentCount < 0 || message.PrivateFileCount < 0 || message.PrivateFileCount > message.AttachmentCount {
 			return ExternalManifest{}, errors.New("invalid Slack file accounting")
 		}
 		record := acquisition.SourceRecord{SourceRecordID: sourceID, NativeMessageID: message.NativeMessageID, NativeTimestamp: message.Timestamp, ContentFingerprint: hex.EncodeToString(digest[:]), EditDeleteState: state, ThreadParentID: message.ThreadParentID, AttachmentCount: message.AttachmentCount, PrivateFileCount: message.PrivateFileCount}
 		for index, observed := range ExtractURLOccurrences(message.Text) {
-			canonical, err := routing.CanonicalizeURL(observed)
+			safeObserved, storageState, err := routing.PrepareURLForStorage(observed)
+			if err != nil {
+				storageState = routing.URLStorageSensitiveRedacted
+			}
+			if storageState == routing.URLStorageSensitiveRedacted {
+				occurrenceID := stableSourceID("occurrence", sourceID, stableIndex(index))
+				canonicalID := stableSourceID("withheld", sourceID, stableIndex(index))
+				record.URLOccurrenceIDs = append(record.URLOccurrenceIDs, occurrenceID)
+				manifest.URLOccurrences = append(manifest.URLOccurrences, acquisition.URLOccurrence{
+					URLOccurrenceID: occurrenceID, SourceRecordID: sourceID, SourceOrdinal: index, CanonicalItemID: canonicalID, SanitizationState: routing.URLStorageSensitiveRedacted,
+				})
+				items[canonicalID] = &acquisition.InventoryItem{
+					CanonicalItemID: canonicalID, Kind: "unknown_sensitive", RetrievalStrategy: "manual_support", Format: "sensitive_redacted",
+					AccessState: routing.URLStorageSensitiveRedacted, URLOccurrenceIDs: []string{occurrenceID},
+				}
+				sensitiveRedactions++
+				continue
+			}
+			canonical, err := routing.CanonicalizeURL(safeObserved)
 			if err != nil {
 				continue
 			}
 			canonicalID := routing.CanonicalURLID(canonical)
-			occurrenceID := stableSourceID("occurrence", message.NativeMessageID, message.Timestamp, stableIndex(index), observed)
+			occurrenceID := stableSourceID("occurrence", message.NativeMessageID, message.Timestamp, stableIndex(index), safeObserved)
 			record.URLOccurrenceIDs = append(record.URLOccurrenceIDs, occurrenceID)
-			manifest.URLOccurrences = append(manifest.URLOccurrences, acquisition.URLOccurrence{URLOccurrenceID: occurrenceID, SourceRecordID: sourceID, ObservedURL: observed, CanonicalItemID: canonicalID})
+			occurrence := acquisition.URLOccurrence{URLOccurrenceID: occurrenceID, SourceRecordID: sourceID, SourceOrdinal: index, ObservedURL: safeObserved, CanonicalItemID: canonicalID}
+			if storageState == routing.URLStorageNonSemanticComponentsRemoved {
+				occurrence.SanitizationState = storageState
+				nonSemanticSanitizations++
+			}
+			manifest.URLOccurrences = append(manifest.URLOccurrences, occurrence)
 			item := items[canonicalID]
 			if item == nil {
 				kind, strategy, format := classifyExternalURL(canonical)
@@ -138,6 +162,8 @@ func buildExternalManifest(input BuildInput, privateAuthorized bool) (ExternalMa
 		{Check: "url_occurrence_denominator", Status: "pass", Count: len(manifest.URLOccurrences)},
 		{Check: "canonical_item_denominator", Status: "pass", Count: len(manifest.CanonicalItems)},
 		{Check: "bidirectional_occurrence_accounting", Status: "pass", Count: len(manifest.URLOccurrences)},
+		{Check: "sensitive_redacted_url_occurrences", Status: "pass", Count: sensitiveRedactions},
+		{Check: "non_semantic_url_sanitizations", Status: "pass", Count: nonSemanticSanitizations},
 	}
 	evidenceByID := map[string]acquisition.ImportedEvidence{}
 	for _, evidence := range input.ImportedEvidence {
@@ -172,35 +198,34 @@ func adapterVersion(input BuildInput) string {
 }
 
 func ExtractURLOccurrences(text string) []string {
-	var result []string
-	for index := 0; index < len(text); {
-		relative := strings.Index(text[index:], "http")
-		if relative < 0 {
-			break
-		}
-		start := index + relative
-		if !strings.HasPrefix(text[start:], "https://") && !strings.HasPrefix(text[start:], "http://") {
-			index = start + 4
-			continue
-		}
-		end := start
-		for end < len(text) {
-			character := rune(text[end])
-			if unicode.IsSpace(character) || strings.ContainsRune("<>|\"'", character) {
-				break
-			}
-			end++
-		}
-		candidate := strings.TrimRight(text[start:end], ".,;:!?)]}")
-		if parsed, err := url.Parse(candidate); err == nil && parsed.Hostname() != "" && (parsed.Scheme == "https" || parsed.Scheme == "http") {
+	matches := routing.URLPattern.FindAllString(text, -1)
+	result := make([]string, 0, len(matches))
+	for _, match := range matches {
+		candidate := strings.TrimRight(match, ".,;:!?)]}")
+		if candidate != "" {
 			result = append(result, candidate)
 		}
-		if end <= start {
-			end = start + 1
-		}
-		index = end
 	}
 	return result
+}
+
+func fingerprintSourceText(text string) [sha256.Size]byte {
+	matches := routing.URLPattern.FindAllStringIndex(text, -1)
+	var redacted strings.Builder
+	last := 0
+	for index, match := range matches {
+		start, end := match[0], match[1]
+		candidate := strings.TrimRight(text[start:end], ".,;:!?)]}")
+		candidateEnd := start + len(candidate)
+		redacted.WriteString(text[last:start])
+		redacted.WriteString("[mindline-url-occurrence:")
+		redacted.WriteString(stableIndex(index))
+		redacted.WriteString("]")
+		redacted.WriteString(text[candidateEnd:end])
+		last = end
+	}
+	redacted.WriteString(text[last:])
+	return sha256.Sum256([]byte(redacted.String()))
 }
 
 func classifyExternalURL(raw string) (kind, strategy, format string) {

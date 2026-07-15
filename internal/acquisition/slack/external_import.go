@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	ExternalInventorySchema = "external_slack_inventory/v1"
+	ExternalInventorySchema = "external_slack_inventory/v2"
 	DefaultMaximumBytes     = int64(64 << 20)
 	DataClassSynthetic      = "synthetic_fixture"
 	DataClassSentinel       = "sentinel_fixture"
@@ -121,6 +121,9 @@ func ValidateExternalManifest(manifest ExternalManifest) (ImportResult, error) {
 
 func validateExternalManifest(manifest ExternalManifest, privateAuthorized bool) (ImportResult, error) {
 	if manifest.SchemaVersion != ExternalInventorySchema {
+		if manifest.SchemaVersion == "external_slack_inventory/v1" {
+			return ImportResult{}, importError("requires_rebuild_after_STD20", errors.New("pre-STD-20 inventory must be rebuilt from its native source"))
+		}
 		category := "unsupported_schema"
 		if strings.Contains(strings.ToLower(manifest.SchemaVersion), "legacy") || strings.Contains(strings.ToLower(manifest.SchemaVersion), "canonical") {
 			category = "canonical_only_legacy"
@@ -149,6 +152,29 @@ func validateExternalManifest(manifest ExternalManifest, privateAuthorized bool)
 	observed := acquisition.InventoryCounts{SourceRecords: len(manifest.SourceRecords), URLOccurrences: len(manifest.URLOccurrences), CanonicalItems: len(manifest.CanonicalItems)}
 	if observed != manifest.DeclaredCounts {
 		return ImportResult{}, importError("declared_counts", errors.New("declared and observed counts differ"))
+	}
+	for _, occurrence := range manifest.URLOccurrences {
+		if occurrence.SanitizationState == routing.URLStorageSensitiveRedacted {
+			expectedOccurrenceID := stableSourceID("occurrence", occurrence.SourceRecordID, stableIndex(occurrence.SourceOrdinal))
+			expectedCanonicalID := stableSourceID("withheld", occurrence.SourceRecordID, stableIndex(occurrence.SourceOrdinal))
+			if occurrence.SourceOrdinal < 0 || occurrence.ObservedURL != "" || occurrence.URLOccurrenceID != expectedOccurrenceID || occurrence.CanonicalItemID != expectedCanonicalID {
+				return ImportResult{}, importError("sensitive_redaction_identity", errors.New("sensitive-redacted identity must derive only from source record and URL ordinal"))
+			}
+			continue
+		}
+		safeObserved, storageState, err := routing.PrepareURLForStorage(occurrence.ObservedURL)
+		if err != nil || storageState == routing.URLStorageSensitiveRedacted || safeObserved != occurrence.ObservedURL {
+			return ImportResult{}, importError("unsafe_observed_url", errors.New("observed URL contains unsafe durable components"))
+		}
+	}
+	for _, item := range manifest.CanonicalItems {
+		if item.AccessState == routing.URLStorageSensitiveRedacted && item.CanonicalURL == "" {
+			continue
+		}
+		safeCanonical, storageState, err := routing.PrepareURLForStorage(item.CanonicalURL)
+		if err != nil || storageState == routing.URLStorageSensitiveRedacted || safeCanonical != item.CanonicalURL {
+			return ImportResult{}, importError("unsafe_canonical_url", errors.New("canonical URL contains unsafe durable components"))
+		}
 	}
 	snapshot := acquisition.SealInventory(acquisition.InventorySnapshot{
 		SourceIdentity: manifest.SourceIdentity.String(),
@@ -191,6 +217,13 @@ func validatePrivateSourceClassifications(manifest ExternalManifest) (map[string
 	policies := make(map[string]importedEvidenceAccessPolicy, len(manifest.CanonicalItems))
 	canonicalURLs := make(map[string]string, len(manifest.CanonicalItems))
 	for _, item := range manifest.CanonicalItems {
+		if item.AccessState == routing.URLStorageSensitiveRedacted {
+			if item.CanonicalURL != "" || item.Kind != "unknown_sensitive" || item.RetrievalStrategy != "manual_support" || item.Format != "sensitive_redacted" {
+				return nil, importError("source_classification", errors.New("invalid sensitive-redacted source classification"))
+			}
+			policies[item.CanonicalItemID] = importedEvidenceManualOnly
+			continue
+		}
 		kind, strategy, format, policy := classifyExternalURLPolicy(item.CanonicalURL)
 		if item.Kind != kind || item.RetrievalStrategy != strategy || item.Format != format {
 			return nil, importError("source_classification", errors.New("canonical item classification does not match source-adapter policy"))
@@ -203,6 +236,12 @@ func validatePrivateSourceClassifications(manifest ExternalManifest) (map[string
 		canonicalURLs[item.CanonicalItemID] = canonical
 	}
 	for _, occurrence := range manifest.URLOccurrences {
+		if occurrence.SanitizationState == routing.URLStorageSensitiveRedacted {
+			if policies[occurrence.CanonicalItemID] != importedEvidenceManualOnly || occurrence.ObservedURL != "" {
+				return nil, importError("source_classification", errors.New("sensitive-redacted occurrence policy mismatch"))
+			}
+			continue
+		}
 		observed, err := routing.CanonicalizeURL(occurrence.ObservedURL)
 		if err != nil || canonicalURLs[occurrence.CanonicalItemID] == "" || observed != canonicalURLs[occurrence.CanonicalItemID] {
 			return nil, importError("source_classification", errors.New("observed URL does not match its canonical provider policy"))

@@ -39,9 +39,106 @@ func TestBuildExternalManifestPreservesDuplicateOccurrencesAndClassifiesFormats(
 }
 
 func TestExtractURLOccurrencesHandlesSlackLabelsAndPunctuation(t *testing.T) {
-	urls := ExtractURLOccurrences("see <https://example.com/a?x=1|label>, then https://example.com/b).")
-	if len(urls) != 2 || urls[0] != "https://example.com/a?x=1" || urls[1] != "https://example.com/b" {
+	urls := ExtractURLOccurrences("see <https://example.com/a?x=1|label>, then HTTPS://example.com/b).")
+	if len(urls) != 2 || urls[0] != "https://example.com/a?x=1" || urls[1] != "HTTPS://example.com/b" {
 		t.Fatalf("unexpected extracted occurrences: %#v", urls)
+	}
+}
+
+func TestBuildExternalManifestCountsMalformedLexicalURLAsSensitive(t *testing.T) {
+	manifest, err := BuildExternalManifest(BuildInput{
+		WorkspaceID: "T-synthetic", ChannelID: "C-synthetic", LowerInclusive: "1700000000.000001", UpperInclusive: "1700000000.000001", Watermark: "1700000000.000001", DataClass: DataClassSynthetic,
+		Messages: []NativeMessage{{NativeMessageID: "m-1", Timestamp: "1700000000.000001", Text: "HTTPS://example.com/public https://example.com/%zz?token=synthetic"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.URLOccurrences) != 2 || manifest.URLOccurrences[0].SourceOrdinal != 0 || manifest.URLOccurrences[1].SourceOrdinal != 1 {
+		t.Fatalf("lexical source denominator was reduced: %+v", manifest.URLOccurrences)
+	}
+	if manifest.URLOccurrences[0].ObservedURL != "https://example.com/public" || manifest.URLOccurrences[1].ObservedURL != "" || manifest.URLOccurrences[1].SanitizationState != "sensitive_redacted" {
+		t.Fatalf("lexical URLs were not normalized fail-closed: %+v", manifest.URLOccurrences)
+	}
+}
+
+func TestBuildExternalManifestCountsEncodedQueryKeyAliasesAsSensitive(t *testing.T) {
+	manifest, err := BuildExternalManifest(BuildInput{
+		WorkspaceID: "T-synthetic", ChannelID: "C-synthetic", LowerInclusive: "1700000000.000001", UpperInclusive: "1700000000.000001", Watermark: "1700000000.000001", DataClass: DataClassSynthetic,
+		Messages: []NativeMessage{{NativeMessageID: "m-1", Timestamp: "1700000000.000001", Text: "https://example.com/path?%75tm_source=x https://www.youtube.com/watch?%73i=x https://www.youtube.com/watch?%76=publicvid01"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.URLOccurrences) != 3 || len(manifest.CanonicalItems) != 3 {
+		t.Fatalf("encoded query aliases changed the denominator: occurrences=%d items=%d", len(manifest.URLOccurrences), len(manifest.CanonicalItems))
+	}
+	for index, occurrence := range manifest.URLOccurrences {
+		if occurrence.SourceOrdinal != index || occurrence.ObservedURL != "" || occurrence.SanitizationState != "sensitive_redacted" {
+			t.Fatalf("encoded query alias was not withheld at ordinal %d: %+v", index, occurrence)
+		}
+	}
+}
+
+func TestBuildExternalManifestSanitizesSecretBearingURLsWithoutChangingDenominators(t *testing.T) {
+	manifest, err := BuildExternalManifest(BuildInput{
+		WorkspaceID: "T-synthetic", ChannelID: "C-synthetic", LowerInclusive: "1700000000.000001", UpperInclusive: "1700000000.000001", Watermark: "1700000000.000001", DataClass: DataClassSynthetic,
+		Messages: []NativeMessage{{NativeMessageID: "m-1", Timestamp: "1700000000.000001", Text: "https://example.com/shared?amp;token=synthetic-value&keep=ok"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.SourceRecords) != 1 || len(manifest.URLOccurrences) != 1 || len(manifest.CanonicalItems) != 1 {
+		t.Fatalf("sanitization changed denominators: records=%d occurrences=%d canonical=%d", len(manifest.SourceRecords), len(manifest.URLOccurrences), len(manifest.CanonicalItems))
+	}
+	occurrence := manifest.URLOccurrences[0]
+	item := manifest.CanonicalItems[0]
+	if occurrence.ObservedURL != "" || occurrence.SanitizationState != "sensitive_redacted" || item.CanonicalURL != "" || item.AccessState != "sensitive_redacted" || item.RetrievalStrategy != "manual_support" {
+		t.Fatalf("unsafe URL was not withheld transparently: %+v item=%+v", occurrence, item)
+	}
+	if manifest.Completeness[len(manifest.Completeness)-2].Check != "sensitive_redacted_url_occurrences" || manifest.Completeness[len(manifest.Completeness)-2].Count != 1 {
+		t.Fatalf("sanitization evidence missing: %+v", manifest.Completeness)
+	}
+}
+
+func TestBuildExternalManifestDoesNotCollapseProviderForeignQueryIdentity(t *testing.T) {
+	manifest, err := BuildExternalManifest(BuildInput{
+		WorkspaceID: "T-synthetic", ChannelID: "C-synthetic", LowerInclusive: "1700000000.000001", UpperInclusive: "1700000000.000001", Watermark: "1700000000.000001", DataClass: DataClassSynthetic,
+		Messages: []NativeMessage{{NativeMessageID: "m-1", Timestamp: "1700000000.000001", Text: "https://unrelated.example/resource?si=one https://unrelated.example/resource?si=two"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.URLOccurrences) != 2 || len(manifest.CanonicalItems) != 2 || manifest.Completeness[len(manifest.Completeness)-2].Count != 2 {
+		t.Fatalf("unknown provider identities collapsed or disappeared: occurrences=%d items=%d evidence=%+v", len(manifest.URLOccurrences), len(manifest.CanonicalItems), manifest.Completeness)
+	}
+	for index, occurrence := range manifest.URLOccurrences {
+		if occurrence.ObservedURL != "" || occurrence.SanitizationState != "sensitive_redacted" {
+			t.Fatalf("provider-foreign query was persisted: %+v", occurrence)
+		}
+		if occurrence.SourceOrdinal != index {
+			t.Fatalf("source URL ordinal was not preserved: %+v", occurrence)
+		}
+	}
+}
+
+func TestSensitiveRedactedIdentityDoesNotDependOnSecretValue(t *testing.T) {
+	build := func(value string) ExternalManifest {
+		manifest, err := BuildExternalManifest(BuildInput{
+			WorkspaceID: "T-synthetic", ChannelID: "C-synthetic", LowerInclusive: "1700000000.000001", UpperInclusive: "1700000000.000001", Watermark: "1700000000.000001", DataClass: DataClassSynthetic,
+			Messages: []NativeMessage{{NativeMessageID: "m-stable", Timestamp: "1700000000.000001", Text: "https://example.com/shared?token=" + value}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return manifest
+	}
+	first := build("synthetic-value-one")
+	second := build("synthetic-value-two")
+	if first.URLOccurrences[0].URLOccurrenceID != second.URLOccurrences[0].URLOccurrenceID || first.CanonicalItems[0].CanonicalItemID != second.CanonicalItems[0].CanonicalItemID {
+		t.Fatalf("withheld identity changed with secret value: first=%+v second=%+v", first.URLOccurrences[0], second.URLOccurrences[0])
+	}
+	if first.SourceRecords[0].ContentFingerprint != second.SourceRecords[0].ContentFingerprint {
+		t.Fatal("source fingerprint retained URL-derived content")
 	}
 }
 

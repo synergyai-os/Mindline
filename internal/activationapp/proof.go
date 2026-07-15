@@ -13,6 +13,7 @@ import (
 	"github.com/synergyai-os/Mindline/internal/processing"
 	"github.com/synergyai-os/Mindline/internal/processing/routingcompat"
 	"github.com/synergyai-os/Mindline/internal/retrieval"
+	"github.com/synergyai-os/Mindline/internal/routing"
 )
 
 func (app *App) freezeLocked(ctx context.Context) (any, error) {
@@ -50,7 +51,7 @@ func (app *App) freezeLocked(ctx context.Context) (any, error) {
 	if app.state.SourceScope != nil {
 		sourceScopeFingerprint = app.state.SourceScope.Fingerprint
 	}
-	acquisitionVersion := "external_slack_inventory/v1"
+	acquisitionVersion := "external_slack_inventory/v2"
 	if app.state.SourceScope != nil && strings.TrimSpace(app.state.SourceScope.AdapterVersion) != "" {
 		acquisitionVersion = app.state.SourceScope.AdapterVersion
 	}
@@ -157,9 +158,16 @@ func (app *App) startProofLocked(ctx context.Context) (any, error) {
 	artifacts := make([]retrieval.Artifact, 0, len(proofInventory.CanonicalItems))
 	proposals := make([]processing.Proposal, 0, len(proofInventory.CanonicalItems))
 	for _, item := range proofInventory.CanonicalItems {
-		artifact, err := registry.Retrieve(ctx, retrieval.Request{CanonicalItemID: item.CanonicalItemID, CanonicalURL: item.CanonicalURL, Strategy: item.RetrievalStrategy, Format: item.Format, MaximumBodyBytes: 4 << 20})
-		if err != nil {
-			return nil, err
+		request := retrieval.Request{CanonicalItemID: item.CanonicalItemID, CanonicalURL: item.CanonicalURL, Strategy: item.RetrievalStrategy, Format: item.Format, MaximumBodyBytes: 4 << 20}
+		var artifact retrieval.Artifact
+		if item.AccessState == routing.URLStorageSensitiveRedacted {
+			artifact = retrieval.MissingArtifact(request, retrieval.StateNotAttempted, retrieval.AccessUnsupported, retrieval.OriginSourcePolicy, retrieval.SensitiveRedactedMissingnessReason)
+			artifact.SecretLike = true
+		} else {
+			artifact, err = registry.Retrieve(ctx, request)
+			if err != nil {
+				return nil, err
+			}
 		}
 		processed, err := (processing.EvidenceMatcher{}).Process(processing.Request{Item: item, Retrieval: artifact, Strategy: *app.state.Strategy})
 		if err != nil {
@@ -328,15 +336,37 @@ func validateExhaustiveInventory(snapshot acquisition.InventorySnapshot) error {
 		"canonical_item_denominator":          len(snapshot.CanonicalItems),
 		"bidirectional_occurrence_accounting": len(snapshot.URLOccurrences),
 	}
+	optional := map[string]int{"sensitive_redacted_url_occurrences": 0, "non_semantic_url_sanitizations": 0}
+	for _, occurrence := range snapshot.URLOccurrences {
+		switch occurrence.SanitizationState {
+		case routing.URLStorageSensitiveRedacted:
+			optional["sensitive_redacted_url_occurrences"]++
+		case routing.URLStorageNonSemanticComponentsRemoved:
+			optional["non_semantic_url_sanitizations"]++
+		}
+	}
 	seen := map[string]bool{}
 	for _, check := range snapshot.Completeness {
 		expected, ok := required[check.Check]
+		if !ok {
+			expected, ok = optional[check.Check]
+		}
 		if !ok || seen[check.Check] || check.Status != "pass" || check.Count != expected {
 			return errors.New("inventory completeness evidence rejected")
 		}
 		seen[check.Check] = true
 	}
-	if len(seen) != len(required) {
+	for name := range required {
+		if !seen[name] {
+			return errors.New("inventory completeness evidence is incomplete")
+		}
+	}
+	for name := range optional {
+		if !seen[name] {
+			return errors.New("inventory sanitization evidence is incomplete")
+		}
+	}
+	if len(seen) != len(required)+len(optional) {
 		return errors.New("inventory completeness evidence is incomplete")
 	}
 	return nil
@@ -441,10 +471,10 @@ func toOrchestrationInventory(snapshot acquisition.InventorySnapshot) (orchestra
 		result.SourceRecords = append(result.SourceRecords, orchestration.SourceRecord{SourceRecordID: record.SourceRecordID, NativeMessageID: record.NativeMessageID, NativeTimestamp: record.NativeTimestamp, ContentFingerprint: record.ContentFingerprint, URLOccurrenceIDs: append([]string(nil), record.URLOccurrenceIDs...), EditDeleteState: record.EditDeleteState, ThreadParentID: record.ThreadParentID})
 	}
 	for _, occurrence := range snapshot.URLOccurrences {
-		result.URLOccurrences = append(result.URLOccurrences, orchestration.URLOccurrence{URLOccurrenceID: occurrence.URLOccurrenceID, SourceRecordID: occurrence.SourceRecordID, ObservedURL: occurrence.ObservedURL, CanonicalItemID: occurrence.CanonicalItemID})
+		result.URLOccurrences = append(result.URLOccurrences, orchestration.URLOccurrence{URLOccurrenceID: occurrence.URLOccurrenceID, SourceRecordID: occurrence.SourceRecordID, SourceOrdinal: occurrence.SourceOrdinal, ObservedURL: occurrence.ObservedURL, CanonicalItemID: occurrence.CanonicalItemID, SanitizationState: occurrence.SanitizationState})
 	}
 	for _, item := range snapshot.CanonicalItems {
-		result.CanonicalItems = append(result.CanonicalItems, orchestration.InventoryItem{CanonicalItemID: item.CanonicalItemID, CanonicalURL: item.CanonicalURL, RetrievalStrategyID: item.RetrievalStrategy, FormatVariant: item.Format, OccurrenceIDs: append([]string(nil), item.URLOccurrenceIDs...)})
+		result.CanonicalItems = append(result.CanonicalItems, orchestration.InventoryItem{CanonicalItemID: item.CanonicalItemID, CanonicalURL: item.CanonicalURL, RetrievalStrategyID: item.RetrievalStrategy, FormatVariant: item.Format, OccurrenceIDs: append([]string(nil), item.URLOccurrenceIDs...), AccessState: item.AccessState})
 	}
 	for _, check := range snapshot.Completeness {
 		result.Completeness = append(result.Completeness, orchestration.EvidenceCheck{Name: check.Check, Status: check.Status, EvidenceFingerprint: acquisition.Fingerprint(check)})

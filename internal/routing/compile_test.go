@@ -87,6 +87,84 @@ func TestCanonicalizeURLDoesNotDoubleEscapeEncodedPath(t *testing.T) {
 	}
 }
 
+func TestPrepareURLForStorageWithholdsAmbiguousOrCredentialBearingURLs(t *testing.T) {
+	got, state, err := PrepareURLForStorage("https://user:pass@example.com/path")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "" || state != URLStorageSensitiveRedacted {
+		t.Fatalf("userinfo URL was not withheld: %q state=%q", got, state)
+	}
+	got, state, err = PrepareURLForStorage("https://example.com/path?amp;token=synthetic-value&keep=ok")
+	if err != nil || got != "" || state != URLStorageSensitiveRedacted {
+		t.Fatalf("ambiguous query URL was not withheld: %q state=%q err=%v", got, state, err)
+	}
+	got, state, err = PrepareURLForStorage("https://www.youtube.com/watch?v=publicvid01&utm_source=slack")
+	if err != nil || state != URLStorageNonSemanticComponentsRemoved || got != "https://www.youtube.com/watch?v=publicvid01" {
+		t.Fatalf("provider identity URL was not safely reduced: %q state=%q err=%v", got, state, err)
+	}
+	for _, target := range []string{
+		"https://www.youtube.com/login?v=publicvid01",
+		"https://www.youtube.com/watch?V=publicvid01",
+		"https://news.ycombinator.com/item?id=1&id=2",
+		"https://www.youtube.com/watch?%20si%20=tracking",
+		"https://example.com/path?UTM_SOURCE=tracking",
+		"https://example.com/path?%75tm_source=tracking",
+		"https://www.youtube.com/watch?%73i=tracking",
+		"https://www.youtube.com/watch?%76=publicvid01",
+	} {
+		got, state, err = PrepareURLForStorage(target)
+		if err != nil || got != "" || state != URLStorageSensitiveRedacted {
+			t.Fatalf("ambiguous provider identity was not withheld: target=%q got=%q state=%q err=%v", target, got, state, err)
+		}
+	}
+	secretShaped := "xoxb" + "-synth1"
+	got, state, err = PrepareURLForStorage("https://www.youtube.com/watch?v=" + secretShaped)
+	if err != nil || got != "" || state != URLStorageSensitiveRedacted {
+		t.Fatalf("secret-shaped provider identity value was not withheld: %q state=%q err=%v", got, state, err)
+	}
+	embeddedSecret := "PLpublic" + secretShaped
+	got, state, err = PrepareURLForStorage("https://www.youtube.com/playlist?list=" + embeddedSecret)
+	if err != nil || got != "" || state != URLStorageSensitiveRedacted {
+		t.Fatalf("embedded secret-shaped playlist value was not withheld: %q state=%q err=%v", got, state, err)
+	}
+	got, state, err = PrepareURLForStorage("https://unrelated.example/resource?si=identity")
+	if err != nil || got != "" || state != URLStorageSensitiveRedacted {
+		t.Fatalf("provider-foreign tracking key was treated as non-semantic: %q state=%q err=%v", got, state, err)
+	}
+	got, state, err = PrepareURLForStorage("https://example.com/path#access_token=synthetic-value")
+	if err != nil || got != "" || state != URLStorageSensitiveRedacted {
+		t.Fatalf("fragment-bearing URL was not withheld: %q state=%q err=%v", got, state, err)
+	}
+	secretPath := "https://example.com/download/" + "xoxb" + "-synthetic"
+	got, state, err = PrepareURLForStorage(secretPath)
+	if err != nil || got != "" || state != URLStorageSensitiveRedacted {
+		t.Fatalf("secret-shaped path was not withheld: %q state=%q err=%v", got, state, err)
+	}
+	secretHost := "https://" + "xoxb" + "-synthetic.example.com/path"
+	got, state, err = PrepareURLForStorage(secretHost)
+	if err != nil || got != "" || state != URLStorageSensitiveRedacted {
+		t.Fatalf("secret-shaped hostname was not withheld: %q state=%q err=%v", got, state, err)
+	}
+	got, state, err = PrepareURLForStorage("https://example.com/path")
+	if err != nil || state != "" || got != "https://example.com/path" {
+		t.Fatalf("safe URL changed: %q state=%q err=%v", got, state, err)
+	}
+}
+
+func TestRoutingArtifactRejectsUnsafeRelatedURL(t *testing.T) {
+	artifact := LinkArtifact{
+		State:          "complete",
+		PublicExcerpts: []PublicExcerpt{{ExcerptID: "evidence-1", Text: "Public evidence.", Locator: "page"}},
+		RelatedURLs: []RelatedURL{{
+			URL: "https://example.com/related?token=synthetic-value", Relation: "source_links_to", DiscoveryEvidenceRef: "evidence-1", SemanticallyRelevant: true,
+		}},
+	}
+	if err := validateArtifact(artifact); err == nil {
+		t.Fatal("routing artifact accepted an unsafe related URL")
+	}
+}
+
 func TestValidateSourceGraphRejectsBrokenAccountingAndEdges(t *testing.T) {
 	base := validSourceGraphFixture()
 	tests := []struct {

@@ -20,6 +20,9 @@ import (
 )
 
 func (app *App) validatePersistedState(state persistedState) error {
+	if state.SchemaVersion != StateSchemaVersion {
+		return errors.New("activation state requires rebuild after STD-20")
+	}
 	if state.KnownSource != nil {
 		if err := validateConnectionSnapshot(*state.KnownSource, "slack", integrations.ConnectionSlackWebAPI); err != nil {
 			return err

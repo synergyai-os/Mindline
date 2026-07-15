@@ -81,9 +81,10 @@ func validateSourceGraph(graph SourceGraph) error {
 	canonical := map[string]CanonicalURL{}
 	canonicalIdentitySeen := map[string]bool{}
 	for _, source := range graph.CanonicalURLs {
+		safeURL, storageState, storageErr := PrepareURLForStorage(source.CanonicalURL)
 		normalized, err := CanonicalizeURL(source.CanonicalURL)
 		identity := canonicalIdentity(normalized)
-		if err != nil || normalized != source.CanonicalURL || source.CanonicalURLID != CanonicalURLID(source.CanonicalURL) || canonical[source.CanonicalURLID].CanonicalURLID != "" || canonicalIdentitySeen[identity] || !urlKinds[source.Kind] || !enrichmentStates[source.EnrichmentState] || source.Depth < 0 || source.Depth > 1 {
+		if storageErr != nil || storageState == URLStorageSensitiveRedacted || safeURL != source.CanonicalURL || err != nil || normalized != source.CanonicalURL || source.CanonicalURLID != CanonicalURLID(source.CanonicalURL) || canonical[source.CanonicalURLID].CanonicalURLID != "" || canonicalIdentitySeen[identity] || !urlKinds[source.Kind] || !enrichmentStates[source.EnrichmentState] || source.Depth < 0 || source.Depth > 1 {
 			return errors.New("invalid canonical source")
 		}
 		if source.Depth == 0 && (source.ParentCanonicalURLID != "" || source.Discovery != "source_occurrence") {
@@ -117,8 +118,9 @@ func validateSourceGraph(graph SourceGraph) error {
 	primaryOccurrenceCoverage := map[string]int{}
 	for _, occurrence := range graph.URLOccurrences {
 		target, targetExists := canonical[occurrence.CanonicalURLID]
+		safeObserved, storageState, storageErr := PrepareURLForStorage(occurrence.ObservedURL)
 		observedCanonical, err := CanonicalizeURL(occurrence.ObservedURL)
-		if occurrence.URLOccurrenceID == "" || occurrences[occurrence.URLOccurrenceID].URLOccurrenceID != "" || records[occurrence.SourceRecordID].SourceRecordID == "" || !targetExists || target.Depth != 0 || err != nil || canonicalIdentity(observedCanonical) != canonicalIdentity(target.CanonicalURL) {
+		if storageErr != nil || storageState == URLStorageSensitiveRedacted || safeObserved != occurrence.ObservedURL || occurrence.URLOccurrenceID == "" || occurrences[occurrence.URLOccurrenceID].URLOccurrenceID != "" || records[occurrence.SourceRecordID].SourceRecordID == "" || !targetExists || target.Depth != 0 || err != nil || canonicalIdentity(observedCanonical) != canonicalIdentity(target.CanonicalURL) {
 			return errors.New("invalid URL occurrence")
 		}
 		occurrences[occurrence.URLOccurrenceID] = occurrence
@@ -404,6 +406,12 @@ func validateArtifact(artifact LinkArtifact) error {
 	}
 	if artifact.State == "inaccessible" && (strings.TrimSpace(artifact.PublicMetadata.Title) != "" || strings.TrimSpace(artifact.PublicMetadata.Author) != "" || strings.TrimSpace(artifact.PublicMetadata.PublishedAt) != "" || len(artifact.RelatedURLs) > 0) {
 		return errors.New("inaccessible source cannot contain invented public context")
+	}
+	for _, related := range artifact.RelatedURLs {
+		safeURL, storageState, err := PrepareURLForStorage(related.URL)
+		if err != nil || storageState == URLStorageSensitiveRedacted || safeURL != related.URL || related.Relation != "source_links_to" || !seen[related.DiscoveryEvidenceRef] {
+			return errors.New("invalid related URL evidence")
+		}
 	}
 	return nil
 }

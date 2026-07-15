@@ -40,15 +40,54 @@ func CompileReviewed(input Input) (routing.Result, error) {
 	if err != nil {
 		return routing.Result{}, err
 	}
+	routableInventory := destinationRoutableInventory(input.Inventory)
 
-	graph, err := compileGraph(input.Inventory, artifactsByItem)
+	graph, err := compileGraph(routableInventory, artifactsByItem)
 	if err != nil {
 		return routing.Result{}, err
 	}
-	linkArtifacts := compileArtifacts(input.Inventory, artifactsByItem)
+	linkArtifacts := compileArtifacts(routableInventory, artifactsByItem)
 	profile := compileProfile(input.Strategy)
-	judgments := compileJudgments(input.Inventory, profile, proposalsByItem, reviewsByItem, judgedAt)
+	judgments := compileJudgments(routableInventory, profile, proposalsByItem, reviewsByItem, judgedAt)
 	return routing.CompileGraph(graph, linkArtifacts, profile, judgments)
+}
+
+// destinationRoutableInventory excludes content-free sensitive-redacted items
+// only after their retrieval and operator-review coverage has been validated.
+// They remain authoritative in the activation inventory and review ledger but
+// cannot enter the strict URL graph or any destination outbox.
+func destinationRoutableInventory(inventory acquisition.InventorySnapshot) acquisition.InventorySnapshot {
+	allowedItems := map[string]bool{}
+	allowedOccurrences := map[string]bool{}
+	result := acquisition.InventorySnapshot{SourceIdentity: inventory.SourceIdentity, Watermark: inventory.Watermark}
+	for _, item := range inventory.CanonicalItems {
+		if item.AccessState == "sensitive_redacted" {
+			continue
+		}
+		result.CanonicalItems = append(result.CanonicalItems, item)
+		allowedItems[item.CanonicalItemID] = true
+		for _, occurrenceID := range item.URLOccurrenceIDs {
+			allowedOccurrences[occurrenceID] = true
+		}
+	}
+	for _, occurrence := range inventory.URLOccurrences {
+		if allowedItems[occurrence.CanonicalItemID] && allowedOccurrences[occurrence.URLOccurrenceID] {
+			result.URLOccurrences = append(result.URLOccurrences, occurrence)
+		}
+	}
+	for _, record := range inventory.SourceRecords {
+		copyRecord := record
+		copyRecord.URLOccurrenceIDs = nil
+		for _, occurrenceID := range record.URLOccurrenceIDs {
+			if allowedOccurrences[occurrenceID] {
+				copyRecord.URLOccurrenceIDs = append(copyRecord.URLOccurrenceIDs, occurrenceID)
+			}
+		}
+		if len(copyRecord.URLOccurrenceIDs) > 0 {
+			result.SourceRecords = append(result.SourceRecords, copyRecord)
+		}
+	}
+	return result
 }
 
 func compileGraph(inventory acquisition.InventorySnapshot, artifacts map[string]retrieval.Artifact) (routing.SourceGraph, error) {

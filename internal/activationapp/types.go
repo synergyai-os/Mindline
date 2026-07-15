@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	StateSchemaVersion        = "mindline-trusted-activation-state/v0.2"
+	StateSchemaVersion        = "mindline-trusted-activation-state/v0.3"
 	FounderReviewSchema       = "mindline-founder-review/v0.1"
 	ZeroDeliveryReceiptSchema = "mindline-zero-delivery-receipt/v0.1"
 	QueueProjectionSchema     = "mindline-frozen-activation-queue/v0.1"
@@ -272,6 +272,12 @@ type EvidenceExcerptView struct {
 	Locator string `json:"locator"`
 }
 
+type SourceReferenceView struct {
+	NativeMessageID string `json:"native_message_id"`
+	NativeTimestamp string `json:"native_timestamp"`
+	URLOrdinal      int    `json:"url_ordinal"`
+}
+
 type ProofItemView struct {
 	CanonicalItemID      string                  `json:"canonical_item_id"`
 	CanonicalURL         string                  `json:"canonical_url"`
@@ -296,6 +302,7 @@ type ProofItemView struct {
 	ReasonCodes          []string                `json:"reason_codes,omitempty"`
 	DestinationMapping   string                  `json:"destination_mapping,omitempty"`
 	ReviewStatus         string                  `json:"review_status"`
+	SourceReferences     []SourceReferenceView   `json:"source_references,omitempty"`
 }
 
 type ProofView struct {

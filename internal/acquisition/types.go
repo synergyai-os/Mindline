@@ -11,10 +11,12 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/synergyai-os/Mindline/internal/routing"
 )
 
 const (
-	InventorySnapshotSchema = "mindline-inventory-snapshot/v0.1"
+	InventorySnapshotSchema = "mindline-inventory-snapshot/v0.2"
 	maximumSourceRecords    = 100_000
 	maximumURLOccurrences   = 250_000
 	maximumCanonicalItems   = 250_000
@@ -72,10 +74,12 @@ type SourceRecord struct {
 }
 
 type URLOccurrence struct {
-	URLOccurrenceID string `json:"url_occurrence_id"`
-	SourceRecordID  string `json:"source_record_id"`
-	ObservedURL     string `json:"observed_url"`
-	CanonicalItemID string `json:"canonical_item_id"`
+	URLOccurrenceID   string `json:"url_occurrence_id"`
+	SourceRecordID    string `json:"source_record_id"`
+	SourceOrdinal     int    `json:"source_ordinal"`
+	ObservedURL       string `json:"observed_url,omitempty"`
+	CanonicalItemID   string `json:"canonical_item_id"`
+	SanitizationState string `json:"sanitization_state,omitempty"`
 }
 
 type InventoryItem struct {
@@ -85,6 +89,7 @@ type InventoryItem struct {
 	URLOccurrenceIDs  []string `json:"url_occurrence_ids"`
 	RetrievalStrategy string   `json:"retrieval_strategy"`
 	Format            string   `json:"format"`
+	AccessState       string   `json:"access_state,omitempty"`
 }
 
 type StratumCount struct {
@@ -199,25 +204,50 @@ func ValidateInventory(snapshot InventorySnapshot) error {
 		if !validID(item.CanonicalItemID) || items[item.CanonicalItemID].CanonicalItemID != "" || strings.TrimSpace(item.Kind) == "" || strings.TrimSpace(item.RetrievalStrategy) == "" || strings.TrimSpace(item.Format) == "" {
 			return errors.New("invalid or duplicate canonical item")
 		}
-		canonical, err := validateWebURL(item.CanonicalURL)
-		if err != nil || canonicalURLSeen[canonical] {
-			return errors.New("invalid or duplicate canonical URL")
+		if item.AccessState == "sensitive_redacted" {
+			if item.CanonicalURL != "" || item.Kind != "unknown_sensitive" || item.RetrievalStrategy != "manual_support" || item.Format != "sensitive_redacted" {
+				return errors.New("invalid sensitive-redacted canonical item")
+			}
+		} else {
+			if item.AccessState != "" {
+				return errors.New("invalid canonical item access state")
+			}
+			canonical, err := validateWebURL(item.CanonicalURL)
+			if err != nil || canonicalURLSeen[canonical] {
+				return errors.New("invalid or duplicate canonical URL")
+			}
+			canonicalURLSeen[canonical] = true
 		}
 		if hasEmptyOrDuplicate(item.URLOccurrenceIDs) {
 			return errors.New("invalid canonical occurrence references")
 		}
-		canonicalURLSeen[canonical] = true
 		items[item.CanonicalItemID] = item
 	}
 
 	occurrences := make(map[string]URLOccurrence, len(snapshot.URLOccurrences))
+	sourceOrdinals := make(map[string]bool, len(snapshot.URLOccurrences))
 	for _, occurrence := range snapshot.URLOccurrences {
-		if !validID(occurrence.URLOccurrenceID) || occurrences[occurrence.URLOccurrenceID].URLOccurrenceID != "" || records[occurrence.SourceRecordID].SourceRecordID == "" || items[occurrence.CanonicalItemID].CanonicalItemID == "" {
+		ordinalKey := occurrence.SourceRecordID + "\x00" + strconv.Itoa(occurrence.SourceOrdinal)
+		if occurrence.SourceOrdinal < 0 || sourceOrdinals[ordinalKey] || !validID(occurrence.URLOccurrenceID) || occurrences[occurrence.URLOccurrenceID].URLOccurrenceID != "" || records[occurrence.SourceRecordID].SourceRecordID == "" || items[occurrence.CanonicalItemID].CanonicalItemID == "" {
 			return errors.New("invalid or duplicate URL occurrence")
 		}
-		if _, err := validateWebURL(occurrence.ObservedURL); err != nil {
+		if occurrence.SanitizationState != "" && occurrence.SanitizationState != "sensitive_redacted" && occurrence.SanitizationState != "non_semantic_components_removed" {
+			return errors.New("invalid URL occurrence sanitization state")
+		}
+		item := items[occurrence.CanonicalItemID]
+		sensitiveOccurrence := occurrence.SanitizationState == "sensitive_redacted"
+		sensitiveItem := item.AccessState == "sensitive_redacted"
+		if sensitiveOccurrence != sensitiveItem {
+			return errors.New("sensitive-redacted occurrence and item state mismatch")
+		}
+		if sensitiveOccurrence {
+			if occurrence.ObservedURL != "" {
+				return errors.New("invalid sensitive-redacted URL occurrence")
+			}
+		} else if _, err := validateWebURL(occurrence.ObservedURL); err != nil {
 			return errors.New("invalid observed URL")
 		}
+		sourceOrdinals[ordinalKey] = true
 		occurrences[occurrence.URLOccurrenceID] = occurrence
 	}
 
@@ -271,6 +301,9 @@ func ValidateImportedEvidence(evidence []ImportedEvidence, snapshot InventorySna
 		if !ok || seen[artifact.CanonicalItemID] || artifact.CanonicalURL != item.CanonicalURL {
 			return errors.New("imported evidence identity mismatch")
 		}
+		if item.AccessState == "sensitive_redacted" {
+			return errors.New("sensitive-redacted item cannot carry imported evidence")
+		}
 		seen[artifact.CanonicalItemID] = true
 		switch artifact.AccessClass {
 		case "", "public", "private", "authenticated", "unsupported":
@@ -303,7 +336,8 @@ func ValidateImportedEvidence(evidence []ImportedEvidence, snapshot InventorySna
 			return errors.New("inaccessible imported evidence must be explicit and unevidenced")
 		}
 		for _, related := range artifact.RelatedURLs {
-			if _, err := validateWebURL(related.URL); err != nil || related.Relation != "source_links_to" || !excerptIDs[related.DiscoveryEvidenceRef] {
+			safeURL, storageState, err := routing.PrepareURLForStorage(related.URL)
+			if err != nil || storageState == routing.URLStorageSensitiveRedacted || safeURL != related.URL || related.Relation != "source_links_to" || !excerptIDs[related.DiscoveryEvidenceRef] {
 				return errors.New("invalid related imported evidence")
 			}
 		}

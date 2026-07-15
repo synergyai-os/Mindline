@@ -13,7 +13,7 @@ import (
 
 const (
 	RunPlanSchemaVersion        = "mindline-activation-run-plan/v0.1"
-	InventorySchemaVersion      = "mindline-activation-inventory/v0.1"
+	InventorySchemaVersion      = "mindline-activation-inventory/v0.2"
 	StrategySchemaVersion       = "mindline-activation-strategy/v0.1"
 	BatchApprovalSchemaVersion  = "mindline-activation-batch-approval/v0.1"
 	SampleManifestSchemaVersion = "mindline-activation-sample/v0.1"
@@ -82,10 +82,12 @@ type SourceRecord struct {
 }
 
 type URLOccurrence struct {
-	URLOccurrenceID string `json:"url_occurrence_id"`
-	SourceRecordID  string `json:"source_record_id"`
-	ObservedURL     string `json:"observed_url"`
-	CanonicalItemID string `json:"canonical_item_id"`
+	URLOccurrenceID   string `json:"url_occurrence_id"`
+	SourceRecordID    string `json:"source_record_id"`
+	SourceOrdinal     int    `json:"source_ordinal"`
+	ObservedURL       string `json:"observed_url,omitempty"`
+	CanonicalItemID   string `json:"canonical_item_id"`
+	SanitizationState string `json:"sanitization_state,omitempty"`
 }
 
 type InventoryItem struct {
@@ -359,7 +361,14 @@ func validateInventoryFields(snapshot InventorySnapshot) error {
 	items := map[string]InventoryItem{}
 	itemOccurrenceRefs := map[string]int{}
 	for _, item := range snapshot.CanonicalItems {
-		if item.CanonicalItemID == "" || item.CanonicalURL == "" || item.RetrievalStrategyID == "" || item.FormatVariant == "" || len(item.OccurrenceIDs) == 0 {
+		if item.CanonicalItemID == "" || item.RetrievalStrategyID == "" || item.FormatVariant == "" || len(item.OccurrenceIDs) == 0 {
+			return ErrInvalidInventory
+		}
+		if item.AccessState == "sensitive_redacted" {
+			if item.CanonicalURL != "" || item.RetrievalStrategyID != "manual_support" || item.FormatVariant != "sensitive_redacted" {
+				return ErrInvalidInventory
+			}
+		} else if item.AccessState != "" || item.CanonicalURL == "" {
 			return ErrInvalidInventory
 		}
 		if _, exists := items[item.CanonicalItemID]; exists {
@@ -376,8 +385,23 @@ func validateInventoryFields(snapshot InventorySnapshot) error {
 		}
 	}
 	occurrences := map[string]URLOccurrence{}
+	sourceOrdinals := map[string]bool{}
 	for _, occurrence := range snapshot.URLOccurrences {
-		if occurrence.URLOccurrenceID == "" || occurrence.SourceRecordID == "" || occurrence.ObservedURL == "" || occurrence.CanonicalItemID == "" {
+		ordinalKey := fmt.Sprintf("%s\x00%d", occurrence.SourceRecordID, occurrence.SourceOrdinal)
+		if occurrence.SourceOrdinal < 0 || sourceOrdinals[ordinalKey] || occurrence.URLOccurrenceID == "" || occurrence.SourceRecordID == "" || occurrence.CanonicalItemID == "" {
+			return ErrInvalidInventory
+		}
+		item := items[occurrence.CanonicalItemID]
+		sensitiveOccurrence := occurrence.SanitizationState == "sensitive_redacted"
+		sensitiveItem := item.AccessState == "sensitive_redacted"
+		if sensitiveOccurrence != sensitiveItem {
+			return ErrInvalidInventory
+		}
+		if sensitiveOccurrence {
+			if occurrence.ObservedURL != "" {
+				return ErrInvalidInventory
+			}
+		} else if occurrence.ObservedURL == "" || occurrence.SanitizationState != "" && occurrence.SanitizationState != "non_semantic_components_removed" {
 			return ErrInvalidInventory
 		}
 		if _, exists := occurrences[occurrence.URLOccurrenceID]; exists {
@@ -389,6 +413,7 @@ func validateInventoryFields(snapshot InventorySnapshot) error {
 		if _, exists := items[occurrence.CanonicalItemID]; !exists {
 			return ErrInvalidInventory
 		}
+		sourceOrdinals[ordinalKey] = true
 		occurrences[occurrence.URLOccurrenceID] = occurrence
 	}
 	for occurrenceID := range occurrences {
