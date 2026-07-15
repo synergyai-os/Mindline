@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/synergyai-os/Mindline/internal/controlrun"
 	"github.com/synergyai-os/Mindline/internal/controlsettings"
@@ -34,6 +35,25 @@ type fakePairingConfirmer struct{ challenge string }
 func (f *fakePairingConfirmer) ConfirmPairing(_ context.Context, challenge string) error {
 	f.challenge = challenge
 	return nil
+}
+
+type blockingPairingConfirmer struct {
+	started chan string
+	release chan struct{}
+}
+
+func (f *blockingPairingConfirmer) ConfirmPairing(ctx context.Context, challenge string) error {
+	select {
+	case f.started <- challenge:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case <-f.release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (f *fakeApplication) ControlUIAuthority() *HumanAuthority { return f.authority }
@@ -122,17 +142,38 @@ func newTestSession(t *testing.T) testSession {
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
-	if response.Code != http.StatusOK {
+	if response.Code != http.StatusCreated {
 		t.Fatalf("bootstrap status %d: %s", response.Code, response.Body.String())
 	}
-	decoder := json.NewDecoder(response.Body)
 	var challenge map[string]any
-	if err := decoder.Decode(&challenge); err != nil {
+	if err := json.NewDecoder(response.Body).Decode(&challenge); err != nil {
 		t.Fatal(err)
 	}
+	attemptID, ok := challenge["attempt_id"].(string)
+	if !ok || attemptID == "" {
+		t.Fatalf("missing pairing attempt: %v", challenge)
+	}
 	var values map[string]string
-	if err := decoder.Decode(&values); err != nil {
-		t.Fatal(err)
+	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); {
+		statusRequest := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:43123/api/session/pair", strings.NewReader(`{"attempt_id":"`+attemptID+`"}`))
+		statusRequest.Host = "127.0.0.1:43123"
+		statusRequest.RemoteAddr = "127.0.0.1:49100"
+		statusRequest.Header.Set("Origin", "http://127.0.0.1:43123")
+		statusRequest.Header.Set("X-Mindline-Origin", "http://127.0.0.1:43123")
+		statusRequest.Header.Set("Content-Type", "application/json")
+		statusResponse := httptest.NewRecorder()
+		server.Handler().ServeHTTP(statusResponse, statusRequest)
+		if statusResponse.Code == http.StatusAccepted {
+			time.Sleep(time.Millisecond)
+			continue
+		}
+		if statusResponse.Code != http.StatusOK {
+			t.Fatalf("pairing status %d: %s", statusResponse.Code, statusResponse.Body.String())
+		}
+		if err := json.NewDecoder(statusResponse.Body).Decode(&values); err != nil {
+			t.Fatal(err)
+		}
+		break
 	}
 	if challenge["type"] != "challenge" || pairing.challenge == "" || values["type"] != "paired" {
 		t.Fatalf("unexpected pairing frames: challenge=%v paired=%v", challenge, values)
@@ -168,14 +209,99 @@ func TestServerBootstrapUsesHeadersAndNoCookies(t *testing.T) {
 		t.Fatal("loopback capability must not use a cookie")
 	}
 	body := response.Body.String()
-	for _, forbidden := range []string{"localStorage", "document.cookie", "innerHTML", "indexedDB", "serviceWorker"} {
+	for _, forbidden := range []string{"localStorage", "document.cookie", "innerHTML", "indexedDB", "serviceWorker", "response.body.getReader"} {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("browser asset contains forbidden capability/content primitive %q", forbidden)
 		}
 	}
-	if !strings.Contains(body, "X-Mindline-Session") || !strings.Contains(body, "history.replaceState") || !strings.Contains(body, "sessionStorage") {
+	if !strings.Contains(body, "X-Mindline-Session") || !strings.Contains(body, "history.replaceState") || !strings.Contains(body, "sessionStorage") || !strings.Contains(body, "PAIRING_ATTEMPT_STORAGE_KEY") || !strings.Contains(body, "attempt_id") {
 		t.Fatal("browser bootstrap boundary missing")
 	}
+}
+
+func TestPairingChallengeReturnsBeforeOperatorConfirmation(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	authority, err := NewHumanAuthority()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pairing := &blockingPairingConfirmer{started: make(chan string, 1), release: make(chan struct{})}
+	app := &fakeApplication{authority: authority}
+	server, err := New(app, Options{ExpectedHost: "127.0.0.1:43123", Origin: "http://127.0.0.1:43123", RuntimeRoot: root, Pairing: pairing})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:43123/api/session/pair", strings.NewReader("{}"))
+	request.Host = "127.0.0.1:43123"
+	request.RemoteAddr = "127.0.0.1:49100"
+	request.Header.Set("Origin", "http://127.0.0.1:43123")
+	request.Header.Set("X-Mindline-Origin", "http://127.0.0.1:43123")
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	returned := make(chan struct{})
+	go func() {
+		server.Handler().ServeHTTP(response, request)
+		close(returned)
+	}()
+	select {
+	case <-returned:
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("pairing challenge waited for operator confirmation")
+	}
+	if response.Code != http.StatusCreated {
+		t.Fatalf("pairing start status %d: %s", response.Code, response.Body.String())
+	}
+	var challenge map[string]any
+	if err := json.NewDecoder(response.Body).Decode(&challenge); err != nil {
+		t.Fatal(err)
+	}
+	attemptID, _ := challenge["attempt_id"].(string)
+	challengeCode, _ := challenge["challenge"].(string)
+	if attemptID == "" || challengeCode == "" {
+		t.Fatalf("incomplete pairing challenge: %v", challenge)
+	}
+	select {
+	case started := <-pairing.started:
+		if started != challengeCode {
+			t.Fatalf("operator challenge %q != browser challenge %q", started, challengeCode)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("operator confirmation did not start")
+	}
+	statusRequest := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:43123/api/session/pair", strings.NewReader(`{"attempt_id":"`+attemptID+`"}`))
+	statusRequest.Host = "127.0.0.1:43123"
+	statusRequest.RemoteAddr = "127.0.0.1:49100"
+	statusRequest.Header.Set("Origin", "http://127.0.0.1:43123")
+	statusRequest.Header.Set("X-Mindline-Origin", "http://127.0.0.1:43123")
+	statusRequest.Header.Set("Content-Type", "application/json")
+	statusResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(statusResponse, statusRequest)
+	if statusResponse.Code != http.StatusAccepted {
+		t.Fatalf("pending pairing status %d: %s", statusResponse.Code, statusResponse.Body.String())
+	}
+	close(pairing.release)
+	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); {
+		completedRequest := httptest.NewRequest(http.MethodPost, "http://127.0.0.1:43123/api/session/pair", strings.NewReader(`{"attempt_id":"`+attemptID+`"}`))
+		completedRequest.Host = "127.0.0.1:43123"
+		completedRequest.RemoteAddr = "127.0.0.1:49100"
+		completedRequest.Header.Set("Origin", "http://127.0.0.1:43123")
+		completedRequest.Header.Set("X-Mindline-Origin", "http://127.0.0.1:43123")
+		completedRequest.Header.Set("Content-Type", "application/json")
+		completedResponse := httptest.NewRecorder()
+		server.Handler().ServeHTTP(completedResponse, completedRequest)
+		if completedResponse.Code == http.StatusAccepted {
+			time.Sleep(time.Millisecond)
+			continue
+		}
+		if completedResponse.Code != http.StatusOK {
+			t.Fatalf("completed pairing status %d: %s", completedResponse.Code, completedResponse.Body.String())
+		}
+		return
+	}
+	t.Fatal("pairing did not complete after operator confirmation")
 }
 
 func TestControlUIOwnsReadableTypographySpacingAndContrast(t *testing.T) {

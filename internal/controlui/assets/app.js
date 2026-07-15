@@ -11,6 +11,8 @@ let runSelectionBaseline = null;
 
 const SESSION_STORAGE_KEY = "mindline.session.v1";
 const CSRF_STORAGE_KEY = "mindline.csrf.v1";
+const PAIRING_ATTEMPT_STORAGE_KEY = "mindline.pairing-attempt.v1";
+const PAIRING_CHALLENGE_STORAGE_KEY = "mindline.pairing-challenge.v1";
 const ORIGIN = "http://127.0.0.1:9876";
 const RUN_RECOVERY_ACKNOWLEDGEMENT = "I understand this changes only the explicit Mindline run selection pointer.";
 
@@ -30,6 +32,23 @@ async function bootstrap() {
     }
   }
   showLocked();
+  const pendingAttempt = sessionStorage.getItem(PAIRING_ATTEMPT_STORAGE_KEY) || "";
+  const pendingChallenge = sessionStorage.getItem(PAIRING_CHALLENGE_STORAGE_KEY) || "";
+  if (pendingAttempt && pendingChallenge) {
+    pairingAbort = new AbortController();
+    showPairingChallenge(pendingChallenge);
+    try {
+      await waitForPairing(pendingAttempt, pairingAbort.signal);
+    } catch (error) {
+      clearPairingAttempt();
+      showLocked();
+      byId("session-status").textContent = error.message;
+    } finally {
+      pairingAbort = null;
+    }
+  } else if (pendingAttempt || pendingChallenge) {
+    clearPairingAttempt();
+  }
 }
 
 function headers(json = true) {
@@ -88,6 +107,11 @@ function clearBrowserAuthority() {
   byId("batch-preview").textContent = "";
 }
 
+function clearPairingAttempt() {
+  sessionStorage.removeItem(PAIRING_ATTEMPT_STORAGE_KEY);
+  sessionStorage.removeItem(PAIRING_CHALLENGE_STORAGE_KEY);
+}
+
 function showLocked() {
   byId("private-workspace").hidden = true;
   byId("pairing-panel").hidden = false;
@@ -98,6 +122,7 @@ function showLocked() {
 }
 
 function showPaired() {
+  clearPairingAttempt();
   byId("pairing-panel").hidden = true;
   byId("pairing-code-panel").hidden = true;
   byId("private-workspace").hidden = false;
@@ -105,8 +130,45 @@ function showPaired() {
   byId("session-status").textContent = "Private local session ready. Provider credentials remain only in this process.";
 }
 
+function showPairingChallenge(challenge) {
+  byId("private-workspace").hidden = true;
+  byId("pairing-panel").hidden = false;
+  byId("pair").hidden = true;
+  byId("pairing-code").textContent = challenge;
+  byId("pairing-code-panel").hidden = false;
+  byId("session-status").textContent = "Waiting for Codex to confirm the exact code…";
+}
+
+async function waitForPairing(attemptID, signal) {
+  while (true) {
+    if (signal.aborted) throw new DOMException("Pairing cancelled.", "AbortError");
+    const response = await fetch("/api/session/pair", {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-Mindline-Origin": ORIGIN},
+      body: JSON.stringify({attempt_id: attemptID}),
+      signal
+    });
+    const frame = await response.json();
+    if (response.status === 202 && frame.type === "pending") {
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      continue;
+    }
+    if (!response.ok || frame.type !== "paired") {
+      throw new Error(frame.user_message || frame.error_code || "Pairing ended before confirmation. Create a new code.");
+    }
+    sessionCapability = frame.session;
+    csrfCapability = frame.csrf;
+    sessionStorage.setItem(SESSION_STORAGE_KEY, sessionCapability);
+    sessionStorage.setItem(CSRF_STORAGE_KEY, csrfCapability);
+    showPaired();
+    await refresh();
+    return;
+  }
+}
+
 async function pairBrowser() {
   if (pairingAbort) pairingAbort.abort();
+  clearPairingAttempt();
   pairingAbort = new AbortController();
   byId("pair").disabled = true;
   byId("session-status").textContent = "Creating a five-minute pairing code…";
@@ -117,42 +179,21 @@ async function pairBrowser() {
       body: "{}",
       signal: pairingAbort.signal
     });
-    if (!response.ok || !response.body) throw new Error("Pairing is unavailable. Restart Mindline from Codex.");
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffered = "";
-    while (true) {
-      const result = await reader.read();
-      buffered += decoder.decode(result.value || new Uint8Array(), {stream: !result.done});
-      const lines = buffered.split("\n");
-      buffered = lines.pop() || "";
-      for (const line of lines) {
-        if (!line) continue;
-        const frame = JSON.parse(line);
-        if (frame.type === "challenge") {
-          byId("pairing-code").textContent = frame.challenge;
-          byId("pairing-code-panel").hidden = false;
-          byId("pair").hidden = true;
-          byId("session-status").textContent = "Waiting for Codex to confirm the exact code…";
-        } else if (frame.type === "paired") {
-          sessionCapability = frame.session;
-          csrfCapability = frame.csrf;
-          sessionStorage.setItem(SESSION_STORAGE_KEY, sessionCapability);
-          sessionStorage.setItem(CSRF_STORAGE_KEY, csrfCapability);
-          showPaired();
-          await refresh();
-          return;
-        }
-      }
-      if (result.done) break;
+    const frame = await response.json();
+    if (!response.ok || frame.type !== "challenge" || !frame.attempt_id || !frame.challenge) {
+      throw new Error(frame.user_message || frame.error_code || "Pairing is unavailable. Restart Mindline from Codex.");
     }
-    throw new Error("Pairing ended before confirmation. Create a new code.");
+    sessionStorage.setItem(PAIRING_ATTEMPT_STORAGE_KEY, frame.attempt_id);
+    sessionStorage.setItem(PAIRING_CHALLENGE_STORAGE_KEY, frame.challenge);
+    showPairingChallenge(frame.challenge);
+    await waitForPairing(frame.attempt_id, pairingAbort.signal);
+  } catch (error) {
+    clearPairingAttempt();
+    showLocked();
+    byId("session-status").textContent = error.message;
+    throw error;
   } finally {
     byId("pair").disabled = false;
-    if (!sessionCapability) {
-      byId("pair").hidden = false;
-      byId("pairing-code-panel").hidden = true;
-    }
     pairingAbort = null;
   }
 }

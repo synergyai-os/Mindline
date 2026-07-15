@@ -163,9 +163,9 @@ type Server struct {
 	csrf           string
 	serverInstance string
 	pairing        PairingConfirmer
-	pairingPending bool
 	pairingBlocked bool
 	pairingStarts  []time.Time
+	pairingAttempt *pairingAttempt
 	humanAuthority *HumanAuthority
 	reviewNonces   map[string]reviewNonce
 	startedAt      time.Time
@@ -181,6 +181,16 @@ type reviewNonce struct {
 	Preview   BatchPreview
 	Session   string
 	ExpiresAt time.Time
+}
+
+type pairingAttempt struct {
+	ID        string
+	Challenge string
+	ExpiresAt time.Time
+	State     string
+	ErrorCode string
+	Session   string
+	CSRF      string
 }
 
 func New(app Application, options Options) (*Server, error) {
@@ -347,14 +357,32 @@ func (s *Server) handlePair(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnsupportedMediaType, "invalid_input")
 		return
 	}
-	if decodeStrictJSON(w, r, &struct{}{}, 256) != nil {
+	var request struct {
+		AttemptID string `json:"attempt_id"`
+	}
+	if decodeStrictJSON(w, r, &request, 512) != nil {
+		return
+	}
+	if request.AttemptID != "" {
+		s.handlePairStatus(w, request.AttemptID)
 		return
 	}
 	if s.pairing == nil {
 		writeError(w, http.StatusServiceUnavailable, "pairing_channel_unavailable")
 		return
 	}
+	challenge, err := randomToken(16)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "local_state_failure")
+		return
+	}
+	attemptID, err := randomToken(32)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "local_state_failure")
+		return
+	}
 	now := s.now()
+	expiresAt := now.Add(5 * time.Minute)
 	s.mu.Lock()
 	retained := s.pairingStarts[:0]
 	for _, started := range s.pairingStarts {
@@ -363,61 +391,104 @@ func (s *Server) handlePair(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.pairingStarts = retained
-	if s.pairingBlocked || s.pairingPending || len(s.pairingStarts) >= 3 {
+	if s.pairingBlocked || (s.pairingAttempt != nil && s.pairingAttempt.State == "pending") || len(s.pairingStarts) >= 3 {
 		s.mu.Unlock()
 		writeError(w, http.StatusTooManyRequests, "pairing_channel_unavailable")
 		return
 	}
 	s.pairingStarts = append(s.pairingStarts, now)
-	s.pairingPending = true
+	s.pairingAttempt = &pairingAttempt{ID: attemptID, Challenge: challenge, ExpiresAt: expiresAt, State: "pending"}
 	s.mu.Unlock()
-	defer func() {
-		s.mu.Lock()
-		s.pairingPending = false
-		s.mu.Unlock()
-	}()
+	go s.confirmPairing(attemptID, challenge)
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"type": "challenge", "attempt_id": attemptID, "challenge": challenge,
+		"expires_in_seconds": 300,
+	})
+}
 
-	challenge, err := randomToken(16)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "local_state_failure")
-		return
-	}
-	w.Header().Set("Content-Type", "application/x-ndjson")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]any{"type": "challenge", "challenge": challenge, "expires_in_seconds": 300})
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		return
-	}
-	flusher.Flush()
-	pairContext, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+func (s *Server) confirmPairing(attemptID, challenge string) {
+	pairContext, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	if err := s.pairing.ConfirmPairing(pairContext, challenge); err != nil {
+		errorCode := "pairing_expired"
 		if errors.Is(err, ErrPairingInputMalformed) {
-			s.mu.Lock()
-			s.pairingBlocked = true
-			s.mu.Unlock()
+			errorCode = "pairing_channel_unavailable"
 		}
-		_ = json.NewEncoder(w).Encode(map[string]string{"type": "error", "error_code": "pairing_expired"})
-		flusher.Flush()
+		s.mu.Lock()
+		if s.pairingAttempt != nil && constantEqual(s.pairingAttempt.ID, attemptID) {
+			s.pairingAttempt.State = "failed"
+			s.pairingAttempt.ErrorCode = errorCode
+			if errors.Is(err, ErrPairingInputMalformed) {
+				s.pairingBlocked = true
+			}
+		}
+		s.mu.Unlock()
 		return
 	}
 	session, err := randomToken(32)
 	if err != nil {
+		s.failPairingAttempt(attemptID, "local_state_failure")
 		return
 	}
 	csrf, err := randomToken(32)
 	if err != nil {
+		s.failPairingAttempt(attemptID, "local_state_failure")
 		return
 	}
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pairingAttempt == nil || !constantEqual(s.pairingAttempt.ID, attemptID) {
+		return
+	}
 	s.session = session
 	s.csrf = csrf
 	s.reviewNonces = map[string]reviewNonce{}
+	s.pairingAttempt.State = "paired"
+	s.pairingAttempt.Session = session
+	s.pairingAttempt.CSRF = csrf
+}
+
+func (s *Server) failPairingAttempt(attemptID, errorCode string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pairingAttempt != nil && constantEqual(s.pairingAttempt.ID, attemptID) {
+		s.pairingAttempt.State = "failed"
+		s.pairingAttempt.ErrorCode = errorCode
+	}
+}
+
+func (s *Server) handlePairStatus(w http.ResponseWriter, attemptID string) {
+	if len(attemptID) != 43 {
+		writeError(w, http.StatusBadRequest, "invalid_input")
+		return
+	}
+	s.mu.Lock()
+	if s.pairingAttempt == nil || !constantEqual(s.pairingAttempt.ID, attemptID) {
+		s.mu.Unlock()
+		writeError(w, http.StatusConflict, "pairing_expired")
+		return
+	}
+	attempt := *s.pairingAttempt
 	instance := s.serverInstance
 	s.mu.Unlock()
-	_ = json.NewEncoder(w).Encode(map[string]string{"type": "paired", "session": session, "csrf": csrf, "server_instance": instance})
-	flusher.Flush()
+	switch attempt.State {
+	case "pending":
+		if !s.now().Before(attempt.ExpiresAt) {
+			writeError(w, http.StatusConflict, "pairing_expired")
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]string{"type": "pending"})
+	case "paired":
+		writeJSON(w, http.StatusOK, map[string]string{"type": "paired", "session": attempt.Session, "csrf": attempt.CSRF, "server_instance": instance})
+	case "failed":
+		code := attempt.ErrorCode
+		if code == "" {
+			code = "pairing_expired"
+		}
+		writeError(w, http.StatusConflict, code)
+	default:
+		writeError(w, http.StatusConflict, "pairing_expired")
+	}
 }
 
 func (s *Server) handleLock(w http.ResponseWriter, r *http.Request) {
