@@ -208,6 +208,9 @@ func TestServerBootstrapUsesHeadersAndNoCookies(t *testing.T) {
 	if response.Header().Get("Set-Cookie") != "" {
 		t.Fatal("loopback capability must not use a cookie")
 	}
+	if response.Header().Get("Cache-Control") != "no-store, max-age=0" || response.Header().Get("Pragma") != "no-cache" {
+		t.Fatal("control UI assets must not mix cached files across local server builds")
+	}
 	body := response.Body.String()
 	for _, forbidden := range []string{"localStorage", "document.cookie", "innerHTML", "indexedDB", "serviceWorker", "response.body.getReader"} {
 		if strings.Contains(body, forbidden) {

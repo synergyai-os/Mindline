@@ -344,6 +344,8 @@ func (s *Server) handleAsset(path, contentType string) http.HandlerFunc {
 			return
 		}
 		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("Cache-Control", "no-store, max-age=0")
+		w.Header().Set("Pragma", "no-cache")
 		_, _ = w.Write(data)
 	}
 }
