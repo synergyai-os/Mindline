@@ -2,7 +2,10 @@ package assurance
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -22,6 +25,8 @@ func TestFixedGateExecutesOnlyPinnedChecks(t *testing.T) {
 			return []byte("Version: 2.28.0"), nil
 		case "gitleaks":
 			return []byte("8.30.1"), nil
+		case "go":
+			return []byte("go version " + runtime.Version() + " " + runtime.GOOS + "/" + runtime.GOARCH), nil
 		default:
 			return []byte(name + " fixed-version"), nil
 		}
@@ -60,12 +65,39 @@ func TestFixedGateCannotMintReceiptAfterCommandFailure(t *testing.T) {
 			return []byte("Version: 2.28.0"), nil
 		case "gitleaks":
 			return []byte("8.30.1"), nil
+		case "go":
+			return []byte("go version " + runtime.Version() + " " + runtime.GOOS + "/" + runtime.GOARCH), nil
 		default:
 			return []byte("fixed-version"), nil
 		}
 	})
 	if err == nil {
 		t.Fatal("failed fixed check minted authority")
+	}
+}
+
+func TestFixedGateRejectsGoVersionDifferentFromGateBuild(t *testing.T) {
+	context := gateRunContext{
+		sourceRoot: "/workspace", cleanHEADRoot: "/clean-head", cleanHEADBinding: "sha256:clean",
+		runtimeSnapshotRoot: "/runtime-snapshot", runtimeSnapshotBinding: "sha256:runtime",
+	}
+	_, err := runFixedGate(context, func(name string, args []string, _ string) ([]byte, error) {
+		if name == "go" && len(args) == 1 && args[0] == "version" {
+			return []byte("go version go0.0.0 " + runtime.GOOS + "/" + runtime.GOARCH), nil
+		}
+		switch name {
+		case "govulncheck":
+			return []byte("govulncheck@v1.1.4"), nil
+		case "gosec":
+			return []byte("Version: 2.28.0"), nil
+		case "gitleaks":
+			return []byte("8.30.1"), nil
+		default:
+			return []byte("fixed-version"), nil
+		}
+	})
+	if err == nil {
+		t.Fatal("different Go version was accepted as the gate build toolchain")
 	}
 }
 
@@ -80,6 +112,36 @@ func TestGosecPreLivePolicyIsExplicitlyHighSeverityHighConfidence(t *testing.T) 
 		}
 	}
 	t.Fatal("gosec authority check is missing")
+}
+
+func TestFixedGateEnvironmentPinsBuildToolchainAheadOfScanner(t *testing.T) {
+	environment, err := fixedGateEnvironment(t.TempDir(), "/tmp/pinned-tools/govulncheck")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var path, toolchain string
+	for _, value := range environment {
+		if strings.HasPrefix(value, "PATH=") {
+			path = strings.TrimPrefix(value, "PATH=")
+		}
+		if strings.HasPrefix(value, "GOTOOLCHAIN=") {
+			toolchain = strings.TrimPrefix(value, "GOTOOLCHAIN=")
+		}
+	}
+	parts := filepath.SplitList(path)
+	if len(parts) < 2 || parts[0] != filepath.Join(runtime.GOROOT(), "bin") || parts[1] != "/tmp/pinned-tools" {
+		t.Fatalf("gate scanner PATH can drift from the build toolchain: %v", parts)
+	}
+	if toolchain != "local" || strings.Contains(path, string(os.PathListSeparator)+".") {
+		t.Fatalf("gate toolchain selection is not fail-closed: GOTOOLCHAIN=%q PATH=%q", toolchain, path)
+	}
+}
+
+func TestFixedGateRejectsAmbientGOROOTOverride(t *testing.T) {
+	t.Setenv("GOROOT", t.TempDir())
+	if _, err := fixedGateEnvironment(t.TempDir(), "/tmp/pinned-tools/govulncheck"); err == nil || !strings.Contains(err.Error(), "ambient GOROOT") {
+		t.Fatalf("hostile GOROOT did not fail closed: %v", err)
+	}
 }
 
 func assertCommandSurface(t *testing.T, executed []string, command, expectedRoot string) {

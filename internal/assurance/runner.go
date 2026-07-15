@@ -117,7 +117,9 @@ func runFixedGate(context gateRunContext, execute commandExecutor) ([]Check, err
 	for _, spec := range fixedGateCommands {
 		workdir, surfaceBinding := context.forSurface(spec.surface)
 		versionOutput, err := execute(spec.executable, spec.versionArgs, workdir)
-		if err != nil || strings.TrimSpace(string(versionOutput)) == "" || spec.versionNeedle != "" && !strings.Contains(string(versionOutput), spec.versionNeedle) {
+		version := string(versionOutput)
+		goVersionMismatch := spec.executable == "go" && !strings.Contains(version, fmt.Sprintf("go version %s %s/%s", runtime.Version(), runtime.GOOS, runtime.GOARCH))
+		if err != nil || strings.TrimSpace(version) == "" || spec.versionNeedle != "" && !strings.Contains(version, spec.versionNeedle) || goVersionMismatch {
 			return nil, fmt.Errorf("pre-live check %s could not verify its tool", spec.name)
 		}
 		started := time.Now().UTC()
@@ -160,7 +162,11 @@ func executeBounded(name string, args []string, workdir string) ([]byte, error) 
 	defer cancel()
 	command := exec.CommandContext(ctx, executable, args...)
 	command.Dir = workdir
-	command.Env = fixedGateEnvironment(workdir, executable)
+	environment, err := fixedGateEnvironment(workdir, executable)
+	if err != nil {
+		return nil, err
+	}
+	command.Env = environment
 	configureProcessGroup(command)
 	command.Cancel = func() error { return killProcessGroup(command) }
 	command.WaitDelay = 5 * time.Second
@@ -192,7 +198,11 @@ func validateExecutableIdentity(name, path string) (string, error) {
 	fingerprint := "sha256:" + hex.EncodeToString(hash.Sum(nil))
 	switch name {
 	case "go":
-		expected, _ := filepath.EvalSymlinks(filepath.Join(runtime.GOROOT(), "bin", "go"))
+		toolchainRoot, rootErr := fixedBuildToolchainRoot()
+		if rootErr != nil {
+			return "", rootErr
+		}
+		expected, _ := filepath.EvalSymlinks(filepath.Join(toolchainRoot, "bin", "go"))
 		actual, _ := filepath.EvalSymlinks(path)
 		if expected == "" || actual != expected {
 			return "", errors.New("pre-live Go executable is not the build toolchain")
@@ -238,19 +248,38 @@ func supportedScannerBuild(name string, info *debug.BuildInfo) bool {
 	return false
 }
 
-func fixedGateEnvironment(workdir, executable string) []string {
+func fixedBuildToolchainRoot() (string, error) {
+	if strings.TrimSpace(os.Getenv("GOROOT")) != "" {
+		return "", errors.New("pre-live gate rejects ambient GOROOT")
+	}
+	root := filepath.Clean(runtime.GOROOT())
+	if root == "." || !filepath.IsAbs(root) {
+		return "", errors.New("pre-live build toolchain root unavailable")
+	}
+	return root, nil
+}
+
+func fixedGateEnvironment(workdir, executable string) ([]string, error) {
+	toolchainRoot, err := fixedBuildToolchainRoot()
+	if err != nil {
+		return nil, err
+	}
 	digest := sha256.Sum256([]byte(filepath.Clean(workdir)))
 	root := filepath.Join(os.TempDir(), "mindline-assurance-"+hex.EncodeToString(digest[:8]))
 	for _, path := range []string{root, filepath.Join(root, "home"), filepath.Join(root, "tmp"), filepath.Join(root, "gocache"), filepath.Join(root, "gomodcache"), filepath.Join(root, "gopath")} {
 		_ = os.MkdirAll(path, 0o700)
 	}
-	path := strings.Join([]string{filepath.Dir(executable), "/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"}, string(os.PathListSeparator))
+	// Scanner processes invoke the Go command while loading packages. Pin that
+	// subprocess to the exact toolchain that built this gate binary; otherwise a
+	// scanner directory followed by ambient PATH can silently analyze a
+	// different (and potentially vulnerable) Go standard library.
+	path := strings.Join([]string{filepath.Join(toolchainRoot, "bin"), filepath.Dir(executable), "/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"}, string(os.PathListSeparator))
 	return []string{
 		"HOME=" + filepath.Join(root, "home"), "TMPDIR=" + filepath.Join(root, "tmp"), "PATH=" + path,
 		"GOCACHE=" + filepath.Join(root, "gocache"), "GOMODCACHE=" + filepath.Join(root, "gomodcache"), "GOPATH=" + filepath.Join(root, "gopath"),
 		"GOPROXY=https://proxy.golang.org,direct", "GOSUMDB=sum.golang.org", "GOTOOLCHAIN=local", "GOVULNDB=https://vuln.go.dev",
 		"LANG=C", "LC_ALL=C", "NO_PROXY=127.0.0.1,localhost",
-	}
+	}, nil
 }
 
 const expectedModulePath = "github.com/synergyai-os/Mindline"
@@ -263,9 +292,13 @@ func VerifySourceBinding(workdir, revision string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	environment, err := fixedGateEnvironment(workdir, "/usr/bin/git")
+	if err != nil {
+		return "", err
+	}
 	runGit := func(args ...string) (string, error) {
 		command := exec.Command("git", append([]string{"-C", workdir}, args...)...)
-		command.Env = fixedGateEnvironment(workdir, "/usr/bin/git")
+		command.Env = environment
 		value, commandErr := command.Output()
 		return strings.TrimSpace(string(value)), commandErr
 	}

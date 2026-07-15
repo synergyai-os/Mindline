@@ -65,7 +65,12 @@ func createCleanHEADExport(workdir, revision string) (privateScanSurface, error)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	command := exec.CommandContext(ctx, gitPath, "-C", workdir, "archive", "--format=tar", revision)
-	command.Env = fixedGateEnvironment(workdir, gitPath)
+	environment, err := fixedGateEnvironment(workdir, gitPath)
+	if err != nil {
+		_ = surface.cleanup()
+		return privateScanSurface{}, err
+	}
+	command.Env = environment
 	configureProcessGroup(command)
 	command.Cancel = func() error { return killProcessGroup(command) }
 	command.WaitDelay = 5 * time.Second
