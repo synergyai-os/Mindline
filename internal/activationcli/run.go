@@ -1,7 +1,9 @@
 package activationcli
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,23 +15,33 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	acquisitionslack "github.com/synergyai-os/Mindline/internal/acquisition/slack"
 	"github.com/synergyai-os/Mindline/internal/activationapp"
 	"github.com/synergyai-os/Mindline/internal/assurance"
 	"github.com/synergyai-os/Mindline/internal/controlui"
 	"github.com/synergyai-os/Mindline/internal/privateio"
 )
 
-const Usage = "usage: mindline activation config-fingerprint\nusage: mindline activation gate-receipt --runtime <private-dir>\nusage: mindline activation serve --runtime <private-dir> --receipt <receipt.json> --open\n"
+const Usage = "usage: mindline activation config-fingerprint\nusage: mindline activation gate-receipt --runtime <private-dir>\nusage: mindline activation build-slack-manifest --runtime <private-dir> --receipt <receipt.json> --out <manifest.json> --payload-bytes <n> --payload-sha256 <hex>\nusage: mindline activation serve --runtime <private-dir> --receipt <receipt.json> --open\n"
+
+const (
+	maximumNativeBatchSize = int64(64 << 20)
+)
 
 var readBuildInfo = debug.ReadBuildInfo
 var runGatePlan = assurance.RunFixedGate
 var verifySourceBinding = assurance.VerifySourceBinding
 
 func Run(args []string, stdout, stderr io.Writer) int {
+	return RunWithInput(args, strings.NewReader(""), stdout, stderr)
+}
+
+func RunWithInput(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprint(stderr, Usage)
 		return 1
@@ -44,12 +56,125 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	case "gate-receipt":
 		return runGateReceipt(args[1:], stdout, stderr)
+	case "build-slack-manifest":
+		return runBuildSlackManifest(args[1:], stdin, stdout, stderr)
 	case "serve":
 		return runServe(args[1:], stdout, stderr)
 	default:
 		fmt.Fprint(stderr, Usage)
 		return 1
 	}
+}
+
+type manifestBuildSummary struct {
+	ManifestPath       string `json:"manifest_path"`
+	ContentFingerprint string `json:"content_fingerprint"`
+	SourceRecords      int    `json:"source_records"`
+	URLOccurrences     int    `json:"url_occurrences"`
+	CanonicalItems     int    `json:"canonical_items"`
+}
+
+func runBuildSlackManifest(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	runtimeRoot, receiptPath, outPath, payloadBytes, payloadDigest, ok := parseBuildSlackManifestArgs(args)
+	if !ok {
+		fmt.Fprint(stderr, Usage)
+		return 1
+	}
+	revision, err := cleanBuildRevision()
+	if err != nil {
+		fmt.Fprintf(stderr, "Slack manifest blocked: %v\n", err)
+		return 2
+	}
+	receipt, err := assurance.Load(runtimeRoot, receiptPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "Slack manifest blocked: %v\n", err)
+		return 2
+	}
+	configuration := activationapp.DefaultConfigurationFingerprint()
+	if err := assurance.Validate(receipt, revision, configuration, time.Now().UTC(), 30*time.Minute); err != nil {
+		fmt.Fprintf(stderr, "Slack manifest blocked: %v\n", err)
+		return 2
+	}
+	if err := validateManifestOutputPath(runtimeRoot, outPath); err != nil {
+		fmt.Fprintf(stderr, "Slack manifest blocked: %v\n", err)
+		return 2
+	}
+	batch, err := decodeNativeSlackBatch(stdin, payloadBytes, payloadDigest)
+	if err != nil {
+		fmt.Fprintf(stderr, "Slack manifest blocked: %v\n", err)
+		return 2
+	}
+	manifest, err := acquisitionslack.BuildAuthorizedExternalManifestFromNativeBatch(batch, receipt, revision, configuration, time.Now().UTC(), 30*time.Minute)
+	if err != nil {
+		fmt.Fprintf(stderr, "Slack manifest blocked: %v\n", err)
+		return 2
+	}
+	manifestPayload, err := json.Marshal(manifest)
+	if err != nil || int64(len(manifestPayload)+1) > acquisitionslack.DefaultMaximumBytes {
+		fmt.Fprintln(stderr, "Slack manifest blocked: normalized manifest exceeds import budget")
+		return 2
+	}
+	if err := privateio.WriteFile(outPath, append(manifestPayload, '\n'), true); err != nil {
+		fmt.Fprintf(stderr, "Slack manifest blocked: %v\n", err)
+		return 2
+	}
+	_ = json.NewEncoder(stdout).Encode(manifestBuildSummary{
+		ManifestPath: outPath, ContentFingerprint: manifest.ContentFingerprint,
+		SourceRecords: len(manifest.SourceRecords), URLOccurrences: len(manifest.URLOccurrences), CanonicalItems: len(manifest.CanonicalItems),
+	})
+	return 0
+}
+
+// The bridge accepts one length- and SHA-bound JSON frame so connector
+// orchestration can keep
+// native content off argv, environment variables, shell history, and temporary
+// raw-export files. Bytes outside the declared frame are never interpreted as
+// source records; the declared denominator and pagination evidence are checked
+// independently below.
+func decodeNativeSlackBatch(input io.Reader, expectedBytes int64, expectedDigest string) (acquisitionslack.NativeBatch, error) {
+	if input == nil {
+		return acquisitionslack.NativeBatch{}, errors.New("native Slack batch is missing")
+	}
+	if expectedBytes <= 0 || expectedBytes > maximumNativeBatchSize || len(expectedDigest) != sha256.Size*2 {
+		return acquisitionslack.NativeBatch{}, errors.New("native Slack frame binding is invalid")
+	}
+	payload := make([]byte, expectedBytes)
+	if _, err := io.ReadFull(input, payload); err != nil {
+		return acquisitionslack.NativeBatch{}, errors.New("native Slack frame is incomplete")
+	}
+	digest := sha256.Sum256(payload)
+	if fmt.Sprintf("%x", digest[:]) != strings.ToLower(expectedDigest) {
+		return acquisitionslack.NativeBatch{}, errors.New("native Slack frame fingerprint mismatch")
+	}
+	if int64(len(payload)) > maximumNativeBatchSize {
+		return acquisitionslack.NativeBatch{}, errors.New("native Slack batch exceeds size limit")
+	}
+	payload = bytes.TrimSpace(payload)
+	if len(payload) == 0 {
+		return acquisitionslack.NativeBatch{}, errors.New("native Slack batch is empty")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	var batch acquisitionslack.NativeBatch
+	if err := decoder.Decode(&batch); err != nil {
+		return acquisitionslack.NativeBatch{}, errors.New("native Slack batch is invalid")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return acquisitionslack.NativeBatch{}, errors.New("native Slack batch contains trailing data")
+	}
+	return batch, nil
+}
+
+func validateManifestOutputPath(root, outPath string) error {
+	if err := privateio.ValidateContained(root, outPath); err != nil {
+		return err
+	}
+	relative, err := filepath.Rel(filepath.Clean(root), filepath.Clean(outPath))
+	if err != nil || relative == "." || relative == "" || relative == ".." || filepath.IsAbs(relative) || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return errors.New("manifest output must be a strict runtime descendant")
+	}
+	return nil
 }
 
 func runGateReceipt(args []string, stdout, stderr io.Writer) int {
@@ -190,6 +315,37 @@ func parseTwoPaths(args []string, firstFlag, secondFlag string) (string, string,
 		return "", "", false
 	}
 	return filepath.Clean(first), filepath.Clean(second), true
+}
+
+func parseBuildSlackManifestArgs(args []string) (string, string, string, int64, string, bool) {
+	if len(args) != 10 {
+		return "", "", "", 0, "", false
+	}
+	allowed := map[string]bool{"--runtime": true, "--receipt": true, "--out": true, "--payload-bytes": true, "--payload-sha256": true}
+	values := map[string]string{}
+	for index := 0; index < len(args); index += 2 {
+		flag := args[index]
+		if !allowed[flag] || strings.TrimSpace(args[index+1]) == "" {
+			return "", "", "", 0, "", false
+		}
+		if values[flag] != "" {
+			return "", "", "", 0, "", false
+		}
+		values[flag] = args[index+1]
+	}
+	runtimeRoot, receiptPath, outPath := values["--runtime"], values["--receipt"], values["--out"]
+	payloadBytes, err := strconv.ParseInt(values["--payload-bytes"], 10, 64)
+	payloadDigest := strings.ToLower(values["--payload-sha256"])
+	if runtimeRoot == "" || receiptPath == "" || outPath == "" || !filepath.IsAbs(runtimeRoot) || !filepath.IsAbs(receiptPath) || !filepath.IsAbs(outPath) ||
+		err != nil || payloadBytes <= 0 || payloadBytes > maximumNativeBatchSize || len(payloadDigest) != sha256.Size*2 {
+		return "", "", "", 0, "", false
+	}
+	for _, character := range payloadDigest {
+		if character < '0' || character > '9' && character < 'a' || character > 'f' {
+			return "", "", "", 0, "", false
+		}
+	}
+	return filepath.Clean(runtimeRoot), filepath.Clean(receiptPath), filepath.Clean(outPath), payloadBytes, payloadDigest, true
 }
 
 func cleanBuildRevision() (string, error) {

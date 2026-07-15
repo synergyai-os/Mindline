@@ -16,6 +16,8 @@ The activation UI proves a modular source → normalized inventory → capped re
 
 The browser is the only credential-entry and approval surface. Slack and Product Brain keys are held in revocable process memory, are never CLI arguments or configuration files, and must be re-entered after restart. Non-secret provider/workspace/channel/key identity may be retained so reconnection cannot silently change the run target.
 
+Credential-owning ingestion connectors can instead hand Mindline a bounded native Slack batch without exporting OAuth material. The versioned connector contract and ownership boundary are documented in [docs/native-slack-batch-v1.md](docs/native-slack-batch-v1.md); connectors declare native completeness while Mindline owns URL occurrence extraction and normalization.
+
 Live controls are unavailable until a clean, commit-bound build passes the fixed pre-live gate. From a clean checkout, with the pinned security tools available on `PATH`:
 
 ```bash

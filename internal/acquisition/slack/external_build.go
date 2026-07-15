@@ -16,13 +16,13 @@ import (
 )
 
 type NativeMessage struct {
-	NativeMessageID  string
-	Timestamp        string
-	ThreadParentID   string
-	Text             string
-	EditDeleteState  string
-	AttachmentCount  int
-	PrivateFileCount int
+	NativeMessageID  string `json:"native_message_id"`
+	Timestamp        string `json:"timestamp"`
+	ThreadParentID   string `json:"thread_parent_id,omitempty"`
+	Text             string `json:"text"`
+	EditDeleteState  string `json:"edit_delete_state,omitempty"`
+	AttachmentCount  int    `json:"attachment_count"`
+	PrivateFileCount int    `json:"private_file_count"`
 }
 
 type BuildInput struct {

@@ -39,6 +39,8 @@ const (
 const baseUsage = "usage: mindline activation config-fingerprint\nusage: mindline activation gate-receipt --runtime <private-dir>\nusage: mindline activation serve --runtime <private-dir> --receipt <receipt.json> --open\nusage: mindline process <candidate.json> [--out <dir>]\nusage: mindline slack normalize <slack-export.json> [--out <dir>]\nusage: mindline slack corpus-intake <slack-export.json> --out <dir>\nusage: mindline gmail corpus-intake <gmail-export.json> --out <dir>\nusage: mindline destination dry-run <sbos-result.json> --adapter tolaria --out <dir>\nusage: mindline pipeline dry-run <pipeline-input.json> --method basb-para-code --destination tolaria --out <dir>\nusage: mindline product-brain propose <run-dir> --profile <profile.json> --out <dir>\nusage: mindline documents decompose <markdown-path-or-dir> --out <dir>\nusage: mindline documents structure <markdown-path-or-dir> --out <dir>\nusage: mindline documents semantics <structure-run-dir-or-markdown-path-or-markdown-dir> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents accept <semantic-run-dir> --answer-key <answer-key.json> --out <dir>\nusage: mindline documents calibrate <semantic-acceptance-dir-or-parent> --out <dir> [--threshold 0.98] [--held-out] [--source-root <dir> --source <relative.md>]\nusage: mindline documents calibrate-next <semantic-calibration-dir-or-parent>\nusage: mindline documents judge <semantic-run-dir> --out <dir> [--source-root <dir> --source <relative.md>] [--agent-reviewer llm --llm-provider openai --llm-model <model>]\nusage: mindline documents judge-next <semantic-judgment-dir-or-parent>\nusage: mindline documents judge-record <semantic-judgment-dir-or-parent> --candidate <candidate-id> --choice accept|reject|unclear|duplicate|wrong-kind [--reason <failure-reason>] [--secondary-reason <failure-reason>] [--note <text>] [--reviewer <id>]\nusage: mindline documents judge-serve <semantic-judgment-dir-or-parent> [--addr 127.0.0.1:8787] [--reviewer <id>]\nusage: mindline documents readiness-report <semantic-judgment-dir-or-parent> --out <dir> [--threshold 0.98] [--held-out]\nusage: mindline documents corpus-graph <manifest.json> --out <dir>\nusage: mindline documents enrich-sources <corpus-pressure-manifest.json> --artifacts <local-enrichment-artifacts.json> --out <dir>\nusage: mindline documents link-enrichment-loop <corpus-pressure-manifest-or-intake-dir> --artifacts <local-enrichment-artifacts.json> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents corpus-pressure <markdown-dir-or-manifest> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents corpus-pressure-loop <markdown-dir-or-manifest> --out <dir> [--max-runs <n>] [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline documents corpus-acceptance <corpus-pressure-out-or-parent> --answer-key <corpus-answer-key.json> --out <dir> [--threshold 0.98] [--held-out]\nusage: mindline documents corpus-acceptance-labeling <corpus-pressure-out-or-parent> --out <dir>\nusage: mindline documents corpus-acceptance-label-next <corpus-acceptance-labeling-out-or-parent> --records <label-records.json> --out <dir>\nusage: mindline documents corpus-acceptance-label-record <corpus-acceptance-labeling-out-or-parent> --records <label-records.json> --map <label-next-map.json> --case-ref <ref> --decision expected_present|expected_absent|uncertain|abstain [--candidate-ref <ref>] [--expected-outcome <id>] [--expected-kind <kind>] [--minimum-confidence-floor low|medium|high] [--required-evidence-ref <ref>] [--labeler <id>] [--independence-attestation not_generated_from_evaluated_run] [--note <text>]\nusage: mindline documents corpus-acceptance-label-apply <corpus-acceptance-labeling-out-or-parent> --records <label-records.json> --out <dir>\nusage: mindline documents meaning-preview <corpus-pressure-out-or-parent> --out <dir>\nusage: mindline documents meaning-packet <corpus-pressure-out-or-parent> --out <dir>\nusage: mindline documents concept-index <corpus-pressure-out-or-parent> --out <dir>\nusage: mindline documents concept-serve <concept-index-out-or-parent> [--addr 127.0.0.1:8788]\nusage: mindline documents value-proof <markdown-dir-or-manifest> --out <dir> [--classifier deterministic|llm --llm-provider openai --llm-model <model>]\nusage: mindline eval readback <run-or-artifact-dir> --out <dir> [--baseline <run-or-artifact-dir>]\nusage: mindline eval proof-gate <run-or-readback-dir> --out <dir> --claim safety|improvement|generalization|dec64 [--baseline <run-or-artifact-dir>]\nusage: mindline eval loop-decision <run-or-readback-dir> --out <dir> [--baseline <run-or-artifact-dir>]\nusage: mindline observability posthog-test\n"
 
 var usage = strings.NewReplacer(
+	"usage: mindline activation gate-receipt --runtime <private-dir>\n",
+	"usage: mindline activation gate-receipt --runtime <private-dir>\nusage: mindline activation build-slack-manifest --runtime <private-dir> --receipt <receipt.json> --out <manifest.json> --payload-bytes <n> --payload-sha256 <hex>\n",
 	"usage: mindline slack corpus-intake <slack-export.json> --out <dir>\n",
 	"usage: mindline slack corpus-intake <slack-export.json> --out <dir>\nusage: mindline slack route <slack-export.json> --links <routing-link-artifacts.json> --lenses <context-lens-profile.json> --judgments <routing-judgments.json> --out <dir>\n",
 	"usage: mindline product-brain propose <run-dir> --profile <profile.json> --out <dir>\n",
@@ -69,6 +71,7 @@ var cliAuthorityIDs = []string{
 
 type Runner struct {
 	fs                         FileSystem
+	stdin                      io.Reader
 	protectedRoots             []string
 	postHogTransport           http.RoundTripper
 	productBrainTransport      http.RoundTripper
@@ -174,7 +177,13 @@ func NewRunner(fileSystem FileSystem) Runner {
 }
 
 func NewRunnerWithProtectedRoots(fileSystem FileSystem, protectedRoots []string) Runner {
-	return Runner{fs: fileSystem, protectedRoots: append([]string(nil), protectedRoots...)}
+	return Runner{fs: fileSystem, stdin: os.Stdin, protectedRoots: append([]string(nil), protectedRoots...)}
+}
+
+func NewRunnerWithInput(fileSystem FileSystem, input io.Reader) Runner {
+	runner := NewRunner(fileSystem)
+	runner.stdin = input
+	return runner
 }
 
 func NewRunnerWithPostHogTransport(fileSystem FileSystem, transport http.RoundTripper) Runner {
@@ -214,7 +223,7 @@ func (r Runner) Run(args []string, stdout, stderr io.Writer) int {
 		return ExitUsage
 	}
 	if args[0] == "activation" {
-		return activationcli.Run(args[1:], stdout, stderr)
+		return activationcli.RunWithInput(args[1:], r.stdin, stdout, stderr)
 	}
 	if args[0] == "slack" {
 		return r.runSlack(args[1:], stdout, stderr)
