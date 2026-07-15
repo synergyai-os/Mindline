@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"html"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/synergyai-os/Mindline/internal/processing"
 )
 
 type fakeApplication struct {
@@ -155,6 +158,77 @@ func TestFounderTruthAssetsUseVerdictSafeAuthorityAndRequiredJudgments(t *testin
 			}
 		}
 	}
+}
+
+func TestStrategyDefaultsIncludeContentNarrativeIntelligence(t *testing.T) {
+	session := newTestSession(t)
+	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:43123/", nil)
+	request.Host = "127.0.0.1:43123"
+	request.RemoteAddr = "127.0.0.1:49100"
+	response := httptest.NewRecorder()
+	session.server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status %d", response.Code)
+	}
+	body := response.Body.String()
+	contextTag, contextDefault := servedTextarea(t, body, "context-lenses")
+	lenses := processing.ContextLenses(processing.StrategySnapshot{ContextLenses: contextDefault})
+	if len(lenses) != 3 || !strings.HasPrefix(lenses[0], "Product Brain landscape:") || !strings.HasPrefix(lenses[1], "AI-dominant organization design:") || !strings.HasPrefix(lenses[2], "Content and narrative intelligence:") {
+		t.Fatalf("unexpected default lenses: %#v", lenses)
+	}
+	strategy := processing.SealStrategy(processing.StrategySnapshot{
+		StrategyID: "served-default", Version: "1", ContextLenses: contextDefault,
+		RoutingPolicy: "Validated separately below.",
+	})
+	if err := processing.ValidateStrategy(strategy); err != nil {
+		t.Fatalf("served context-lens default is invalid: %v", err)
+	}
+	routingTag, routingDefault := servedTextarea(t, body, "routing-policy")
+	if strings.Contains(contextTag+routingTag, "readonly") || strings.Contains(contextTag+routingTag, "disabled") {
+		t.Fatal("strategy defaults must remain editable")
+	}
+	for _, expected := range []string{
+		"Evaluate each source against every configured lens.",
+		"one source may support multiple outcomes",
+		"selected role as exhaustive",
+		"an original angle",
+		"Treat engagement and comments as signals, not truth.",
+		"Never copy or fabricate.",
+		"does not generate or publish finished content",
+	} {
+		if !strings.Contains(routingDefault, expected) {
+			t.Fatalf("strategy default missing %q", expected)
+		}
+	}
+	for _, expected := range []string{"less-technical audiences", "Product Brain Chain"} {
+		if !strings.Contains(contextDefault, expected) {
+			t.Fatalf("context-lens default missing %q", expected)
+		}
+	}
+	if strings.Contains(routingDefault, "Product Brain") {
+		t.Fatal("routing default must remain destination-neutral")
+	}
+}
+
+func servedTextarea(t *testing.T, body, id string) (string, string) {
+	t.Helper()
+	marker := `id="` + id + `"`
+	start := strings.Index(body, marker)
+	if start < 0 {
+		t.Fatalf("textarea %q missing", id)
+	}
+	tagEnd := strings.Index(body[start:], ">")
+	if tagEnd < 0 {
+		t.Fatalf("textarea %q opening tag is incomplete", id)
+	}
+	tagEnd += start
+	valueStart := tagEnd + 1
+	valueEnd := strings.Index(body[valueStart:], "</textarea>")
+	if valueEnd < 0 {
+		t.Fatalf("textarea %q closing tag is missing", id)
+	}
+	valueEnd += valueStart
+	return body[start : tagEnd+1], html.UnescapeString(body[valueStart:valueEnd])
 }
 
 func TestFounderReviewRequiresReasonAndAllBurdenJudgments(t *testing.T) {
