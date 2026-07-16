@@ -378,8 +378,8 @@ func TestWP46_SafeShellAssetsExposeGateMissingAndKeepRunRecovery(t *testing.T) {
 		path    string
 		markers []string
 	}{
-		{path: "/", markers: []string{`id="gate-status"`, `id="create-run"`, `id="run-recovery"`, `id="recover-run-clear"`}},
-		{path: "/app.js", markers: []string{"gate_missing", `data.pre_live_ready`, `"/api/runs/recover-selection"`}},
+		{path: "/", markers: []string{`id="gate-status"`, `id="source-handoff-status"`, `id="destination-status"`, `id="create-run"`, `id="run-recovery"`, `id="recover-run-clear"`}},
+		{path: "/app.js", markers: []string{"The live safety gate is not ready yet", `data.pre_live_ready`, `"/api/runs/recover-selection"`}},
 	} {
 		request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:43123"+asset.path, nil)
 		request.Host = "127.0.0.1:43123"
@@ -392,6 +392,70 @@ func TestWP46_SafeShellAssetsExposeGateMissingAndKeepRunRecovery(t *testing.T) {
 		for _, marker := range asset.markers {
 			if !strings.Contains(response.Body.String(), marker) {
 				t.Fatalf("asset %s missing %q", asset.path, marker)
+			}
+		}
+	}
+}
+
+func TestWP46_FounderUIKeepsSlackAcquisitionOperatorManaged(t *testing.T) {
+	session := newTestSession(t)
+	assets := map[string]struct {
+		required  []string
+		forbidden []string
+	}{
+		"/": {
+			required: []string{
+				"Managed by Codex for this proof",
+				"You do not connect Slack or upload a file here",
+				"Connect Slack",
+				`id="destination-key"`,
+				"Connect Product Brain",
+			},
+			forbidden: []string{
+				`id="slack-source-form"`,
+				`id="slack-drain-form"`,
+				`id="import-form"`,
+				`type="file"`,
+				"Slack user token",
+				"Slack channel ID",
+				"Oldest Slack timestamp",
+				"External Slack inventory",
+			},
+		},
+		"/app.js": {
+			required: []string{
+				"Waiting for Codex to prepare and hand off the Slack source inventory",
+				"Slack source ready for this proof",
+			},
+			forbidden: []string{
+				`byId("slack-source-form")`,
+				`byId("slack-drain-form")`,
+				`byId("import-form")`,
+				`byId("manifest")`,
+				`byId("slack-key")`,
+				`byId("slack-channel")`,
+				"Choose one occurrence-complete manifest",
+			},
+		},
+	}
+	for path, assertions := range assets {
+		request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:43123"+path, nil)
+		request.Host = "127.0.0.1:43123"
+		request.RemoteAddr = "127.0.0.1:49100"
+		response := httptest.NewRecorder()
+		session.server.Handler().ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("asset %s = %d", path, response.Code)
+		}
+		body := response.Body.String()
+		for _, marker := range assertions.required {
+			if !strings.Contains(body, marker) {
+				t.Errorf("asset %s missing %q", path, marker)
+			}
+		}
+		for _, marker := range assertions.forbidden {
+			if strings.Contains(body, marker) {
+				t.Errorf("asset %s exposes founder Slack acquisition control %q", path, marker)
 			}
 		}
 	}
@@ -444,7 +508,7 @@ func TestFounderTruthAssetsUseVerdictSafeAuthorityAndRequiredJudgments(t *testin
 		required []string
 	}{
 		{path: "/app.js", required: []string{"Unauthorized while blockers remain.", "Unauthorized until every named condition passes.", `stage.verdict === "READY"`}},
-		{path: "/", required: []string{`id="slack-key"`, `id="slack-channel"`, `id="slack-latest"`, `id="destination-key"`, `id="context-lenses"`, `id="usefulness" required`, `id="manual-burden" required`, "enter N/A explicitly if none was needed"}},
+		{path: "/", required: []string{`id="source-handoff-status"`, "Managed by Codex for this proof", `id="destination-key"`, `id="context-lenses"`, `id="usefulness" required`, `id="manual-burden" required`, "enter N/A explicitly if none was needed"}},
 	} {
 		request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:43123"+asset.path, nil)
 		request.Host = "127.0.0.1:43123"

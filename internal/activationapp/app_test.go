@@ -725,17 +725,37 @@ func pairControlUIServer(t *testing.T, server *controlui.Server) map[string]stri
 		"Content-Type":      "application/json",
 		"X-Mindline-Origin": "http://127.0.0.1:43125",
 	})
-	if response.Code != http.StatusOK {
+	if response.Code != http.StatusCreated {
 		t.Fatalf("pairing failed: %d %s", response.Code, response.Body.String())
 	}
-	decoder := json.NewDecoder(response.Body)
 	var challenge map[string]any
-	if err := decoder.Decode(&challenge); err != nil || challenge["type"] != "challenge" {
+	if err := json.NewDecoder(response.Body).Decode(&challenge); err != nil || challenge["type"] != "challenge" {
 		t.Fatalf("invalid pairing challenge: %v err=%v", challenge, err)
 	}
+	attemptID, _ := challenge["attempt_id"].(string)
+	if attemptID == "" {
+		t.Fatalf("pairing challenge omitted attempt id: %v", challenge)
+	}
 	var paired map[string]string
-	if err := decoder.Decode(&paired); err != nil || paired["type"] != "paired" || paired["session"] == "" || paired["csrf"] == "" {
-		t.Fatalf("invalid paired session: %v err=%v", paired, err)
+	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); {
+		status := uiRequest(t, server, http.MethodPost, "/api/session/pair", strings.NewReader(`{"attempt_id":"`+attemptID+`"}`), map[string]string{
+			"Content-Type":      "application/json",
+			"X-Mindline-Origin": "http://127.0.0.1:43125",
+		})
+		if status.Code == http.StatusAccepted {
+			time.Sleep(time.Millisecond)
+			continue
+		}
+		if status.Code != http.StatusOK {
+			t.Fatalf("pairing completion failed: %d %s", status.Code, status.Body.String())
+		}
+		if err := json.NewDecoder(status.Body).Decode(&paired); err != nil || paired["type"] != "paired" || paired["session"] == "" || paired["csrf"] == "" {
+			t.Fatalf("invalid paired session: %v err=%v", paired, err)
+		}
+		break
+	}
+	if paired["session"] == "" || paired["csrf"] == "" {
+		t.Fatal("pairing did not complete before deadline")
 	}
 	return map[string]string{
 		"Content-Type":       "application/json",

@@ -28,29 +28,30 @@
 
     <div id="private-workspace" hidden>
     <section>
-      <h2>1. Connections</h2>
+      <h2>1. Source and destination</h2>
       <p id="gate-status" role="status" aria-live="polite">Checking local live gate…</p>
-      <p>First save the collection strategy and safety limits below. Then connect Slack or import an occurrence-complete export, and connect a draft-only Product Brain destination. Credentials live only for this process.</p>
-      <form id="slack-source-form">
-        <label>Slack user token <input id="slack-key" type="password" autocomplete="off" minlength="16"></label>
-        <label>Slack channel ID <input id="slack-channel" type="text" autocomplete="off" pattern="[A-Z0-9]{2,64}" placeholder="C0123456789"></label>
-        <button type="submit">Connect Slack source</button>
-      </form>
-      <form id="slack-drain-form">
-        <label>Oldest Slack timestamp <input id="slack-oldest" type="text" value="0.000001"></label>
-        <label>Latest Slack timestamp <input id="slack-latest" type="text" placeholder="Leave blank to freeze at first drain"></label>
-        <button type="submit">Build full occurrence inventory</button>
-        <button id="disconnect-slack" class="secondary" type="button">Disconnect Slack token</button>
-      </form>
-      <p>Alternatively, upload an occurrence-complete manifest produced by another Slack integration. This keeps source adapters interchangeable.</p>
-      <form id="import-form">
-        <label>External Slack inventory <input id="manifest" name="manifest" type="file" accept="application/json" required></label>
-        <button type="submit">Validate and import</button>
-      </form>
-      <form id="destination-form">
-        <label>Product Brain key <input id="destination-key" type="password" autocomplete="off" minlength="16" required></label>
-        <button type="submit">Connect destination</button>
-      </form>
+      <p>For this proof, Codex operates the Slack source. The only integration credential you enter here is your Product Brain key.</p>
+      <div class="connection-grid">
+        <article id="source-handoff" class="connection-card" aria-labelledby="source-handoff-heading">
+          <p class="connection-label">Slack source</p>
+          <h3 id="source-handoff-heading">Managed by Codex for this proof</h3>
+          <p>Codex uses the existing Slack connection and hands a validated, occurrence-complete inventory to Mindline. You do not connect Slack or upload a file here.</p>
+          <p id="source-handoff-status" class="connection-status" role="status" aria-live="polite">Waiting for Codex to prepare the source…</p>
+          <p class="connection-note">In the real product, <strong>Connect Slack</strong> will open Slack’s permission screen and return you here when authorization is complete.</p>
+        </article>
+        <article class="connection-card" aria-labelledby="destination-heading">
+          <p class="connection-label">Product Brain destination</p>
+          <h3 id="destination-heading">Connect the draft-only destination</h3>
+          <p id="destination-status" class="connection-status" role="status" aria-live="polite">Checking whether destination connection is available…</p>
+          <div id="destination-credential-panel" hidden>
+            <form id="destination-form">
+              <label>Product Brain key <input id="destination-key" type="password" autocomplete="off" minlength="16" required></label>
+              <button type="submit">Connect Product Brain</button>
+            </form>
+          </div>
+          <button id="disconnect" class="secondary" type="button" hidden>Disconnect Product Brain</button>
+        </article>
+      </div>
       <div id="connections-summary" class="summary"></div>
     </section>
 
@@ -124,7 +125,6 @@
       <div class="actions danger-actions">
         <button id="resume-delivery" class="secondary">Resume the existing exact approved batch</button>
         <button id="cancel-delivery" class="secondary">Cancel approved batch</button>
-        <button id="disconnect" class="secondary">Disconnect destination key</button>
       </div>
     </section>
 

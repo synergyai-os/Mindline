@@ -306,19 +306,29 @@ function renderGuidedState(data) {
   const destination = data.destination || {};
   const drain = data.drain || {};
   const identity = connections.destination_identity || {};
-  const sourceIdentity = connections.source_identity || {};
   const gateReady = Boolean(data.pre_live_ready);
   const runReady = !data.run_selection || !data.run_selection.state || data.run_selection.state === "compatible_selected";
   byId("gate-status").textContent = gateReady
-    ? "Live gate ready. Provider credentials remain session-only and every live action still requires explicit input."
-    : "gate_missing: settings, run-selection recovery, and read-only evidence remain available; Slack, import, provider credentials, and new proof actions are disabled.";
-  for (const id of ["slack-source-form", "slack-drain-form", "import-form", "destination-form"]) {
-    for (const field of byId(id).querySelectorAll("input,button")) field.disabled = !gateReady;
-  }
-  setSummary("connections-summary", `Slack source ${connections.source_connected ? `verified as workspace ${sourceIdentity.workspace_id || "unknown"}, channel ${sourceIdentity.channel_id || "unknown"}` : "not connected"}; inventory ${connections.source_imported ? "adopted" : "not imported"}; Product Brain ${connections.destination_connected ? `verified as ${identity.provider || "unknown provider"} workspace ${identity.workspace_id || "unknown"}, key ${identity.key_id || "unknown"}` : "not connected"}. Credentials are session-only.`);
+    ? "Live safety gate ready. Source handoff and Product Brain connection remain explicit, bounded actions."
+    : "The live safety gate is not ready yet. You can edit strategy and review saved evidence; Codex must prepare the gate before source handoff or Product Brain connection.";
+  const sourceReady = Boolean(connections.source_imported);
+  byId("source-handoff-status").textContent = sourceReady
+    ? `Slack source ready for this proof: ${inventory.source_records || 0} messages, ${inventory.url_occurrences || 0} link occurrences, and ${inventory.canonical_items || 0} canonical items${inventory.watermark ? ` through ${inventory.watermark}` : ""}.`
+    : (gateReady
+      ? "Waiting for Codex to prepare and hand off the Slack source inventory. No action is required from you."
+      : "Waiting for Codex to prepare the live gate and hand off the Slack source inventory. No action is required from you.");
+  const destinationConnected = Boolean(connections.destination_connected);
+  byId("destination-credential-panel").hidden = !gateReady || destinationConnected;
+  byId("disconnect").hidden = !destinationConnected;
+  byId("destination-status").textContent = destinationConnected
+    ? `Connected to ${identity.provider || "Product Brain"} workspace ${identity.workspace_id || "unknown"}, key ${identity.key_id || "unknown"}. The credential remains only in this process.`
+    : (gateReady
+      ? "Enter your Product Brain key when you are ready to connect the draft-only destination. It remains only in this process."
+      : "Waiting for Codex to prepare the live safety gate. Mindline will not request your Product Brain key before then.");
+  setSummary("connections-summary", `Slack source ${sourceReady ? "ready" : "waiting for Codex"}. Product Brain ${destinationConnected ? "connected" : "not connected"}.`);
   setSummary("inventory-summary", inventory.frozen
     ? `Frozen source ${inventory.source_identity || "unknown"} to ${inventory.watermark || "unknown watermark"}: ${inventory.source_records} Slack records → ${inventory.url_occurrences} URL occurrences → ${inventory.canonical_items} canonical items. ${inventory.selected_items} selected; ${inventory.unselected_items} durably unprocessed. Import ${inventory.file_name || "unnamed"}: ${inventory.file_bytes || 0} bytes; declared ${JSON.stringify(inventory.declared_counts || {})}; observed ${JSON.stringify(inventory.observed_counts || {})}; ${inventory.omission_count || 0} count omissions; ${inventory.duplicate_occurrences || 0} duplicate occurrences.`
-    : (connections.source_imported ? `Validated ${inventory.file_name || "import"} from ${inventory.source_identity || "unknown source"}: declared ${JSON.stringify(inventory.declared_counts || {})}; observed ${JSON.stringify(inventory.observed_counts || {})}. Freeze only after checking this accounting.` : "Import an occurrence-complete Slack manifest first."));
+    : (connections.source_imported ? `Validated ${inventory.file_name || "source handoff"} from ${inventory.source_identity || "unknown source"}: declared ${JSON.stringify(inventory.declared_counts || {})}; observed ${JSON.stringify(inventory.observed_counts || {})}. Freeze only after checking this accounting.` : "Waiting for Codex to hand off a validated Slack source inventory."));
   setSummary("proof-summary", proof.started
     ? `${proof.reviewed_count || 0}/${proof.item_count || 0} selected items reviewed. ${proof.awaiting_review_count || 0} await your judgment; ${proof.manual_support_count || 0} require explicit manual-support handling.`
     : "The capped proof has not started.");
@@ -342,11 +352,7 @@ function renderGuidedState(data) {
   byId("cancel-delivery").disabled = !gateReady || !destination.approval_fingerprint || Boolean(destination.cancellation_fingerprint);
   byId("resume-delivery").disabled = !gateReady || !destination.approval_fingerprint || destination.delivery_status === "completed" || destination.delivery_status === "zero_draft_activation_recorded" || Boolean(destination.cancellation_fingerprint);
   byId("disconnect").disabled = !gateReady || !connections.destination_connected;
-  byId("disconnect-slack").disabled = !gateReady || !connections.source_connected;
 	byId("founder-form").querySelector('button[type="submit"]').disabled = !gateReady;
-	byId("slack-source-form").querySelector('button[type="submit"]').disabled = !gateReady || !runReady || !(data.strategy && data.strategy.configured) || connections.source_imported;
-  byId("slack-drain-form").querySelector('button[type="submit"]').disabled = !gateReady || !connections.source_connected || connections.source_imported;
-  byId("import-form").querySelector("button").disabled = !gateReady || !runReady;
   byId("destination-form").querySelector("button").disabled = !gateReady || !runReady || Boolean(data.delivery_in_flight);
 	if (destination.approval_fingerprint && destination.batch_preview) {
 		renderBatchPreview(destination.batch_preview);
@@ -454,22 +460,6 @@ function renderProofItems(items, mutationsEnabled = true) {
 function notice(message) { byId("notice").textContent = message; }
 function fail(error) { notice(error.message || "Operation blocked."); }
 
-byId("import-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  try {
-    const input = byId("manifest");
-    if (!input.files.length) throw new Error("Choose one occurrence-complete manifest.");
-    const form = new FormData();
-    form.append("manifest", input.files[0]);
-    input.value = "";
-    const response = await fetch("/api/import/external-slack", {method: "POST", headers: headers(false), body: form});
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.error || "import_blocked");
-    notice("External inventory validated and adopted.");
-    await refresh();
-  } catch (error) { fail(error); }
-});
-
 byId("destination-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const input = byId("destination-key");
@@ -481,29 +471,6 @@ byId("destination-form").addEventListener("submit", async (event) => {
     await refresh();
   } catch (error) { fail(error); }
 });
-
-byId("slack-source-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const input = byId("slack-key");
-  const credential = input.value;
-  input.value = "";
-  try {
-    await api("/api/commands/connect-slack-source", {credential, channel_id: byId("slack-channel").value.trim()});
-    notice("Slack source identity verified. The token remains session-only.");
-    await refresh();
-  } catch (error) { fail(error); }
-});
-
-byId("slack-drain-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  try {
-    await api("/api/commands/drain-slack-source", {oldest: byId("slack-oldest").value.trim(), latest: byId("slack-latest").value.trim()});
-    notice("Slack source drained into an occurrence-complete, checkpointed inventory.");
-    await refresh();
-  } catch (error) { fail(error); }
-});
-
-byId("disconnect-slack").addEventListener("click", () => api("/api/commands/disconnect-slack-source").then(refresh).catch(fail));
 
 byId("strategy-form").addEventListener("submit", async (event) => {
   event.preventDefault();

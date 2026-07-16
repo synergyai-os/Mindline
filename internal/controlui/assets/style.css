@@ -97,6 +97,15 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .actions { display: flex; flex-wrap: wrap; gap: 12px; }
 .danger-actions { margin-top: 20px; }
 
+.connection-grid { display: grid; gap: 16px; margin-top: 20px; }
+.connection-card { padding: 20px; border: 1px solid var(--border); border-radius: 12px; background: #fbfdfb; }
+.connection-card h3 { margin-bottom: 10px; }
+.connection-label { margin-bottom: 4px; color: var(--ink-muted); font-size: .8125rem; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+.connection-status { margin-bottom: 12px; padding: 12px 14px; border-left: 3px solid #739982; border-radius: 8px; background: var(--surface-subtle); font-weight: 650; }
+.connection-note { margin-bottom: 0; color: var(--ink-muted); font-size: .9375rem; }
+#destination-credential-panel form { margin-top: 16px; }
+#disconnect { margin-top: 16px; }
+
 .summary {
   display: grid;
   gap: 12px;
