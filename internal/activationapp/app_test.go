@@ -246,7 +246,7 @@ func TestSensitiveRedactedOccurrenceIsReviewedButCannotReachDestination(t *testi
 	}
 	stateAny, _ := app.State(context.Background())
 	state := stateAny.(View)
-	if len(state.Proof.Items) != 1 || !state.Proof.Items[0].RequiresManualReview || state.Proof.Items[0].CanonicalURL != "" || len(state.Proof.Items[0].SourceReferences) != 1 {
+	if len(state.Proof.Items) != 1 || !state.Proof.Items[0].RequiresManualReview || state.Proof.Items[0].CanonicalURL != "" || len(state.Proof.Items[0].SourceReferences) != 1 || state.Proof.Items[0].ReviewStatus != "reviewed" || state.Proof.AwaitingReviewCount != 0 {
 		t.Fatalf("redacted item did not reach the content-free manual queue: %+v", state.Proof.Items)
 	}
 	item := state.Proof.Items[0]
@@ -263,6 +263,54 @@ func TestSensitiveRedactedOccurrenceIsReviewedButCannotReachDestination(t *testi
 	preview, err := app.PreviewBatch(context.Background(), 1, 1)
 	if err != nil || preview.OperationCount != 0 || transport.mutationCalls != 0 {
 		t.Fatalf("sensitive-redacted item reached the destination boundary: preview=%+v calls=%d err=%v", preview, transport.mutationCalls, err)
+	}
+}
+
+func TestProofAutoRoutesManualSupportAndLeavesEvidenceCandidateForFounder(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	app, err := New(withTestHuman(Options{RuntimeRoot: root, SyntheticOnly: true, Now: func() time.Time { return now }, Connector: fakeConnector{transport: newMemoryTransport()}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Close()
+	manifest := syntheticManifest(t, 2, true)
+	manifest.ImportedEvidence = manifest.ImportedEvidence[:1]
+	manifest = acquisitionslack.SealExternalManifest(manifest)
+	payload, _ := json.Marshal(manifest)
+	manifestPath := filepath.Join(root, "mixed-evidence.json")
+	if err := os.WriteFile(manifestPath, payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.ImportExternalInventory(context.Background(), manifestPath, filepath.Base(manifestPath)); err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range []controlui.Command{
+		{Kind: "save_strategy", Payload: testStrategyPayload("Product strategy", "Promote evidence-backed relevant sources; route missing evidence to manual support.")},
+		{Kind: "freeze_inventory", Payload: struct{}{}},
+		{Kind: "start_proof", Payload: struct{}{}},
+	} {
+		if _, err := app.Execute(context.Background(), command); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stateAny, _ := app.State(context.Background())
+	state := stateAny.(View)
+	if state.Proof.ItemCount != 2 || state.Proof.ManualSupportCount != 1 || state.Proof.ReviewedCount != 1 || state.Proof.AwaitingReviewCount != 1 || state.Proof.Completed {
+		t.Fatalf("mixed proof did not isolate founder judgment from manual routing: %+v", state.Proof)
+	}
+	for _, item := range state.Proof.Items {
+		if item.RequiresManualReview && item.ReviewStatus != "reviewed" {
+			t.Fatalf("manual-support item was not system-routed: %+v", item)
+		}
+		if !item.RequiresManualReview && item.ReviewStatus != "awaiting_operator_review" {
+			t.Fatalf("evidence-bearing item bypassed founder judgment: %+v", item)
+		}
+	}
+	reviewAllSelected(t, app)
+	stateAny, _ = app.State(context.Background())
+	if !stateAny.(View).Proof.Completed {
+		t.Fatal("proof did not complete after the one evidence-bearing founder judgment")
 	}
 }
 
@@ -813,6 +861,9 @@ func reviewAllSelected(t *testing.T, app *App) {
 		t.Fatal(err)
 	}
 	for _, item := range state.(View).Proof.Items {
+		if item.ReviewStatus == "reviewed" {
+			continue
+		}
 		if _, err := executeHumanTest(app, "review_item", map[string]string{
 			"item_id": item.CanonicalItemID, "decision": "accept", "role": item.ProposedRole,
 			"disposition": item.ProposedDisposition, "rationale": "Founder confirmed the evidence-bound proposal.", "manual_support_outcome": map[bool]string{true: "queued_for_manual_processing", false: "not_required"}[item.RequiresManualReview],

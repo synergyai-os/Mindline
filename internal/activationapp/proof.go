@@ -180,6 +180,20 @@ func (app *App) startProofLocked(ctx context.Context) (any, error) {
 	app.state.Retrieval = artifacts
 	app.state.Proposals = proposals
 	app.state.Reviews = nil
+	for _, proposal := range proposals {
+		if !proposal.RequiresManualReview {
+			continue
+		}
+		review, reviewErr := processing.RecordOperatorReview(proposal, processing.OperatorReviewInput{
+			Decision: processing.ReviewAccept, ReviewerID: "mindline-manual-support-router/v0.1", ReviewedAt: app.now().UTC().Format(time.RFC3339),
+			Rationale:            "Mindline routed this evidence-empty or inaccessible item to manual support without a founder semantic judgment.",
+			ManualSupportOutcome: "queued_for_manual_processing",
+		})
+		if reviewErr != nil {
+			return nil, reviewErr
+		}
+		app.state.Reviews = append(app.state.Reviews, review)
+	}
 	app.state.Route = nil
 	if len(proposals) == 0 {
 		route, compileErr := routingcompat.CompileReviewed(routingcompat.Input{Inventory: proofInventory, Retrieval: artifacts, Strategy: *app.state.Strategy, Proposals: proposals, Reviews: nil})
@@ -209,6 +223,17 @@ func (app *App) startProofLocked(ctx context.Context) (any, error) {
 		}
 		return map[string]any{"completed": true, "state": aggregate.State, "processed_items": 0, "awaiting_operator_review": 0}, nil
 	}
+	if len(app.state.Reviews) == len(proposals) {
+		if err := app.completeProofReviewsLocked(ctx); err != nil {
+			return nil, err
+		}
+		return map[string]any{"completed": true, "state": orchestration.StateProofComplete, "processed_items": len(proposals), "awaiting_operator_review": 0, "manual_support_items": len(proposals), "proposed_promotions": 0}, nil
+	}
+	if len(app.state.Reviews) > 0 {
+		if err := app.commitAuthorityLocked(ctx, "review", acquisition.Fingerprint(app.state.Reviews)); err != nil {
+			return nil, err
+		}
+	}
 	manual, promoted := 0, 0
 	for _, proposal := range proposals {
 		if proposal.RequiresManualReview {
@@ -218,7 +243,7 @@ func (app *App) startProofLocked(ctx context.Context) (any, error) {
 			promoted++
 		}
 	}
-	return map[string]any{"completed": false, "state": aggregate.State, "processed_items": len(proposals), "awaiting_operator_review": len(proposals), "manual_support_items": manual, "proposed_promotions": promoted}, nil
+	return map[string]any{"completed": false, "state": aggregate.State, "processed_items": len(proposals), "awaiting_operator_review": len(proposals) - len(app.state.Reviews), "manual_support_items": manual, "proposed_promotions": promoted}, nil
 }
 
 func (app *App) reviewItemLocked(ctx context.Context, payload reviewItemPayload) (any, error) {
@@ -292,29 +317,7 @@ func (app *App) reviewItemLocked(ctx context.Context, payload reviewItemPayload)
 	app.state.Reviews = append(app.state.Reviews, review)
 	complete := len(app.state.Reviews) == len(app.state.Proposals)
 	if complete {
-		route, err := routingcompat.CompileReviewed(routingcompat.Input{Inventory: *app.state.ProofInventory, Retrieval: app.state.Retrieval, Strategy: *app.state.Strategy, Proposals: app.state.Proposals, Reviews: app.state.Reviews})
-		if err != nil {
-			return nil, err
-		}
-		app.state.Route = &route
-		if err := app.markQueueReviewedLocked(); err != nil {
-			return nil, err
-		}
-		app.resetDestinationArtifactsLocked()
-		if err := app.commitAuthorityLocked(ctx, "queue", app.state.Queue.Fingerprint); err != nil {
-			return nil, err
-		}
-		if err := app.commitAuthorityLocked(ctx, "review", acquisition.Fingerprint(app.state.Reviews)); err != nil {
-			return nil, err
-		}
-		aggregate, err := app.service.Get(ctx, app.state.RunID)
-		if err != nil {
-			return nil, err
-		}
-		if aggregate.State != orchestration.StateProofProcessing {
-			return nil, fmt.Errorf("proof review cannot complete from %s", aggregate.State)
-		}
-		if _, err := app.service.Execute(ctx, app.state.RunID, orchestration.Command{Kind: orchestration.CommandCompleteProof, ExpectedVersion: aggregate.Version, Plan: app.state.Plan}); err != nil {
+		if err := app.completeProofReviewsLocked(ctx); err != nil {
 			return nil, err
 		}
 	}
@@ -327,6 +330,33 @@ func (app *App) reviewItemLocked(ctx context.Context, payload reviewItemPayload)
 		}
 	}
 	return map[string]any{"reviewed": true, "review_fingerprint": review.Fingerprint, "proof_complete": complete, "remaining_reviews": len(app.state.Proposals) - len(app.state.Reviews)}, nil
+}
+
+func (app *App) completeProofReviewsLocked(ctx context.Context) error {
+	route, err := routingcompat.CompileReviewed(routingcompat.Input{Inventory: *app.state.ProofInventory, Retrieval: app.state.Retrieval, Strategy: *app.state.Strategy, Proposals: app.state.Proposals, Reviews: app.state.Reviews})
+	if err != nil {
+		return err
+	}
+	app.state.Route = &route
+	if err := app.markQueueReviewedLocked(); err != nil {
+		return err
+	}
+	app.resetDestinationArtifactsLocked()
+	if err := app.commitAuthorityLocked(ctx, "queue", app.state.Queue.Fingerprint); err != nil {
+		return err
+	}
+	if err := app.commitAuthorityLocked(ctx, "review", acquisition.Fingerprint(app.state.Reviews)); err != nil {
+		return err
+	}
+	aggregate, err := app.service.Get(ctx, app.state.RunID)
+	if err != nil {
+		return err
+	}
+	if aggregate.State != orchestration.StateProofProcessing {
+		return fmt.Errorf("proof review cannot complete from %s", aggregate.State)
+	}
+	_, err = app.service.Execute(ctx, app.state.RunID, orchestration.Command{Kind: orchestration.CommandCompleteProof, ExpectedVersion: aggregate.Version, Plan: app.state.Plan})
+	return err
 }
 
 func validateExhaustiveInventory(snapshot acquisition.InventorySnapshot) error {

@@ -330,7 +330,7 @@ function renderGuidedState(data) {
     ? `Frozen source ${inventory.source_identity || "unknown"} to ${inventory.watermark || "unknown watermark"}: ${inventory.source_records} Slack records → ${inventory.url_occurrences} URL occurrences → ${inventory.canonical_items} canonical items. ${inventory.selected_items} selected; ${inventory.unselected_items} durably unprocessed. Import ${inventory.file_name || "unnamed"}: ${inventory.file_bytes || 0} bytes; declared ${JSON.stringify(inventory.declared_counts || {})}; observed ${JSON.stringify(inventory.observed_counts || {})}; ${inventory.omission_count || 0} count omissions; ${inventory.duplicate_occurrences || 0} duplicate occurrences.`
     : (connections.source_imported ? `Validated ${inventory.file_name || "source handoff"} from ${inventory.source_identity || "unknown source"}: declared ${JSON.stringify(inventory.declared_counts || {})}; observed ${JSON.stringify(inventory.observed_counts || {})}. Freeze only after checking this accounting.` : "Waiting for Codex to hand off a validated Slack source inventory."));
   setSummary("proof-summary", proof.started
-    ? `${proof.reviewed_count || 0}/${proof.item_count || 0} selected items reviewed. ${proof.awaiting_review_count || 0} await your judgment; ${proof.manual_support_count || 0} require explicit manual-support handling.`
+    ? `${proof.reviewed_count || 0}/${proof.item_count || 0} selected items resolved. ${proof.awaiting_review_count || 0} evidence-bearing candidates await your judgment; ${proof.manual_support_count || 0} were routed to manual support.`
     : "The capped proof has not started.");
   const stages = drain.stages || [];
   const sentences = drain.authorization_sentences || {};
@@ -384,6 +384,7 @@ function renderProofItems(items, mutationsEnabled = true) {
   const container = byId("proof-items");
   container.replaceChildren();
   for (const item of items) {
+    if (item.review_status === "reviewed" && item.requires_manual_review) continue;
     const card = document.createElement("article");
     card.className = "card";
     const title = document.createElement("h3");
