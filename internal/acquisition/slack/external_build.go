@@ -10,6 +10,7 @@ import (
 
 	"github.com/synergyai-os/Mindline/internal/acquisition"
 	"github.com/synergyai-os/Mindline/internal/assurance"
+	"github.com/synergyai-os/Mindline/internal/contentguard"
 	"github.com/synergyai-os/Mindline/internal/routing"
 )
 
@@ -335,7 +336,11 @@ const (
 func ProjectActivationEvidence(evidence []acquisition.ImportedEvidence) []acquisition.ImportedEvidence {
 	projected := make([]acquisition.ImportedEvidence, 0, len(evidence))
 	for _, item := range evidence {
-		if item.SecretLike {
+		if contentguard.ContainsNonPersistableContent(item.CanonicalItemID, item.CanonicalURL) {
+			continue
+		}
+		if activationEvidenceContainsUnsafeDetail(item) {
+			projected = append(projected, manualActivationEvidenceShell(item, "activation_secret_like_evidence_redacted"))
 			continue
 		}
 		_, _, _, policy := classifyExternalURLPolicy(item.CanonicalURL)
@@ -343,21 +348,47 @@ func ProjectActivationEvidence(evidence []acquisition.ImportedEvidence) []acquis
 			projected = append(projected, item)
 			continue
 		}
-		accessClass := item.AccessClass
-		switch accessClass {
-		case "private", "authenticated", "unsupported":
-		default:
-			accessClass = "unsupported"
-		}
-		projected = append(projected, acquisition.ImportedEvidence{
-			CanonicalItemID: item.CanonicalItemID,
-			CanonicalURL:    item.CanonicalURL,
-			State:           "inaccessible",
-			AccessClass:     accessClass,
-			Missingness:     []string{"activation_retrieval_not_independently_authorized"},
-		})
+		projected = append(projected, manualActivationEvidenceShell(item, "activation_retrieval_not_independently_authorized"))
 	}
 	return projected
+}
+
+func activationEvidenceContainsUnsafeDetail(item acquisition.ImportedEvidence) bool {
+	if item.SecretLike {
+		return true
+	}
+	values := []string{
+		item.State,
+		item.RetrievedAt,
+		item.AccessClass,
+		item.Metadata.Title,
+		item.Metadata.Author,
+		item.Metadata.PublishedAt,
+	}
+	values = append(values, item.Missingness...)
+	for _, excerpt := range item.Excerpts {
+		values = append(values, excerpt.ExcerptID, excerpt.Text, excerpt.Locator)
+	}
+	for _, related := range item.RelatedURLs {
+		values = append(values, related.URL, related.Relation, related.DiscoveryEvidenceRef)
+	}
+	return contentguard.ContainsNonPersistableContent(values...)
+}
+
+func manualActivationEvidenceShell(item acquisition.ImportedEvidence, reason string) acquisition.ImportedEvidence {
+	accessClass := item.AccessClass
+	switch accessClass {
+	case "private", "authenticated", "unsupported":
+	default:
+		accessClass = "unsupported"
+	}
+	return acquisition.ImportedEvidence{
+		CanonicalItemID: item.CanonicalItemID,
+		CanonicalURL:    item.CanonicalURL,
+		State:           "inaccessible",
+		AccessClass:     accessClass,
+		Missingness:     []string{reason},
+	}
 }
 
 // classifyExternalURLPolicy is the source adapter's independent provider

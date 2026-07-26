@@ -1,11 +1,94 @@
 package slack
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/synergyai-os/Mindline/internal/acquisition"
 	"github.com/synergyai-os/Mindline/internal/assurance"
 )
+
+func TestProjectActivationEvidenceIndependentlyFailsClosed(t *testing.T) {
+	base := acquisition.ImportedEvidence{
+		CanonicalItemID: "github-acme-tool",
+		CanonicalURL:    "https://github.com/acme/tool",
+		State:           "complete",
+		RetrievedAt:     "2026-07-26T12:00:00Z",
+		AccessClass:     "public",
+		Metadata: acquisition.ImportedMetadata{
+			Title:  "A useful public repository",
+			Author: "Acme",
+		},
+		Excerpts: []acquisition.ImportedExcerpt{{
+			ExcerptID: "excerpt-1",
+			Text:      "A safe public excerpt",
+			Locator:   "README",
+		}},
+	}
+	tests := []struct {
+		name   string
+		mutate func(*acquisition.ImportedEvidence)
+	}{
+		{
+			name: "caller secret flag",
+			mutate: func(item *acquisition.ImportedEvidence) {
+				item.SecretLike = true
+			},
+		},
+		{
+			name: "unmarked credential",
+			mutate: func(item *acquisition.ImportedEvidence) {
+				item.Metadata.Title = "credential password=synthetic-private-value"
+			},
+		},
+		{
+			name: "unmarked signed URL",
+			mutate: func(item *acquisition.ImportedEvidence) {
+				item.Excerpts[0].Text = "read https://example.com/private?token=synthetic-private-value"
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			input := base
+			input.Excerpts = append([]acquisition.ImportedExcerpt(nil), base.Excerpts...)
+			test.mutate(&input)
+			projected := ProjectActivationEvidence([]acquisition.ImportedEvidence{input})
+			if len(projected) != 1 {
+				t.Fatalf("unsafe public evidence was not represented by one shell: %+v", projected)
+			}
+			shell := projected[0]
+			if shell.State != "inaccessible" || shell.AccessClass != "unsupported" ||
+				len(shell.Missingness) != 1 || shell.Missingness[0] != "activation_secret_like_evidence_redacted" ||
+				shell.Metadata != (acquisition.ImportedMetadata{}) || len(shell.Excerpts) != 0 ||
+				len(shell.RelatedURLs) != 0 || shell.RetrievedAt != "" || shell.SecretLike {
+				t.Fatalf("unsafe public evidence did not become a content-free shell: %+v", shell)
+			}
+			encoded, err := json.Marshal(shell)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, forbidden := range []string{"synthetic-private-value", "password=", "?token="} {
+				if strings.Contains(string(encoded), forbidden) {
+					t.Fatalf("content-free shell leaked %q: %s", forbidden, encoded)
+				}
+			}
+		})
+	}
+
+	safe := ProjectActivationEvidence([]acquisition.ImportedEvidence{base})
+	if len(safe) != 1 || safe[0].Metadata.Title != base.Metadata.Title || len(safe[0].Excerpts) != 1 {
+		t.Fatalf("safe public evidence was not preserved: %+v", safe)
+	}
+
+	unsafeIdentity := base
+	unsafeIdentity.CanonicalItemID = "password=synthetic-private-value"
+	if projected := ProjectActivationEvidence([]acquisition.ImportedEvidence{unsafeIdentity}); len(projected) != 0 {
+		t.Fatalf("unsafe evidence identity crossed activation: %+v", projected)
+	}
+}
 
 func TestBuildExternalManifestPreservesDuplicateOccurrencesAndClassifiesFormats(t *testing.T) {
 	manifest, err := BuildExternalManifest(BuildInput{
