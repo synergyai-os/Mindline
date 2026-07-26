@@ -16,6 +16,9 @@ import (
 type NativeMessage struct {
 	NativeMessageID  string `json:"native_message_id"`
 	Timestamp        string `json:"timestamp"`
+	AuthorID         string `json:"author_id,omitempty"`
+	AuthorName       string `json:"author_name,omitempty"`
+	Permalink        string `json:"permalink,omitempty"`
 	ThreadParentID   string `json:"thread_parent_id,omitempty"`
 	Text             string `json:"text"`
 	EditDeleteState  string `json:"edit_delete_state,omitempty"`
@@ -197,34 +200,11 @@ func adapterVersion(input BuildInput) string {
 }
 
 func ExtractURLOccurrences(text string) []string {
-	matches := routing.URLPattern.FindAllString(text, -1)
-	result := make([]string, 0, len(matches))
-	for _, match := range matches {
-		candidate := strings.TrimRight(match, ".,;:!?)]}")
-		if candidate != "" {
-			result = append(result, candidate)
-		}
-	}
-	return result
+	return routing.ExtractLexicalURLOccurrences(text)
 }
 
 func fingerprintSourceText(text string) [sha256.Size]byte {
-	matches := routing.URLPattern.FindAllStringIndex(text, -1)
-	var redacted strings.Builder
-	last := 0
-	for index, match := range matches {
-		start, end := match[0], match[1]
-		candidate := strings.TrimRight(text[start:end], ".,;:!?)]}")
-		candidateEnd := start + len(candidate)
-		redacted.WriteString(text[last:start])
-		redacted.WriteString("[mindline-url-occurrence:")
-		redacted.WriteString(stableIndex(index))
-		redacted.WriteString("]")
-		redacted.WriteString(text[candidateEnd:end])
-		last = end
-	}
-	redacted.WriteString(text[last:])
-	return sha256.Sum256([]byte(redacted.String()))
+	return routing.URLFreeSourceFingerprint(text)
 }
 
 func classifyExternalURL(raw string) (kind, strategy, format string) {

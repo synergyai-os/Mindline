@@ -20,6 +20,41 @@ const (
 	URLStorageNonSemanticComponentsRemoved = "non_semantic_components_removed"
 )
 
+// ExtractLexicalURLOccurrences accounts for every lexical HTTP(S) occurrence
+// in source order. Policy decisions happen after this ordinal is established.
+func ExtractLexicalURLOccurrences(text string) []string {
+	matches := URLPattern.FindAllString(text, -1)
+	result := make([]string, 0, len(matches))
+	for _, match := range matches {
+		candidate := strings.TrimRight(match, ".,;:!?)]}")
+		if candidate != "" {
+			result = append(result, candidate)
+		}
+	}
+	return result
+}
+
+// URLFreeSourceFingerprint prevents any lexical URL value, including a
+// withheld value, from influencing a persisted source digest.
+func URLFreeSourceFingerprint(text string) [sha256.Size]byte {
+	matches := URLPattern.FindAllStringIndex(text, -1)
+	var redacted strings.Builder
+	last := 0
+	for index, match := range matches {
+		start, end := match[0], match[1]
+		candidate := strings.TrimRight(text[start:end], ".,;:!?)]}")
+		candidateEnd := start + len(candidate)
+		redacted.WriteString(text[last:start])
+		redacted.WriteString("[mindline-url-occurrence:")
+		redacted.WriteString(strconv.FormatInt(int64(index), 36))
+		redacted.WriteString("]")
+		redacted.WriteString(text[candidateEnd:end])
+		last = end
+	}
+	redacted.WriteString(text[last:])
+	return sha256.Sum256([]byte(redacted.String()))
+}
+
 // PrepareURLForStorage applies a deny-by-default durable URL policy. Unknown
 // query parameters, userinfo, and ambiguous query serialization are withheld
 // completely. Only provider-specific public identity parameters survive.
@@ -44,7 +79,8 @@ func PrepareURLForStorage(raw string) (string, string, error) {
 	if secretLookingURLComponent(parsed.Hostname()) || secretLookingURLComponent(parsed.Path) {
 		return "", URLStorageSensitiveRedacted, nil
 	}
-	if !rawQueryKeysAreExact(parsed.RawQuery) {
+	host := strings.ToLower(parsed.Hostname())
+	if !rawQueryKeysAreExact(parsed.RawQuery, host) {
 		return "", URLStorageSensitiveRedacted, nil
 	}
 	state := ""
@@ -52,7 +88,6 @@ func PrepareURLForStorage(raw string) (string, string, error) {
 	if err != nil {
 		return "", URLStorageSensitiveRedacted, nil
 	}
-	host := strings.ToLower(parsed.Hostname())
 	for key, candidates := range values {
 		if sensitiveQueryKey(key) || secretLookingQueryValues(candidates) {
 			return "", URLStorageSensitiveRedacted, nil
@@ -70,18 +105,25 @@ func PrepareURLForStorage(raw string) (string, string, error) {
 	return parsed.String(), state, nil
 }
 
-func rawQueryKeysAreExact(rawQuery string) bool {
+func rawQueryKeysAreExact(rawQuery, host string) bool {
 	if rawQuery == "" {
 		return true
 	}
 	for _, field := range strings.Split(rawQuery, "&") {
 		rawKey, _, _ := strings.Cut(field, "=")
 		decodedKey, err := url.QueryUnescape(rawKey)
-		if err != nil || rawKey == "" || rawKey != decodedKey || decodedKey != strings.ToLower(decodedKey) || decodedKey != strings.TrimSpace(decodedKey) {
+		if err != nil || rawKey == "" || rawKey != decodedKey || decodedKey != strings.TrimSpace(decodedKey) {
+			return false
+		}
+		if decodedKey != strings.ToLower(decodedKey) && !knownExactProviderQueryKey(host, decodedKey) {
 			return false
 		}
 	}
 	return true
+}
+
+func knownExactProviderQueryKey(host, key string) bool {
+	return (host == "linkedin.com" || strings.HasSuffix(host, ".linkedin.com")) && key == "highlightedUpdateUrn"
 }
 
 func sensitiveQueryKey(key string) bool {
@@ -115,7 +157,7 @@ func secretLookingURLComponent(value string) bool {
 
 func trackingQueryKey(host, key string) bool {
 	lower := strings.ToLower(strings.TrimSpace(key))
-	if key != lower {
+	if key != lower && !knownExactProviderQueryKey(host, key) {
 		return false
 	}
 	if strings.HasPrefix(lower, "utm_") || lower == "fbclid" || lower == "gclid" {
@@ -123,7 +165,7 @@ func trackingQueryKey(host, key string) bool {
 	}
 	switch {
 	case host == "linkedin.com" || strings.HasSuffix(host, ".linkedin.com"):
-		return lower == "trk" || lower == "rcm" || strings.HasPrefix(lower, "lipi")
+		return lower == "trk" || lower == "rcm" || lower == "highlightedupdateurn" || strings.HasPrefix(lower, "lipi")
 	case host == "youtube.com" || strings.HasSuffix(host, ".youtube.com") || host == "youtu.be":
 		return lower == "feature" || lower == "si"
 	case host == "open.spotify.com" || strings.HasSuffix(host, ".spotify.com"):
@@ -212,7 +254,7 @@ func CanonicalizeURL(raw string) (string, error) {
 	values := parsed.Query()
 	for key := range values {
 		lower := strings.ToLower(key)
-		if strings.HasPrefix(lower, "utm_") || lower == "fbclid" || lower == "gclid" || lower == "trk" || lower == "rcm" || strings.HasPrefix(lower, "lipi") || strings.HasPrefix(lower, "tracking") {
+		if strings.HasPrefix(lower, "utm_") || lower == "fbclid" || lower == "gclid" || lower == "trk" || lower == "rcm" || lower == "highlightedupdateurn" || strings.HasPrefix(lower, "lipi") || strings.HasPrefix(lower, "tracking") {
 			values.Del(key)
 		}
 	}

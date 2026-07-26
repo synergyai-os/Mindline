@@ -39,7 +39,7 @@ func canonicalizeDraft(draft Draft, validators map[string]AdapterValidator) (Dra
 	copyDraft := draft
 	copyDraft.ContextLenses = append([]string(nil), draft.ContextLenses...)
 	copyDraft.AdapterDefaults = make([]AdapterDefault, len(draft.AdapterDefaults))
-	if len(copyDraft.ContextLenses) == 0 || len(copyDraft.ContextLenses) > 128 {
+	if len(copyDraft.ContextLenses) == 0 {
 		return Draft{}, ErrInvalid
 	}
 	for _, lens := range copyDraft.ContextLenses {

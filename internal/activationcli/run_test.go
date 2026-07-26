@@ -16,27 +16,29 @@ import (
 	"testing"
 	"time"
 
+	"github.com/synergyai-os/Mindline/internal/acquisition"
 	acquisitionslack "github.com/synergyai-os/Mindline/internal/acquisition/slack"
 	"github.com/synergyai-os/Mindline/internal/activationapp"
 	"github.com/synergyai-os/Mindline/internal/assurance"
 	"github.com/synergyai-os/Mindline/internal/controlui"
+	"github.com/synergyai-os/Mindline/internal/personalmemory"
 	"github.com/synergyai-os/Mindline/internal/privateio"
+	"github.com/synergyai-os/Mindline/internal/routing"
 )
 
 func TestWP46_FixedPortCollisionPrecedesMutationAndNeverOpensBrowser(t *testing.T) {
-	occupied, err := net.Listen("tcp4", fixedControlAddress)
-	if err != nil {
-		t.Fatalf("reserve fixed test port: %v", err)
-	}
-	defer occupied.Close()
-
 	root := filepath.Join(t.TempDir(), "must-not-exist")
 	initialized := false
 	dependencies := serveDependencies{
 		resolveRoot:   func() (string, error) { return root, nil },
 		buildRevision: func() (string, error) { return "clean-revision", nil },
 		verifyChannel: func(*os.File) (controlui.PairingConfirmer, error) { return nil, nil },
-		listen:        net.Listen,
+		listen: func(network, address string) (net.Listener, error) {
+			if network != "tcp4" || address != fixedControlAddress {
+				t.Fatalf("wrong listener contract: %s %s", network, address)
+			}
+			return nil, errors.New("synthetic fixed-port collision")
+		},
 		initialize: func(string, string, string, controlui.PairingConfirmer) (*serveRuntime, error) {
 			initialized = true
 			return nil, errors.New("must not initialize")
@@ -348,6 +350,150 @@ func TestBuildSlackManifestRejectsUnknownInputAndEscapingOutput(t *testing.T) {
 	trailingDigest := sha256.Sum256(trailing)
 	if _, err := decodeNativeSlackBatch(bytes.NewReader(trailing), int64(len(trailing)), fmt.Sprintf("%x", trailingDigest[:])); err == nil {
 		t.Fatal("multiple objects inside one declared frame were accepted")
+	}
+}
+
+func TestIngestSlackDurablyStoresCaptureAndEnrichmentBeforePublishingManifest(t *testing.T) {
+	original := readBuildInfo
+	readBuildInfo = func() (*debug.BuildInfo, bool) {
+		return &debug.BuildInfo{Settings: []debug.BuildSetting{{Key: "vcs.revision", Value: "commit-test"}, {Key: "vcs.modified", Value: "false"}}}, true
+	}
+	defer func() { readBuildInfo = original }()
+	root := t.TempDir()
+	useControlRoot(t, root)
+	if err := privateio.PrepareDir(root); err != nil {
+		t.Fatal(err)
+	}
+	assuranceRoot := filepath.Join(root, "assurance")
+	if err := privateio.PrepareDir(assuranceRoot); err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := assurance.Build(
+		"commit-test",
+		activationapp.DefaultConfigurationFingerprint(),
+		"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		time.Now().UTC(),
+		passingChecks(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := assurance.Write(root, filepath.Join(assuranceRoot, "pre-live-receipt.json"), receipt); err != nil {
+		t.Fatal(err)
+	}
+	canonicalURL := "https://github.com/example/project"
+	envelope := slackIngestEnvelope{
+		SchemaVersion: slackIngestEnvelopeSchema,
+		NativeBatch: acquisitionslack.NativeBatch{
+			SchemaVersion: acquisitionslack.NativeBatchSchema,
+			WorkspaceID:   "T1", ChannelID: "D1",
+			LowerInclusive: "1.000001", UpperInclusive: "1.000001", Watermark: "1.000001",
+			IncludeThreads: true, IncludeReplies: true, PaginationExhausted: true, ThreadPaginationExhausted: true,
+			DeclaredSourceRecords: 1,
+			Messages: []acquisitionslack.NativeMessage{{
+				NativeMessageID: "1.000001", Timestamp: "1.000001",
+				AuthorName: "Randy", Text: canonicalURL,
+			}},
+		},
+		Resources: []acquisition.ImportedEvidence{{
+			CanonicalItemID: routing.CanonicalURLID(canonicalURL),
+			CanonicalURL:    canonicalURL,
+			State:           "complete",
+			RetrievedAt:     "2026-07-26T10:00:00Z",
+			AccessClass:     "public",
+			Metadata:        acquisition.ImportedMetadata{Title: "Agent-first memory"},
+			Excerpts: []acquisition.ImportedExcerpt{{
+				ExcerptID: "excerpt-1", Text: "Durable context remains available after restart.", Locator: "page",
+			}},
+		}},
+		Contents: []personalmemory.ExtractedContent{{
+			CanonicalURL: canonicalURL, MediaType: "text/plain", Completeness: "full",
+			Text:        "Durable context remains available after restart. The complete extracted body is retained separately from activation.",
+			AccessClass: "public",
+		}},
+	}
+	payload, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(payload)
+	outPath := filepath.Join(root, "slack-manifest.json")
+	var stdout, stderr bytes.Buffer
+	code := RunWithInput([]string{
+		"ingest-slack", "--out", outPath,
+		"--payload-bytes", fmt.Sprint(len(payload)), "--payload-sha256", fmt.Sprintf("%x", digest[:]),
+	}, bytes.NewReader(payload), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Slack ingest failed: code=%d stderr=%s", code, stderr.String())
+	}
+	repository, err := personalmemory.NewFileRepository(filepath.Join(root, "personal-memory"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	packet, err := personalmemory.NewLexicalRetriever(repository).Search(personalmemory.SearchRequest{
+		Query: "durable context restart", Limit: 3,
+	})
+	if err != nil || len(packet.Records) != 1 || len(packet.Resources) != 1 {
+		t.Fatalf("durable enriched recall failed: packet=%+v err=%v", packet, err)
+	}
+	replayStdout := bytes.Buffer{}
+	replayStderr := bytes.Buffer{}
+	if code := RunWithInput([]string{
+		"ingest-slack", "--out", outPath,
+		"--payload-bytes", fmt.Sprint(len(payload)), "--payload-sha256", fmt.Sprintf("%x", digest[:]),
+	}, bytes.NewReader(payload), &replayStdout, &replayStderr); code != 0 {
+		t.Fatalf("Slack ingest replay failed: code=%d stderr=%s", code, replayStderr.String())
+	}
+	var summary manifestBuildSummary
+	if err := json.Unmarshal(replayStdout.Bytes(), &summary); err != nil ||
+		summary.Memory == nil || summary.Memory.UnchangedRecords != 1 ||
+		summary.Enrichment == nil || summary.Enrichment.UnchangedResources != 1 ||
+		!summary.ManifestReused || summary.ManifestCreated {
+		t.Fatalf("Slack ingest replay duplicated state: %+v err=%v", summary, err)
+	}
+}
+
+func TestIngestSlackRetainsPersonalEvidenceWhenActivationGateIsUnavailable(t *testing.T) {
+	original := readBuildInfo
+	readBuildInfo = func() (*debug.BuildInfo, bool) {
+		return &debug.BuildInfo{Settings: []debug.BuildSetting{{Key: "vcs.revision", Value: "commit-test"}, {Key: "vcs.modified", Value: "false"}}}, true
+	}
+	defer func() { readBuildInfo = original }()
+	root := t.TempDir()
+	useControlRoot(t, root)
+	envelope := slackIngestEnvelope{
+		SchemaVersion: slackIngestEnvelopeSchema,
+		NativeBatch: acquisitionslack.NativeBatch{
+			SchemaVersion: acquisitionslack.NativeBatchSchema,
+			WorkspaceID:   "T-retain", ChannelID: "D-retain",
+			LowerInclusive: "1.000001", UpperInclusive: "1.000001", Watermark: "1.000001",
+			IncludeThreads: true, IncludeReplies: true, PaginationExhausted: true, ThreadPaginationExhausted: true,
+			DeclaredSourceRecords: 1,
+			Messages: []acquisitionslack.NativeMessage{{
+				NativeMessageID: "1.000001", Timestamp: "1.000001", Text: "https://example.com/retained",
+			}},
+		},
+	}
+	payload, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(payload)
+	var stdout, stderr bytes.Buffer
+	code := RunWithInput([]string{
+		"ingest-slack", "--out", filepath.Join(root, "manifest.json"),
+		"--payload-bytes", fmt.Sprint(len(payload)), "--payload-sha256", fmt.Sprintf("%x", digest[:]),
+	}, bytes.NewReader(payload), &stdout, &stderr)
+	if code == 0 || !strings.Contains(stderr.String(), "personal evidence retained") {
+		t.Fatalf("missing downstream-only failure: code=%d stderr=%s", code, stderr.String())
+	}
+	repository, err := personalmemory.NewFileRepository(filepath.Join(root, "personal-memory"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := repository.Status()
+	if err != nil || status.RecordCount != 1 {
+		t.Fatalf("stale activation gate blocked personal retention: %+v err=%v", status, err)
 	}
 }
 

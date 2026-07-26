@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -19,20 +20,24 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/synergyai-os/Mindline/internal/acquisition"
 	acquisitionslack "github.com/synergyai-os/Mindline/internal/acquisition/slack"
 	"github.com/synergyai-os/Mindline/internal/activationapp"
+	slackadapter "github.com/synergyai-os/Mindline/internal/adapters/slack"
 	"github.com/synergyai-os/Mindline/internal/assurance"
 	"github.com/synergyai-os/Mindline/internal/controlui"
 	"github.com/synergyai-os/Mindline/internal/operatorchannel"
+	"github.com/synergyai-os/Mindline/internal/personalmemory"
 	"github.com/synergyai-os/Mindline/internal/privateio"
 )
 
-const Usage = "usage: mindline activation config-fingerprint\nusage: mindline activation gate-receipt\nusage: mindline activation build-slack-manifest --out <manifest.json> --payload-bytes <n> --payload-sha256 <hex>\nusage: mindline activation serve\n"
+const Usage = "usage: mindline activation config-fingerprint\nusage: mindline activation gate-receipt\nusage: mindline activation build-slack-manifest --out <manifest.json> --payload-bytes <n> --payload-sha256 <hex>\nusage: mindline activation ingest-slack --out <manifest.json> --payload-bytes <n> --payload-sha256 <hex>\nusage: mindline activation serve\n"
 
 const (
-	maximumNativeBatchSize = int64(64 << 20)
-	fixedControlAddress    = "127.0.0.1:9876"
-	fixedControlURL        = "http://127.0.0.1:9876/"
+	maximumNativeBatchSize    = int64(64 << 20)
+	fixedControlAddress       = "127.0.0.1:9876"
+	fixedControlURL           = "http://127.0.0.1:9876/"
+	slackIngestEnvelopeSchema = "mindline-slack-ingest-envelope/v0.1"
 )
 
 var readBuildInfo = debug.ReadBuildInfo
@@ -68,6 +73,8 @@ func RunWithInputs(args []string, nativeInput io.Reader, operatorInput *os.File,
 		return runGateReceipt(args[1:], stdout, stderr)
 	case "build-slack-manifest":
 		return runBuildSlackManifest(args[1:], nativeInput, stdout, stderr)
+	case "ingest-slack":
+		return runIngestSlack(args[1:], nativeInput, stdout, stderr)
 	case "serve":
 		return runServe(args[1:], operatorInput, stdout, stderr, productionServeDependencies())
 	default:
@@ -77,11 +84,22 @@ func RunWithInputs(args []string, nativeInput io.Reader, operatorInput *os.File,
 }
 
 type manifestBuildSummary struct {
-	ManifestPath       string `json:"manifest_path"`
-	ContentFingerprint string `json:"content_fingerprint"`
-	SourceRecords      int    `json:"source_records"`
-	URLOccurrences     int    `json:"url_occurrences"`
-	CanonicalItems     int    `json:"canonical_items"`
+	ManifestPath       string                            `json:"manifest_path"`
+	ContentFingerprint string                            `json:"content_fingerprint"`
+	SourceRecords      int                               `json:"source_records"`
+	URLOccurrences     int                               `json:"url_occurrences"`
+	CanonicalItems     int                               `json:"canonical_items"`
+	Memory             *personalmemory.ImportReceipt     `json:"memory,omitempty"`
+	Enrichment         *personalmemory.EnrichmentReceipt `json:"enrichment,omitempty"`
+	ManifestCreated    bool                              `json:"manifest_created"`
+	ManifestReused     bool                              `json:"manifest_reused"`
+}
+
+type slackIngestEnvelope struct {
+	SchemaVersion string                            `json:"schema_version"`
+	NativeBatch   acquisitionslack.NativeBatch      `json:"native_batch"`
+	Resources     []acquisition.ImportedEvidence    `json:"resources"`
+	Contents      []personalmemory.ExtractedContent `json:"contents,omitempty"`
 }
 
 func runBuildSlackManifest(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -141,6 +159,121 @@ func runBuildSlackManifest(args []string, stdin io.Reader, stdout, stderr io.Wri
 	return 0
 }
 
+func runIngestSlack(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	outPath, payloadBytes, payloadDigest, ok := parseBuildSlackManifestArgs(args)
+	if !ok {
+		fmt.Fprint(stderr, Usage)
+		return 1
+	}
+	runtimeRoot, err := resolveControlRoot()
+	if err != nil || !filepath.IsAbs(runtimeRoot) {
+		fmt.Fprintln(stderr, "Slack ingest blocked: stable control root unavailable")
+		return 2
+	}
+	envelope, err := decodeSlackIngestEnvelope(stdin, payloadBytes, payloadDigest)
+	if err != nil {
+		fmt.Fprintf(stderr, "Slack ingest blocked: %v\n", err)
+		return 2
+	}
+	repository, err := personalmemory.NewFileRepository(filepath.Join(runtimeRoot, "personal-memory"), nil)
+	if err != nil {
+		fmt.Fprintln(stderr, "Slack ingest blocked: personal evidence storage unavailable")
+		return 2
+	}
+	captureBatch, err := slackadapter.CaptureBatchFromNative(envelope.NativeBatch)
+	if err != nil {
+		fmt.Fprintf(stderr, "Slack ingest blocked: %v\n", err)
+		return 2
+	}
+	memoryReceipt, err := repository.Import(captureBatch)
+	if err != nil {
+		fmt.Fprintf(stderr, "Slack ingest blocked: %v\n", err)
+		return 2
+	}
+	var enrichmentReceipt *personalmemory.EnrichmentReceipt
+	if len(envelope.Resources)+len(envelope.Contents) > 0 {
+		merged, mergeErr := repository.MergeEnrichment(personalmemory.EnrichmentBatch{
+			SchemaVersion: personalmemory.EnrichmentBatchSchemaVersion,
+			Resources:     envelope.Resources, Contents: envelope.Contents,
+		})
+		if mergeErr != nil {
+			fmt.Fprintf(stderr, "Slack source retained, but enrichment blocked: %v\n", mergeErr)
+			return 2
+		}
+		enrichmentReceipt = &merged
+	}
+	receiptPath := filepath.Join(runtimeRoot, "assurance", "pre-live-receipt.json")
+	revision, err := cleanBuildRevision()
+	if err != nil {
+		fmt.Fprintf(stderr, "Slack personal evidence retained, but activation blocked: %v\n", err)
+		return 2
+	}
+	receipt, err := assurance.Load(runtimeRoot, receiptPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "Slack personal evidence retained, but activation blocked: %v\n", err)
+		return 2
+	}
+	configuration := activationapp.DefaultConfigurationFingerprint()
+	if err := assurance.Validate(receipt, revision, configuration); err != nil {
+		fmt.Fprintf(stderr, "Slack personal evidence retained, but activation blocked: %v\n", err)
+		return 2
+	}
+	if err := validateManifestOutputPath(runtimeRoot, outPath); err != nil {
+		fmt.Fprintf(stderr, "Slack personal evidence retained, but activation blocked: %v\n", err)
+		return 2
+	}
+	manifest, err := acquisitionslack.BuildAuthorizedExternalManifestFromNativeBatchWithEvidence(
+		envelope.NativeBatch, envelope.Resources, receipt, revision, configuration,
+	)
+	if err != nil {
+		fmt.Fprintf(stderr, "Slack source retained, but activation manifest blocked: %v\n", err)
+		return 2
+	}
+	manifestPayload, err := json.Marshal(manifest)
+	if err != nil || int64(len(manifestPayload)+1) > acquisitionslack.DefaultMaximumBytes {
+		fmt.Fprintln(stderr, "Slack ingest blocked: normalized manifest exceeds import budget")
+		return 2
+	}
+	created, reused, err := writeOrReuseManifest(runtimeRoot, outPath, append(manifestPayload, '\n'))
+	if err != nil {
+		fmt.Fprintf(stderr, "Slack ingest blocked: %v\n", err)
+		return 2
+	}
+	_ = json.NewEncoder(stdout).Encode(manifestBuildSummary{
+		ManifestPath: outPath, ContentFingerprint: manifest.ContentFingerprint,
+		SourceRecords: len(manifest.SourceRecords), URLOccurrences: len(manifest.URLOccurrences), CanonicalItems: len(manifest.CanonicalItems),
+		Memory: &memoryReceipt, Enrichment: enrichmentReceipt,
+		ManifestCreated: created, ManifestReused: reused,
+	})
+	return 0
+}
+
+func decodeSlackIngestEnvelope(input io.Reader, expectedBytes int64, expectedDigest string) (slackIngestEnvelope, error) {
+	if input == nil {
+		return slackIngestEnvelope{}, errors.New("Slack ingest envelope is missing")
+	}
+	if expectedBytes <= 0 || expectedBytes > maximumNativeBatchSize || len(expectedDigest) != sha256.Size*2 {
+		return slackIngestEnvelope{}, errors.New("Slack ingest frame binding is invalid")
+	}
+	payload := make([]byte, expectedBytes)
+	if _, err := io.ReadFull(input, payload); err != nil {
+		return slackIngestEnvelope{}, errors.New("Slack ingest frame is incomplete")
+	}
+	digest := sha256.Sum256(payload)
+	if fmt.Sprintf("%x", digest[:]) != strings.ToLower(expectedDigest) {
+		return slackIngestEnvelope{}, errors.New("Slack ingest frame fingerprint mismatch")
+	}
+	payload = bytes.TrimSpace(payload)
+	var envelope slackIngestEnvelope
+	if err := privateio.DecodeJSONStrict(payload, &envelope); err != nil || envelope.SchemaVersion != slackIngestEnvelopeSchema {
+		return slackIngestEnvelope{}, errors.New("Slack ingest envelope is invalid")
+	}
+	if err := acquisitionslack.ValidateNativeBatch(envelope.NativeBatch); err != nil {
+		return slackIngestEnvelope{}, err
+	}
+	return envelope, nil
+}
+
 // The bridge accepts one length- and SHA-bound JSON frame so connector
 // orchestration can keep
 // native content off argv, environment variables, shell history, and temporary
@@ -169,17 +302,28 @@ func decodeNativeSlackBatch(input io.Reader, expectedBytes int64, expectedDigest
 	if len(payload) == 0 {
 		return acquisitionslack.NativeBatch{}, errors.New("native Slack batch is empty")
 	}
-	decoder := json.NewDecoder(bytes.NewReader(payload))
-	decoder.DisallowUnknownFields()
 	var batch acquisitionslack.NativeBatch
-	if err := decoder.Decode(&batch); err != nil {
+	if err := privateio.DecodeJSONStrict(payload, &batch); err != nil {
 		return acquisitionslack.NativeBatch{}, errors.New("native Slack batch is invalid")
 	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		return acquisitionslack.NativeBatch{}, errors.New("native Slack batch contains trailing data")
-	}
 	return batch, nil
+}
+
+func writeOrReuseManifest(root, path string, payload []byte) (bool, bool, error) {
+	existing, err := privateio.ReadFileBounded(root, path, acquisitionslack.DefaultMaximumBytes)
+	if err == nil {
+		if !bytes.Equal(existing, payload) {
+			return false, false, errors.New("existing manifest differs from exact replay")
+		}
+		return false, true, nil
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		return false, false, err
+	}
+	if err := privateio.WriteFile(path, payload, true); err != nil {
+		return false, false, err
+	}
+	return true, false, nil
 }
 
 func validateManifestOutputPath(root, outPath string) error {

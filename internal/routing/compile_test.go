@@ -152,6 +152,17 @@ func TestPrepareURLForStorageWithholdsAmbiguousOrCredentialBearingURLs(t *testin
 	}
 }
 
+func TestPrepareURLForStorageRemovesLinkedInHighlightedUpdateURN(t *testing.T) {
+	target := "https://www.linkedin.com/posts/example_activity-123?highlightedUpdateUrn=urn%3Ali%3Aactivity%3A123&utm_source=slack"
+	got, state, err := PrepareURLForStorage(target)
+	if err != nil {
+		t.Fatalf("prepare LinkedIn URL: %v", err)
+	}
+	if got != "https://www.linkedin.com/posts/example_activity-123" || state != URLStorageNonSemanticComponentsRemoved {
+		t.Fatalf("unexpected LinkedIn sanitization: url=%q state=%q", got, state)
+	}
+}
+
 func TestRoutingArtifactRejectsUnsafeRelatedURL(t *testing.T) {
 	artifact := LinkArtifact{
 		State:          "complete",

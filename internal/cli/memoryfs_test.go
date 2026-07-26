@@ -34,6 +34,17 @@ func (m *MemoryFS) ReadFile(path string) ([]byte, error) {
 	return copyData, nil
 }
 
+func (m *MemoryFS) ReadFileBounded(path string, maximumBytes int64) ([]byte, error) {
+	data, err := m.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if maximumBytes <= 0 || int64(len(data)) > maximumBytes {
+		return nil, fmt.Errorf("file exceeds bounded input contract")
+	}
+	return data, nil
+}
+
 func (m *MemoryFS) MkdirAll(path string, _ fs.FileMode) error {
 	clean := filepath.Clean(path)
 	parts := strings.Split(clean, string(filepath.Separator))

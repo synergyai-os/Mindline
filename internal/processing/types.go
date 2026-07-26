@@ -159,7 +159,7 @@ func ValidateStrategy(strategy StrategySnapshot) error {
 			return errors.New("invalid strategy creation time")
 		}
 	}
-	if len(ContextLenses(strategy)) == 0 || len(ContextLenses(strategy)) > 8 {
+	if len(ContextLenses(strategy)) == 0 {
 		return errors.New("invalid context lens count")
 	}
 	return nil

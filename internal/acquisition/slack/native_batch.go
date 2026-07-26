@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/synergyai-os/Mindline/internal/acquisition"
 	"github.com/synergyai-os/Mindline/internal/assurance"
 )
 
@@ -34,6 +35,10 @@ type NativeBatch struct {
 }
 
 func BuildAuthorizedExternalManifestFromNativeBatch(batch NativeBatch, receipt assurance.Receipt, commit, configuration string) (ExternalManifest, error) {
+	return BuildAuthorizedExternalManifestFromNativeBatchWithEvidence(batch, nil, receipt, commit, configuration)
+}
+
+func BuildAuthorizedExternalManifestFromNativeBatchWithEvidence(batch NativeBatch, evidence []acquisition.ImportedEvidence, receipt assurance.Receipt, commit, configuration string) (ExternalManifest, error) {
 	if err := assurance.Validate(receipt, commit, configuration); err != nil {
 		return ExternalManifest{}, errors.New("pre-live authority rejected private Slack batch")
 	}
@@ -41,15 +46,16 @@ func BuildAuthorizedExternalManifestFromNativeBatch(batch NativeBatch, receipt a
 		return ExternalManifest{}, err
 	}
 	return BuildAuthorizedExternalManifest(BuildInput{
-		ConnectorKind:  "external_slack_inventory",
-		AdapterVersion: ExternalInventorySchema,
-		WorkspaceID:    batch.WorkspaceID,
-		ChannelID:      batch.ChannelID,
-		LowerInclusive: batch.LowerInclusive,
-		UpperInclusive: batch.UpperInclusive,
-		Watermark:      batch.Watermark,
-		Messages:       batch.Messages,
-		DataClass:      DataClassPrivateRuntime,
+		ConnectorKind:    "external_slack_inventory",
+		AdapterVersion:   ExternalInventorySchema,
+		WorkspaceID:      batch.WorkspaceID,
+		ChannelID:        batch.ChannelID,
+		LowerInclusive:   batch.LowerInclusive,
+		UpperInclusive:   batch.UpperInclusive,
+		Watermark:        batch.Watermark,
+		Messages:         batch.Messages,
+		ImportedEvidence: evidence,
+		DataClass:        DataClassPrivateRuntime,
 	}, receipt, commit, configuration)
 }
 
@@ -74,4 +80,12 @@ func validateNativeBatch(batch NativeBatch) error {
 		}
 	}
 	return nil
+}
+
+// ValidateNativeBatch exposes the closed, occurrence-complete connector
+// handoff contract to source-neutral consumers such as the personal evidence
+// library. Authorization to acquire private Slack data remains at the
+// connector boundary; this function validates only the handed-off facts.
+func ValidateNativeBatch(batch NativeBatch) error {
+	return validateNativeBatch(batch)
 }
