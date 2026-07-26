@@ -8,6 +8,7 @@ import (
 
 	"github.com/synergyai-os/Mindline/internal/acquisition"
 	"github.com/synergyai-os/Mindline/internal/assurance"
+	"github.com/synergyai-os/Mindline/internal/routing"
 )
 
 func TestProjectActivationEvidenceIndependentlyFailsClosed(t *testing.T) {
@@ -55,7 +56,7 @@ func TestProjectActivationEvidenceIndependentlyFailsClosed(t *testing.T) {
 			input := base
 			input.Excerpts = append([]acquisition.ImportedExcerpt(nil), base.Excerpts...)
 			test.mutate(&input)
-			projected := ProjectActivationEvidence([]acquisition.ImportedEvidence{input})
+			projected := projectActivationEvidence([]acquisition.ImportedEvidence{input})
 			if len(projected) != 1 {
 				t.Fatalf("unsafe public evidence was not represented by one shell: %+v", projected)
 			}
@@ -78,14 +79,14 @@ func TestProjectActivationEvidenceIndependentlyFailsClosed(t *testing.T) {
 		})
 	}
 
-	safe := ProjectActivationEvidence([]acquisition.ImportedEvidence{base})
+	safe := projectActivationEvidence([]acquisition.ImportedEvidence{base})
 	if len(safe) != 1 || safe[0].Metadata.Title != base.Metadata.Title || len(safe[0].Excerpts) != 1 {
 		t.Fatalf("safe public evidence was not preserved: %+v", safe)
 	}
 
 	unsafeIdentity := base
 	unsafeIdentity.CanonicalItemID = "password=synthetic-private-value"
-	if projected := ProjectActivationEvidence([]acquisition.ImportedEvidence{unsafeIdentity}); len(projected) != 0 {
+	if projected := projectActivationEvidence([]acquisition.ImportedEvidence{unsafeIdentity}); len(projected) != 0 {
 		t.Fatalf("unsafe evidence identity crossed activation: %+v", projected)
 	}
 }
@@ -241,5 +242,46 @@ func TestPrivateManifestBuildRequiresCommitBoundReceipt(t *testing.T) {
 	}
 	if _, err := BuildAuthorizedExternalManifest(input, receipt, "commit-1", "config-1"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAuthorizedManifestConstructorAlwaysProjectsUnsafeEvidence(t *testing.T) {
+	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	checks := make([]assurance.Check, 0, len(assurance.RequiredChecks))
+	for _, name := range assurance.RequiredChecks {
+		checks = append(checks, assurance.Check{Name: name, ToolVersion: "test", Outcome: "pass", EvidenceFingerprint: "sha256:test-" + name})
+	}
+	receipt, err := assurance.Build("commit-1", "config-1", "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", now, checks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := "https://github.com/acme/tool"
+	input := BuildInput{
+		WorkspaceID: "T-private", ChannelID: "C-private",
+		LowerInclusive: "1700000000.000001", UpperInclusive: "1700000000.000001", Watermark: "1700000000.000001",
+		DataClass: DataClassPrivateRuntime,
+		Messages:  []NativeMessage{{NativeMessageID: "m-1", Timestamp: "1700000000.000001", Text: target}},
+		ImportedEvidence: []acquisition.ImportedEvidence{{
+			CanonicalItemID: routing.CanonicalURLID(target),
+			CanonicalURL:    target,
+			State:           "complete",
+			RetrievedAt:     "2026-07-26T12:00:00Z",
+			AccessClass:     "public",
+			Metadata:        acquisition.ImportedMetadata{Title: "password=synthetic-private-value"},
+			Excerpts:        []acquisition.ImportedExcerpt{{ExcerptID: "excerpt-1", Text: "unsafe detail", Locator: "README"}},
+		}},
+	}
+	manifest, err := BuildAuthorizedExternalManifest(input, receipt, "commit-1", "config-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.ImportedEvidence) != 1 {
+		t.Fatalf("authorized constructor lost explicit evidence state: %+v", manifest.ImportedEvidence)
+	}
+	shell := manifest.ImportedEvidence[0]
+	if shell.State != "inaccessible" || len(shell.Missingness) != 1 ||
+		shell.Missingness[0] != "activation_secret_like_evidence_redacted" ||
+		shell.Metadata != (acquisition.ImportedMetadata{}) || len(shell.Excerpts) != 0 {
+		t.Fatalf("authorized constructor did not enforce content-free projection: %+v", shell)
 	}
 }

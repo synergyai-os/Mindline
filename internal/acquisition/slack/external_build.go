@@ -54,6 +54,7 @@ func BuildAuthorizedExternalManifest(input BuildInput, receipt assurance.Receipt
 	if input.DataClass != DataClassPrivateRuntime {
 		return ExternalManifest{}, errors.New("authorized Slack build requires private-runtime data class")
 	}
+	input.ImportedEvidence = projectActivationEvidence(input.ImportedEvidence)
 	return buildExternalManifest(input, true)
 }
 
@@ -328,12 +329,13 @@ const (
 	importedEvidenceManualOnly     importedEvidenceAccessPolicy = "manual_only"
 )
 
-// ProjectActivationEvidence keeps the canonical personal-memory evidence
+// projectActivationEvidence keeps the canonical personal-memory evidence
 // separate from the stricter activation trust boundary. Rich evidence remains
 // available for owner-only recall, while a provider whose retrieval has not
 // been independently authorized for activation crosses into review only as an
-// explicit manual-processing shell.
-func ProjectActivationEvidence(evidence []acquisition.ImportedEvidence) []acquisition.ImportedEvidence {
+// explicit manual-processing shell. The authorized constructor invokes this
+// unconditionally so callers cannot opt out of the activation policy.
+func projectActivationEvidence(evidence []acquisition.ImportedEvidence) []acquisition.ImportedEvidence {
 	projected := make([]acquisition.ImportedEvidence, 0, len(evidence))
 	for _, item := range evidence {
 		if contentguard.ContainsNonPersistableContent(item.CanonicalItemID, item.CanonicalURL) {
