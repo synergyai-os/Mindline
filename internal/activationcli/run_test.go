@@ -381,7 +381,7 @@ func TestIngestSlackDurablyStoresCaptureAndEnrichmentBeforePublishingManifest(t 
 	if err := assurance.Write(root, filepath.Join(assuranceRoot, "pre-live-receipt.json"), receipt); err != nil {
 		t.Fatal(err)
 	}
-	canonicalURL := "https://github.com/example/project"
+	canonicalURL := "https://example.com/project"
 	envelope := slackIngestEnvelope{
 		SchemaVersion: slackIngestEnvelopeSchema,
 		NativeBatch: acquisitionslack.NativeBatch{
@@ -435,6 +435,19 @@ func TestIngestSlackDurablyStoresCaptureAndEnrichmentBeforePublishingManifest(t 
 	})
 	if err != nil || len(packet.Records) != 1 || len(packet.Resources) != 1 {
 		t.Fatalf("durable enriched recall failed: packet=%+v err=%v", packet, err)
+	}
+	manifestPayload, err := privateio.ReadFileBounded(root, outPath, acquisitionslack.DefaultMaximumBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest acquisitionslack.ExternalManifest
+	if err := privateio.DecodeJSONStrict(manifestPayload, &manifest); err != nil ||
+		len(manifest.ImportedEvidence) != 1 ||
+		manifest.ImportedEvidence[0].State != "inaccessible" ||
+		manifest.ImportedEvidence[0].AccessClass != "unsupported" ||
+		len(manifest.ImportedEvidence[0].Excerpts) != 0 ||
+		len(manifest.ImportedEvidence[0].Missingness) != 1 {
+		t.Fatalf("activation did not receive the bounded manual shell: %+v err=%v", manifest.ImportedEvidence, err)
 	}
 	replayStdout := bytes.Buffer{}
 	replayStderr := bytes.Buffer{}

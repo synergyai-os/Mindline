@@ -327,6 +327,39 @@ const (
 	importedEvidenceManualOnly     importedEvidenceAccessPolicy = "manual_only"
 )
 
+// ProjectActivationEvidence keeps the canonical personal-memory evidence
+// separate from the stricter activation trust boundary. Rich evidence remains
+// available for owner-only recall, while a provider whose retrieval has not
+// been independently authorized for activation crosses into review only as an
+// explicit manual-processing shell.
+func ProjectActivationEvidence(evidence []acquisition.ImportedEvidence) []acquisition.ImportedEvidence {
+	projected := make([]acquisition.ImportedEvidence, 0, len(evidence))
+	for _, item := range evidence {
+		if item.SecretLike {
+			continue
+		}
+		_, _, _, policy := classifyExternalURLPolicy(item.CanonicalURL)
+		if policy == importedEvidencePublicEligible && item.AccessClass == "public" {
+			projected = append(projected, item)
+			continue
+		}
+		accessClass := item.AccessClass
+		switch accessClass {
+		case "private", "authenticated", "unsupported":
+		default:
+			accessClass = "unsupported"
+		}
+		projected = append(projected, acquisition.ImportedEvidence{
+			CanonicalItemID: item.CanonicalItemID,
+			CanonicalURL:    item.CanonicalURL,
+			State:           "inaccessible",
+			AccessClass:     accessClass,
+			Missingness:     []string{"activation_retrieval_not_independently_authorized"},
+		})
+	}
+	return projected
+}
+
 // classifyExternalURLPolicy is the source adapter's independent provider
 // policy. Unknown providers deliberately remain manual-only until a retrieval
 // implementation proves public access; a manifest cannot promote itself by

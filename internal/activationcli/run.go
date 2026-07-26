@@ -223,7 +223,7 @@ func runIngestSlack(args []string, stdin io.Reader, stdout, stderr io.Writer) in
 		return 2
 	}
 	manifest, err := acquisitionslack.BuildAuthorizedExternalManifestFromNativeBatchWithEvidence(
-		envelope.NativeBatch, envelope.Resources, receipt, revision, configuration,
+		envelope.NativeBatch, acquisitionslack.ProjectActivationEvidence(envelope.Resources), receipt, revision, configuration,
 	)
 	if err != nil {
 		fmt.Fprintf(stderr, "Slack source retained, but activation manifest blocked: %v\n", err)
