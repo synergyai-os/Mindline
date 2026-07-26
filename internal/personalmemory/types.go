@@ -193,8 +193,10 @@ type Status struct {
 }
 
 type SearchRequest struct {
-	Query string `json:"query"`
-	Limit int    `json:"limit"`
+	Query  string `json:"query"`
+	Limit  int    `json:"limit"`
+	RunID  string `json:"run_id,omitempty"`
+	LensID string `json:"lens_id,omitempty"`
 }
 
 type Citation struct {
@@ -207,6 +209,7 @@ type Citation struct {
 	Snippet         string              `json:"snippet"`
 	MatchedTerms    []string            `json:"matched_terms"`
 	Score           float64             `json:"score"`
+	ComponentScores map[string]float64  `json:"component_scores,omitempty"`
 	ContentHash     string              `json:"content_hash"`
 	ContextState    string              `json:"context_state"`
 	Missingness     []string            `json:"missingness"`
@@ -229,8 +232,12 @@ type EvidenceReference struct {
 
 type ContextPacket struct {
 	SchemaVersion      string             `json:"schema_version"`
+	RunID              string             `json:"run_id,omitempty"`
 	Query              string             `json:"query"`
+	LensID             string             `json:"lens_id,omitempty"`
 	RetrievalMethod    string             `json:"retrieval_method"`
+	RetrievalState     string             `json:"retrieval_state,omitempty"`
+	DegradedReason     string             `json:"degraded_reason,omitempty"`
 	AuthorityClass     string             `json:"authority_class"`
 	LibraryRevision    uint64             `json:"library_revision"`
 	LibraryFingerprint string             `json:"library_fingerprint"`

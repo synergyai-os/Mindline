@@ -13,6 +13,7 @@ const (
 	HydratedCaptureSchemaVersion = "mindline-hydrated-capture/v0.1"
 	MaximumLensRequestRunes      = 64 << 10
 	MaximumRetrievalContentBytes = 64 << 20
+	maximumCitationEvidenceRefs  = 32
 )
 
 // RetrieverPort is the agent-facing canonical Mindline contract.
@@ -28,6 +29,10 @@ type RetrievalBackendPort interface {
 	Rank(SearchRequest, []IndexDocument) ([]RankedHit, error)
 }
 
+type RetrievalDiagnosticsPort interface {
+	RetrievalDiagnostics() (state, degradedReason string)
+}
+
 type IndexDocument struct {
 	DocumentID string
 	Text       string
@@ -37,6 +42,7 @@ type RankedHit struct {
 	DocumentID   string
 	Score        float64
 	MatchedTerms []string
+	Components   map[string]float64
 }
 
 type ContextRetriever struct {
@@ -91,7 +97,11 @@ func (retriever ContextRetriever) Search(request SearchRequest) (ContextPacket, 
 	if method == "" {
 		return ContextPacket{}, errors.New("personal evidence retrieval backend has no method identity")
 	}
-	return assembleContextPacket(request, library, hits, byID, method), nil
+	packet := assembleContextPacket(request, library, hits, byID, method)
+	if diagnostics, ok := retriever.backend.(RetrievalDiagnosticsPort); ok {
+		packet.RetrievalState, packet.DegradedReason = diagnostics.RetrievalDiagnostics()
+	}
+	return packet, nil
 }
 
 func (retriever ContextRetriever) Get(recordID string) (HydratedCapture, error) {
@@ -343,7 +353,8 @@ func (LexicalBM25Backend) Rank(request SearchRequest, documents []IndexDocument)
 
 func assembleContextPacket(request SearchRequest, library Library, hits []RankedHit, documents map[string]evidenceDocument, retrievalMethod string) ContextPacket {
 	packet := ContextPacket{
-		SchemaVersion: ContextPacketSchemaVersion, Query: strings.TrimSpace(request.Query),
+		SchemaVersion: ContextPacketSchemaVersion, RunID: request.RunID,
+		Query: strings.TrimSpace(request.Query), LensID: request.LensID,
 		RetrievalMethod: retrievalMethod, AuthorityClass: AuthorityClass,
 		LibraryRevision: library.Revision, LibraryFingerprint: library.Fingerprint,
 		Citations: []Citation{}, Records: []CaptureRecord{}, Resources: []ResourceContext{},
@@ -362,7 +373,7 @@ func assembleContextPacket(request SearchRequest, library Library, hits []Ranked
 		}
 		evidenceRefs := evidenceReferences(document, hit.MatchedTerms)
 		sourceSnippet := snippet(document.record.RawText, 500)
-		if len(evidenceRefs) > 0 {
+		if len(evidenceRefs) > 0 && strings.TrimSpace(evidenceRefs[0].MatchedSnippet) != "" {
 			sourceSnippet = evidenceRefs[0].MatchedSnippet
 		}
 		packet.Citations = append(packet.Citations, Citation{
@@ -370,7 +381,8 @@ func assembleContextPacket(request SearchRequest, library Library, hits []Ranked
 			VersionState: document.versionState, SourceRef: document.record.SourceRef,
 			OccurredAt: document.record.OccurredAt, Author: author, Snippet: sourceSnippet,
 			MatchedTerms: hit.MatchedTerms, Score: hit.Score, ContentHash: document.record.ContentHash,
-			ContextState: document.record.ContextState, Missingness: append([]string(nil), document.record.Missingness...),
+			ComponentScores: copyScores(hit.Components),
+			ContextState:    document.record.ContextState, Missingness: citationMissingness(document),
 			ResourceIDs: append([]string(nil), document.record.ResourceIDs...), EvidenceRefs: evidenceRefs,
 			AuthorityClass: AuthorityClass,
 		})
@@ -393,17 +405,53 @@ func assembleContextPacket(request SearchRequest, library Library, hits []Ranked
 	return packet
 }
 
+func copyScores(scores map[string]float64) map[string]float64 {
+	if len(scores) == 0 {
+		return nil
+	}
+	copy := make(map[string]float64, len(scores))
+	for name, value := range scores {
+		copy[name] = value
+	}
+	return copy
+}
+
 func evidenceReferences(document evidenceDocument, matchedTerms []string) []EvidenceReference {
 	references := []EvidenceReference{}
+	if len(matchedTerms) == 0 {
+		for _, resource := range document.resources {
+			content, _ := document.contents[resource.ResourceID]
+			references = append(references, semanticResourceReference(resource, content, "current", ""))
+			if len(references) == maximumCitationEvidenceRefs {
+				return references
+			}
+		}
+		for _, revision := range document.resourceRevisions {
+			content, _ := document.revisionContents[revision.RevisionID]
+			references = append(references, semanticResourceReference(
+				revision.Resource, content, "superseded", revision.RevisionID,
+			))
+			if len(references) == maximumCitationEvidenceRefs {
+				return references
+			}
+		}
+		return references
+	}
 	for _, resource := range document.resources {
 		content, _ := document.contents[resource.ResourceID]
 		references = append(references, referencesForResource(resource, content, matchedTerms, "current", "")...)
+		if len(references) >= maximumCitationEvidenceRefs {
+			return references[:maximumCitationEvidenceRefs]
+		}
 	}
 	for _, revision := range document.resourceRevisions {
 		content, _ := document.revisionContents[revision.RevisionID]
 		references = append(references, referencesForResource(
 			revision.Resource, content, matchedTerms, "superseded", revision.RevisionID,
 		)...)
+		if len(references) >= maximumCitationEvidenceRefs {
+			return references[:maximumCitationEvidenceRefs]
+		}
 	}
 	return references
 }
@@ -437,20 +485,43 @@ func referencesForResource(resource ResourceContext, content ExtractedContentArt
 	metadata := strings.TrimSpace(strings.Join([]string{
 		resource.Metadata.Title, resource.Metadata.Author, resource.Metadata.PublishedAt,
 	}, " — "))
-	if containsAnyTerm(metadata, matchedTerms) {
+	if strings.TrimSpace(metadata) != "" && containsAnyTerm(metadata, matchedTerms) {
 		reference := base()
 		reference.Locator = "public_metadata"
 		reference.MatchedSnippet = snippet(metadata, 500)
 		references = append(references, reference)
 	}
 	missingness := strings.Join(resource.Missingness, ", ")
-	if containsAnyTerm(missingness, matchedTerms) {
+	if strings.TrimSpace(missingness) != "" && containsAnyTerm(missingness, matchedTerms) {
 		reference := base()
 		reference.Locator = "resource_missingness"
 		reference.MatchedSnippet = snippet(missingness, 500)
 		references = append(references, reference)
 	}
 	return references
+}
+
+func semanticResourceReference(resource ResourceContext, content ExtractedContentArtifact, versionState, revisionID string) EvidenceReference {
+	reference := EvidenceReference{
+		ResourceID: resource.ResourceID, CanonicalURL: resource.CanonicalURL,
+		ResourceHash: resource.ContentHash, ResourceVersionState: versionState,
+		ResourceRevisionID: revisionID, Locator: "semantic_record_match",
+	}
+	if content.Reference.ArtifactID != "" {
+		reference.ArtifactID = content.Reference.ArtifactID
+	}
+	return reference
+}
+
+func citationMissingness(document evidenceDocument) []string {
+	values := append([]string(nil), document.record.Missingness...)
+	for _, resource := range document.resources {
+		values = append(values, resource.Missingness...)
+	}
+	for _, revision := range document.resourceRevisions {
+		values = append(values, revision.Resource.Missingness...)
+	}
+	return uniqueSorted(values)
 }
 
 func searchableText(record CaptureRecord, resources []ResourceContext, revisions []ResourceRevision, contents map[string]ExtractedContentArtifact, revisionContents map[string]ExtractedContentArtifact) string {
