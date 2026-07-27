@@ -773,6 +773,69 @@ func TestRetryGenerationSelectsOnlyApprovedTransientReasonAndReplaysSafely(t *te
 	}
 }
 
+func TestSyncMembershipPrunesLegacyJobsWithoutResettingRetainedRunState(t *testing.T) {
+	store, err := NewStore(t.TempDir()+"/queue", FixtureProfile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Rebuild([]RebuildItem{
+		{ResourceID: "keep", State: StateBlocked, Reason: ReasonRunBudgetDeferred},
+		{ResourceID: "remove-deferred", State: StateBlocked, Reason: ReasonRunBudgetDeferred},
+		{ResourceID: "remove-processing", State: StateQueued},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := store.update(func(queue *Queue) error {
+		queue.Generation = 4
+		queue.GenerationKind = "continuation"
+		queue.Counters = Counters{
+			ProcessedResources: 2, Requests: 7, Attempts: 3,
+			ReservedRequests: 4, DownloadedBytes: 11, DecodedBytes: 12,
+			ExtractedBytes: 13, RuntimeStorageBytes: 14, WallSeconds: 15,
+		}
+		for index := range queue.Items {
+			switch queue.Items[index].ResourceID {
+			case "keep":
+				queue.Items[index].Attempts = 2
+			case "remove-processing":
+				queue.Items[index].State = StateProcessing
+				queue.Items[index].Attempts = 1
+				queue.Items[index].ReservedRequests = 4
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := store.SyncMembership([]string{"keep", "new"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedCounters := before.Counters
+	expectedCounters.ReservedRequests = 0
+	if after.Generation != before.Generation ||
+		after.GenerationKind != before.GenerationKind ||
+		after.Counters != expectedCounters || len(after.Items) != 2 {
+		t.Fatalf("membership sync reset run state: before=%+v after=%+v", before, after)
+	}
+	for _, item := range after.Items {
+		switch item.ResourceID {
+		case "keep":
+			if item.State != StateBlocked || item.Reason != ReasonRunBudgetDeferred ||
+				item.Attempts != 2 {
+				t.Fatalf("retained item changed: %+v", item)
+			}
+		case "new":
+			if item.State != StateQueued || item.Attempts != 0 {
+				t.Fatalf("new processable item was not queued: %+v", item)
+			}
+		default:
+			t.Fatalf("removed legacy item survived: %+v", item)
+		}
+	}
+}
+
 type cancelingUsageFetcher struct{ cancel context.CancelFunc }
 
 func (fetcher cancelingUsageFetcher) Fetch(context.Context, Target) (FetchResult, error) {

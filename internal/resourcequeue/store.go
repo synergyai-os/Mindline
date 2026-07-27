@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/synergyai-os/Mindline/internal/privateio"
 )
@@ -103,6 +104,57 @@ func (store *Store) Enqueue(resourceIDs []string) (Queue, error) {
 				known[resourceID] = true
 			}
 		}
+		return nil
+	})
+}
+
+// SyncMembership atomically makes the derived queue contain exactly the
+// currently processable resource IDs. Matching jobs retain their state,
+// attempts, generation, and consumed counters. Removed in-flight jobs release
+// only their unconsumed request reservation; consumed budget is never refunded.
+func (store *Store) SyncMembership(resourceIDs []string) (Queue, error) {
+	desired := make(map[string]bool, len(resourceIDs))
+	for _, resourceID := range resourceIDs {
+		if resourceID == "" || desired[resourceID] {
+			return Queue{}, errors.New("invalid resource queue membership")
+		}
+		desired[resourceID] = true
+	}
+	return store.update(func(queue *Queue) error {
+		retained := make([]Item, 0, len(desired))
+		known := make(map[string]bool, len(desired))
+		added := false
+		for _, item := range queue.Items {
+			if !desired[item.ResourceID] {
+				if item.State == StateProcessing {
+					if item.ReservedRequests > queue.Counters.ReservedRequests {
+						return errors.New("resource queue reservation accounting is invalid")
+					}
+					queue.Counters.ReservedRequests -= item.ReservedRequests
+				}
+				continue
+			}
+			retained = append(retained, item)
+			known[item.ResourceID] = true
+		}
+		for _, resourceID := range resourceIDs {
+			if known[resourceID] {
+				continue
+			}
+			retained = append(retained, Item{
+				JobID: JobIdentity(queue.Profile, resourceID), ResourceID: resourceID,
+				State: StateQueued,
+			})
+			added = true
+		}
+		if added && strings.HasPrefix(queue.GenerationKind, "retry:") {
+			// A retry generation identifies only its selected transient
+			// terminals. Newly discovered direct work is unrelated and makes
+			// retry resumption ambiguous; Continue may still adopt the mixed
+			// active queue as ordinary work.
+			queue.GenerationKind = ""
+		}
+		queue.Items = retained
 		return nil
 	})
 }

@@ -78,8 +78,10 @@ func NewLive(root string, repository resourcequeue.Repository, profile resourceq
 	return New(root, repository, profile, liveFetchPort{dependencies: dependencies})
 }
 
-// EnqueueCurrent adds each safe canonical current resource once. Queue-level
-// deterministic IDs make repeated calls idempotent; no URL is persisted here.
+// EnqueueCurrent atomically synchronizes the derived queue to the complete set
+// of safe, currently processable resources. Legacy overbroad jobs are removed
+// before any fetch can claim them; matching job state and consumed budgets are
+// preserved.
 func (pipeline *Pipeline) EnqueueCurrent() error {
 	if pipeline == nil || pipeline.Store == nil || pipeline.Repository == nil {
 		return errors.New("resource pipeline is incomplete")
@@ -98,7 +100,7 @@ func (pipeline *Pipeline) EnqueueCurrent() error {
 		ids = append(ids, resource.ResourceID)
 	}
 	sort.Strings(ids)
-	_, err = pipeline.Store.Enqueue(ids)
+	_, err = pipeline.Store.SyncMembership(ids)
 	return err
 }
 
@@ -163,9 +165,15 @@ func (pipeline *Pipeline) Reconcile(ctx context.Context) error {
 	for _, resourceID := range personalmemory.ProcessableResourceIDs(library) {
 		processable[resourceID] = true
 	}
+	genericTargets := map[string]bool{}
+	for _, resourceID := range personalmemory.GenericExtractorReferenceTargetIDs(library) {
+		genericTargets[resourceID] = true
+	}
 	referenceOnly := make([]acquisition.ImportedEvidence, 0)
 	for _, resource := range library.Resources {
-		if processable[resource.ResourceID] || resource.State != "not_attempted" {
+		if processable[resource.ResourceID] ||
+			!genericTargets[resource.ResourceID] ||
+			resource.State != "not_attempted" {
 			continue
 		}
 		referenceOnly = append(referenceOnly, acquisition.ImportedEvidence{
@@ -249,6 +257,8 @@ func (pipeline *Pipeline) Continue(ctx context.Context) error {
 		if err := pipeline.RebuildCurrent(); err != nil {
 			return err
 		}
+	} else if err := pipeline.EnqueueCurrent(); err != nil {
+		return err
 	}
 	runner := pipeline.runner()
 	if err := runner.Recover(); err != nil {
@@ -376,15 +386,21 @@ func (fetcher queueFetcher) Fetch(ctx context.Context, target resourcequeue.Targ
 }
 
 type Status struct {
-	SchemaVersion     string                 `json:"schema_version"`
-	BudgetFingerprint string                 `json:"budget_fingerprint"`
-	QueueFingerprint  string                 `json:"queue_fingerprint"`
-	Generation        int                    `json:"generation"`
-	GenerationKind    string                 `json:"generation_kind,omitempty"`
-	DeferredCount     int                    `json:"deferred_count"`
-	Counters          resourcequeue.Counters `json:"counters"`
-	TerminalCounts    map[string]int         `json:"terminal_counts"`
-	ReasonCounts      map[string]int         `json:"reason_counts"`
+	SchemaVersion                            string                 `json:"schema_version"`
+	BudgetFingerprint                        string                 `json:"budget_fingerprint"`
+	QueueFingerprint                         string                 `json:"queue_fingerprint"`
+	Generation                               int                    `json:"generation"`
+	GenerationKind                           string                 `json:"generation_kind,omitempty"`
+	CanonicalResourceCount                   int                    `json:"canonical_resource_count"`
+	ProcessableResourceCount                 int                    `json:"processable_resource_count"`
+	QueueResourceCount                       int                    `json:"queue_resource_count"`
+	LegacyGenericReferenceCount              int                    `json:"legacy_generic_reference_count"`
+	UnresolvedUnprocessableNotAttemptedCount int                    `json:"unresolved_unprocessable_not_attempted_count"`
+	AcquiredUnprocessableCount               int                    `json:"acquired_unprocessable_count"`
+	DeferredCount                            int                    `json:"deferred_count"`
+	Counters                                 resourcequeue.Counters `json:"counters"`
+	TerminalCounts                           map[string]int         `json:"terminal_counts"`
+	ReasonCounts                             map[string]int         `json:"reason_counts"`
 }
 
 // StructuralStatus intentionally contains no resource IDs, URLs, paths, or
@@ -397,7 +413,38 @@ func (pipeline *Pipeline) StructuralStatus() (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	status := Status{SchemaVersion: "mindline-resource-pipeline-status/v0.2", BudgetFingerprint: queue.Profile.Fingerprint, QueueFingerprint: queue.Fingerprint, Generation: queue.Generation, GenerationKind: queue.GenerationKind, Counters: queue.Counters, TerminalCounts: map[string]int{}, ReasonCounts: map[string]int{}}
+	library, err := pipeline.Repository.Load()
+	if err != nil {
+		return Status{}, err
+	}
+	processable := map[string]bool{}
+	for _, resourceID := range personalmemory.ProcessableResourceIDs(library) {
+		processable[resourceID] = true
+	}
+	genericTargets := map[string]bool{}
+	for _, resourceID := range personalmemory.GenericExtractorReferenceTargetIDs(library) {
+		genericTargets[resourceID] = true
+	}
+	status := Status{
+		SchemaVersion:     "mindline-resource-pipeline-status/v0.2",
+		BudgetFingerprint: queue.Profile.Fingerprint, QueueFingerprint: queue.Fingerprint,
+		Generation: queue.Generation, GenerationKind: queue.GenerationKind,
+		CanonicalResourceCount:   len(library.Resources),
+		ProcessableResourceCount: len(processable), QueueResourceCount: len(queue.Items),
+		Counters: queue.Counters, TerminalCounts: map[string]int{}, ReasonCounts: map[string]int{},
+	}
+	for _, resource := range library.Resources {
+		if processable[resource.ResourceID] {
+			continue
+		}
+		if genericTargets[resource.ResourceID] {
+			status.LegacyGenericReferenceCount++
+		} else if resource.State == "not_attempted" {
+			status.UnresolvedUnprocessableNotAttemptedCount++
+		} else {
+			status.AcquiredUnprocessableCount++
+		}
+	}
 	for _, item := range queue.Items {
 		if item.State == resourcequeue.StateComplete || item.State == resourcequeue.StatePartial || item.State == resourcequeue.StateBlocked {
 			status.TerminalCounts[item.State]++

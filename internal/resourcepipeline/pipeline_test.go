@@ -419,21 +419,24 @@ func (repository *reconcileRepository) MergeEnrichment(batch personalmemory.Enri
 }
 
 func TestPipelineReconcilePrunesUnfollowableQueueAndTerminalizesOnlyPlaceholder(t *testing.T) {
+	const genericURL = "https://example.com/generic"
 	parentID := "resource-parent"
-	genericID := "resource-generic"
+	genericID := "resource-" + digest(genericURL)[:24]
 	acquiredID := "resource-acquired"
+	unresolvedID := "resource-unresolved"
 	repository := &reconcileRepository{library: personalmemory.Library{
 		Records: []personalmemory.CaptureRecord{{ResourceIDs: []string{parentID}}},
 		Resources: []personalmemory.ResourceContext{
 			{
 				ResourceID: parentID, CanonicalURL: "https://example.com/parent", State: "not_attempted",
 				RelatedURLs: []personalmemory.RelatedResource{{
-					URL: "https://example.com/generic", Relation: "source_links_to",
+					URL: genericURL, Relation: "source_links_to",
 					DiscoveryEvidenceRef: "related-legacy", SemanticallyRelevant: true,
 				}},
 			},
-			{ResourceID: genericID, CanonicalURL: "https://example.com/generic", State: "not_attempted"},
+			{ResourceID: genericID, CanonicalURL: genericURL, State: "not_attempted"},
 			{ResourceID: acquiredID, CanonicalURL: "https://example.com/acquired", State: "partial"},
+			{ResourceID: unresolvedID, CanonicalURL: "https://example.com/unresolved", State: "not_attempted"},
 		},
 	}}
 	pipeline, err := New(t.TempDir()+"/queue", repository, resourcequeue.FixtureProfile(), &fakeFetchPort{})
@@ -470,10 +473,127 @@ func TestPipelineReconcilePrunesUnfollowableQueueAndTerminalizesOnlyPlaceholder(
 			if resource.State != "partial" {
 				t.Fatalf("acquired orphan evidence changed: %+v", resource)
 			}
+		case unresolvedID:
+			if resource.State != "not_attempted" {
+				t.Fatalf("unproven orphan placeholder was terminalized: %+v", resource)
+			}
 		case parentID:
 			if len(resource.RelatedURLs) != 1 {
 				t.Fatal("parent generic provenance was discarded")
 			}
+		}
+	}
+	status, err := pipeline.StructuralStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.CanonicalResourceCount != 4 ||
+		status.ProcessableResourceCount != 1 ||
+		status.QueueResourceCount != 1 ||
+		status.LegacyGenericReferenceCount != 1 ||
+		status.UnresolvedUnprocessableNotAttemptedCount != 1 ||
+		status.AcquiredUnprocessableCount != 1 {
+		t.Fatalf("reconciliation denominator is not structurally visible: %+v", status)
+	}
+	categorized := status.ProcessableResourceCount +
+		status.LegacyGenericReferenceCount +
+		status.UnresolvedUnprocessableNotAttemptedCount +
+		status.AcquiredUnprocessableCount
+	if categorized != status.CanonicalResourceCount {
+		t.Fatalf("resource denominator does not reconcile: categorized=%d status=%+v", categorized, status)
+	}
+}
+
+func TestRunAndContinuePruneEveryLegacyGenericJobBeforeFetch(t *testing.T) {
+	for _, command := range []string{"run", "continue"} {
+		for _, legacyState := range []string{"queued", "deferred", "processing"} {
+			t.Run(command+"/"+legacyState, func(t *testing.T) {
+				const (
+					genericID = "a-legacy-generic"
+					directID  = "z-direct"
+				)
+				repository := &reconcileRepository{library: personalmemory.Library{
+					Records: []personalmemory.CaptureRecord{{ResourceIDs: []string{directID}}},
+					Resources: []personalmemory.ResourceContext{
+						{
+							ResourceID: directID, CanonicalURL: "https://example.com/direct",
+							State: "not_attempted",
+							RelatedURLs: []personalmemory.RelatedResource{{
+								URL: "https://example.com/generic", Relation: "source_links_to",
+								DiscoveryEvidenceRef: "related-legacy", SemanticallyRelevant: true,
+							}},
+						},
+						{
+							ResourceID: genericID, CanonicalURL: "https://example.com/generic",
+							State: "not_attempted",
+						},
+					},
+				}}
+				port := &fakeFetchPort{}
+				pipeline, err := New(
+					t.TempDir()+"/queue", repository,
+					resourcequeue.FixtureProfile(), port,
+				)
+				if err != nil {
+					t.Fatal(err)
+				}
+				direct := resourcequeue.RebuildItem{
+					ResourceID: directID, State: resourcequeue.StateQueued,
+				}
+				generic := resourcequeue.RebuildItem{
+					ResourceID: genericID, State: resourcequeue.StateQueued,
+				}
+				if legacyState == "deferred" {
+					direct.State, direct.Reason = resourcequeue.StateBlocked, resourcequeue.ReasonRunBudgetDeferred
+					generic.State, generic.Reason = resourcequeue.StateBlocked, resourcequeue.ReasonRunBudgetDeferred
+				}
+				if _, err := pipeline.Store.Rebuild([]resourcequeue.RebuildItem{generic, direct}); err != nil {
+					t.Fatal(err)
+				}
+				if legacyState == "processing" {
+					claimed, found, err := pipeline.Store.ClaimNext()
+					if err != nil || !found || claimed.ResourceID != genericID ||
+						claimed.State != resourcequeue.StateProcessing {
+						t.Fatalf("legacy processing seed = %+v found=%v err=%v", claimed, found, err)
+					}
+				}
+
+				switch command {
+				case "run":
+					err = pipeline.Run(context.Background())
+				case "continue":
+					err = pipeline.Continue(context.Background())
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				queue, err := pipeline.Store.Load()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(queue.Items) != 1 || queue.Items[0].ResourceID != directID ||
+					queue.Counters.ReservedRequests != 0 {
+					t.Fatalf("legacy generic work survived or reservation leaked: %+v", queue)
+				}
+				expectedCalls := 1
+				expectedState := resourcequeue.StateComplete
+				if command == "run" && legacyState == "deferred" {
+					expectedCalls = 0
+					expectedState = resourcequeue.StateBlocked
+				}
+				if port.calls != expectedCalls || queue.Items[0].State != expectedState {
+					t.Fatalf("direct work outcome=%+v calls=%d want calls=%d state=%s", queue.Items[0], port.calls, expectedCalls, expectedState)
+				}
+				library, err := repository.Load()
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, resource := range library.Resources {
+					if resource.ResourceID == genericID && resource.State != "not_attempted" {
+						t.Fatalf("implicit queue pruning changed canonical generic evidence: %+v", resource)
+					}
+				}
+			})
 		}
 	}
 }
@@ -537,6 +657,81 @@ func TestPipelineRetryRunsOnceAndCompletedReplayIsIdempotent(t *testing.T) {
 	}
 	if port.calls != 1 {
 		t.Fatalf("completed retry replay fetched again: calls=%d", port.calls)
+	}
+}
+
+func TestRetryRefusesDirectWorkAddedToInterruptedRetryAndContinueRecovers(t *testing.T) {
+	const (
+		retryID  = "a-retry"
+		directID = "z-direct"
+	)
+	repository := &reconcileRepository{library: personalmemory.Library{
+		Records: []personalmemory.CaptureRecord{{ResourceIDs: []string{retryID}}},
+		Resources: []personalmemory.ResourceContext{{
+			ResourceID: retryID, CanonicalURL: "https://example.com/retry",
+			State: "failed", Missingness: []string{"resource_blocked:unreachable"},
+		}},
+	}}
+	port := &fakeFetchPort{}
+	pipeline, err := New(
+		t.TempDir()+"/queue", repository,
+		resourcequeue.FixtureProfile(), port,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pipeline.RebuildCurrent(); err != nil {
+		t.Fatal(err)
+	}
+	if _, started, err := pipeline.Store.StartRetryGeneration("unreachable"); err != nil || !started {
+		t.Fatalf("start retry = %v err=%v", started, err)
+	}
+	claimed, found, err := pipeline.Store.ClaimNext()
+	if err != nil || !found || claimed.ResourceID != retryID {
+		t.Fatalf("interrupted retry claim=%+v found=%v err=%v", claimed, found, err)
+	}
+
+	repository.library.Records = append(
+		repository.library.Records,
+		personalmemory.CaptureRecord{ResourceIDs: []string{directID}},
+	)
+	repository.library.Resources = append(
+		repository.library.Resources,
+		personalmemory.ResourceContext{
+			ResourceID: directID, CanonicalURL: "https://example.com/direct",
+			State: "not_attempted",
+		},
+	)
+	if err := pipeline.EnqueueCurrent(); err != nil {
+		t.Fatal(err)
+	}
+	mixed, err := pipeline.Store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mixed.GenerationKind != "" || len(mixed.Items) != 2 {
+		t.Fatalf("new direct work did not invalidate retry identity: %+v", mixed)
+	}
+	if err := pipeline.Retry(context.Background(), "unreachable"); err == nil {
+		t.Fatal("retry adopted mixed unrelated active work")
+	}
+	if port.calls != 0 {
+		t.Fatalf("refused mixed retry called fetch port: calls=%d", port.calls)
+	}
+	if err := pipeline.Continue(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := pipeline.Store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if port.calls != 2 || len(recovered.Items) != 2 {
+		t.Fatalf("continue did not recover mixed ordinary work: queue=%+v calls=%d", recovered, port.calls)
+	}
+	for _, item := range recovered.Items {
+		if item.State != resourcequeue.StateComplete {
+			t.Fatalf("continued mixed item did not finish: %+v", item)
+		}
 	}
 }
 

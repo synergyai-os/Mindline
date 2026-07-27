@@ -1021,6 +1021,9 @@ func referencesForResource(resource ResourceContext, content ExtractedContentArt
 		}
 	}
 	for _, excerpt := range resource.Excerpts {
+		if GenericExtractorReferenceExcerpt(excerpt) {
+			continue
+		}
 		if !containsAnyTerm(excerpt.Text+" "+excerpt.Locator, matchedTerms) {
 			continue
 		}
@@ -1099,6 +1102,9 @@ func searchableResourceText(resource ResourceContext, content ExtractedContentAr
 		resource.Metadata.PublishedAt, strings.Join(resource.Missingness, " "),
 	}
 	for _, excerpt := range resource.Excerpts {
+		if GenericExtractorReferenceExcerpt(excerpt) {
+			continue
+		}
 		parts = append(parts, excerpt.Text, excerpt.Locator)
 	}
 	if content.Reference.ArtifactID != "" {
