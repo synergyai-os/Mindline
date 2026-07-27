@@ -69,18 +69,19 @@ func NewCaptureRecord(input CaptureRecordInput) (CaptureRecord, error) {
 	rawInput := strings.TrimSpace(input.RawText)
 	rawText := rawInput
 	contextState := "source_complete"
-	if containsSecret(rawText) {
-		rawText = "[REDACTED SECRET-LIKE CONTENT]"
+	if sanitized, redacted := redactSecretFragments(rawText); redacted {
+		rawText = sanitized
 		contextState = "secret_redacted"
 		missingness = append(missingness, "secret_like_content_redacted")
-	} else if rawText == "" {
+	}
+	if rawText == "" {
 		rawText = "[Capture has no text]"
 		contextState = "empty_source"
 		missingness = append(missingness, "source_text_empty")
 	} else {
-		var redacted bool
-		rawText, redacted = sanitizeTextURLs(rawText)
-		if redacted {
+		var urlRedacted bool
+		rawText, urlRedacted = sanitizeTextURLs(rawText)
+		if urlRedacted {
 			missingness = append(missingness, "sensitive_url_redacted")
 		}
 	}

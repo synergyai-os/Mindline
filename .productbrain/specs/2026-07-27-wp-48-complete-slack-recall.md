@@ -4,7 +4,7 @@ Date: 2026-07-27
 Status: signed in DEC-428  
 Shape authority: DEC-427  
 Depends on: WP-47 at `c5a5617` or a merged equivalent  
-Governing authority: DEC-422, DEC-424, DEC-425, DEC-426, STD-20,
+Governing authority: DEC-422, DEC-424, DEC-425, DEC-426, DEC-430, STD-20,
 STD-24, TEN-37, INS-48
 
 ## Outcome
@@ -14,10 +14,13 @@ personal evidence library that survives restart and can be queried by a fresh
 local agent through the installed CLI and skill.
 
 Every user-authored native Slack identity in the scope is retained by default.
-If its content cannot safely be stored, Mindline retains a searchable,
-content-free withheld placeholder. Objective non-user/system artifacts may be
-structurally excluded. Lenses and feedback affect retrieval only; neither may
-change the canonical denominator.
+Unsafe URL fragments and secret-like text cross the canonical field-level
+sanitization/redaction boundary, which preserves a searchable safe shell,
+explicit missingness, and the saved identity without persisting the unsafe
+value. Unknown or ambiguous author ownership becomes a searchable,
+content-free withheld placeholder. Objective non-user/system artifacts may
+be structurally excluded. Lenses and feedback affect retrieval only; neither
+may change the canonical denominator.
 
 The founder experiences one short journey:
 
@@ -216,8 +219,11 @@ Completion requires:
 Disposition is independent from enrichment:
 
 - `retained`: the current user-authored capture is canonical and searchable;
+  unsafe URL fragments and secret-like text are sanitized or redacted inside
+  the canonical constructor with explicit missingness, never by withholding
+  the complete user-authored item;
 - `excluded`: only objectively empty non-user/system transport artifacts;
-- `withheld`: unsafe or ambiguous content becomes a content-free, owner-only,
+- `withheld`: unknown or ambiguous author ownership becomes a content-free, owner-only,
   searchable placeholder with native identity, occurrence time, provenance,
   authority, and a fixed structural reason;
 - `unknown_author`: fail closed to `withheld`, never `excluded`.

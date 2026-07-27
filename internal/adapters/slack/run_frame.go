@@ -6,7 +6,6 @@ import (
 
 	"github.com/synergyai-os/Mindline/internal/acquisition"
 	acquisitionslack "github.com/synergyai-os/Mindline/internal/acquisition/slack"
-	"github.com/synergyai-os/Mindline/internal/contentguard"
 	"github.com/synergyai-os/Mindline/internal/personalmemory"
 )
 
@@ -66,7 +65,7 @@ func DispositionFor(message acquisitionslack.NativeMessage, authorClass string) 
 	if authorClass == "non_user" && strings.TrimSpace(message.Text) == "" && message.AttachmentCount == 0 && message.PrivateFileCount == 0 {
 		return DispositionExclude, nil
 	}
-	if authorClass == "unknown" || contentguard.ContainsNonPersistableContent(message.Text) {
+	if authorClass == "unknown" {
 		return DispositionWithhold, nil
 	}
 	return DispositionRetain, nil
@@ -101,11 +100,7 @@ func CaptureBatchForAdoption(frame RunFrame) (personalmemory.CaptureBatch, map[s
 		}
 		if disposition == DispositionWithhold {
 			message.Text = ""
-			if class == "unknown" {
-				missingness = append(missingness, "withheld_unknown_author")
-			} else {
-				missingness = append(missingness, "withheld_unsafe_content")
-			}
+			missingness = append(missingness, "withheld_unknown_author")
 		}
 		occurredAt, err := acquisition.NativeTimestampToRFC3339(message.Timestamp)
 		if err != nil {

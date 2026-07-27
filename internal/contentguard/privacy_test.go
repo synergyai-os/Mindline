@@ -1,6 +1,9 @@
 package contentguard
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestContainsNonPersistableContent(t *testing.T) {
 	tests := []struct {
@@ -20,5 +23,16 @@ func TestContainsNonPersistableContent(t *testing.T) {
 	}
 	if ContainsNonPersistableContent("safe title", "https://github.com/acme/tool") {
 		t.Fatal("safe public content was rejected")
+	}
+}
+
+func TestRedactSecretLikePreservesSurroundingSavedIntent(t *testing.T) {
+	input := "useful product lesson password=synthetic-private-value keep this explanation"
+	redacted, changed := RedactSecretLike(input)
+	if !changed || !strings.Contains(redacted, "useful product lesson") ||
+		!strings.Contains(redacted, "keep this explanation") ||
+		!strings.Contains(redacted, SecretRedactionMarker) ||
+		strings.Contains(redacted, "synthetic-private-value") {
+		t.Fatalf("field-level redaction = %q, changed=%v", redacted, changed)
 	}
 }

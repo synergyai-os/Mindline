@@ -15,6 +15,8 @@ var secretLikePatterns = []*regexp.Regexp{
 	regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b`),
 }
 
+const SecretRedactionMarker = "[mindline-secret-redacted]"
+
 // ContainsSecretLike reports whether a value contains credential-shaped
 // material that must not cross a durable boundary.
 func ContainsSecretLike(value string) bool {
@@ -24,6 +26,21 @@ func ContainsSecretLike(value string) bool {
 		}
 	}
 	return false
+}
+
+// RedactSecretLike removes only credential-shaped fragments. It preserves
+// surrounding saved intent so canonical personal evidence remains useful
+// without allowing the unsafe value to cross a durable boundary.
+func RedactSecretLike(value string) (string, bool) {
+	result := value
+	redacted := false
+	for _, pattern := range secretLikePatterns {
+		if pattern.MatchString(result) {
+			result = pattern.ReplaceAllString(result, SecretRedactionMarker)
+			redacted = true
+		}
+	}
+	return result, redacted
 }
 
 // ContainsNonPersistableURL reports whether any lexical HTTP(S) occurrence
