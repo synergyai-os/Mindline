@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/synergyai-os/Mindline/internal/evalreadback"
+	"github.com/synergyai-os/Mindline/internal/privateio"
 )
 
 func Build(inputRoot, outRoot string, options Options) (Packet, error) {
@@ -28,11 +29,17 @@ func Build(inputRoot, outRoot string, options Options) (Packet, error) {
 	if err != nil {
 		return Packet{}, err
 	}
+	if err := evalreadback.ValidateOutputPath(root, root, options.ProtectedRoots); err != nil {
+		return Packet{}, err
+	}
+	if err := privateio.PrepareDir(root); err != nil {
+		return Packet{}, err
+	}
 	proofDir := filepath.Join(root, DirName)
 	if err := evalreadback.ValidateOutputPath(root, proofDir, options.ProtectedRoots); err != nil {
 		return Packet{}, err
 	}
-	if err := os.MkdirAll(proofDir, 0o755); err != nil {
+	if err := privateio.PrepareDir(proofDir); err != nil {
 		return Packet{}, err
 	}
 
@@ -84,6 +91,9 @@ func Evaluate(summary evalreadback.Summary, claim string, readbackRef string, op
 
 func readbackFor(inputRoot, proofDir string, options Options) (evalreadback.Summary, string, error) {
 	if summaryPath := existingReadbackSummaryPath(inputRoot); summaryPath != "" {
+		if options.Claim == ClaimDelivery {
+			return evalreadback.Summary{}, "", errors.New("delivery proof requires raw sealed authority artifacts, not a cached readback summary")
+		}
 		summary, err := evalreadback.LoadSummary(summaryPath)
 		if err != nil {
 			return evalreadback.Summary{}, "", err
@@ -148,7 +158,11 @@ func mandatoryGates(summary evalreadback.Summary, claim string, options Options)
 		readbackStatusGate(summary, "artifact_presence", []string{"pass"}, "required local eval/readback evidence exists"),
 		statusGate("schema_supported", schemaStatus(summary), []string{"pass"}, "unsupported artifact schemas block machine proof"),
 		readbackStatusGate(summary, "privacy_safe_readback", []string{"pass"}, "proof output must be safe for PR and Chain capture"),
-		readbackStatusGate(summary, "side_effect_claim", []string{"pass"}, "proof requires zero prohibited side-effect counters"),
+	}
+	if claim == ClaimDelivery {
+		gates = append(gates, readbackStatusGate(summary, "delivery_claim", []string{"pass"}, "delivery proof requires exact accounting, acknowledgement, attribution, immutable lineage, and zero-mutation replay"))
+	} else {
+		gates = append(gates, readbackStatusGate(summary, "side_effect_claim", []string{"pass"}, "proof requires zero prohibited side-effect counters"))
 	}
 	switch claim {
 	case ClaimImprovement:
@@ -169,6 +183,9 @@ func mandatoryGates(summary evalreadback.Summary, claim string, options Options)
 		gates = append(gates, readbackStatusGate(summary, "generalization_claim", []string{"pass"}, "generalization claims require reusable or held-out evidence"))
 	case ClaimDEC64:
 		gates = append(gates, readbackStatusGate(summary, "dec64_no_human_claim", []string{"pass"}, "no-human claims require held-out threshold proof and safety counters"))
+	case ClaimDelivery:
+		// The dedicated delivery_claim gate above permits only the signed bounded
+		// draft-delivery outcome. The global safety claim keeps its zero-write rule.
 	}
 	return gates
 }
@@ -338,6 +355,8 @@ func thresholdsFor(claim string) []string {
 		return []string{"comparable baseline/current evidence", "at least one supported positive metric delta", "no guardrail regression"}
 	case ClaimGeneralization:
 		return []string{"generalization_claim=pass", "no private/temp/non-held-out sample-bound proof"}
+	case ClaimDelivery:
+		return []string{"complete source/URL/lens accounting", "routing-to-outbox-to-preflight-to-sealed-run fingerprint lineage", "all draft entry and relation operations exactly acknowledged", "zero-leak public outbox", "later zero-mutation replay"}
 	default:
 		return []string{"artifact presence", "supported schemas", "privacy-safe readback", "side-effect safety"}
 	}
@@ -361,7 +380,7 @@ func sortedKeys(values map[string]int) []string {
 
 func validClaim(claim string) bool {
 	switch claim {
-	case ClaimSafety, ClaimImprovement, ClaimGeneralization, ClaimDEC64:
+	case ClaimSafety, ClaimImprovement, ClaimGeneralization, ClaimDEC64, ClaimDelivery:
 		return true
 	default:
 		return false

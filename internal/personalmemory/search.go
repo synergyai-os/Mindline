@@ -1,0 +1,709 @@
+package personalmemory
+
+import (
+	"errors"
+	"math"
+	"sort"
+	"strings"
+	"unicode"
+)
+
+const (
+	ContextPacketSchemaVersion   = "mindline-agent-context-packet/v0.2"
+	HydratedCaptureSchemaVersion = "mindline-hydrated-capture/v0.1"
+	MaximumLensRequestRunes      = 64 << 10
+	MaximumRetrievalContentBytes = 64 << 20
+	maximumCitationEvidenceRefs  = 32
+)
+
+// RetrieverPort is the agent-facing canonical Mindline contract.
+type RetrieverPort interface {
+	Search(SearchRequest) (ContextPacket, error)
+	Get(string) (HydratedCapture, error)
+}
+
+// RetrievalBackendPort owns ranking only. It never owns canonical hydration,
+// citations, authority labels, or context-packet assembly.
+type RetrievalBackendPort interface {
+	MethodID() string
+	Rank(SearchRequest, []IndexDocument) ([]RankedHit, error)
+}
+
+type RetrievalDiagnosticsPort interface {
+	RetrievalDiagnostics() (state, degradedReason string)
+}
+
+type IndexDocument struct {
+	DocumentID string
+	Text       string
+}
+
+type RankedHit struct {
+	DocumentID   string
+	Score        float64
+	MatchedTerms []string
+	Components   map[string]float64
+}
+
+type ContextRetriever struct {
+	repository RepositoryPort
+	backend    RetrievalBackendPort
+}
+
+type LexicalBM25Backend struct{}
+
+func (LexicalBM25Backend) MethodID() string {
+	return "mindline_lexical_bm25_baseline/v0.1"
+}
+
+func NewRetriever(repository RepositoryPort, backend RetrievalBackendPort) ContextRetriever {
+	return ContextRetriever{repository: repository, backend: backend}
+}
+
+func NewLexicalRetriever(repository RepositoryPort) ContextRetriever {
+	return NewRetriever(repository, LexicalBM25Backend{})
+}
+
+type evidenceDocument struct {
+	id                string
+	record            CaptureRecord
+	versionState      string
+	resources         []ResourceContext
+	resourceRevisions []ResourceRevision
+	contents          map[string]ExtractedContentArtifact
+	revisionContents  map[string]ExtractedContentArtifact
+	searchText        string
+}
+
+func (retriever ContextRetriever) Search(request SearchRequest) (ContextPacket, error) {
+	if retriever.backend == nil {
+		return ContextPacket{}, errors.New("personal evidence retrieval backend is unavailable")
+	}
+	library, documents, err := retriever.prepareDocuments()
+	if err != nil {
+		return ContextPacket{}, err
+	}
+	indexDocuments := make([]IndexDocument, 0, len(documents))
+	byID := make(map[string]evidenceDocument, len(documents))
+	for _, document := range documents {
+		indexDocuments = append(indexDocuments, IndexDocument{DocumentID: document.id, Text: document.searchText})
+		byID[document.id] = document
+	}
+	hits, err := retriever.backend.Rank(request, indexDocuments)
+	if err != nil {
+		return ContextPacket{}, err
+	}
+	method := strings.TrimSpace(retriever.backend.MethodID())
+	if method == "" {
+		return ContextPacket{}, errors.New("personal evidence retrieval backend has no method identity")
+	}
+	packet := assembleContextPacket(request, library, hits, byID, method)
+	if diagnostics, ok := retriever.backend.(RetrievalDiagnosticsPort); ok {
+		packet.RetrievalState, packet.DegradedReason = diagnostics.RetrievalDiagnostics()
+	}
+	return packet, nil
+}
+
+func (retriever ContextRetriever) Get(recordID string) (HydratedCapture, error) {
+	library, err := retriever.repository.Load()
+	if err != nil {
+		return HydratedCapture{}, err
+	}
+	resourcesByID := make(map[string]ResourceContext, len(library.Resources))
+	for _, resource := range library.Resources {
+		resourcesByID[resource.ResourceID] = resource
+	}
+	resourceRevisions := groupResourceRevisions(library.ResourceRevisions)
+	var record CaptureRecord
+	versionState := ""
+	if current, exists := findCurrentRecord(library.Records, recordID); exists {
+		record = current
+		versionState = "current"
+	} else if revision, exists := findRevision(library.Revisions, recordID); exists {
+		record = revision.Record
+		versionState = "superseded"
+	} else {
+		return HydratedCapture{}, errors.New("personal evidence record not found")
+	}
+	hydratedBytes := 0
+	document, err := retriever.prepareDocument(recordID, record, versionState, resourcesByID, resourceRevisions, &hydratedBytes)
+	if err != nil {
+		return HydratedCapture{}, err
+	}
+	contents := make([]ExtractedContentArtifact, 0, len(document.contents))
+	for _, resource := range document.resources {
+		if content, exists := document.contents[resource.ResourceID]; exists {
+			contents = append(contents, content)
+		}
+	}
+	return HydratedCapture{
+		SchemaVersion: HydratedCaptureSchemaVersion,
+		RecordID:      document.id, VersionState: document.versionState,
+		Record: document.record, Resources: document.resources,
+		ResourceRevisions: document.resourceRevisions, Contents: append(contents, orderedRevisionContents(document)...),
+	}, nil
+}
+
+func (retriever ContextRetriever) ReviewLenses(batch LensBatch, limit int) (LensReviewPacket, error) {
+	if retriever.backend == nil {
+		return LensReviewPacket{}, errors.New("personal evidence retrieval backend is unavailable")
+	}
+	if err := validateLensBatch(batch); err != nil {
+		return LensReviewPacket{}, err
+	}
+	before, err := retriever.repository.Load()
+	if err != nil {
+		return LensReviewPacket{}, err
+	}
+	_, documents, err := retriever.prepareDocuments()
+	if err != nil {
+		return LensReviewPacket{}, err
+	}
+	indexDocuments := make([]IndexDocument, 0, len(documents))
+	byID := make(map[string]evidenceDocument, len(documents))
+	for _, document := range documents {
+		indexDocuments = append(indexDocuments, IndexDocument{DocumentID: document.id, Text: document.searchText})
+		byID[document.id] = document
+	}
+	projections := make([]LensProjection, 0, len(batch.Lenses))
+	for _, lens := range batch.Lenses {
+		request := SearchRequest{Query: lens.Query, Limit: limit}
+		hits, err := retriever.backend.Rank(request, indexDocuments)
+		if err != nil {
+			return LensReviewPacket{}, err
+		}
+		method := strings.TrimSpace(retriever.backend.MethodID())
+		if method == "" {
+			return LensReviewPacket{}, errors.New("personal evidence retrieval backend has no method identity")
+		}
+		packet := assembleContextPacket(request, before, hits, byID, method)
+		projections = append(projections, LensProjection{
+			Lens: lens, LibraryFingerprint: before.Fingerprint,
+			RetainedCount: len(before.Records), Matches: packet.Citations,
+		})
+	}
+	after, err := retriever.repository.Load()
+	if err != nil {
+		return LensReviewPacket{}, err
+	}
+	return LensReviewPacket{
+		SchemaVersion: LensReviewSchemaVersion, AuthorityClass: AuthorityClass,
+		RetainedBefore: len(before.Records), RetainedAfter: len(after.Records),
+		FingerprintBefore: before.Fingerprint, FingerprintAfter: after.Fingerprint,
+		RetentionUnchanged: len(before.Records) == len(after.Records) && before.Fingerprint == after.Fingerprint,
+		LensCount:          len(batch.Lenses), Projections: projections,
+	}, nil
+}
+
+func (retriever ContextRetriever) prepareDocuments() (Library, []evidenceDocument, error) {
+	library, err := retriever.repository.Load()
+	if err != nil {
+		return Library{}, nil, err
+	}
+	resourcesByID := make(map[string]ResourceContext, len(library.Resources))
+	for _, resource := range library.Resources {
+		resourcesByID[resource.ResourceID] = resource
+	}
+	resourceRevisions := groupResourceRevisions(library.ResourceRevisions)
+	hydratedBytes := 0
+	documents := make([]evidenceDocument, 0, len(library.Records)+len(library.Revisions))
+	for _, record := range library.Records {
+		document, err := retriever.prepareDocument(record.RecordID, record, "current", resourcesByID, resourceRevisions, &hydratedBytes)
+		if err != nil {
+			return Library{}, nil, err
+		}
+		documents = append(documents, document)
+	}
+	for _, revision := range library.Revisions {
+		document, err := retriever.prepareDocument(revision.RevisionID, revision.Record, "superseded", resourcesByID, resourceRevisions, &hydratedBytes)
+		if err != nil {
+			return Library{}, nil, err
+		}
+		documents = append(documents, document)
+	}
+	return library, documents, nil
+}
+
+func (retriever ContextRetriever) prepareDocument(id string, record CaptureRecord, state string, resourcesByID map[string]ResourceContext, revisionsByResourceID map[string][]ResourceRevision, hydratedBytes *int) (evidenceDocument, error) {
+	resources, resourceRevisions := resourceBundleForRecord(record, resourcesByID, revisionsByResourceID)
+	contents := map[string]ExtractedContentArtifact{}
+	revisionContents := map[string]ExtractedContentArtifact{}
+	for _, resource := range resources {
+		if resource.Content == nil {
+			continue
+		}
+		if resource.Content.ByteLength > MaximumRetrievalContentBytes-*hydratedBytes {
+			return evidenceDocument{}, errors.New("personal evidence retrieval exceeds its hydration budget")
+		}
+		content, err := retriever.repository.LoadContent(*resource.Content)
+		if err != nil {
+			return evidenceDocument{}, err
+		}
+		*hydratedBytes += content.Reference.ByteLength
+		contents[resource.ResourceID] = content
+	}
+	for _, revision := range resourceRevisions {
+		if revision.Resource.Content == nil {
+			continue
+		}
+		if revision.Resource.Content.ByteLength > MaximumRetrievalContentBytes-*hydratedBytes {
+			return evidenceDocument{}, errors.New("personal evidence retrieval exceeds its hydration budget")
+		}
+		content, err := retriever.repository.LoadContent(*revision.Resource.Content)
+		if err != nil {
+			return evidenceDocument{}, err
+		}
+		*hydratedBytes += content.Reference.ByteLength
+		revisionContents[revision.RevisionID] = content
+	}
+	return evidenceDocument{
+		id: id, record: record, versionState: state, resources: resources,
+		resourceRevisions: resourceRevisions, contents: contents, revisionContents: revisionContents,
+		searchText: searchableText(record, resources, resourceRevisions, contents, revisionContents),
+	}, nil
+}
+
+func findCurrentRecord(records []CaptureRecord, recordID string) (CaptureRecord, bool) {
+	for _, record := range records {
+		if record.RecordID == recordID {
+			return record, true
+		}
+	}
+	return CaptureRecord{}, false
+}
+
+func findRevision(revisions []CaptureRevision, revisionID string) (CaptureRevision, bool) {
+	for _, revision := range revisions {
+		if revision.RevisionID == revisionID {
+			return revision, true
+		}
+	}
+	return CaptureRevision{}, false
+}
+
+func (LexicalBM25Backend) Rank(request SearchRequest, documents []IndexDocument) ([]RankedHit, error) {
+	queryTerms := uniqueSorted(tokenize(request.Query))
+	if len(queryTerms) == 0 {
+		return nil, errors.New("search query is empty")
+	}
+	limit := request.Limit
+	if limit <= 0 {
+		limit = 10
+	}
+	if limit > 100 {
+		return nil, errors.New("search limit exceeds 100")
+	}
+	type prepared struct {
+		document IndexDocument
+		terms    []string
+		counts   map[string]int
+	}
+	preparedDocuments := make([]prepared, 0, len(documents))
+	documentFrequency := map[string]int{}
+	totalLength := 0
+	for _, document := range documents {
+		terms := tokenize(document.Text)
+		counts := termCounts(terms)
+		preparedDocuments = append(preparedDocuments, prepared{document: document, terms: terms, counts: counts})
+		totalLength += len(terms)
+		for _, term := range queryTerms {
+			if counts[term] > 0 {
+				documentFrequency[term]++
+			}
+		}
+	}
+	averageLength := 1.0
+	if len(preparedDocuments) > 0 {
+		averageLength = float64(totalLength) / float64(len(preparedDocuments))
+	}
+	hits := []RankedHit{}
+	for _, document := range preparedDocuments {
+		score := 0.0
+		matched := []string{}
+		for _, term := range queryTerms {
+			tf := document.counts[term]
+			if tf == 0 {
+				continue
+			}
+			matched = append(matched, term)
+			idf := math.Log(1 + (float64(len(preparedDocuments)-documentFrequency[term])+0.5)/(float64(documentFrequency[term])+0.5))
+			numerator := float64(tf) * 2.2
+			denominator := float64(tf) + 1.2*(0.25+0.75*float64(len(document.terms))/averageLength)
+			score += idf * numerator / denominator
+		}
+		if score == 0 {
+			continue
+		}
+		if strings.Contains(strings.ToLower(document.document.Text), strings.ToLower(strings.TrimSpace(request.Query))) {
+			score += 2
+		}
+		hits = append(hits, RankedHit{DocumentID: document.document.DocumentID, Score: score, MatchedTerms: uniqueSorted(matched)})
+	}
+	sort.Slice(hits, func(i, j int) bool {
+		if hits[i].Score == hits[j].Score {
+			return hits[i].DocumentID < hits[j].DocumentID
+		}
+		return hits[i].Score > hits[j].Score
+	})
+	if len(hits) > limit {
+		hits = hits[:limit]
+	}
+	return hits, nil
+}
+
+func assembleContextPacket(request SearchRequest, library Library, hits []RankedHit, documents map[string]evidenceDocument, retrievalMethod string) ContextPacket {
+	packet := ContextPacket{
+		SchemaVersion: ContextPacketSchemaVersion, RunID: request.RunID,
+		Query: strings.TrimSpace(request.Query), LensID: request.LensID,
+		RetrievalMethod: retrievalMethod, AuthorityClass: AuthorityClass,
+		LibraryRevision: library.Revision, LibraryFingerprint: library.Fingerprint,
+		Citations: []Citation{}, Records: []CaptureRecord{}, Resources: []ResourceContext{},
+		ResourceRevisions: []ResourceRevision{},
+	}
+	includedResources := map[string]bool{}
+	includedResourceRevisions := map[string]bool{}
+	for _, hit := range hits {
+		document, exists := documents[hit.DocumentID]
+		if !exists {
+			continue
+		}
+		author := document.record.AuthorName
+		if author == "" {
+			author = document.record.AuthorID
+		}
+		evidenceRefs := evidenceReferences(document, hit.MatchedTerms)
+		sourceSnippet := snippet(document.record.RawText, 500)
+		if len(evidenceRefs) > 0 && strings.TrimSpace(evidenceRefs[0].MatchedSnippet) != "" {
+			sourceSnippet = evidenceRefs[0].MatchedSnippet
+		}
+		packet.Citations = append(packet.Citations, Citation{
+			RecordID: hit.DocumentID, LogicalRecordID: document.record.RecordID,
+			VersionState: document.versionState, SourceRef: document.record.SourceRef,
+			OccurredAt: document.record.OccurredAt, Author: author, Snippet: sourceSnippet,
+			MatchedTerms: hit.MatchedTerms, Score: hit.Score, ContentHash: document.record.ContentHash,
+			ComponentScores: copyScores(hit.Components),
+			ContextState:    document.record.ContextState, Missingness: citationMissingness(document),
+			ResourceIDs: append([]string(nil), document.record.ResourceIDs...), EvidenceRefs: evidenceRefs,
+			AuthorityClass: AuthorityClass,
+		})
+		packet.Records = append(packet.Records, document.record)
+		for _, resource := range document.resources {
+			if includedResources[resource.ResourceID] {
+				continue
+			}
+			includedResources[resource.ResourceID] = true
+			packet.Resources = append(packet.Resources, resource)
+		}
+		for _, revision := range document.resourceRevisions {
+			if includedResourceRevisions[revision.RevisionID] {
+				continue
+			}
+			includedResourceRevisions[revision.RevisionID] = true
+			packet.ResourceRevisions = append(packet.ResourceRevisions, revision)
+		}
+	}
+	return packet
+}
+
+func copyScores(scores map[string]float64) map[string]float64 {
+	if len(scores) == 0 {
+		return nil
+	}
+	copy := make(map[string]float64, len(scores))
+	for name, value := range scores {
+		copy[name] = value
+	}
+	return copy
+}
+
+func evidenceReferences(document evidenceDocument, matchedTerms []string) []EvidenceReference {
+	references := []EvidenceReference{}
+	if len(matchedTerms) == 0 {
+		for _, resource := range document.resources {
+			content, _ := document.contents[resource.ResourceID]
+			references = append(references, semanticResourceReference(resource, content, "current", ""))
+			if len(references) == maximumCitationEvidenceRefs {
+				return references
+			}
+		}
+		for _, revision := range document.resourceRevisions {
+			content, _ := document.revisionContents[revision.RevisionID]
+			references = append(references, semanticResourceReference(
+				revision.Resource, content, "superseded", revision.RevisionID,
+			))
+			if len(references) == maximumCitationEvidenceRefs {
+				return references
+			}
+		}
+		return references
+	}
+	for _, resource := range document.resources {
+		content, _ := document.contents[resource.ResourceID]
+		references = append(references, referencesForResource(resource, content, matchedTerms, "current", "")...)
+		if len(references) >= maximumCitationEvidenceRefs {
+			return references[:maximumCitationEvidenceRefs]
+		}
+	}
+	for _, revision := range document.resourceRevisions {
+		content, _ := document.revisionContents[revision.RevisionID]
+		references = append(references, referencesForResource(
+			revision.Resource, content, matchedTerms, "superseded", revision.RevisionID,
+		)...)
+		if len(references) >= maximumCitationEvidenceRefs {
+			return references[:maximumCitationEvidenceRefs]
+		}
+	}
+	return references
+}
+
+func referencesForResource(resource ResourceContext, content ExtractedContentArtifact, matchedTerms []string, versionState, revisionID string) []EvidenceReference {
+	references := []EvidenceReference{}
+	base := func() EvidenceReference {
+		return EvidenceReference{
+			ResourceID: resource.ResourceID, CanonicalURL: resource.CanonicalURL,
+			ResourceHash: resource.ContentHash, ResourceVersionState: versionState,
+			ResourceRevisionID: revisionID,
+		}
+	}
+	for _, excerpt := range resource.Excerpts {
+		if !containsAnyTerm(excerpt.Text+" "+excerpt.Locator, matchedTerms) {
+			continue
+		}
+		reference := base()
+		reference.ExcerptID = excerpt.ExcerptID
+		reference.Locator = excerpt.Locator
+		reference.MatchedSnippet = snippet(excerpt.Text, 500)
+		references = append(references, reference)
+	}
+	if content.Reference.ArtifactID != "" && containsAnyTerm(content.Text, matchedTerms) {
+		reference := base()
+		reference.ArtifactID = content.Reference.ArtifactID
+		reference.Locator = "extracted_content"
+		reference.MatchedSnippet = matchedWindow(content.Text, matchedTerms, 500)
+		references = append(references, reference)
+	}
+	metadata := strings.TrimSpace(strings.Join([]string{
+		resource.Metadata.Title, resource.Metadata.Author, resource.Metadata.PublishedAt,
+	}, " — "))
+	if strings.TrimSpace(metadata) != "" && containsAnyTerm(metadata, matchedTerms) {
+		reference := base()
+		reference.Locator = "public_metadata"
+		reference.MatchedSnippet = snippet(metadata, 500)
+		references = append(references, reference)
+	}
+	missingness := strings.Join(resource.Missingness, ", ")
+	if strings.TrimSpace(missingness) != "" && containsAnyTerm(missingness, matchedTerms) {
+		reference := base()
+		reference.Locator = "resource_missingness"
+		reference.MatchedSnippet = snippet(missingness, 500)
+		references = append(references, reference)
+	}
+	return references
+}
+
+func semanticResourceReference(resource ResourceContext, content ExtractedContentArtifact, versionState, revisionID string) EvidenceReference {
+	reference := EvidenceReference{
+		ResourceID: resource.ResourceID, CanonicalURL: resource.CanonicalURL,
+		ResourceHash: resource.ContentHash, ResourceVersionState: versionState,
+		ResourceRevisionID: revisionID, Locator: "semantic_record_match",
+	}
+	if content.Reference.ArtifactID != "" {
+		reference.ArtifactID = content.Reference.ArtifactID
+	}
+	return reference
+}
+
+func citationMissingness(document evidenceDocument) []string {
+	values := append([]string(nil), document.record.Missingness...)
+	for _, resource := range document.resources {
+		values = append(values, resource.Missingness...)
+	}
+	for _, revision := range document.resourceRevisions {
+		values = append(values, revision.Resource.Missingness...)
+	}
+	return uniqueSorted(values)
+}
+
+func searchableText(record CaptureRecord, resources []ResourceContext, revisions []ResourceRevision, contents map[string]ExtractedContentArtifact, revisionContents map[string]ExtractedContentArtifact) string {
+	parts := []string{
+		record.RawText, strings.Join(record.URLs, " "), record.AuthorName,
+		record.AuthorID, record.SourceRef, strings.Join(record.Missingness, " "),
+	}
+	for _, resource := range resources {
+		parts = append(parts, searchableResourceText(resource, contents[resource.ResourceID])...)
+	}
+	for _, revision := range revisions {
+		parts = append(parts, searchableResourceText(revision.Resource, revisionContents[revision.RevisionID])...)
+	}
+	return strings.Join(parts, "\n")
+}
+
+func searchableResourceText(resource ResourceContext, content ExtractedContentArtifact) []string {
+	parts := []string{
+		resource.Metadata.Title, resource.Metadata.Author,
+		resource.Metadata.PublishedAt, strings.Join(resource.Missingness, " "),
+	}
+	for _, excerpt := range resource.Excerpts {
+		parts = append(parts, excerpt.Text, excerpt.Locator)
+	}
+	if content.Reference.ArtifactID != "" {
+		parts = append(parts, content.Text)
+	}
+	return parts
+}
+
+func resourceBundleForRecord(record CaptureRecord, resourcesByID map[string]ResourceContext, revisionsByResourceID map[string][]ResourceRevision) ([]ResourceContext, []ResourceRevision) {
+	resources := []ResourceContext{}
+	revisions := []ResourceRevision{}
+	seen := map[string]bool{}
+	seenRevisions := map[string]bool{}
+	queue := append([]string(nil), record.ResourceIDs...)
+	for len(queue) > 0 {
+		resourceID := queue[0]
+		queue = queue[1:]
+		if seen[resourceID] {
+			continue
+		}
+		resource, exists := resourcesByID[resourceID]
+		if !exists {
+			continue
+		}
+		seen[resourceID] = true
+		resources = append(resources, resource)
+		for _, related := range resource.RelatedURLs {
+			queue = append(queue, stableResourceID(related.URL))
+		}
+		for _, revision := range revisionsByResourceID[resourceID] {
+			if seenRevisions[revision.RevisionID] {
+				continue
+			}
+			seenRevisions[revision.RevisionID] = true
+			revisions = append(revisions, revision)
+			for _, related := range revision.Resource.RelatedURLs {
+				queue = append(queue, stableResourceID(related.URL))
+			}
+		}
+	}
+	return resources, revisions
+}
+
+func groupResourceRevisions(revisions []ResourceRevision) map[string][]ResourceRevision {
+	grouped := map[string][]ResourceRevision{}
+	for _, revision := range revisions {
+		resourceID := revision.Resource.ResourceID
+		grouped[resourceID] = append(grouped[resourceID], revision)
+	}
+	return grouped
+}
+
+func orderedRevisionContents(document evidenceDocument) []ExtractedContentArtifact {
+	contents := make([]ExtractedContentArtifact, 0, len(document.revisionContents))
+	for _, revision := range document.resourceRevisions {
+		if content, exists := document.revisionContents[revision.RevisionID]; exists {
+			contents = append(contents, content)
+		}
+	}
+	return contents
+}
+
+func validateLensBatch(batch LensBatch) error {
+	if batch.SchemaVersion != LensBatchSchemaVersion || len(batch.Lenses) == 0 {
+		return errors.New("invalid personal memory lens batch")
+	}
+	seen := map[string]bool{}
+	totalRunes := 0
+	for _, lens := range batch.Lenses {
+		if strings.TrimSpace(lens.ID) == "" || strings.TrimSpace(lens.Name) == "" || strings.TrimSpace(lens.Query) == "" || seen[lens.ID] {
+			return errors.New("invalid personal memory lens")
+		}
+		seen[lens.ID] = true
+		totalRunes += len([]rune(lens.ID)) + len([]rune(lens.Name)) + len([]rune(lens.Query))
+	}
+	if totalRunes > MaximumLensRequestRunes {
+		return errors.New("personal memory lens request exceeds execution budget; submit smaller batches")
+	}
+	return nil
+}
+
+func containsAnyTerm(value string, terms []string) bool {
+	counts := termCounts(tokenize(value))
+	for _, term := range terms {
+		if counts[term] > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func matchedWindow(value string, terms []string, maximum int) string {
+	lower := strings.ToLower(value)
+	start := -1
+	for _, term := range terms {
+		if index := strings.Index(lower, strings.ToLower(term)); index >= 0 && (start < 0 || index < start) {
+			start = index
+		}
+	}
+	runes := []rune(value)
+	if start < 0 || len(runes) <= maximum {
+		return snippet(value, maximum)
+	}
+	runeStart := len([]rune(value[:start]))
+	windowStart := runeStart - maximum/4
+	if windowStart < 0 {
+		windowStart = 0
+	}
+	windowEnd := windowStart + maximum
+	if windowEnd > len(runes) {
+		windowEnd = len(runes)
+	}
+	prefix := ""
+	suffix := ""
+	if windowStart > 0 {
+		prefix = "…"
+	}
+	if windowEnd < len(runes) {
+		suffix = "…"
+	}
+	return prefix + strings.TrimSpace(string(runes[windowStart:windowEnd])) + suffix
+}
+
+func tokenize(value string) []string {
+	terms := []string{}
+	var token strings.Builder
+	flush := func() {
+		if token.Len() == 0 {
+			return
+		}
+		value := token.String()
+		if len([]rune(value)) >= 2 {
+			terms = append(terms, value)
+		}
+		token.Reset()
+	}
+	for _, character := range strings.ToLower(value) {
+		if unicode.IsLetter(character) || unicode.IsDigit(character) {
+			token.WriteRune(character)
+		} else {
+			flush()
+		}
+	}
+	flush()
+	return terms
+}
+
+func termCounts(terms []string) map[string]int {
+	counts := make(map[string]int, len(terms))
+	for _, term := range terms {
+		counts[term]++
+	}
+	return counts
+}
+
+func snippet(value string, maximum int) string {
+	value = strings.TrimSpace(value)
+	runes := []rune(value)
+	if len(runes) <= maximum {
+		return value
+	}
+	return strings.TrimSpace(string(runes[:maximum])) + "…"
+}

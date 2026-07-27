@@ -2308,3 +2308,77 @@ func readString(t *testing.T, path string) string {
 	}
 	return string(data)
 }
+
+func TestSafeFailedPreconditionRunRequiresZeroMutation(t *testing.T) {
+	run := map[string]any{"outcome": "failed", "entries_created_this_run": 0, "relations_created_this_run": 0, "operations": []any{map[string]any{"operation_id": "op-1", "state": "pending", "attempts": 0, "mutation_observed": false, "acknowledged": false}}}
+	if !safeFailedPreconditionRun(run) {
+		t.Fatal("zero-mutation fail-closed run was not retained as valid authority")
+	}
+	run["operations"].([]any)[0].(map[string]any)["mutation_observed"] = true
+	if safeFailedPreconditionRun(run) {
+		t.Fatal("failed run with an observed mutation was treated as a safe precondition failure")
+	}
+}
+
+func TestValidDeliveryOperationStateRejectsUnknownAndIncoherentStates(t *testing.T) {
+	valid := []map[string]any{
+		{"state": "pending", "attempts": 0, "acknowledged": false, "mutation_observed": false},
+		{"state": "sending", "attempts": 1, "acknowledged": false, "mutation_observed": false},
+		{"state": "reconciling", "attempts": 1, "acknowledged": false, "mutation_response_received": true, "mutation_observed": false},
+		{"state": "blocked", "attempts": 1, "acknowledged": false, "mutation_observed": false, "safe_category": "transient"},
+		{"state": "blocked", "attempts": 1, "acknowledged": false, "mutation_response_received": true, "mutation_observed": false, "safe_category": "ambiguous_outcome"},
+		{"state": "blocked", "attempts": 1, "acknowledged": false, "mutation_response_received": true, "mutation_observed": true, "safe_category": "readback_mismatch"},
+		{"state": "acknowledged", "attempts": 1, "acknowledged": true, "mutation_observed": true},
+	}
+	for _, operation := range valid {
+		if !validDeliveryOperationState(operation) {
+			t.Fatalf("valid operation state was rejected: %+v", operation)
+		}
+	}
+	invalid := []map[string]any{
+		{"state": "mystery_state", "attempts": 0, "acknowledged": false, "mutation_observed": false},
+		{"state": "pending", "attempts": 1, "acknowledged": false, "mutation_observed": false},
+		{"state": "pending", "attempts": 0, "acknowledged": false, "mutation_response_received": true, "mutation_observed": false},
+		{"state": "sending", "attempts": 1, "acknowledged": false, "mutation_observed": true},
+		{"state": "sending", "attempts": 1, "acknowledged": false, "mutation_response_received": true, "mutation_observed": false},
+		{"state": "blocked", "attempts": 1, "acknowledged": false, "mutation_observed": false},
+		{"state": "blocked", "attempts": 1, "acknowledged": false, "mutation_observed": false, "safe_category": "arbitrary_remote_error"},
+		{"state": "blocked", "attempts": 1, "acknowledged": false, "mutation_observed": false, "safe_category": "readback_mismatch"},
+		{"state": "blocked", "attempts": 1, "acknowledged": false, "mutation_response_received": true, "mutation_observed": false, "safe_category": "transient"},
+		{"state": "blocked", "attempts": 1, "acknowledged": false, "mutation_observed": true, "safe_category": "ambiguous_outcome"},
+		{"state": "acknowledged", "attempts": 0, "acknowledged": true, "mutation_observed": false},
+	}
+	for _, operation := range invalid {
+		if validDeliveryOperationState(operation) {
+			t.Fatalf("incoherent operation state was accepted: %+v", operation)
+		}
+	}
+}
+
+func TestDeliveryHistoryAuthorityCountsMutationResponseOrObservationExactlyOnce(t *testing.T) {
+	failedOperations := []any{
+		map[string]any{"operation_id": "op-entry", "kind": "entry", "state": "blocked", "attempts": 1, "mutation_response_received": true, "mutation_observed": true, "acknowledged": false, "safe_category": "readback_mismatch"},
+		map[string]any{"operation_id": "op-relation", "kind": "relation", "state": "blocked", "attempts": 1, "mutation_response_received": true, "mutation_observed": true, "acknowledged": false, "safe_category": "readback_mismatch"},
+	}
+	completedOperations := []any{
+		map[string]any{"operation_id": "op-entry", "kind": "entry", "state": "acknowledged", "attempts": 1, "mutation_response_received": false, "mutation_observed": false, "acknowledged": true, "entry_doc_id": "doc-entry", "remote_object_id": "ENTRY-1", "readback_fingerprint": "entry-readback", "draft_verified": true, "actor_verified": true},
+		map[string]any{"operation_id": "op-relation", "kind": "relation", "state": "acknowledged", "attempts": 1, "mutation_response_received": false, "mutation_observed": false, "acknowledged": true, "remote_object_id": "rel-1", "readback_fingerprint": "relation-readback", "attribution_verified": true},
+	}
+	runs := []any{
+		map[string]any{"outcome": "failed", "entries_created_this_run": 1, "relations_created_this_run": 1, "operations": failedOperations},
+		map[string]any{"outcome": "completed", "entries_created_this_run": 0, "relations_created_this_run": 0, "operations": completedOperations},
+	}
+	authority := deliveryHistoryAuthority{Metrics: map[string]float64{}, Flags: map[string]bool{}, Operations: map[string]operationContract{}}
+	if !deriveDeliveryHistoryAuthority(runs, &authority) {
+		t.Fatal("coherent mutation-response lineage was rejected")
+	}
+	if authority.Metrics["destination_writes"] != 2 || authority.Metrics["product_brain_writes"] != 2 || authority.Metrics["first_run_entry_mutations"] != 1 || authority.Metrics["first_run_relation_mutations"] != 1 {
+		t.Fatalf("mutation response/observation was not counted exactly once: %+v", authority.Metrics)
+	}
+	failedOperations[0].(map[string]any)["mutation_response_received"] = false
+	failedOperations[0].(map[string]any)["mutation_observed"] = false
+	authority = deliveryHistoryAuthority{Metrics: map[string]float64{}, Flags: map[string]bool{}, Operations: map[string]operationContract{}}
+	if deriveDeliveryHistoryAuthority(runs, &authority) {
+		t.Fatal("run counter without mutation response or observation was accepted")
+	}
+}

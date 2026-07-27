@@ -10,6 +10,7 @@ const (
 	ClaimImprovement    = "improvement"
 	ClaimGeneralization = "generalization"
 	ClaimDEC64          = "dec64"
+	ClaimDelivery       = "delivery"
 
 	VerdictPass    = "pass"
 	VerdictFail    = "fail"

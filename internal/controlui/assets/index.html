@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mindline activation</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main>
+    <header>
+      <p class="eyebrow">Mindline</p>
+      <h1>Choose what matters → review a small proof → send only the drafts you approve.</h1>
+      <p id="session-status" role="status" aria-live="polite">This local Mindline window is locked.</p>
+      <div id="pairing-panel" class="summary">
+        <p>Pair this browser with the running Mindline process. The code is not a credential and expires after five minutes.</p>
+        <button id="pair" type="button">Create a pairing code</button>
+        <div id="pairing-code-panel" hidden>
+          <p>Ask Codex to confirm this exact code:</p>
+          <output id="pairing-code" aria-label="Pairing code"></output>
+          <button id="copy-pairing-code" class="secondary" type="button">Copy exact code</button>
+        </div>
+      </div>
+      <button id="lock-session" class="secondary" type="button" hidden>Lock this browser</button>
+      <button id="help" class="secondary">What happens in this proof?</button>
+      <p id="help-text" hidden>This run freezes the complete Slack denominator, processes at most three canonical items per observed retrieval/format type, requires your judgment on every selected item, and sends only one exact approved draft batch. The remainder stays unprocessed.</p>
+    </header>
+
+    <div id="private-workspace" hidden>
+    <section>
+      <h2>1. Source and destination</h2>
+      <p id="gate-status" role="status" aria-live="polite">Checking local live gate…</p>
+      <p>For this proof, Codex operates the Slack source. The only integration credential you enter here is your Product Brain key.</p>
+      <div class="connection-grid">
+        <article id="source-handoff" class="connection-card" aria-labelledby="source-handoff-heading">
+          <p class="connection-label">Slack source</p>
+          <h3 id="source-handoff-heading">Managed by Codex for this proof</h3>
+          <p>Codex uses the existing Slack connection and hands a validated, occurrence-complete inventory to Mindline. You do not connect Slack or upload a file here.</p>
+          <p id="source-handoff-status" class="connection-status" role="status" aria-live="polite">Waiting for Codex to prepare the source…</p>
+          <p class="connection-note">In the real product, <strong>Connect Slack</strong> will open Slack’s permission screen and return you here when authorization is complete.</p>
+        </article>
+        <article class="connection-card" aria-labelledby="destination-heading">
+          <p class="connection-label">Product Brain destination</p>
+          <h3 id="destination-heading">Connect the draft-only destination</h3>
+          <p id="destination-status" class="connection-status" role="status" aria-live="polite">Checking whether destination connection is available…</p>
+          <div id="destination-credential-panel" hidden>
+            <form id="destination-form">
+              <label>Product Brain key <input id="destination-key" type="password" autocomplete="off" minlength="16" required></label>
+              <button type="submit">Connect Product Brain</button>
+            </form>
+          </div>
+          <button id="disconnect" class="secondary" type="button" hidden>Disconnect Product Brain</button>
+        </article>
+      </div>
+      <div id="connections-summary" class="summary"></div>
+    </section>
+
+    <section>
+      <h2>2. Strategy</h2>
+      <p id="settings-status" role="status" aria-live="polite">Loading authoritative settings…</p>
+      <form id="strategy-form">
+        <label>What matters and why<textarea id="context-lenses" required disabled aria-describedby="settings-status"></textarea></label>
+        <label>How to route it<textarea id="routing-policy" required disabled aria-describedby="settings-status"></textarea></label>
+        <fieldset>
+          <legend>Experimental full-drain limits</legend>
+          <p>These are your policy ceilings, saved before the sample is selected. Readiness compares the observed projection to these values; Mindline does not expand them from the inventory.</p>
+          <label>Maximum network requests <input id="drain-network" type="number" min="1" max="1000000" required disabled></label>
+          <label>Maximum wall time (seconds) <input id="drain-wall" type="number" min="60" max="86400" required disabled></label>
+          <label>Maximum cost (microunits) <input id="drain-cost" type="number" min="0" max="1000000000000" required disabled></label>
+          <label>Maximum retry attempts <input id="drain-retries" type="number" min="0" max="100000" required disabled></label>
+          <label>Maximum manual-support items <input id="drain-manual" type="number" min="0" max="250000" required disabled></label>
+        </fieldset>
+        <button id="save-settings" type="submit" disabled>Save settings</button>
+        <button id="use-settings" class="secondary" type="button" disabled>Use these settings for this proof</button>
+      </form>
+      <div id="settings-conflict" class="summary" hidden>
+        <p id="settings-conflict-message"></p>
+        <button id="reload-settings" class="secondary" type="button">Reload saved version</button>
+        <button id="rebase-settings" class="secondary" type="button">Review and save my edits</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>3. Proof run</h2>
+      <p id="run-status" role="status" aria-live="polite">Loading explicit run selection…</p>
+      <div class="actions">
+        <button id="create-run" type="button" disabled>Start a new proof with saved settings</button>
+      </div>
+      <form id="select-run-form">
+        <label>Existing run ID <input id="select-run-id" type="text" autocomplete="off" placeholder="run-20260715T143000Z-…"></label>
+        <button type="submit">Select this exact run</button>
+      </form>
+      <div id="run-recovery" class="summary" hidden>
+        <p id="run-recovery-message"></p>
+        <button id="recover-run-clear" class="secondary" type="button">Acknowledge and clear corrupt selection</button>
+        <button id="recover-run-explicit" class="secondary" type="button">Acknowledge and replace with entered run ID</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>4. Prove</h2>
+      <p>The inventory is exhaustive. The proof sample is deterministic, capped at three per observed strategy/format stratum, and never rerolled.</p>
+      <div class="actions">
+        <button id="freeze">Freeze inventory</button>
+        <button id="prove">Start capped proof</button>
+      </div>
+      <div id="inventory-summary" class="summary"></div>
+      <div id="proof-summary" class="summary"></div>
+      <div id="proof-items" class="cards"></div>
+    </section>
+
+    <section>
+      <h2>5. Exact Product Brain batch</h2>
+      <p id="delivery-boundary">No proof result grants blanket delivery. Approval applies only to the rendered fingerprint and budgets.</p>
+      <form id="preview-form">
+        <label>Maximum unique writes <input id="max-writes" type="number" min="1" value="3" required></label>
+        <label>Maximum mutation attempts <input id="max-attempts" type="number" min="1" value="3" required></label>
+        <button type="submit">Render exact preview</button>
+      </form>
+      <div id="approval-panel" hidden>
+        <div id="batch-summary" class="summary"></div>
+        <details><summary>Technical exact payload</summary><pre id="batch-preview"></pre></details>
+        <button id="approve">I approve this exact draft batch</button>
+      </div>
+      <div class="actions danger-actions">
+        <button id="resume-delivery" class="secondary">Resume the existing exact approved batch</button>
+        <button id="cancel-delivery" class="secondary">Cancel approved batch</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Founder review</h2>
+      <form id="founder-form">
+        <label>Exact Product Brain or zero-draft receipt <input id="receipt" readonly></label>
+        <label>Value verdict
+          <select id="value-verdict"><option value="not_useful" selected>Not useful yet</option><option value="useful">Useful</option><option value="zero_draft">Zero-draft proof</option></select>
+        </label>
+        <fieldset><legend>Select only drafts you actually found useful</legend><div id="useful-drafts"></div></fieldset>
+        <label><input id="zero-draft" type="checkbox" disabled> The sealed proof produced no draft batch</label>
+        <label>Why was or was not this useful?<textarea id="usefulness" required></textarea></label>
+        <label>Session-key burden<textarea id="credential-burden" required></textarea></label>
+        <label>Manual-support burden (enter N/A explicitly if none was needed)<textarea id="manual-burden" required></textarea></label>
+        <label>Exact-approval burden<textarea id="approval-burden" required></textarea></label>
+        <button type="submit">Record founder review</button>
+      </form>
+    </section>
+
+    <section>
+      <h2>Drain readiness</h2>
+      <p>The frozen remainder stays unprocessed in this proof. This panel explains whether a later experimental processing run could be considered; it never approves Product Brain delivery.</p>
+      <button id="confirm-drain">Confirm later experimental processing plan</button>
+      <div id="drain-summary" class="summary"></div>
+    </section>
+
+    <section>
+      <h2>Technical evidence</h2>
+      <details><summary>Show complete local state</summary><pre id="state"></pre></details>
+      <button id="refresh" class="secondary">Refresh</button>
+      <p id="notice" role="status"></p>
+    </section>
+    </div>
+  </main>
+  <script src="/app.js" defer></script>
+</body>
+</html>

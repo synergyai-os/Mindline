@@ -4,11 +4,30 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/synergyai-os/Mindline/internal/evalproof"
 	"github.com/synergyai-os/Mindline/internal/evalreadback"
 )
+
+func TestBuildRejectsProtectedRootBeforeChangingIt(t *testing.T) {
+	protected := t.TempDir()
+	if err := os.Chmod(protected, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Build(filepath.Join("..", "..", "testdata", "eval-readback", "current"), protected, Options{ProtectedRoots: []string{protected}})
+	if err == nil {
+		t.Fatal("loop decision accepted a protected output root")
+	}
+	info, statErr := os.Stat(protected)
+	if statErr != nil {
+		t.Fatal(statErr)
+	}
+	if info.Mode().Perm() != 0o755 {
+		t.Fatalf("protected root mode was changed before rejection: %o", info.Mode().Perm())
+	}
+}
 
 func TestDecisionCurrentOnlyBlocksImprovementAndNamesOneTarget(t *testing.T) {
 	out := t.TempDir()
@@ -35,6 +54,13 @@ func TestDecisionCurrentOnlyBlocksImprovementAndNamesOneTarget(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(out, DirName, rel)); err != nil {
 			t.Fatalf("expected %s: %v", rel, err)
 		}
+	}
+}
+
+func TestChainDraftIsWorkPackageNeutral(t *testing.T) {
+	draft := chainDraft(Packet{ImprovementState: ImprovementBlockedMissingBaseline, TopImprovementTarget: evalreadback.ImprovementTarget{Code: "target"}})
+	if strings.Contains(draft, "WP-") || !strings.HasPrefix(draft, "Mindline eval loop decision:") {
+		t.Fatalf("generated Chain draft is not work-package-neutral: %s", draft)
 	}
 }
 

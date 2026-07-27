@@ -248,9 +248,11 @@ func normalizeMetadata(meta CaptureMetadata) CaptureMetadata {
 	meta.ClassificationStatus = defaultString(meta.ClassificationStatus, "clear")
 	meta.DesiredVisibilityHint = defaultString(meta.DesiredVisibilityHint, "background")
 	meta.ProvenanceVisibilityHint = defaultString(meta.ProvenanceVisibilityHint, "private")
-	meta.DomainHint = defaultString(meta.DomainHint, "Research Landscape")
+	// Domain and topic hints are source data, not Slack adapter defaults. The
+	// routing layer resolves configurable workspace context lenses later.
+	meta.DomainHint = defaultString(meta.DomainHint, "Unclassified")
 	if len(meta.TopicHints) == 0 {
-		meta.TopicHints = []string{"slack-capture"}
+		meta.TopicHints = []string{"uncategorized"}
 	}
 	return meta
 }

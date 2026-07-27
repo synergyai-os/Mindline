@@ -72,6 +72,35 @@ func TestEvalReadbackCLIRejectsProtectedOutputRoot(t *testing.T) {
 	}
 }
 
+func TestStrategicRoutingAndProductBrainCommandsRejectProtectedOutputsBeforeInputReads(t *testing.T) {
+	root := t.TempDir()
+	protected := filepath.Join(root, "protected")
+	if err := os.MkdirAll(protected, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runner := NewRunnerWithProtectedRoots(NewOSFileSystem(), []string{protected})
+	tests := [][]string{
+		{"slack", "route", "missing-slack.json", "--links", "missing-links.json", "--lenses", "missing-lenses.json", "--judgments", "missing-judgments.json", "--out", filepath.Join(protected, "routing")},
+		{"product-brain", "outbox", "missing-routing", "--profile", "missing-profile.json", "--out", filepath.Join(protected, "outbox")},
+		{"product-brain", "preflight", "missing-outbox", "--out", filepath.Join(protected, "preflight")},
+		{"product-brain", "deliver", "missing-outbox", "--preflight", "missing-preflight", "--out", filepath.Join(protected, "delivery")},
+		{"product-brain", "review", "missing-routing", "--outbox", "missing-outbox", "--delivery", "missing-delivery", "--out", filepath.Join(protected, "review")},
+	}
+	for _, args := range tests {
+		var stdout, stderr bytes.Buffer
+		if code := runner.Run(args, &stdout, &stderr); code != ExitUsage || !strings.Contains(stderr.String(), "protected output root") {
+			t.Fatalf("command %v did not reject protected output before input work: code=%d stderr=%s", args, code, stderr.String())
+		}
+	}
+	entries, err := os.ReadDir(protected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("protected output received command artifacts: %v", entries)
+	}
+}
+
 func TestEvalProofGateCLI(t *testing.T) {
 	root := t.TempDir()
 	writeCLIReadbackPressure(t, filepath.Join(root, "baseline"), 0.2, 0.8, "same")
@@ -117,6 +146,58 @@ func TestEvalProofGateCLIUsage(t *testing.T) {
 	}
 }
 
+func TestEvalCommandsEnforcePrivateRuntimeContainmentAndModes(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	input := filepath.Join(root, "input")
+	writeCLIReadbackPressure(t, input, 0.8, 0.3, "same")
+	t.Setenv("MINDLINE_PRIVATE_RUNTIME_ROOT", root)
+	out := filepath.Join(root, "out")
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{"eval", "readback", input, "--out", out}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("private readback failed: code=%d stderr=%s", code, stderr.String())
+	}
+	for _, path := range []string{out, filepath.Join(out, "eval-readback")} {
+		info, err := os.Stat(path)
+		if err != nil || info.Mode().Perm() != 0o700 {
+			t.Fatalf("private output directory mode = %v, err=%v", info, err)
+		}
+	}
+	for _, name := range []string{"readback-summary.json", "readback-report.md", "chain-capture-draft.md"} {
+		info, err := os.Stat(filepath.Join(out, "eval-readback", name))
+		if err != nil || info.Mode().Perm() != 0o600 {
+			t.Fatalf("private output file %s mode = %v, err=%v", name, info, err)
+		}
+	}
+	for _, command := range []struct {
+		args []string
+		out  string
+	}{
+		{[]string{"eval", "proof-gate", input, "--out", filepath.Join(root, "proof-out"), "--claim", "safety"}, filepath.Join(root, "proof-out")},
+		{[]string{"eval", "loop-decision", input, "--out", filepath.Join(root, "decision-out")}, filepath.Join(root, "decision-out")},
+	} {
+		stdout.Reset()
+		stderr.Reset()
+		if code := NewRunner(NewOSFileSystem()).Run(command.args, &stdout, &stderr); code != ExitOK {
+			t.Fatalf("private eval command failed: code=%d stderr=%s", code, stderr.String())
+		}
+		info, err := os.Stat(command.out)
+		if err != nil || info.Mode().Perm() != 0o700 {
+			t.Fatalf("private eval root mode = %v, err=%v", info, err)
+		}
+	}
+	outside := t.TempDir()
+	stdout.Reset()
+	stderr.Reset()
+	code = NewRunner(NewOSFileSystem()).Run([]string{"eval", "readback", input, "--out", filepath.Join(outside, "escaped")}, &stdout, &stderr)
+	if code != ExitUsage || !strings.Contains(stderr.String(), "private runtime") {
+		t.Fatalf("escaped private output was not rejected: code=%d stderr=%s", code, stderr.String())
+	}
+}
+
 func TestEvalLoopDecisionCLI(t *testing.T) {
 	root := t.TempDir()
 	writeCLIReadbackPressure(t, filepath.Join(root, "baseline"), 0.2, 0.8, "same")
@@ -150,7 +231,7 @@ func TestEvalLoopDecisionCLIUsage(t *testing.T) {
 func writeCLIReadbackPressure(t *testing.T, root string, evidenceReady, reviewBurden float64, fingerprint string) {
 	t.Helper()
 	target := filepath.Join(root, "corpus-pressure", "pressure-summary.json")
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 	payload := map[string]any{
@@ -178,7 +259,7 @@ func writeCLIReadbackPressure(t *testing.T, root string, evidenceReady, reviewBu
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	if err := os.WriteFile(target, append(data, '\n'), 0o644); err != nil {
+	if err := os.WriteFile(target, append(data, '\n'), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 }

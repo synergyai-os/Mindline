@@ -3,11 +3,11 @@ package evalproof
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/synergyai-os/Mindline/internal/evalreadback"
+	"github.com/synergyai-os/Mindline/internal/privateio"
 )
 
 func writePacket(outRoot string, packet Packet, protectedRoots []string) error {
@@ -15,7 +15,7 @@ func writePacket(outRoot string, packet Packet, protectedRoots []string) error {
 	if err := evalreadback.ValidateOutputPath(outRoot, dir, protectedRoots); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := privateio.PrepareDir(dir); err != nil {
 		return err
 	}
 	files := map[string][]byte{}
@@ -34,7 +34,7 @@ func writePacket(outRoot string, packet Packet, protectedRoots []string) error {
 		if err := evalreadback.ValidateOutputPath(outRoot, target, protectedRoots); err != nil {
 			return err
 		}
-		if err := os.WriteFile(target, data, 0o644); err != nil {
+		if err := privateio.WriteFile(target, data, false); err != nil {
 			return err
 		}
 	}
@@ -78,7 +78,7 @@ func chainDraft(packet Packet) string {
 	for _, claim := range packet.BlockedClaims {
 		blocked = append(blocked, claim.Claim)
 	}
-	return fmt.Sprintf("WP-36 eval proof gate: claim %s verdict %s. Blocked claims: %s. Generalization limit: %s. Next target: %s. Proof refs: %s.",
+	return fmt.Sprintf("Mindline eval proof gate: claim %s verdict %s. Blocked claims: %s. Generalization limit: %s. Next target: %s. Proof refs: %s.",
 		packet.Claim,
 		packet.Verdict,
 		strings.Join(blocked, ", "),

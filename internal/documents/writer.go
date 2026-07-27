@@ -1,6 +1,8 @@
 package documents
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -245,7 +247,125 @@ func writeFile(root, relative string, data []byte) error {
 	if info, err := os.Lstat(cleanTarget); err == nil && info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("output path escaped output directory")
 	}
-	return os.WriteFile(cleanTarget, data, 0o644)
+	return writeFileInRoot(cleanRoot, relative, data, 0o644)
+}
+
+// writeFileInRoot uses descriptor-relative Root operations and an exclusive
+// temporary file in the already-opened parent directory. The final rename
+// replaces a directory entry atomically rather than following it, closing the
+// validation-to-write symlink race while preserving deterministic overwrite
+// behavior for regular generated artifacts.
+func writeFileInRoot(root, relative string, data []byte, mode os.FileMode) error {
+	rootHandle, err := openBoundRoot(root)
+	if err != nil {
+		return err
+	}
+	defer rootHandle.Close()
+
+	relative = filepath.Clean(filepath.FromSlash(relative))
+	parentName, baseName := filepath.Dir(relative), filepath.Base(relative)
+	parent := rootHandle
+	if parentName != "." {
+		parent, err = rootHandle.OpenRoot(parentName)
+		if err != nil {
+			return err
+		}
+		defer parent.Close()
+	}
+	var existingMode os.FileMode
+	preserveExistingMode := false
+	if info, statErr := parent.Lstat(baseName); statErr == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("output path escaped output directory")
+		}
+		if info.Mode().IsRegular() {
+			existingMode = info.Mode().Perm()
+			preserveExistingMode = true
+		}
+	} else if !os.IsNotExist(statErr) {
+		return statErr
+	}
+
+	var temporary string
+	var file *os.File
+	for attempt := 0; attempt < 8; attempt++ {
+		entropy := make([]byte, 16)
+		if _, err := rand.Read(entropy); err != nil {
+			return err
+		}
+		temporary = ".mindline-write-" + hex.EncodeToString(entropy)
+		file, err = parent.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+		if err == nil {
+			break
+		}
+		if !os.IsExist(err) {
+			return err
+		}
+	}
+	if file == nil {
+		return fmt.Errorf("could not reserve contained output file")
+	}
+	if preserveExistingMode {
+		if err := file.Chmod(existingMode); err != nil {
+			_ = file.Close()
+			_ = parent.Remove(temporary)
+			return err
+		}
+	}
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = parent.Remove(temporary)
+		}
+	}()
+	written, writeErr := file.Write(data)
+	if writeErr == nil && written != len(data) {
+		writeErr = fmt.Errorf("short contained output write")
+	}
+	if writeErr == nil {
+		writeErr = file.Sync()
+	}
+	if closeErr := file.Close(); writeErr == nil {
+		writeErr = closeErr
+	}
+	if writeErr != nil {
+		return writeErr
+	}
+	if err := parent.Rename(temporary, baseName); err != nil {
+		return err
+	}
+	cleanup = false
+	return nil
+}
+
+func openBoundRoot(root string) (*os.Root, error) {
+	return openBoundRootWith(root, os.OpenRoot)
+}
+
+// openBoundRootWith binds the pathname validation to the directory descriptor
+// used for all later operations. OpenRoot intentionally follows symlinks in its
+// root argument, so the before/open/after identity checks are required to fail
+// closed if the root or one of its ancestors is replaced during acquisition.
+func openBoundRootWith(root string, open func(string) (*os.Root, error)) (*os.Root, error) {
+	before, err := os.Lstat(root)
+	if err != nil {
+		return nil, err
+	}
+	if before.Mode()&os.ModeSymlink != 0 || !before.IsDir() {
+		return nil, fmt.Errorf("output root must be a non-symlink directory")
+	}
+	handle, err := open(root)
+	if err != nil {
+		return nil, err
+	}
+	opened, openedErr := handle.Stat(".")
+	after, afterErr := os.Lstat(root)
+	if openedErr != nil || afterErr != nil || after.Mode()&os.ModeSymlink != 0 ||
+		!after.IsDir() || !os.SameFile(before, opened) || !os.SameFile(opened, after) {
+		_ = handle.Close()
+		return nil, fmt.Errorf("output root changed during secure open")
+	}
+	return handle, nil
 }
 
 func ensureParentDir(root, relative string) error {
