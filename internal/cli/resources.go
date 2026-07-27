@@ -44,10 +44,15 @@ func (r Runner) runResourceCommand(args []string, stdout, stderr io.Writer, comm
 		fmt.Fprintln(stderr, "open resource processing: unavailable")
 		return ExitProcess
 	}
-	if command == "run" {
+	if command == "run" || command == "continue" {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		runErr := pipeline.Run(ctx)
+		var runErr error
+		if command == "continue" {
+			runErr = pipeline.Continue(ctx)
+		} else {
+			runErr = pipeline.Run(ctx)
+		}
 		status, statusErr := pipeline.StructuralStatus()
 		if statusErr != nil {
 			fmt.Fprintln(stderr, "resource processing did not reach a terminal state")

@@ -112,6 +112,11 @@ func (store *Store) Enqueue(resourceIDs []string) (Queue, error) {
 func (store *Store) Rebuild(items []RebuildItem) (Queue, error) {
 	return store.update(func(queue *Queue) error {
 		queue.Counters = Counters{}
+		// Canonical run_budget_deferred is sufficient to preserve future
+		// continuation. A rebuild deliberately opts out of the ambiguous
+		// budget_exhausted legacy migration because canonical state does not
+		// retain the old derived attempt count.
+		queue.LegacyBudgetMigrationComplete = true
 		queue.Items = make([]Item, 0, len(items))
 		seen := map[string]bool{}
 		for _, input := range items {
@@ -235,8 +240,13 @@ func (store *Store) ClaimNext() (Item, bool, error) {
 			if item.State != StateQueued {
 				continue
 			}
-			if queue.Counters.ProcessedResources >= queue.Profile.MaxResources || queue.Counters.Requests+queue.Counters.ReservedRequests >= queue.Profile.MaxRequests || item.Attempts >= queue.Profile.MaxAttemptsPerResource {
-				item.State, item.Reason = StateBlocked, "budget_exhausted"
+			if item.Attempts >= queue.Profile.MaxAttemptsPerResource {
+				item.State, item.Reason = StateBlocked, ReasonBudgetExhausted
+				selected, found = *item, true
+				return nil
+			}
+			if budgetDefersItem(*queue, *item) {
+				item.State, item.Reason = StateBlocked, ReasonRunBudgetDeferred
 				selected, found = *item, true
 				return nil
 			}
@@ -273,7 +283,7 @@ func (store *Store) BudgetRemainder() ([]string, bool, error) {
 	}
 	resourceIDs := make([]string, 0)
 	for _, item := range queue.Items {
-		if item.State == StateQueued {
+		if item.State == StateQueued && budgetDefersItem(queue, item) {
 			resourceIDs = append(resourceIDs, item.ResourceID)
 		}
 	}
@@ -282,7 +292,7 @@ func (store *Store) BudgetRemainder() ([]string, bool, error) {
 }
 
 // TerminalizeBudgetRemainder advances only the exact queued identities that
-// were already committed canonically as budget-exhausted. A crash between the
+// were already committed canonically as run-budget-deferred. A crash between the
 // canonical write and this derived transition safely replays the same
 // idempotent canonical batch on restart.
 func (store *Store) TerminalizeBudgetRemainder(resourceIDs []string) error {
@@ -308,7 +318,10 @@ func (store *Store) TerminalizeBudgetRemainder(resourceIDs []string) error {
 			if item.State != StateQueued {
 				return errors.New("resource queue budget remainder changed")
 			}
-			item.State, item.Reason = StateBlocked, "budget_exhausted"
+			if !budgetDefersItem(*queue, *item) {
+				return errors.New("resource queue item is not budget deferred")
+			}
+			item.State, item.Reason = StateBlocked, ReasonRunBudgetDeferred
 			delete(expected, item.ResourceID)
 		}
 		if len(expected) != 0 {
@@ -319,9 +332,59 @@ func (store *Store) TerminalizeBudgetRemainder(resourceIDs []string) error {
 	return err
 }
 
+// StartNextGeneration atomically opens at most one new bounded run. It only
+// acts after the current queue is terminal, resets every aggregate counter,
+// increments generation exactly once, and requeues canonical deferred work.
+//
+// Queues persisted before run_budget_deferred existed receive one conservative
+// migration: budget_exhausted items are eligible only when their derived
+// attempt count proves they were never fetched. Rebuild marks that migration
+// complete because canonical budget_exhausted alone is ambiguous.
+func (store *Store) StartNextGeneration() (Queue, bool, error) {
+	started := false
+	queue, err := store.update(func(queue *Queue) error {
+		for _, item := range queue.Items {
+			if item.State == StateQueued || item.State == StateProcessing {
+				return nil
+			}
+		}
+		eligible := make([]int, 0)
+		for index, item := range queue.Items {
+			if item.State != StateBlocked {
+				continue
+			}
+			if item.Reason == ReasonRunBudgetDeferred ||
+				(!queue.LegacyBudgetMigrationComplete && item.Reason == ReasonBudgetExhausted && item.Attempts == 0) {
+				eligible = append(eligible, index)
+			}
+		}
+		if len(eligible) == 0 {
+			return nil
+		}
+		queue.Generation++
+		queue.Counters = Counters{}
+		queue.LegacyBudgetMigrationComplete = true
+		for _, index := range eligible {
+			queue.Items[index].State = StateQueued
+			queue.Items[index].Reason = ""
+			queue.Items[index].ReservedRequests = 0
+		}
+		started = true
+		return nil
+	})
+	return queue, started, err
+}
+
 func globalBudgetExhausted(queue Queue) bool {
 	return queue.Counters.ProcessedResources >= queue.Profile.MaxResources ||
 		queue.Counters.Requests+queue.Counters.ReservedRequests >= queue.Profile.MaxRequests
+}
+
+func budgetDefersItem(queue Queue, item Item) bool {
+	if queue.Counters.Requests+queue.Counters.ReservedRequests >= queue.Profile.MaxRequests {
+		return true
+	}
+	return queue.Counters.ProcessedResources >= queue.Profile.MaxResources && item.Attempts == 0
 }
 
 func (store *Store) Requeue(resourceID string) error {

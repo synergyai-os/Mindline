@@ -110,6 +110,194 @@ func TestPipelineRejectsPolicyFingerprintMismatch(t *testing.T) {
 	}
 }
 
+func TestPipelineContinuationAdvancesOneBoundedGenerationAndClearsCanonicalDeferredMissingness(t *testing.T) {
+	root := t.TempDir()
+	repository, err := personalmemory.NewFileRepository(root+"/library", func() time.Time {
+		return time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := personalmemory.NewCaptureRecord(personalmemory.CaptureRecordInput{
+		SourceAdapter: "slack", SourceScopeID: "workspace", SourceContainerID: "self",
+		ExternalID: "message-many", OccurredAt: "2026-07-27T12:00:00Z",
+		SourceRef:       "slack://workspace/self/message-many",
+		RawText:         "https://example.com/one https://example.com/two https://example.com/three",
+		EditDeleteState: "original", Missingness: []string{"permalink_unavailable"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch, err := personalmemory.NewCaptureBatch(personalmemory.CaptureBatchInput{
+		SourceIdentity: "slack:workspace:self", LowerInclusive: "1", UpperInclusive: "1",
+		Watermark: "1", DeclaredRecords: 1, Records: []personalmemory.CaptureRecord{record},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.Import(batch); err != nil {
+		t.Fatal(err)
+	}
+	profile := resourcequeue.FixtureProfile()
+	profile.MaxResources = 1
+	profile = resourcequeue.SealProfile(profile)
+	port := &fakeFetchPort{}
+	pipeline, err := New(root+"/queue", repository, profile, port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pipeline.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	assertGenerationState(t, pipeline, repository, 0, 1, 2, profile)
+
+	// The derived queue is disposable: canonical run_budget_deferred is enough
+	// to reconstruct continuation eligibility without retrying true terminals.
+	if err := pipeline.Store.Delete(); err != nil {
+		t.Fatal(err)
+	}
+	if err := pipeline.RebuildCurrent(); err != nil {
+		t.Fatal(err)
+	}
+	rebuilt, err := pipeline.Store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if countQueueReason(rebuilt, resourcequeue.ReasonRunBudgetDeferred) != 2 {
+		t.Fatalf("rebuild lost deferred eligibility: %+v", rebuilt)
+	}
+	if err := pipeline.Continue(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	assertGenerationState(t, pipeline, repository, 1, 2, 1, profile)
+	if port.calls != 2 {
+		t.Fatalf("one continuation processed more than one bounded generation: calls=%d", port.calls)
+	}
+	if err := pipeline.Continue(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	assertGenerationState(t, pipeline, repository, 2, 3, 0, profile)
+	if port.calls != 3 {
+		t.Fatalf("final generation call count=%d", port.calls)
+	}
+	terminal, err := pipeline.Store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := terminal.Fingerprint
+	if err := pipeline.Continue(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	after, err := pipeline.Store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Generation != 2 || after.Fingerprint != before || port.calls != 3 {
+		t.Fatalf("continuation without deferred work was not idempotent: before=%s after=%+v calls=%d", before, after, port.calls)
+	}
+}
+
+func TestPipelineContinuationRecoversCrashedGenerationWithoutOpeningAnother(t *testing.T) {
+	root := t.TempDir()
+	repository, err := personalmemory.NewFileRepository(root+"/library", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := personalmemory.NewCaptureRecord(personalmemory.CaptureRecordInput{
+		SourceAdapter: "slack", SourceScopeID: "workspace", SourceContainerID: "self",
+		ExternalID: "message-crash", OccurredAt: "2026-07-27T12:00:00Z",
+		SourceRef:       "slack://workspace/self/message-crash",
+		RawText:         "https://example.com/first https://example.com/second",
+		EditDeleteState: "original", Missingness: []string{"permalink_unavailable"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch, err := personalmemory.NewCaptureBatch(personalmemory.CaptureBatchInput{
+		SourceIdentity: "slack:workspace:self", LowerInclusive: "1", UpperInclusive: "1",
+		Watermark: "1", DeclaredRecords: 1, Records: []personalmemory.CaptureRecord{record},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.Import(batch); err != nil {
+		t.Fatal(err)
+	}
+	profile := resourcequeue.FixtureProfile()
+	profile.MaxResources = 1
+	profile = resourcequeue.SealProfile(profile)
+	port := &fakeFetchPort{}
+	pipeline, err := New(root+"/queue", repository, profile, port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pipeline.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, started, err := pipeline.Store.StartNextGeneration(); err != nil || !started {
+		t.Fatalf("start crashed generation = %v %v", started, err)
+	}
+	if item, found, err := pipeline.Store.ClaimNext(); err != nil || !found || item.State != resourcequeue.StateProcessing {
+		t.Fatalf("crash lease = %+v %v %v", item, found, err)
+	}
+	if err := pipeline.Continue(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	status, err := pipeline.StructuralStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Generation != 1 || status.DeferredCount != 0 || status.Counters.ProcessedResources > profile.MaxResources || port.calls != 2 {
+		t.Fatalf("crash recovery opened an extra generation or crossed cap: %+v calls=%d", status, port.calls)
+	}
+}
+
+func assertGenerationState(t *testing.T, pipeline *Pipeline, repository *personalmemory.FileRepository, generation, complete, deferred int, profile resourcequeue.BudgetProfile) {
+	t.Helper()
+	status, err := pipeline.StructuralStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Generation != generation || status.DeferredCount != deferred ||
+		status.Counters.ProcessedResources > profile.MaxResources ||
+		status.Counters.Requests > profile.MaxRequests ||
+		status.Counters.DownloadedBytes > profile.MaxDownloadedBytes ||
+		status.Counters.DecodedBytes > profile.MaxDecodedBytes ||
+		status.Counters.ExtractedBytes > profile.MaxExtractedBytes ||
+		status.Counters.RuntimeStorageBytes > profile.MaxRuntimeStorageBytes ||
+		status.Counters.WallSeconds > profile.MaxRunWallSeconds {
+		t.Fatalf("generation escaped frozen profile: %+v", status)
+	}
+	library, err := repository.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotComplete, gotDeferred := 0, 0
+	for _, resource := range library.Resources {
+		if resource.State == "complete" {
+			gotComplete++
+		}
+		for _, missing := range resource.Missingness {
+			if missing == "resource_blocked:"+resourcequeue.ReasonRunBudgetDeferred {
+				gotDeferred++
+			}
+		}
+	}
+	if gotComplete != complete || gotDeferred != deferred {
+		t.Fatalf("canonical continuation state = complete:%d deferred:%d want complete:%d deferred:%d", gotComplete, gotDeferred, complete, deferred)
+	}
+}
+
+func countQueueReason(queue resourcequeue.Queue, reason string) int {
+	count := 0
+	for _, item := range queue.Items {
+		if item.State == resourcequeue.StateBlocked && item.Reason == reason {
+			count++
+		}
+	}
+	return count
+}
+
 type FetchPortFunc func(context.Context, string, resourcefetch.FrozenPolicy) resourcefetch.Result
 
 func (fn FetchPortFunc) Fetch(ctx context.Context, url string, policy resourcefetch.FrozenPolicy) resourcefetch.Result {

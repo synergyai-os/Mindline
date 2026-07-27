@@ -2,7 +2,10 @@ package resourcequeue
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +19,7 @@ func TestTerminalMappingIsCanonicalAndFixed(t *testing.T) {
 		{StateBlocked, "access_denied", "inaccessible"},
 		{StateBlocked, "manual_processing_required", "inaccessible"},
 		{StateBlocked, "unreachable", "failed"}, {StateBlocked, "budget_exhausted", "failed"},
+		{StateBlocked, ReasonRunBudgetDeferred, "failed"},
 	}
 	for _, test := range tests {
 		got, missingness, err := CanonicalState(test.state, test.reason)
@@ -25,6 +29,34 @@ func TestTerminalMappingIsCanonicalAndFixed(t *testing.T) {
 		if test.state == StateBlocked && (len(missingness) != 1 || missingness[0] != "resource_blocked:"+test.reason) {
 			t.Fatalf("blocked mapping missingness = %#v", missingness)
 		}
+	}
+}
+
+func TestQueueGenerationIsBackwardCompatibleAndNonnegative(t *testing.T) {
+	profile := FixtureProfile()
+	legacy := Empty(profile)
+	payload, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(payload), `"generation"`) || strings.Contains(string(payload), `"legacy_budget_migration_complete"`) {
+		t.Fatalf("zero-value continuation fields changed the legacy queue envelope: %s", payload)
+	}
+	store, err := NewStore(t.TempDir()+"/queue", profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(store.path, payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := store.Load()
+	if err != nil || loaded.Generation != 0 {
+		t.Fatalf("legacy queue did not load as generation zero: %+v err=%v", loaded, err)
+	}
+	loaded.Generation = -1
+	loaded = Seal(loaded)
+	if Validate(loaded) == nil {
+		t.Fatal("negative queue generation was accepted")
 	}
 }
 
@@ -50,7 +82,7 @@ func TestStoreRestartAndCapacityTerminalAreDeterministic(t *testing.T) {
 		}
 	}
 	item, found, err := store.ClaimNext()
-	if err != nil || !found || item.ResourceID != "resource-d" || item.State != StateBlocked || item.Reason != "budget_exhausted" {
+	if err != nil || !found || item.ResourceID != "resource-d" || item.State != StateBlocked || item.Reason != ReasonRunBudgetDeferred {
 		t.Fatalf("capacity terminal = %#v, %v, %v", item, found, err)
 	}
 	before, err := store.Load()
@@ -156,7 +188,7 @@ func TestRetriesDoNotConsumeUniqueResourceCapacityAndSettleExactRequests(t *test
 		t.Fatal(err)
 	}
 	blocked, found, err := store.ClaimNext()
-	if err != nil || !found || blocked.State != StateBlocked || blocked.Reason != "budget_exhausted" {
+	if err != nil || !found || blocked.State != StateBlocked || blocked.Reason != ReasonRunBudgetDeferred {
 		t.Fatalf("request-cap terminal = %#v %v %v", blocked, found, err)
 	}
 	queue, err := store.Load()
@@ -204,7 +236,7 @@ func TestNamedFixtureProfilesExhaustOnlyTheirFrozenBudget(t *testing.T) {
 					t.Fatal(err)
 				}
 				second, found, err := store.ClaimNext()
-				if err != nil || !found || second.State != StateBlocked || second.Reason != "budget_exhausted" {
+				if err != nil || !found || second.State != StateBlocked || second.Reason != ReasonRunBudgetDeferred {
 					t.Fatalf("resource cap=%#v %v %v", second, found, err)
 				}
 			case "fixture-request-count":
@@ -215,7 +247,7 @@ func TestNamedFixtureProfilesExhaustOnlyTheirFrozenBudget(t *testing.T) {
 					t.Fatal(err)
 				}
 				second, found, err := store.ClaimNext()
-				if err != nil || !found || second.State != StateBlocked || second.Reason != "budget_exhausted" {
+				if err != nil || !found || second.State != StateBlocked || second.Reason != ReasonRunBudgetDeferred {
 					t.Fatalf("request cap=%#v %v %v", second, found, err)
 				}
 			case "fixture-attempt-count":
@@ -431,9 +463,86 @@ func TestGlobalBudgetRemainderSettlesInOneCanonicalBatch(t *testing.T) {
 		t.Fatalf("budget remainder was not one canonical batch: %#v", repository.batchSizes)
 	}
 	if queue.Items[0].State != StatePartial ||
-		queue.Items[1].State != StateBlocked || queue.Items[1].Reason != "budget_exhausted" ||
-		queue.Items[2].State != StateBlocked || queue.Items[2].Reason != "budget_exhausted" {
+		queue.Items[1].State != StateBlocked || queue.Items[1].Reason != ReasonRunBudgetDeferred ||
+		queue.Items[2].State != StateBlocked || queue.Items[2].Reason != ReasonRunBudgetDeferred {
 		t.Fatalf("budget remainder did not settle terminally: %+v", queue)
+	}
+}
+
+func TestStartNextGenerationMigratesOnlyNeverAttemptedLegacyRemainder(t *testing.T) {
+	profile := FixtureProfile()
+	store, err := NewStore(t.TempDir()+"/queue", profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Enqueue([]string{"legacy-remainder", "attempted-budget", "deferred", "other-terminal"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.update(func(queue *Queue) error {
+		queue.Counters = Counters{
+			ProcessedResources: 3, Requests: 4, Attempts: 5,
+			DownloadedBytes: 6, DecodedBytes: 7, ExtractedBytes: 8,
+			RuntimeStorageBytes: 9, WallSeconds: 10,
+		}
+		for index := range queue.Items {
+			item := &queue.Items[index]
+			item.State = StateBlocked
+			switch item.ResourceID {
+			case "legacy-remainder":
+				item.Reason = ReasonBudgetExhausted
+			case "attempted-budget":
+				item.Reason, item.Attempts = ReasonBudgetExhausted, 1
+			case "deferred":
+				item.Reason = ReasonRunBudgetDeferred
+			case "other-terminal":
+				item.Reason = "unreachable"
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	queue, started, err := store.StartNextGeneration()
+	if err != nil || !started {
+		t.Fatalf("start generation = started:%v err:%v", started, err)
+	}
+	if queue.Generation != 1 || queue.Counters != (Counters{}) || !queue.LegacyBudgetMigrationComplete {
+		t.Fatalf("generation did not reset exactly: %+v", queue)
+	}
+	states := map[string]string{}
+	for _, item := range queue.Items {
+		states[item.ResourceID] = item.State + ":" + item.Reason
+	}
+	if states["legacy-remainder"] != StateQueued+":" || states["deferred"] != StateQueued+":" ||
+		states["attempted-budget"] != StateBlocked+":"+ReasonBudgetExhausted ||
+		states["other-terminal"] != StateBlocked+":unreachable" {
+		t.Fatalf("legacy migration selected the wrong items: %#v", states)
+	}
+	replayed, started, err := store.StartNextGeneration()
+	if err != nil || started || replayed.Generation != 1 || replayed.Fingerprint != queue.Fingerprint {
+		t.Fatalf("queued generation replay was not a no-op: started:%v queue:%+v err:%v", started, replayed, err)
+	}
+}
+
+func TestStartNextGenerationIsNoOpWithoutDeferredWork(t *testing.T) {
+	store, err := NewStore(t.TempDir()+"/queue", FixtureProfile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Enqueue([]string{"attempted-budget", "terminal"}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := store.update(func(queue *Queue) error {
+		queue.Items[0].State, queue.Items[0].Reason, queue.Items[0].Attempts = StateBlocked, ReasonBudgetExhausted, 1
+		queue.Items[1].State, queue.Items[1].Reason = StateBlocked, "unreachable"
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, started, err := store.StartNextGeneration()
+	if err != nil || started || after.Generation != 0 || after.Fingerprint != before.Fingerprint {
+		t.Fatalf("terminal no-op changed queue: started:%v before:%+v after:%+v err:%v", started, before, after, err)
 	}
 }
 

@@ -21,6 +21,9 @@ const (
 	StateComplete   = "complete"
 	StatePartial    = "partial"
 	StateBlocked    = "blocked"
+
+	ReasonBudgetExhausted   = "budget_exhausted"
+	ReasonRunBudgetDeferred = "run_budget_deferred"
 )
 
 var fixedBlockedReasons = map[string]bool{
@@ -31,7 +34,8 @@ var fixedBlockedReasons = map[string]bool{
 	"unreachable":                true,
 	"rate_limited":               true,
 	"unsafe_network_target":      true,
-	"budget_exhausted":           true,
+	ReasonBudgetExhausted:        true,
+	ReasonRunBudgetDeferred:      true,
 	"extractor_unsupported":      true,
 	"manual_processing_required": true,
 }
@@ -182,9 +186,16 @@ type RebuildItem struct {
 type Queue struct {
 	SchemaVersion string        `json:"schema_version"`
 	Profile       BudgetProfile `json:"profile"`
-	Counters      Counters      `json:"counters"`
-	Items         []Item        `json:"items"`
-	Fingerprint   string        `json:"fingerprint"`
+	// Generation is zero for the original bounded run. Omitempty preserves the
+	// fingerprint of queues written before generational continuation existed.
+	Generation int `json:"generation,omitempty"`
+	// Rebuilds cannot safely distinguish a historical global remainder from a
+	// per-resource budget failure. This derived marker prevents an ambiguous
+	// rebuilt budget_exhausted item from entering the one-time legacy migration.
+	LegacyBudgetMigrationComplete bool     `json:"legacy_budget_migration_complete,omitempty"`
+	Counters                      Counters `json:"counters"`
+	Items                         []Item   `json:"items"`
+	Fingerprint                   string   `json:"fingerprint"`
 }
 
 // Usage is reported by a fetch adapter as structural counters only. The queue
@@ -218,7 +229,7 @@ func Seal(queue Queue) Queue {
 }
 
 func Validate(queue Queue) error {
-	if queue.SchemaVersion != SchemaVersion || ValidateProfile(queue.Profile) != nil ||
+	if queue.SchemaVersion != SchemaVersion || ValidateProfile(queue.Profile) != nil || queue.Generation < 0 ||
 		queue.Counters.ProcessedResources < 0 || queue.Counters.Requests < 0 || queue.Counters.Attempts < 0 || queue.Counters.ReservedRequests < 0 ||
 		queue.Counters.DownloadedBytes < 0 || queue.Counters.DecodedBytes < 0 || queue.Counters.ExtractedBytes < 0 ||
 		queue.Counters.RuntimeStorageBytes < 0 || queue.Counters.WallSeconds < 0 {

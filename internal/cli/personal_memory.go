@@ -27,6 +27,8 @@ func (r Runner) runPersonalMemory(args []string, stdout, stderr io.Writer) int {
 	switch args[0] {
 	case "resources-run":
 		return r.runResourceCommand(args[1:], stdout, stderr, "run")
+	case "resources-continue":
+		return r.runResourceCommand(args[1:], stdout, stderr, "continue")
 	case "resources-status":
 		return r.runResourceCommand(args[1:], stdout, stderr, "status")
 	case "resources-proof":

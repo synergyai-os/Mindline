@@ -151,6 +151,9 @@ func (pipeline *Pipeline) Recover(ctx context.Context) error {
 }
 
 func (pipeline *Pipeline) Run(ctx context.Context) error {
+	if pipeline == nil || pipeline.Store == nil || pipeline.Repository == nil {
+		return errors.New("resource pipeline is incomplete")
+	}
 	queue, err := pipeline.Store.Load()
 	if err != nil {
 		return err
@@ -164,6 +167,35 @@ func (pipeline *Pipeline) Run(ctx context.Context) error {
 		return err
 	}
 	return pipeline.runner().Drain(ctx)
+}
+
+// Continue resumes an interrupted generation or starts exactly one next
+// generation after the prior queue is terminal. Each generation uses the same
+// sealed profile and is drained only to its own bounded terminal state.
+func (pipeline *Pipeline) Continue(ctx context.Context) error {
+	if pipeline == nil || pipeline.Store == nil || pipeline.Repository == nil {
+		return errors.New("resource pipeline is incomplete")
+	}
+	queue, err := pipeline.Store.Load()
+	if err != nil {
+		return err
+	}
+	if len(queue.Items) == 0 {
+		err = pipeline.RebuildCurrent()
+	} else {
+		err = pipeline.EnqueueCurrent()
+	}
+	if err != nil {
+		return err
+	}
+	runner := pipeline.runner()
+	if err := runner.Recover(); err != nil {
+		return err
+	}
+	if _, _, err := pipeline.Store.StartNextGeneration(); err != nil {
+		return err
+	}
+	return runner.Drain(ctx)
 }
 
 func (pipeline *Pipeline) runner() resourcequeue.Runner {
@@ -239,6 +271,8 @@ type Status struct {
 	SchemaVersion     string                 `json:"schema_version"`
 	BudgetFingerprint string                 `json:"budget_fingerprint"`
 	QueueFingerprint  string                 `json:"queue_fingerprint"`
+	Generation        int                    `json:"generation"`
+	DeferredCount     int                    `json:"deferred_count"`
 	Counters          resourcequeue.Counters `json:"counters"`
 	TerminalCounts    map[string]int         `json:"terminal_counts"`
 	ReasonCounts      map[string]int         `json:"reason_counts"`
@@ -254,13 +288,16 @@ func (pipeline *Pipeline) StructuralStatus() (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	status := Status{SchemaVersion: "mindline-resource-pipeline-status/v0.1", BudgetFingerprint: queue.Profile.Fingerprint, QueueFingerprint: queue.Fingerprint, Counters: queue.Counters, TerminalCounts: map[string]int{}, ReasonCounts: map[string]int{}}
+	status := Status{SchemaVersion: "mindline-resource-pipeline-status/v0.2", BudgetFingerprint: queue.Profile.Fingerprint, QueueFingerprint: queue.Fingerprint, Generation: queue.Generation, Counters: queue.Counters, TerminalCounts: map[string]int{}, ReasonCounts: map[string]int{}}
 	for _, item := range queue.Items {
 		if item.State == resourcequeue.StateComplete || item.State == resourcequeue.StatePartial || item.State == resourcequeue.StateBlocked {
 			status.TerminalCounts[item.State]++
 		}
 		if item.Reason != "" {
 			status.ReasonCounts[item.Reason]++
+		}
+		if item.State == resourcequeue.StateBlocked && item.Reason == resourcequeue.ReasonRunBudgetDeferred {
+			status.DeferredCount++
 		}
 	}
 	return status, nil

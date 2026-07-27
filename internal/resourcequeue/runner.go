@@ -106,7 +106,7 @@ func (runner Runner) settleBudgetRemainder() (bool, error) {
 			CanonicalURL: canonicalURL,
 			State:        "failed",
 			AccessClass:  "public",
-			Missingness:  []string{"resource_blocked:budget_exhausted"},
+			Missingness:  []string{"resource_blocked:" + ReasonRunBudgetDeferred},
 		})
 	}
 	if _, err := runner.Repository.MergeEnrichment(personalmemory.EnrichmentBatch{
@@ -144,7 +144,7 @@ func (runner Runner) ProcessNext(ctx context.Context) (bool, error) {
 	if exhausted, err := runner.Store.Consume(item.ResourceID, result.Usage); err != nil {
 		return true, err
 	} else if exhausted {
-		item.State, item.Reason = StateBlocked, "budget_exhausted"
+		item.State, item.Reason = StateBlocked, ReasonBudgetExhausted
 		return true, runner.mergeAndFinish(target, item, FetchResult{})
 	}
 	if retryEligible(result) && item.Attempts < runner.profileAttempts() {
@@ -169,7 +169,7 @@ func (runner Runner) ProcessNext(ctx context.Context) (bool, error) {
 		return true, runner.mergeAndFinish(target, item, FetchResult{})
 	}
 	if result.State != StateComplete && result.State != StatePartial {
-		item.State, item.Reason = StateBlocked, "budget_exhausted"
+		item.State, item.Reason = StateBlocked, ReasonBudgetExhausted
 		return true, runner.mergeAndFinish(target, item, FetchResult{})
 	}
 	if result.State == StateComplete && result.Content == nil {
@@ -261,7 +261,7 @@ func approvedBlockedReason(reason string) string {
 	}
 	// Unknown adapter outcomes and per-response oversize are never persisted as
 	// novel reasons. Both consume the bounded fetch envelope.
-	return "budget_exhausted"
+	return ReasonBudgetExhausted
 }
 
 func blockedHasPayload(result FetchResult) bool {
