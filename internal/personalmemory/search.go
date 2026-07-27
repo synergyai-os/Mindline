@@ -23,11 +23,22 @@ const (
 	DefaultSearchLimit           = 10
 	MaximumSearchLimit           = 100
 
-	CompactAbstentionPolicySchemaVersion = "mindline-compact-abstention-policy/v0.5"
-	DefaultCompactMinimumSemanticCosine  = 0.65
-	DefaultCompactMinimumSemanticMargin  = 0.05
-	compactLexicalEvidenceRule           = "phrase_or_rare_term_coverage"
-	compactStopwordPolicy                = "mindline-english-stopwords/v0.2"
+	CompactAbstentionPolicySchemaVersion      = "mindline-compact-abstention-policy/v0.6"
+	DefaultCompactMinimumSemanticCosine       = 0.65
+	DefaultCompactMinimumSemanticMargin       = 0.05
+	DefaultCompactMinimumSemanticOnlyCosine   = 0.70
+	DefaultCompactMinimumSemanticOnlyMargin   = 0.08
+	DefaultCompactMinimumSemanticLexicalCover = 0.50
+	DefaultCompactMinimumLexicalIDFCoverage   = 0.80
+	DefaultCompactMaximumLexicalDocumentRatio = 0.01
+	DefaultCompactMinimumLexicalWinnerMargin  = 0.15
+	DefaultCompactMinimumLexicalMatchedTerms  = 3
+	DefaultCompactMinimumOrderedPhraseTerms   = 3
+	CompactSemanticCalibrationIdentity        = "ollama/embeddinggemma:latest/retrieval-input-v0.2|query-prompt=search-result-v0.1|document-prompt=title-none-v0.1|chunk-runes=2000|chunk-overlap=200|max-chunks=8"
+	compactLexicalEvidenceRule                = "rank1_ordered_phrase_or_rare_idf_coverage"
+	compactStopwordPolicy                     = "mindline-english-stopwords/v0.2"
+	compactRankingIdentity                    = "bm25-original-query|authorization-meaningful-query|candidate-pool=100|rrf-k=60|lexical-weight=2|semantic-weight=1|lens-rerank-only"
+	compactChunkingIdentity                   = "chunk-runes=2000|chunk-overlap=200|max-chunks=8"
 )
 
 // RetrieverPort is the agent-facing canonical Mindline contract.
@@ -46,6 +57,13 @@ type RetrievalBackendPort interface {
 
 type RetrievalDiagnosticsPort interface {
 	RetrievalDiagnostics() (state, degradedReason string)
+}
+
+// CompactSemanticCalibrationPort identifies a backend whose semantic scores
+// are calibrated for compact answer authorization. Unknown providers may rank,
+// but their scores cannot grant permission to answer.
+type CompactSemanticCalibrationPort interface {
+	CompactSemanticCalibrationID() string
 }
 
 type IndexDocument struct {
@@ -132,6 +150,13 @@ func (retriever ContextRetriever) SearchCompact(request SearchRequest) (CompactC
 		return CompactContextPacket{}, errors.New("personal evidence retrieval backend has no method identity")
 	}
 	policy := DefaultCompactAbstentionPolicy()
+	callerLimit := request.Limit
+	if callerLimit <= 0 {
+		callerLimit = DefaultSearchLimit
+	}
+	if callerLimit > MaximumSearchLimit {
+		return CompactContextPacket{}, errors.New("search limit exceeds 100")
+	}
 	queryTerms := meaningfulQueryTerms(request.Query)
 	if len(queryTerms) == 0 {
 		packet := assembleCompactContextPacket(request, library, nil, nil, method, policy)
@@ -141,6 +166,7 @@ func (retriever ContextRetriever) SearchCompact(request SearchRequest) (CompactC
 	}
 	rankingRequest := request
 	rankingRequest.LexicalQuery = strings.Join(queryTerms, " ")
+	rankingRequest.Limit = MaximumSearchLimit
 	indexDocuments := make([]IndexDocument, 0, len(documents))
 	byID := make(map[string]evidenceDocument, len(documents))
 	for _, document := range documents {
@@ -154,7 +180,14 @@ func (retriever ContextRetriever) SearchCompact(request SearchRequest) (CompactC
 	if err != nil {
 		return CompactContextPacket{}, err
 	}
-	hits = usableCompactHits(hits, policy, queryTerms)
+	calibrationID := ""
+	if calibrated, ok := retriever.backend.(CompactSemanticCalibrationPort); ok {
+		calibrationID = strings.TrimSpace(calibrated.CompactSemanticCalibrationID())
+	}
+	hits = usableCompactHits(hits, policy, calibrationID)
+	if len(hits) > callerLimit {
+		hits = hits[:callerLimit]
+	}
 	packet := assembleCompactContextPacket(request, library, hits, byID, method, policy)
 	if diagnostics, ok := retriever.backend.(RetrievalDiagnosticsPort); ok {
 		packet.RetrievalState, packet.DegradedReason = diagnostics.RetrievalDiagnostics()
@@ -436,13 +469,13 @@ func findRevision(revisions []CaptureRevision, revisionID string) (CaptureRevisi
 }
 
 func (LexicalBM25Backend) Rank(request SearchRequest, documents []IndexDocument) ([]RankedHit, error) {
-	query := request.Query
+	rankingTerms := uniqueSorted(tokenize(request.Query))
+	authorizationTerms := meaningfulQueryTerms(request.Query)
 	if strings.TrimSpace(request.LexicalQuery) != "" {
-		query = request.LexicalQuery
+		authorizationTerms = uniqueSorted(tokenize(request.LexicalQuery))
 	}
-	queryTerms := uniqueSorted(tokenize(query))
-	orderedQueryTerms := meaningfulQueryTermsInOrder(request.Query)
-	if len(queryTerms) == 0 {
+	orderedAuthorizationTerms := uniqueInOrder(meaningfulQueryTermsInOrder(request.Query))
+	if len(rankingTerms) == 0 {
 		return nil, errors.New("search query is empty")
 	}
 	limit := request.Limit
@@ -459,13 +492,16 @@ func (LexicalBM25Backend) Rank(request SearchRequest, documents []IndexDocument)
 	}
 	preparedDocuments := make([]prepared, 0, len(documents))
 	documentFrequency := map[string]int{}
+	frequencyTerms := uniqueSorted(append(
+		append([]string(nil), rankingTerms...), authorizationTerms...,
+	))
 	totalLength := 0
 	for _, document := range documents {
 		terms := tokenize(document.Text)
 		counts := termCounts(terms)
 		preparedDocuments = append(preparedDocuments, prepared{document: document, terms: terms, counts: counts})
 		totalLength += len(terms)
-		for _, term := range queryTerms {
+		for _, term := range frequencyTerms {
 			if counts[term] > 0 {
 				documentFrequency[term]++
 			}
@@ -478,17 +514,12 @@ func (LexicalBM25Backend) Rank(request SearchRequest, documents []IndexDocument)
 	hits := []RankedHit{}
 	for _, document := range preparedDocuments {
 		score := 0.0
-		matched := []string{}
+		matchedAuthorizationTerms := []string{}
 		rarestDocumentRatio := 1.0
-		for _, term := range queryTerms {
+		for _, term := range rankingTerms {
 			tf := document.counts[term]
 			if tf == 0 {
 				continue
-			}
-			matched = append(matched, term)
-			ratio := float64(documentFrequency[term]) / float64(len(preparedDocuments))
-			if ratio < rarestDocumentRatio {
-				rarestDocumentRatio = ratio
 			}
 			idf := math.Log(1 + (float64(len(preparedDocuments)-documentFrequency[term])+0.5)/(float64(documentFrequency[term])+0.5))
 			numerator := float64(tf) * 2.2
@@ -498,31 +529,39 @@ func (LexicalBM25Backend) Rank(request SearchRequest, documents []IndexDocument)
 		if score == 0 {
 			continue
 		}
-		exactPhrase := len(orderedQueryTerms) >= 2 &&
-			containsTermSequence(document.terms, orderedQueryTerms)
-		adjacentPhrase := containsAnyAdjacentPair(document.terms, orderedQueryTerms)
-		if exactPhrase {
-			score += 2
+		totalAuthorizationIDF := 0.0
+		matchedAuthorizationIDF := 0.0
+		for _, term := range authorizationTerms {
+			df := documentFrequency[term]
+			idf := math.Log(1 + (float64(len(preparedDocuments)-df)+0.5)/(float64(df)+0.5))
+			totalAuthorizationIDF += idf
+			if document.counts[term] == 0 {
+				continue
+			}
+			matchedAuthorizationTerms = append(matchedAuthorizationTerms, term)
+			matchedAuthorizationIDF += idf
+			ratio := float64(df) / float64(len(preparedDocuments))
+			if ratio < rarestDocumentRatio {
+				rarestDocumentRatio = ratio
+			}
 		}
-		coverage := float64(len(matched)) / float64(len(queryTerms))
-		strongLexical := exactPhrase ||
-			(len(matched) >= 2 && adjacentPhrase) ||
-			(len(matched) >= 2 && coverage >= 0.5 && rarestDocumentRatio <= 0.05) ||
-			(len(queryTerms) == 1 && rarestDocumentRatio <= 0.01)
-		lexicalEvidence := 0.0
-		if strongLexical {
-			lexicalEvidence = 1
+		idfCoverage := 0.0
+		if totalAuthorizationIDF > 0 {
+			idfCoverage = matchedAuthorizationIDF / totalAuthorizationIDF
 		}
+		exactPhrase := len(orderedAuthorizationTerms) >= 2 &&
+			containsTermSequence(document.terms, orderedAuthorizationTerms)
 		hits = append(hits, RankedHit{
 			DocumentID: document.document.DocumentID, Score: score,
-			MatchedTerms: uniqueSorted(matched),
+			MatchedTerms: uniqueSorted(matchedAuthorizationTerms),
 			Components: map[string]float64{
-				"lexical_raw": score, "lexical_query_terms": float64(len(queryTerms)),
-				"lexical_matched_terms": float64(len(matched)),
-				"lexical_coverage":      coverage, "lexical_rarest_document_ratio": rarestDocumentRatio,
-				"lexical_exact_phrase":    boolScore(exactPhrase),
-				"lexical_adjacent_phrase": boolScore(adjacentPhrase),
-				"lexical_evidence":        lexicalEvidence,
+				"lexical_raw":                    score,
+				"lexical_query_terms":            float64(len(authorizationTerms)),
+				"lexical_matched_terms":          float64(len(matchedAuthorizationTerms)),
+				"lexical_idf_coverage":           idfCoverage,
+				"lexical_rarest_document_ratio":  rarestDocumentRatio,
+				"lexical_exact_ordered_phrase":   boolScore(exactPhrase),
+				"lexical_winner_relative_margin": 0,
 			},
 		})
 	}
@@ -532,6 +571,17 @@ func (LexicalBM25Backend) Rank(request SearchRequest, documents []IndexDocument)
 		}
 		return hits[i].Score > hits[j].Score
 	})
+	winnerMargin := 1.0
+	if len(hits) > 1 && hits[0].Score > 0 {
+		winnerMargin = (hits[0].Score - hits[1].Score) / hits[0].Score
+		if winnerMargin < 0 {
+			winnerMargin = 0
+		}
+	}
+	for index := range hits {
+		hits[index].Components["lexical_rank"] = float64(index + 1)
+		hits[index].Components["lexical_winner_relative_margin"] = winnerMargin
+	}
 	if len(hits) > limit {
 		hits = hits[:limit]
 	}
@@ -687,8 +737,8 @@ func boundedCompactSnippet(value string, maximum int) string {
 	return strings.TrimSpace(string(runes[:maximum-1])) + "…"
 }
 
-// DefaultCompactAbstentionPolicy is frozen for compact v0.3 before held-out
-// evaluation. A changed threshold or rule requires a new policy version.
+// DefaultCompactAbstentionPolicy binds every ranking and authorization
+// assumption used by compact retrieval. Any change requires a new version.
 func DefaultCompactAbstentionPolicy() CompactAbstentionPolicy {
 	identity := strings.Join([]string{
 		CompactAbstentionPolicySchemaVersion,
@@ -698,86 +748,131 @@ func DefaultCompactAbstentionPolicy() CompactAbstentionPolicy {
 		"minimum_semantic_margin=" + strconv.FormatFloat(
 			DefaultCompactMinimumSemanticMargin, 'f', 6, 64,
 		),
+		"minimum_semantic_only_cosine=" + strconv.FormatFloat(
+			DefaultCompactMinimumSemanticOnlyCosine, 'f', 6, 64,
+		),
+		"minimum_semantic_only_margin=" + strconv.FormatFloat(
+			DefaultCompactMinimumSemanticOnlyMargin, 'f', 6, 64,
+		),
+		"minimum_semantic_lexical_coverage=" + strconv.FormatFloat(
+			DefaultCompactMinimumSemanticLexicalCover, 'f', 6, 64,
+		),
+		"minimum_lexical_idf_coverage=" + strconv.FormatFloat(
+			DefaultCompactMinimumLexicalIDFCoverage, 'f', 6, 64,
+		),
+		"maximum_lexical_document_ratio=" + strconv.FormatFloat(
+			DefaultCompactMaximumLexicalDocumentRatio, 'f', 6, 64,
+		),
+		"minimum_lexical_winner_margin=" + strconv.FormatFloat(
+			DefaultCompactMinimumLexicalWinnerMargin, 'f', 6, 64,
+		),
+		"minimum_lexical_matched_terms=" + strconv.Itoa(
+			DefaultCompactMinimumLexicalMatchedTerms,
+		),
+		"minimum_ordered_phrase_terms=" + strconv.Itoa(
+			DefaultCompactMinimumOrderedPhraseTerms,
+		),
 		"lexical_evidence_rule=" + compactLexicalEvidenceRule,
 		"stopword_policy=" + compactStopwordPolicy,
+		"semantic_calibration_identity=" + CompactSemanticCalibrationIdentity,
+		"ranking_identity=" + compactRankingIdentity,
+		"chunking_identity=" + compactChunkingIdentity,
 	}, "\n")
 	sum := sha256.Sum256([]byte(identity))
 	return CompactAbstentionPolicy{
-		SchemaVersion:         CompactAbstentionPolicySchemaVersion,
-		MinimumSemanticCosine: DefaultCompactMinimumSemanticCosine,
-		MinimumSemanticMargin: DefaultCompactMinimumSemanticMargin,
-		LexicalEvidenceRule:   compactLexicalEvidenceRule,
-		StopwordPolicy:        compactStopwordPolicy,
-		Fingerprint:           hex.EncodeToString(sum[:]),
+		SchemaVersion:                  CompactAbstentionPolicySchemaVersion,
+		MinimumSemanticCosine:          DefaultCompactMinimumSemanticCosine,
+		MinimumSemanticMargin:          DefaultCompactMinimumSemanticMargin,
+		MinimumSemanticOnlyCosine:      DefaultCompactMinimumSemanticOnlyCosine,
+		MinimumSemanticOnlyMargin:      DefaultCompactMinimumSemanticOnlyMargin,
+		MinimumSemanticLexicalCoverage: DefaultCompactMinimumSemanticLexicalCover,
+		MinimumLexicalIDFCoverage:      DefaultCompactMinimumLexicalIDFCoverage,
+		MaximumLexicalDocumentRatio:    DefaultCompactMaximumLexicalDocumentRatio,
+		MinimumLexicalWinnerMargin:     DefaultCompactMinimumLexicalWinnerMargin,
+		MinimumLexicalMatchedTerms:     DefaultCompactMinimumLexicalMatchedTerms,
+		MinimumOrderedPhraseTerms:      DefaultCompactMinimumOrderedPhraseTerms,
+		LexicalEvidenceRule:            compactLexicalEvidenceRule,
+		StopwordPolicy:                 compactStopwordPolicy,
+		SemanticCalibrationIdentity:    CompactSemanticCalibrationIdentity,
+		RankingIdentity:                compactRankingIdentity,
+		ChunkingIdentity:               compactChunkingIdentity,
+		Fingerprint:                    hex.EncodeToString(sum[:]),
 	}
 }
 
 func usableCompactHits(
 	hits []RankedHit,
 	policy CompactAbstentionPolicy,
-	queryTerms []string,
+	calibrationID string,
 ) []RankedHit {
-	filtered := make([]RankedHit, 0, len(hits))
+	valid := make([]RankedHit, 0, len(hits))
 	seen := map[string]bool{}
-	semanticWinner := -1
-	semanticWinnerScore := math.Inf(-1)
-	semanticRunnerUpScore := math.Inf(-1)
-	for index, hit := range hits {
-		score, exists := finiteComponent(hit, "semantic_cosine")
-		if !exists {
-			continue
-		}
-		if score > semanticWinnerScore {
-			semanticRunnerUpScore = semanticWinnerScore
-			semanticWinnerScore = score
-			semanticWinner = index
-		} else if score > semanticRunnerUpScore {
-			semanticRunnerUpScore = score
-		}
-	}
-	semanticWinnerStrong := semanticWinner >= 0 &&
-		semanticWinnerScore >= policy.MinimumSemanticCosine &&
-		(math.IsInf(semanticRunnerUpScore, -1) ||
-			semanticWinnerScore-semanticRunnerUpScore >= policy.MinimumSemanticMargin)
-	for index, hit := range hits {
+	for _, hit := range hits {
 		if strings.TrimSpace(hit.DocumentID) == "" || seen[hit.DocumentID] ||
-			math.IsNaN(hit.Score) || math.IsInf(hit.Score, 0) || hit.Score <= 0 ||
-			!hasCompactRetrievalEvidence(
-				hit, queryTerms,
-				semanticWinnerStrong && index == semanticWinner,
-			) {
+			math.IsNaN(hit.Score) || math.IsInf(hit.Score, 0) || hit.Score <= 0 {
 			continue
 		}
 		seen[hit.DocumentID] = true
-		filtered = append(filtered, hit)
+		valid = append(valid, hit)
 	}
-	return filtered
+	if !compactQueryAuthorized(valid, policy, calibrationID) {
+		return nil
+	}
+	return valid
 }
 
-func hasCompactRetrievalEvidence(
-	hit RankedHit,
-	queryTerms []string,
-	strongSemanticWinner bool,
+func compactQueryAuthorized(
+	hits []RankedHit,
+	policy CompactAbstentionPolicy,
+	calibrationID string,
 ) bool {
-	querySet := make(map[string]bool, len(queryTerms))
-	for _, term := range queryTerms {
-		querySet[term] = true
-	}
-	matched := map[string]bool{}
-	for _, term := range hit.MatchedTerms {
-		term = strings.ToLower(strings.TrimSpace(term))
-		if querySet[term] {
-			matched[term] = true
+	for _, hit := range hits {
+		rank, rankOK := finiteComponent(hit, "lexical_rank")
+		if !rankOK || rank != 1 {
+			continue
 		}
-	}
-	if len(matched) > 0 {
-		if evidence, exists := finiteComponent(hit, "lexical_evidence"); exists &&
-			evidence >= 1 {
+		queryTerms, queryOK := finiteComponent(hit, "lexical_query_terms")
+		matchedTerms, matchedOK := finiteComponent(hit, "lexical_matched_terms")
+		idfCoverage, coverageOK := finiteComponent(hit, "lexical_idf_coverage")
+		rarestRatio, rarityOK := finiteComponent(hit, "lexical_rarest_document_ratio")
+		winnerMargin, marginOK := finiteComponent(hit, "lexical_winner_relative_margin")
+		exactPhrase, phraseOK := finiteComponent(hit, "lexical_exact_ordered_phrase")
+		if !queryOK || !matchedOK || !coverageOK || !rarityOK || !marginOK ||
+			!phraseOK || queryTerms < 2 {
+			break
+		}
+		if exactPhrase >= 1 &&
+			(queryTerms >= float64(policy.MinimumOrderedPhraseTerms) ||
+				(queryTerms >= 2 && rarestRatio <= policy.MaximumLexicalDocumentRatio)) {
 			return true
 		}
+		if matchedTerms >= float64(policy.MinimumLexicalMatchedTerms) &&
+			idfCoverage >= policy.MinimumLexicalIDFCoverage &&
+			rarestRatio <= policy.MaximumLexicalDocumentRatio &&
+			winnerMargin >= policy.MinimumLexicalWinnerMargin {
+			return true
+		}
+		break
 	}
-	if strongSemanticWinner {
-		return true
+	if calibrationID != policy.SemanticCalibrationIdentity {
+		return false
+	}
+	for _, hit := range hits {
+		semanticRank, rankOK := finiteComponent(hit, "semantic_rank")
+		cosine, cosineOK := finiteComponent(hit, "semantic_cosine")
+		margin, marginOK := finiteComponent(hit, "semantic_margin")
+		if !rankOK || !cosineOK || !marginOK || semanticRank != 1 {
+			continue
+		}
+		if cosine >= policy.MinimumSemanticOnlyCosine &&
+			margin >= policy.MinimumSemanticOnlyMargin {
+			return true
+		}
+		lexicalCoverage, lexicalOK := finiteComponent(hit, "lexical_idf_coverage")
+		return lexicalOK &&
+			cosine >= policy.MinimumSemanticCosine &&
+			margin >= policy.MinimumSemanticMargin &&
+			lexicalCoverage >= policy.MinimumSemanticLexicalCoverage
 	}
 	return false
 }
@@ -815,6 +910,19 @@ func meaningfulQueryTermsInOrder(query string) []string {
 		filtered = append(filtered, term)
 	}
 	return filtered
+}
+
+func uniqueInOrder(values []string) []string {
+	seen := make(map[string]bool, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if seen[value] {
+			continue
+		}
+		seen[value] = true
+		result = append(result, value)
+	}
+	return result
 }
 
 func containsTermSequence(documentTerms, queryTerms []string) bool {

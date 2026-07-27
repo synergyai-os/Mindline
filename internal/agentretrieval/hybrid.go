@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -40,7 +41,7 @@ func NewHybridBackend(ctx context.Context, state *agentstate.Store, embedder emb
 	}
 	return &HybridBackend{
 		context: ctx, state: state, embedder: embedder,
-		method: "mindline_hybrid_local/v0.5", retrievalState: "hybrid",
+		method: "mindline_hybrid_local/v0.6", retrievalState: "hybrid",
 	}
 }
 
@@ -54,6 +55,14 @@ func (backend *HybridBackend) RetrievalDiagnostics() (string, string) {
 	backend.mu.Lock()
 	defer backend.mu.Unlock()
 	return backend.retrievalState, backend.degradedReason
+}
+
+func (backend *HybridBackend) CompactSemanticCalibrationID() string {
+	if backend.embedder == nil ||
+		backend.embedder.ModelID() != "ollama/embeddinggemma:latest/retrieval-input-v0.2" {
+		return ""
+	}
+	return personalmemory.CompactSemanticCalibrationIdentity
 }
 
 func (backend *HybridBackend) Rank(request personalmemory.SearchRequest, documents []personalmemory.IndexDocument) ([]personalmemory.RankedHit, error) {
@@ -97,7 +106,13 @@ func (backend *HybridBackend) Rank(request personalmemory.SearchRequest, documen
 		}
 		lensQuery = lens.Query
 	}
-	semanticScores, semanticErr := backend.semanticScores(strings.TrimSpace(query+"\n"+lensQuery), documents)
+	authorizationSemanticScores, semanticErr := backend.semanticScores(query, documents)
+	rankingSemanticScores := authorizationSemanticScores
+	if semanticErr == nil && strings.TrimSpace(lensQuery) != "" {
+		rankingSemanticScores, semanticErr = backend.semanticScores(
+			strings.TrimSpace(query+"\n"+lensQuery), documents,
+		)
+	}
 	backend.setMode(semanticErr)
 
 	documentIDs := make([]string, 0, len(documents))
@@ -116,7 +131,13 @@ func (backend *HybridBackend) Rank(request personalmemory.SearchRequest, documen
 		lexicalComponents[hit.DocumentID] = hit.Components
 		matchedTerms[hit.DocumentID] = hit.MatchedTerms
 	}
-	semanticRanks := rankScores(semanticScores, maximumSemanticRanks)
+	semanticRanks := rankScores(rankingSemanticScores, maximumSemanticRanks)
+	authorizationSemanticRanks := rankScores(
+		authorizationSemanticScores, maximumSemanticRanks,
+	)
+	semanticTop1, semanticTop2, semanticMargin := topScoreMargin(
+		authorizationSemanticScores,
+	)
 	type scored struct {
 		id         string
 		score      float64
@@ -131,25 +152,29 @@ func (backend *HybridBackend) Rank(request personalmemory.SearchRequest, documen
 		if semanticErr != nil {
 			base = lexicalRRFWeight * lexicalRRF
 		}
-		if lexicalComponents[document.DocumentID]["lexical_evidence"] >= 1 {
-			base += 1
-		}
 		if base > maximumBase {
 			maximumBase = base
 		}
 		candidates = append(candidates, scored{
 			id: document.DocumentID,
 			components: map[string]float64{
-				"lexical_raw":                   lexicalComponents[document.DocumentID]["lexical_raw"],
-				"lexical_rrf":                   lexicalRRF,
-				"lexical_coverage":              lexicalComponents[document.DocumentID]["lexical_coverage"],
-				"lexical_rarest_document_ratio": lexicalComponents[document.DocumentID]["lexical_rarest_document_ratio"],
-				"lexical_exact_phrase":          lexicalComponents[document.DocumentID]["lexical_exact_phrase"],
-				"lexical_adjacent_phrase":       lexicalComponents[document.DocumentID]["lexical_adjacent_phrase"],
-				"lexical_evidence":              lexicalComponents[document.DocumentID]["lexical_evidence"],
-				"semantic_cosine":               semanticScores[document.DocumentID],
-				"semantic_rrf":                  semanticRRF,
-				"lens_feedback":                 relevance[document.DocumentID],
+				"lexical_raw":                    lexicalComponents[document.DocumentID]["lexical_raw"],
+				"lexical_rank":                   float64(lexicalRanks[document.DocumentID]),
+				"lexical_rrf":                    lexicalRRF,
+				"lexical_query_terms":            lexicalComponents[document.DocumentID]["lexical_query_terms"],
+				"lexical_matched_terms":          lexicalComponents[document.DocumentID]["lexical_matched_terms"],
+				"lexical_idf_coverage":           lexicalComponents[document.DocumentID]["lexical_idf_coverage"],
+				"lexical_rarest_document_ratio":  lexicalComponents[document.DocumentID]["lexical_rarest_document_ratio"],
+				"lexical_exact_ordered_phrase":   lexicalComponents[document.DocumentID]["lexical_exact_ordered_phrase"],
+				"lexical_winner_relative_margin": lexicalComponents[document.DocumentID]["lexical_winner_relative_margin"],
+				"semantic_cosine":                authorizationSemanticScores[document.DocumentID],
+				"semantic_rank":                  float64(authorizationSemanticRanks[document.DocumentID]),
+				"semantic_top1":                  semanticTop1,
+				"semantic_top2":                  semanticTop2,
+				"semantic_margin":                semanticMargin,
+				"semantic_ranking_cosine":        rankingSemanticScores[document.DocumentID],
+				"semantic_rrf":                   semanticRRF,
+				"lens_feedback":                  relevance[document.DocumentID],
 			},
 		})
 	}
@@ -158,9 +183,6 @@ func (backend *HybridBackend) Rank(request personalmemory.SearchRequest, documen
 		base := lexicalRRFWeight * candidate.components["lexical_rrf"]
 		if semanticErr == nil {
 			base += semanticRRFWeight * candidate.components["semantic_rrf"]
-		}
-		if candidate.components["lexical_evidence"] >= 1 {
-			base += 1
 		}
 		if base == 0 {
 			continue
@@ -328,7 +350,7 @@ func (backend *HybridBackend) setMode(semanticErr error) {
 	backend.mu.Lock()
 	defer backend.mu.Unlock()
 	if semanticErr == nil {
-		backend.method = "mindline_hybrid_local/v0.5"
+		backend.method = "mindline_hybrid_local/v0.6"
 		backend.retrievalState = "hybrid"
 		backend.degradedReason = ""
 		return
@@ -345,6 +367,9 @@ func rankScores(scores map[string]float64, limit int) map[string]int {
 	}
 	items := make([]item, 0, len(scores))
 	for id, score := range scores {
+		if math.IsNaN(score) || math.IsInf(score, 0) {
+			continue
+		}
 		items = append(items, item{id: id, score: score})
 	}
 	sort.Slice(items, func(i, j int) bool {
@@ -361,6 +386,29 @@ func rankScores(scores map[string]float64, limit int) map[string]int {
 		ranks[item.id] = index + 1
 	}
 	return ranks
+}
+
+func topScoreMargin(scores map[string]float64) (float64, float64, float64) {
+	top1 := math.Inf(-1)
+	top2 := math.Inf(-1)
+	for _, score := range scores {
+		if math.IsNaN(score) || math.IsInf(score, 0) {
+			continue
+		}
+		if score > top1 {
+			top2 = top1
+			top1 = score
+		} else if score > top2 {
+			top2 = score
+		}
+	}
+	if math.IsInf(top1, -1) {
+		return 0, 0, 0
+	}
+	if math.IsInf(top2, -1) {
+		return top1, 0, 1
+	}
+	return top1, top2, top1 - top2
 }
 
 func reciprocalRank(rank int) float64 {

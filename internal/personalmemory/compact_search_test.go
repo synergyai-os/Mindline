@@ -2,6 +2,7 @@ package personalmemory
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -17,11 +18,13 @@ type compactNoiseBackend struct {
 }
 
 type compactHitsBackend struct {
-	hits []RankedHit
+	hits          []RankedHit
+	calibrationID string
 }
 
 type compactQueryCaptureBackend struct {
 	request SearchRequest
+	hits    []RankedHit
 }
 
 func (backend compactNoiseBackend) MethodID() string {
@@ -40,6 +43,10 @@ func (backend compactHitsBackend) Rank(SearchRequest, []IndexDocument) ([]Ranked
 	return append([]RankedHit(nil), backend.hits...), nil
 }
 
+func (backend compactHitsBackend) CompactSemanticCalibrationID() string {
+	return backend.calibrationID
+}
+
 func (backend *compactQueryCaptureBackend) MethodID() string {
 	return "compact-query-capture/v0.1"
 }
@@ -49,7 +56,7 @@ func (backend *compactQueryCaptureBackend) Rank(
 	_ []IndexDocument,
 ) ([]RankedHit, error) {
 	backend.request = request
-	return nil, nil
+	return append([]RankedHit(nil), backend.hits...), nil
 }
 
 func (repository *compactRepository) Load() (Library, error) {
@@ -80,7 +87,7 @@ func TestCompactSearchIndexesContentPrivatelyAndOmitsHistoricalMissingnessAndPat
 		SchemaVersion: LibrarySchemaVersion, Revision: 7, Fingerprint: strings.Repeat("a", 64),
 		Records: []CaptureRecord{{
 			RecordID: "record-current", SourceRef: "slack://fixture/current",
-			OccurredAt: "2026-07-27T10:00:00Z", RawText: "durable agent memory",
+			OccurredAt: "2026-07-27T10:00:00Z", RawText: "durable contextual agent memory",
 			ResourceIDs: []string{resourceID}, Missingness: []string{"current_capture_gap"},
 			ContextState: "partial", ContentHash: strings.Repeat("b", 64),
 		}},
@@ -101,7 +108,7 @@ func TestCompactSearchIndexesContentPrivatelyAndOmitsHistoricalMissingnessAndPat
 		}},
 	}}
 	packet, err := NewLexicalRetriever(repository).SearchCompact(SearchRequest{
-		Query: "agent memory", Limit: 3, RunID: "run-compact",
+		Query: "contextual agent memory", Limit: 3, RunID: "run-compact",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -284,7 +291,8 @@ func TestCompactSearchPreservesSemanticQueryAndSeparatesLexicalTerms(t *testing.
 		t.Fatal(err)
 	}
 	if backend.request.Query != "How should contextual agents work?" ||
-		backend.request.LexicalQuery != "agents contextual" {
+		backend.request.LexicalQuery != "agents contextual" ||
+		backend.request.Limit != MaximumSearchLimit {
 		t.Fatalf("compact ranking query was damaged: %+v", backend.request)
 	}
 }
@@ -319,7 +327,7 @@ func TestCompactSearchDiscardsUnsubstantiatedRankerNoise(t *testing.T) {
 	}
 }
 
-func TestCompactLexicalEvidenceRequiresPhraseOrRareCoverage(t *testing.T) {
+func TestCompactLexicalAuthorizationBoundaries(t *testing.T) {
 	repository := &compactRepository{library: Library{
 		SchemaVersion: LibrarySchemaVersion, Revision: 1,
 		Fingerprint: strings.Repeat("1", 64),
@@ -329,31 +337,50 @@ func TestCompactLexicalEvidenceRequiresPhraseOrRareCoverage(t *testing.T) {
 		}},
 	}}
 	for _, test := range []struct {
-		name         string
-		query        string
-		matchedTerms []string
-		evidence     float64
-		expected     string
+		name       string
+		query      string
+		components map[string]float64
+		expected   string
 	}{
 		{
-			name: "one coincidental term is insufficient", query: "portable quantum orchards",
-			matchedTerms: []string{"portable"}, evidence: 0, expected: "abstained",
+			name: "ordered three term phrase", query: "portable quantum orchards",
+			components: lexicalAuthorizationComponents(3, 3, 1, 1, 0.01, 0),
+			expected:   "answered",
 		},
 		{
-			name: "adjacent or rare covered terms provide evidence", query: "portable quantum orchards",
-			matchedTerms: []string{"portable", "quantum"}, evidence: 1, expected: "answered",
+			name: "rare ordered two term phrase", query: "portable quantum",
+			components: lexicalAuthorizationComponents(2, 2, 1, 1, 0.01, 0),
+			expected:   "answered",
 		},
 		{
-			name: "single term queries require corpus rarity", query: "portable",
-			matchedTerms: []string{"portable"}, evidence: 1, expected: "answered",
+			name: "common ordered two term phrase", query: "portable quantum",
+			components: lexicalAuthorizationComponents(2, 2, 1, 1, 0.010001, 0),
+			expected:   "abstained",
+		},
+		{
+			name: "adjacent pair alone", query: "portable quantum orchards",
+			components: lexicalAuthorizationComponents(3, 2, 0.67, 0, 0.001, 1),
+			expected:   "abstained",
+		},
+		{
+			name: "single term", query: "portable",
+			components: lexicalAuthorizationComponents(1, 1, 1, 0, 0.001, 1),
+			expected:   "abstained",
+		},
+		{
+			name: "coverage and margin boundary", query: "portable quantum orchard systems",
+			components: lexicalAuthorizationComponents(4, 3, 0.80, 0, 0.01, 0.15),
+			expected:   "answered",
+		},
+		{
+			name: "below margin", query: "portable quantum orchard systems",
+			components: lexicalAuthorizationComponents(4, 3, 0.80, 0, 0.01, 0.149999),
+			expected:   "abstained",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			packet, err := NewRetriever(repository, compactNoiseBackend{hit: RankedHit{
-				DocumentID: "record-lexical", Score: 1, MatchedTerms: test.matchedTerms,
-				Components: map[string]float64{
-					"lexical_raw": 1, "lexical_evidence": test.evidence,
-				},
+				DocumentID: "record-lexical", Score: 1, Components: test.components,
 			}}).SearchCompact(SearchRequest{Query: test.query, Limit: 3})
 			if err != nil {
 				t.Fatal(err)
@@ -365,37 +392,45 @@ func TestCompactLexicalEvidenceRequiresPhraseOrRareCoverage(t *testing.T) {
 	}
 }
 
-func TestLexicalEvidenceUsesPhraseOrCorpusRarity(t *testing.T) {
+func lexicalAuthorizationComponents(
+	queryTerms, matchedTerms int,
+	idfCoverage, exactPhrase, rarestRatio, winnerMargin float64,
+) map[string]float64 {
+	return map[string]float64{
+		"lexical_raw": 1, "lexical_rank": 1,
+		"lexical_query_terms": float64(queryTerms), "lexical_matched_terms": float64(matchedTerms),
+		"lexical_idf_coverage": idfCoverage, "lexical_exact_ordered_phrase": exactPhrase,
+		"lexical_rarest_document_ratio":  rarestRatio,
+		"lexical_winner_relative_margin": winnerMargin,
+	}
+}
+
+func TestLexicalBM25ScoresOriginalQueryAndCarriesFilteredAuthorization(t *testing.T) {
 	documents := make([]IndexDocument, 0, 101)
 	for index := 0; index < 100; index++ {
 		documents = append(documents, IndexDocument{
 			DocumentID: "common-" + string(rune('Ā'+index)),
-			Text:       "portable filler quantum",
+			Text:       "how filler",
 		})
 	}
 	documents = append(documents, IndexDocument{
-		DocumentID: "rare", Text: "portable unique quantum",
+		DocumentID: "rare", Text: "contextual agent memory",
 	})
 	hits, err := (LexicalBM25Backend{}).Rank(SearchRequest{
-		Query: "unique governance portable", Limit: 100,
+		Query: "how contextual agent memory", LexicalQuery: "agent contextual memory", Limit: 100,
 	}, documents)
 	if err != nil {
 		t.Fatal(err)
 	}
-	evidence := map[string]float64{}
+	foundOriginalOnlyMatch := false
 	for _, hit := range hits {
-		evidence[hit.DocumentID] = hit.Components["lexical_evidence"]
+		if strings.HasPrefix(hit.DocumentID, "common-") && hit.Score > 0 &&
+			hit.Components["lexical_matched_terms"] == 0 {
+			foundOriginalOnlyMatch = true
+		}
 	}
-	if evidence["common-Ā"] != 0 || evidence["rare"] != 1 {
-		t.Fatalf("lexical rarity evidence mismatch: common=%v rare=%v",
-			evidence["common-Ā"], evidence["rare"])
-	}
-	phraseHits, err := (LexicalBM25Backend{}).Rank(SearchRequest{
-		Query: "portable filler", Limit: 1,
-	}, documents)
-	if err != nil || len(phraseHits) != 1 ||
-		phraseHits[0].Components["lexical_evidence"] != 1 {
-		t.Fatalf("adjacent phrase evidence mismatch: hits=%+v err=%v", phraseHits, err)
+	if !foundOriginalOnlyMatch {
+		t.Fatalf("original query was not scored separately: %+v", hits)
 	}
 }
 
@@ -405,7 +440,7 @@ func TestCompactSemanticAbstentionThresholdIsFrozenAndBoundToPacket(t *testing.T
 		policy.SchemaVersion != CompactAbstentionPolicySchemaVersion ||
 		policy.MinimumSemanticCosine != DefaultCompactMinimumSemanticCosine ||
 		policy.MinimumSemanticMargin != DefaultCompactMinimumSemanticMargin ||
-		policy.Fingerprint != "4a7f737afc19ddc1dcef21ada09a4b7a6ca8ff46169fa5176b9410c368ba71f6" {
+		policy.Fingerprint != "4fc4293b1d1459308c979300b8c1c606d21f0749d3ad2b28c40add8c414b8250" {
 		t.Fatalf("compact abstention policy is not deterministic: %+v", policy)
 	}
 	repository := &compactRepository{library: Library{
@@ -421,14 +456,20 @@ func TestCompactSemanticAbstentionThresholdIsFrozenAndBoundToPacket(t *testing.T
 		cosine   float64
 		expected string
 	}{
-		{name: "just below", cosine: DefaultCompactMinimumSemanticCosine - 0.000001, expected: "abstained"},
-		{name: "just above", cosine: DefaultCompactMinimumSemanticCosine + 0.000001, expected: "answered"},
+		{name: "just below", cosine: DefaultCompactMinimumSemanticOnlyCosine - 0.000001, expected: "abstained"},
+		{name: "at threshold", cosine: DefaultCompactMinimumSemanticOnlyCosine, expected: "answered"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			packet, err := NewRetriever(repository, compactNoiseBackend{hit: RankedHit{
-				DocumentID: "record-semantic", Score: 1,
-				Components: map[string]float64{"semantic_cosine": test.cosine},
-			}}).SearchCompact(SearchRequest{Query: "semantic threshold", Limit: 3})
+			packet, err := NewRetriever(repository, compactHitsBackend{
+				calibrationID: CompactSemanticCalibrationIdentity,
+				hits: []RankedHit{{
+					DocumentID: "record-semantic", Score: 1,
+					Components: map[string]float64{
+						"semantic_cosine": test.cosine, "semantic_rank": 1,
+						"semantic_margin": DefaultCompactMinimumSemanticOnlyMargin,
+					},
+				}},
+			}).SearchCompact(SearchRequest{Query: "semantic threshold", Limit: 3})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -455,21 +496,97 @@ func TestCompactSemanticAnswerRequiresWinnerMargin(t *testing.T) {
 			},
 		},
 	}}
-	packet, err := NewRetriever(repository, compactHitsBackend{hits: []RankedHit{
-		{
-			DocumentID: "record-first", Score: 1,
-			Components: map[string]float64{"semantic_cosine": 0.80},
-		},
-		{
-			DocumentID: "record-second", Score: 0.9,
-			Components: map[string]float64{"semantic_cosine": 0.79},
-		},
-	}}).SearchCompact(SearchRequest{Query: "semantic ambiguity", Limit: 3})
+	packet, err := NewRetriever(repository, compactHitsBackend{
+		calibrationID: CompactSemanticCalibrationIdentity,
+		hits: []RankedHit{
+			{
+				DocumentID: "record-first", Score: 1,
+				Components: map[string]float64{
+					"semantic_cosine": 0.80, "semantic_rank": 1, "semantic_margin": 0.01,
+				},
+			},
+			{
+				DocumentID: "record-second", Score: 0.9,
+				Components: map[string]float64{
+					"semantic_cosine": 0.79, "semantic_rank": 2, "semantic_margin": 0.01,
+				},
+			},
+		}}).SearchCompact(SearchRequest{Query: "semantic ambiguity", Limit: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if packet.AnswerState != "abstained" || len(packet.Citations) != 0 {
 		t.Fatalf("flat semantic ranking did not abstain: %+v", packet)
+	}
+}
+
+func TestCompactSearchAuthorizesFromFullPoolThenReturnsCallerLimit(t *testing.T) {
+	records := make([]CaptureRecord, 0, MaximumSearchLimit)
+	hits := make([]RankedHit, 0, MaximumSearchLimit)
+	for index := 0; index < MaximumSearchLimit; index++ {
+		id := "record-" + strconv.Itoa(index)
+		records = append(records, CaptureRecord{
+			RecordID: id, SourceRef: "slack://fixture/" + id,
+			RawText: "retained context", ContentHash: strings.Repeat("d", 64),
+		})
+		hit := RankedHit{DocumentID: id, Score: float64(MaximumSearchLimit - index)}
+		if index == 75 {
+			hit.Components = lexicalAuthorizationComponents(3, 3, 1, 1, 1, 0)
+		}
+		hits = append(hits, hit)
+	}
+	backend := &compactQueryCaptureBackend{hits: hits}
+	packet, err := NewRetriever(&compactRepository{library: Library{
+		SchemaVersion: LibrarySchemaVersion, Revision: 1,
+		Fingerprint: strings.Repeat("e", 64), Records: records,
+	}}, backend).SearchCompact(SearchRequest{
+		Query: "portable quantum orchards", Limit: 3,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if backend.request.Limit != MaximumSearchLimit ||
+		packet.AnswerState != "answered" || len(packet.Citations) != 3 ||
+		packet.Citations[0].RecordID != "record-0" {
+		t.Fatalf("compact pool/backfill contract failed: request=%+v packet=%+v",
+			backend.request, packet)
+	}
+}
+
+func TestCompactSemanticAuthorizationRequiresCalibrationAndSupportsCorroboration(t *testing.T) {
+	repository := &compactRepository{library: Library{
+		SchemaVersion: LibrarySchemaVersion, Revision: 1,
+		Fingerprint: strings.Repeat("f", 64),
+		Records: []CaptureRecord{{
+			RecordID: "record-semantic", SourceRef: "slack://fixture/semantic",
+			RawText: "retained context", ContentHash: strings.Repeat("1", 64),
+		}},
+	}}
+	hit := RankedHit{
+		DocumentID: "record-semantic", Score: 1,
+		Components: map[string]float64{
+			"semantic_cosine": DefaultCompactMinimumSemanticCosine,
+			"semantic_rank":   1, "semantic_margin": DefaultCompactMinimumSemanticMargin,
+			"lexical_idf_coverage": DefaultCompactMinimumSemanticLexicalCover,
+		},
+	}
+	for _, test := range []struct {
+		name, calibration, expected string
+	}{
+		{name: "missing calibration", expected: "abstained"},
+		{name: "exact calibration", calibration: CompactSemanticCalibrationIdentity, expected: "answered"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			packet, err := NewRetriever(repository, compactHitsBackend{
+				hits: []RankedHit{hit}, calibrationID: test.calibration,
+			}).SearchCompact(SearchRequest{Query: "semantic corroboration", Limit: 3})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if packet.AnswerState != test.expected {
+				t.Fatalf("semantic calibration result=%+v", packet)
+			}
+		})
 	}
 }
 

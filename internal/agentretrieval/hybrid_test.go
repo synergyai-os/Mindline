@@ -92,8 +92,8 @@ func TestHybridBackendUsesSemanticLensAndReversibleFeedback(t *testing.T) {
 	if err != nil || len(hits) != 2 || hits[0].DocumentID != "relevant" {
 		t.Fatalf("hits=%+v err=%v", hits, err)
 	}
-	if hits[0].Components["semantic_cosine"] <= hits[1].Components["semantic_cosine"] {
-		t.Fatalf("semantic scores not reflected: %+v", hits)
+	if hits[0].Components["semantic_ranking_cosine"] <= hits[1].Components["semantic_ranking_cosine"] {
+		t.Fatalf("lens-aware semantic ranking scores not reflected: %+v", hits)
 	}
 	if err := state.SaveRetrieval(ctx, agentstate.RetrievalTrace{
 		RunID: "run", Query: request.Query, LensID: request.LensID,
@@ -208,6 +208,90 @@ func TestHybridBackendPreservesStrongLexicalEvidenceDuringFusion(t *testing.T) {
 	if err != nil || len(hits) == 0 || hits[0].DocumentID != "zzz-lexical-distractor" {
 		t.Fatalf("strong lexical evidence was displaced by semantic-only evidence: hits=%+v err=%v",
 			hits, err)
+	}
+}
+
+func TestHybridBackendDoesNotBoostLexicalAuthorizationFeatures(t *testing.T) {
+	state, err := agentstate.Open(filepath.Join(t.TempDir(), "state", "agent.sqlite"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	hits, err := NewHybridBackend(context.Background(), state, failingEmbedder{}).Rank(
+		personalmemory.SearchRequest{Query: "portable quantum orchards", Limit: 2},
+		[]personalmemory.IndexDocument{
+			{DocumentID: "phrase", Text: "portable quantum orchards"},
+			{DocumentID: "partial", Text: "portable quantum"},
+		},
+	)
+	if err != nil || len(hits) != 2 {
+		t.Fatalf("hits=%+v err=%v", hits, err)
+	}
+	if _, exists := hits[0].Components["lexical_evidence"]; exists ||
+		hits[1].Score < 0.90 {
+		t.Fatalf("lexical authorization changed fusion ranking: %+v", hits)
+	}
+}
+
+type calibratedLensEmbedder struct{}
+
+func (calibratedLensEmbedder) ModelID() string {
+	return "ollama/embeddinggemma:latest/retrieval-input-v0.2"
+}
+func (calibratedLensEmbedder) Embed(context.Context, []string) ([][]float64, error) {
+	return nil, errors.New("generic embedding path should not be used")
+}
+func (calibratedLensEmbedder) EmbedDocuments(
+	_ context.Context, inputs []string,
+) ([][]float64, error) {
+	result := make([][]float64, 0, len(inputs))
+	for _, input := range inputs {
+		if strings.Contains(input, "authority") {
+			result = append(result, []float64{1, 0})
+		} else {
+			result = append(result, []float64{0, 1})
+		}
+	}
+	return result, nil
+}
+func (calibratedLensEmbedder) EmbedQuery(
+	_ context.Context, input string,
+) ([]float64, error) {
+	if strings.Contains(input, "authority") {
+		return []float64{1, 0}, nil
+	}
+	return []float64{0, 1}, nil
+}
+
+func TestHybridBackendLensReranksWithoutChangingAuthorizationScores(t *testing.T) {
+	state, err := agentstate.Open(filepath.Join(t.TempDir(), "state", "agent.sqlite"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	ctx := context.Background()
+	if _, err := state.PutLens(ctx, agentstate.Lens{
+		ID: "authority", Name: "Authority", Query: "authority",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	hits, err := NewHybridBackend(ctx, state, calibratedLensEmbedder{}).Rank(
+		personalmemory.SearchRequest{
+			Query: "unseen orchard concept", LensID: "authority", Limit: 3,
+		},
+		[]personalmemory.IndexDocument{
+			{DocumentID: "lens", Text: "authority"},
+			{DocumentID: "tie-a", Text: "unrelated"},
+			{DocumentID: "tie-b", Text: "unrelated"},
+		},
+	)
+	if err != nil || len(hits) != 3 || hits[0].DocumentID != "lens" {
+		t.Fatalf("hits=%+v err=%v", hits, err)
+	}
+	if hits[0].Components["semantic_ranking_cosine"] != 1 ||
+		hits[0].Components["semantic_cosine"] != 0 ||
+		hits[0].Components["semantic_margin"] != 0 {
+		t.Fatalf("lens leaked into authorization components: %+v", hits[0])
 	}
 }
 

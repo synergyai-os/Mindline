@@ -139,7 +139,7 @@ func TestClosedSlackRecallFixture(t *testing.T) {
 	}
 
 	retriever := personalmemory.NewLexicalRetriever(restartedRepository)
-	compact, err := retriever.SearchCompact(personalmemory.SearchRequest{Query: "fixture retained", Limit: 3, RunID: "fixture-run"})
+	compact, err := retriever.SearchCompact(personalmemory.SearchRequest{Query: "fixture retained parent", Limit: 3, RunID: "fixture-run"})
 	if err != nil || compact.AnswerState != "answered" || len(compact.Citations) == 0 {
 		t.Fatalf("compact search = %#v, %v", compact, err)
 	}

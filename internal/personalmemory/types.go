@@ -266,12 +266,23 @@ type CompactContextPacket struct {
 }
 
 type CompactAbstentionPolicy struct {
-	SchemaVersion         string  `json:"schema_version"`
-	MinimumSemanticCosine float64 `json:"minimum_semantic_cosine"`
-	MinimumSemanticMargin float64 `json:"minimum_semantic_margin"`
-	LexicalEvidenceRule   string  `json:"lexical_evidence_rule"`
-	StopwordPolicy        string  `json:"stopword_policy"`
-	Fingerprint           string  `json:"fingerprint"`
+	SchemaVersion                  string  `json:"schema_version"`
+	MinimumSemanticCosine          float64 `json:"minimum_semantic_cosine"`
+	MinimumSemanticMargin          float64 `json:"minimum_semantic_margin"`
+	MinimumSemanticOnlyCosine      float64 `json:"minimum_semantic_only_cosine"`
+	MinimumSemanticOnlyMargin      float64 `json:"minimum_semantic_only_margin"`
+	MinimumSemanticLexicalCoverage float64 `json:"minimum_semantic_lexical_coverage"`
+	MinimumLexicalIDFCoverage      float64 `json:"minimum_lexical_idf_coverage"`
+	MaximumLexicalDocumentRatio    float64 `json:"maximum_lexical_document_ratio"`
+	MinimumLexicalWinnerMargin     float64 `json:"minimum_lexical_winner_margin"`
+	MinimumLexicalMatchedTerms     int     `json:"minimum_lexical_matched_terms"`
+	MinimumOrderedPhraseTerms      int     `json:"minimum_ordered_phrase_terms"`
+	LexicalEvidenceRule            string  `json:"lexical_evidence_rule"`
+	StopwordPolicy                 string  `json:"stopword_policy"`
+	SemanticCalibrationIdentity    string  `json:"semantic_calibration_identity"`
+	RankingIdentity                string  `json:"ranking_identity"`
+	ChunkingIdentity               string  `json:"chunking_identity"`
+	Fingerprint                    string  `json:"fingerprint"`
 }
 
 type CompactCitation struct {

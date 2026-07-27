@@ -38,7 +38,7 @@ func TestMixedSecretCaptureKeepsSafeLessonSearchable(t *testing.T) {
 		t.Fatal(err)
 	}
 	packet, err := NewLexicalRetriever(repository).SearchCompact(SearchRequest{
-		Query: "useful product lesson explanation", Limit: 3,
+		Query: "useful product lesson", Limit: 3,
 	})
 	if err != nil || packet.AnswerState != "answered" || len(packet.Citations) != 1 ||
 		!strings.Contains(packet.Citations[0].Snippet, "useful product lesson") ||
