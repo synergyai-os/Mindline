@@ -36,13 +36,20 @@ type HybridBackend struct {
 	degradedReason string
 }
 
+type distinctEvidenceAuthorization struct {
+	winnerID string
+	top1     float64
+	runner   float64
+	margin   float64
+}
+
 func NewHybridBackend(ctx context.Context, state *agentstate.Store, embedder embedding.Port) *HybridBackend {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	return &HybridBackend{
 		context: ctx, state: state, embedder: embedder,
-		method: "mindline_hybrid_local/v0.9", retrievalState: "hybrid",
+		method: "mindline_hybrid_local/v0.10", retrievalState: "hybrid",
 	}
 }
 
@@ -135,6 +142,9 @@ func (backend *HybridBackend) Rank(request personalmemory.SearchRequest, documen
 	semanticTop1, semanticTop2, semanticMargin := topScoreMargin(
 		authorizationSemanticScores,
 	)
+	distinctEvidence, distinctEvidenceOK := distinctEvidenceSemanticAuthorization(
+		authorizationSemanticScores, documents,
+	)
 	type scored struct {
 		id         string
 		score      float64
@@ -152,27 +162,33 @@ func (backend *HybridBackend) Rank(request personalmemory.SearchRequest, documen
 		if base > maximumBase {
 			maximumBase = base
 		}
+		components := map[string]float64{
+			"lexical_raw":                    lexicalComponents[document.DocumentID]["lexical_raw"],
+			"lexical_rank":                   float64(lexicalRanks[document.DocumentID]),
+			"lexical_rrf":                    lexicalRRF,
+			"lexical_query_terms":            lexicalComponents[document.DocumentID]["lexical_query_terms"],
+			"lexical_matched_terms":          lexicalComponents[document.DocumentID]["lexical_matched_terms"],
+			"lexical_idf_coverage":           lexicalComponents[document.DocumentID]["lexical_idf_coverage"],
+			"lexical_rarest_document_ratio":  lexicalComponents[document.DocumentID]["lexical_rarest_document_ratio"],
+			"lexical_exact_ordered_phrase":   lexicalComponents[document.DocumentID]["lexical_exact_ordered_phrase"],
+			"lexical_winner_relative_margin": lexicalComponents[document.DocumentID]["lexical_winner_relative_margin"],
+			"semantic_cosine":                authorizationSemanticScores[document.DocumentID],
+			"semantic_rank":                  float64(authorizationSemanticRanks[document.DocumentID]),
+			"semantic_top1":                  semanticTop1,
+			"semantic_top2":                  semanticTop2,
+			"semantic_margin":                semanticMargin,
+			"semantic_ranking_cosine":        rankingSemanticScores[document.DocumentID],
+			"semantic_rrf":                   semanticRRF,
+			"lens_feedback":                  relevance[document.DocumentID],
+		}
+		if distinctEvidenceOK && document.DocumentID == distinctEvidence.winnerID {
+			components["semantic_distinct_evidence_valid"] = 1
+			components["semantic_distinct_evidence_top1"] = distinctEvidence.top1
+			components["semantic_distinct_evidence_runner"] = distinctEvidence.runner
+			components["semantic_distinct_evidence_margin"] = distinctEvidence.margin
+		}
 		candidates = append(candidates, scored{
-			id: document.DocumentID,
-			components: map[string]float64{
-				"lexical_raw":                    lexicalComponents[document.DocumentID]["lexical_raw"],
-				"lexical_rank":                   float64(lexicalRanks[document.DocumentID]),
-				"lexical_rrf":                    lexicalRRF,
-				"lexical_query_terms":            lexicalComponents[document.DocumentID]["lexical_query_terms"],
-				"lexical_matched_terms":          lexicalComponents[document.DocumentID]["lexical_matched_terms"],
-				"lexical_idf_coverage":           lexicalComponents[document.DocumentID]["lexical_idf_coverage"],
-				"lexical_rarest_document_ratio":  lexicalComponents[document.DocumentID]["lexical_rarest_document_ratio"],
-				"lexical_exact_ordered_phrase":   lexicalComponents[document.DocumentID]["lexical_exact_ordered_phrase"],
-				"lexical_winner_relative_margin": lexicalComponents[document.DocumentID]["lexical_winner_relative_margin"],
-				"semantic_cosine":                authorizationSemanticScores[document.DocumentID],
-				"semantic_rank":                  float64(authorizationSemanticRanks[document.DocumentID]),
-				"semantic_top1":                  semanticTop1,
-				"semantic_top2":                  semanticTop2,
-				"semantic_margin":                semanticMargin,
-				"semantic_ranking_cosine":        rankingSemanticScores[document.DocumentID],
-				"semantic_rrf":                   semanticRRF,
-				"lens_feedback":                  relevance[document.DocumentID],
-			},
+			id: document.DocumentID, components: components,
 		})
 	}
 	hits := make([]personalmemory.RankedHit, 0, len(candidates))
@@ -283,6 +299,114 @@ func (backend *HybridBackend) semanticScores(query string, documents []personalm
 		}
 	}
 	return scores, nil
+}
+
+func distinctEvidenceSemanticAuthorization(
+	scores map[string]float64,
+	documents []personalmemory.IndexDocument,
+) (distinctEvidenceAuthorization, bool) {
+	if len(scores) == 0 || len(documents) == 0 {
+		return distinctEvidenceAuthorization{}, false
+	}
+	documentsByID := make(map[string]personalmemory.IndexDocument, len(documents))
+	aliasesByID := make(map[string][]string, len(documents))
+	resourceDocumentsByAlias := map[string]string{}
+	for _, document := range documents {
+		documentID := strings.TrimSpace(document.DocumentID)
+		if documentID == "" {
+			return distinctEvidenceAuthorization{}, false
+		}
+		if _, exists := documentsByID[documentID]; exists {
+			return distinctEvidenceAuthorization{}, false
+		}
+		aliases, valid := strictAuthorizationEvidenceAliases(document)
+		if !valid {
+			return distinctEvidenceAuthorization{}, false
+		}
+		switch document.AuthorizationEvidenceKind {
+		case personalmemory.IndexEvidenceKindRecordSource:
+		case personalmemory.IndexEvidenceKindUniqueResource:
+			if len(aliases) != 1 {
+				return distinctEvidenceAuthorization{}, false
+			}
+			if _, exists := resourceDocumentsByAlias[aliases[0]]; exists {
+				return distinctEvidenceAuthorization{}, false
+			}
+			resourceDocumentsByAlias[aliases[0]] = documentID
+		default:
+			return distinctEvidenceAuthorization{}, false
+		}
+		documentsByID[documentID] = document
+		aliasesByID[documentID] = aliases
+	}
+	winnerID := ""
+	top1 := math.Inf(-1)
+	for documentID, score := range scores {
+		if math.IsNaN(score) || math.IsInf(score, 0) {
+			return distinctEvidenceAuthorization{}, false
+		}
+		if _, exists := documentsByID[documentID]; !exists {
+			return distinctEvidenceAuthorization{}, false
+		}
+		if winnerID == "" || score > top1 ||
+			(score == top1 && documentID < winnerID) {
+			winnerID = documentID
+			top1 = score
+		}
+	}
+	winner, exists := documentsByID[winnerID]
+	if !exists ||
+		winner.AuthorizationEvidenceKind != personalmemory.IndexEvidenceKindUniqueResource {
+		return distinctEvidenceAuthorization{}, false
+	}
+	winnerAliases := aliasesByID[winnerID]
+	if len(winnerAliases) != 1 {
+		return distinctEvidenceAuthorization{}, false
+	}
+	winnerAlias := winnerAliases[0]
+	runner := math.Inf(-1)
+	for documentID, score := range scores {
+		if documentID == winnerID {
+			continue
+		}
+		document := documentsByID[documentID]
+		aliases := aliasesByID[documentID]
+		if document.AuthorizationEvidenceKind == personalmemory.IndexEvidenceKindRecordSource &&
+			len(aliases) == 1 && aliases[0] == winnerAlias {
+			continue
+		}
+		if score > runner {
+			runner = score
+		}
+	}
+	if math.IsInf(runner, -1) {
+		return distinctEvidenceAuthorization{
+			winnerID: winnerID, top1: top1, runner: 0, margin: 1,
+		}, true
+	}
+	return distinctEvidenceAuthorization{
+		winnerID: winnerID, top1: top1, runner: runner, margin: top1 - runner,
+	}, true
+}
+
+func strictAuthorizationEvidenceAliases(
+	document personalmemory.IndexDocument,
+) ([]string, bool) {
+	if len(document.AuthorizationEvidenceAliases) == 0 {
+		return nil, false
+	}
+	seen := map[string]bool{}
+	aliases := make([]string, 0, len(document.AuthorizationEvidenceAliases))
+	for _, alias := range document.AuthorizationEvidenceAliases {
+		alias = strings.TrimSpace(alias)
+		if alias == "" || seen[alias] {
+			return nil, false
+		}
+		seen[alias] = true
+		aliases = append(aliases, alias)
+	}
+	sort.Strings(aliases)
+	return aliases, true
 }
 
 func (backend *HybridBackend) feedbackRelevance(
@@ -425,7 +549,7 @@ func (backend *HybridBackend) setMode(semanticErr error) {
 	backend.mu.Lock()
 	defer backend.mu.Unlock()
 	if semanticErr == nil {
-		backend.method = "mindline_hybrid_local/v0.9"
+		backend.method = "mindline_hybrid_local/v0.10"
 		backend.retrievalState = "hybrid"
 		backend.degradedReason = ""
 		return

@@ -8,12 +8,13 @@ import (
 )
 
 type compactProjectionBackend struct {
-	documents []IndexDocument
-	hits      []RankedHit
+	documents     []IndexDocument
+	hits          []RankedHit
+	calibrationID string
 }
 
 func (*compactProjectionBackend) MethodID() string {
-	return "compact-projection-fixture/v0.8"
+	return "compact-projection-fixture/v0.10"
 }
 
 func (backend *compactProjectionBackend) Rank(
@@ -22,6 +23,10 @@ func (backend *compactProjectionBackend) Rank(
 ) ([]RankedHit, error) {
 	backend.documents = append([]IndexDocument(nil), documents...)
 	return append([]RankedHit(nil), backend.hits...), nil
+}
+
+func (backend *compactProjectionBackend) CompactSemanticCalibrationID() string {
+	return backend.calibrationID
 }
 
 func authorizedProjectionHit(documentID string, terms ...string) RankedHit {
@@ -434,5 +439,239 @@ func TestCompactProjectionFailsClosedBeforeUnknownHitCanAuthorizeKnownCandidate(
 	}
 	if packet.AnswerState == "answered" || len(packet.Citations) != 0 {
 		t.Fatalf("unknown authorizing hit leaked a known citation: %+v", packet)
+	}
+}
+
+func corroboratedResourceHit(
+	documentID string,
+	cosine, rawMargin, distinctMargin, lexicalCoverage float64,
+) RankedHit {
+	return RankedHit{
+		DocumentID: documentID,
+		Score:      1,
+		Components: map[string]float64{
+			"semantic_rank":                     1,
+			"semantic_cosine":                   cosine,
+			"semantic_margin":                   rawMargin,
+			"semantic_distinct_evidence_valid":  1,
+			"semantic_distinct_evidence_margin": distinctMargin,
+			"lexical_idf_coverage":              lexicalCoverage,
+		},
+	}
+}
+
+func TestCompactCorroboratedResourceRecoveryIgnoresOnlySameResourceSourceSibling(t *testing.T) {
+	resourceID := "resource-recovery"
+	resourceDocumentID, err := compactResourceDocumentID(resourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	records := []CaptureRecord{
+		{
+			RecordID: "record-owner", SourceRef: "slack://fixture/owner",
+			RawText: "source sibling", ResourceIDs: []string{resourceID},
+			ContentHash: strings.Repeat("a", 64),
+		},
+		{
+			RecordID: "record-competitor", SourceRef: "slack://fixture/competitor",
+			RawText:     "different retained evidence",
+			ContentHash: strings.Repeat("b", 64),
+		},
+	}
+	run := func(records []CaptureRecord) (CompactContextPacket, []IndexDocument) {
+		t.Helper()
+		backend := &compactProjectionBackend{
+			calibrationID: CompactSemanticCalibrationIdentity,
+			hits: []RankedHit{
+				corroboratedResourceHit(
+					resourceDocumentID, 0.62, 0.01, 0.06, 0.40,
+				),
+				{
+					DocumentID: "record-owner", Score: 0.99,
+					Components: map[string]float64{
+						"semantic_rank": 2, "semantic_cosine": 0.61,
+						"semantic_margin": 0.01,
+					},
+				},
+				{
+					DocumentID: "record-competitor", Score: 0.80,
+					Components: map[string]float64{
+						"semantic_rank": 3, "semantic_cosine": 0.56,
+						"semantic_margin": 0.01,
+					},
+				},
+			},
+		}
+		repository := &compactRepository{library: Library{
+			SchemaVersion: LibrarySchemaVersion,
+			Revision:      12,
+			Fingerprint:   strings.Repeat("1", 64),
+			Records:       records,
+			Resources: []ResourceContext{{
+				ResourceID: resourceID,
+				Metadata: ResourceMetadata{
+					Title: "Corroborated resource recovery",
+				},
+				ContentHash: strings.Repeat("c", 64),
+			}},
+		}}
+		packet, err := NewRetriever(repository, backend).SearchCompact(SearchRequest{
+			Query: "corroborated resource recovery",
+			Limit: 1,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return packet, backend.documents
+	}
+	first, firstDocuments := run(records)
+	second, secondDocuments := run([]CaptureRecord{records[1], records[0]})
+	if first.AnswerState != "answered" ||
+		len(first.Citations) != 1 ||
+		first.Citations[0].RecordID != "record-owner" {
+		t.Fatalf("same-resource source sibling was not recovered: %+v", first)
+	}
+	if !reflect.DeepEqual(first.Citations, second.Citations) ||
+		!reflect.DeepEqual(firstDocuments, secondDocuments) {
+		t.Fatalf("corroborated recovery was not replay deterministic")
+	}
+	documentByID := map[string]IndexDocument{}
+	for _, document := range firstDocuments {
+		documentByID[document.DocumentID] = document
+	}
+	resourceDocument := documentByID[resourceDocumentID]
+	sourceDocument := documentByID["record-owner"]
+	if resourceDocument.AuthorizationEvidenceKind != IndexEvidenceKindUniqueResource ||
+		!reflect.DeepEqual(
+			resourceDocument.AuthorizationEvidenceAliases,
+			[]string{resourceID},
+		) ||
+		sourceDocument.AuthorizationEvidenceKind != IndexEvidenceKindRecordSource ||
+		!reflect.DeepEqual(
+			sourceDocument.AuthorizationEvidenceAliases,
+			[]string{resourceID},
+		) {
+		t.Fatalf("authorization evidence aliases were not projected: resource=%+v source=%+v",
+			resourceDocument, sourceDocument)
+	}
+	data, err := json.Marshal(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{
+		"compact-resource:",
+		"authorization_evidence_aliases",
+		"authorization_evidence_kind",
+	} {
+		if strings.Contains(string(data), forbidden) {
+			t.Fatalf("internal authorization evidence leaked as %q: %s",
+				forbidden, data)
+		}
+	}
+}
+
+func TestCompactCorroboratedResourceRecoveryPreservesAbstentionGuards(t *testing.T) {
+	resourceID := "resource-recovery-guard"
+	resourceDocumentID, err := compactResourceDocumentID(resourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := &compactRepository{library: Library{
+		SchemaVersion: LibrarySchemaVersion,
+		Revision:      13,
+		Fingerprint:   strings.Repeat("2", 64),
+		Records: []CaptureRecord{
+			{
+				RecordID: "record-winner", SourceRef: "slack://fixture/winner",
+				RawText: "source sibling", ResourceIDs: []string{resourceID},
+				ContentHash: strings.Repeat("d", 64),
+			},
+			{
+				RecordID: "record-runner", SourceRef: "slack://fixture/runner",
+				RawText:     "different owner runner",
+				ContentHash: strings.Repeat("e", 64),
+			},
+		},
+		Resources: []ResourceContext{{
+			ResourceID:  resourceID,
+			Metadata:    ResourceMetadata{Title: "Recovery guard"},
+			ContentHash: strings.Repeat("f", 64),
+		}},
+	}}
+	for _, test := range []struct {
+		name          string
+		calibrationID string
+		hit           RankedHit
+	}{
+		{
+			name:          "different-owner near runner",
+			calibrationID: CompactSemanticCalibrationIdentity,
+			hit: corroboratedResourceHit(
+				resourceDocumentID, 0.62, 0.01, 0.01, 0.40,
+			),
+		},
+		{
+			name:          "lexical corroboration below floor",
+			calibrationID: CompactSemanticCalibrationIdentity,
+			hit: corroboratedResourceHit(
+				resourceDocumentID, 0.62, 0.01, 0.06,
+				DefaultCompactMinimumSemanticLexicalCover-0.000001,
+			),
+		},
+		{
+			name:          "semantic only remains blocked",
+			calibrationID: CompactSemanticCalibrationIdentity,
+			hit: corroboratedResourceHit(
+				resourceDocumentID, 0.66, 0.01, 0.06, 0,
+			),
+		},
+		{
+			name:          "stale calibration remains blocked",
+			calibrationID: CompactSemanticCalibrationIdentity + "|stale",
+			hit: corroboratedResourceHit(
+				resourceDocumentID, 0.62, 0.01, 0.06, 0.40,
+			),
+		},
+		{
+			name:          "absent near-neighbor remains blocked",
+			calibrationID: CompactSemanticCalibrationIdentity,
+			hit: corroboratedResourceHit(
+				resourceDocumentID, 0.61, 0.01,
+				DefaultCompactMinimumSemanticMargin-0.000001, 0.40,
+			),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			backend := &compactProjectionBackend{
+				calibrationID: test.calibrationID,
+				hits: []RankedHit{
+					test.hit,
+					{
+						DocumentID: "record-winner", Score: 0.99,
+						Components: map[string]float64{
+							"semantic_rank": 2, "semantic_cosine": 0.61,
+							"semantic_margin": 0.01,
+						},
+					},
+					{
+						DocumentID: "record-runner", Score: 0.98,
+						Components: map[string]float64{
+							"semantic_rank": 3, "semantic_cosine": 0.61,
+							"semantic_margin": 0.01,
+						},
+					},
+				},
+			}
+			packet, err := NewRetriever(repository, backend).SearchCompact(
+				SearchRequest{Query: "absent conceptual topic", Limit: 3},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if packet.AnswerState != "abstained" ||
+				len(packet.Citations) != 0 {
+				t.Fatalf("recovery guard answered: %+v", packet)
+			}
+		})
 	}
 }

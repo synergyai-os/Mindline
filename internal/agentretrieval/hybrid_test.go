@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -328,7 +329,7 @@ func TestHybridBackendUsesAsymmetricChunkEmbeddingsForLateEvidence(t *testing.T)
 		t.Fatalf("asymmetric inputs not used: docs=%d queries=%v",
 			len(embedder.documentInputs), embedder.queryInputs)
 	}
-	if backend.MethodID() != "mindline_hybrid_local/v0.9" {
+	if backend.MethodID() != "mindline_hybrid_local/v0.10" {
 		t.Fatalf("semantic authorization policy change kept stale method identity: %s",
 			backend.MethodID())
 	}
@@ -416,6 +417,40 @@ func (calibratedLensEmbedder) EmbedQuery(
 	return []float64{0, 1}, nil
 }
 
+type corroboratedRecoveryEmbedder struct{}
+
+func (corroboratedRecoveryEmbedder) ModelID() string {
+	return "ollama/embeddinggemma:latest/retrieval-input-v0.2"
+}
+func (corroboratedRecoveryEmbedder) Embed(context.Context, []string) ([][]float64, error) {
+	return nil, errors.New("generic embedding path should not be used")
+}
+func (corroboratedRecoveryEmbedder) EmbedDocuments(
+	_ context.Context,
+	inputs []string,
+) ([][]float64, error) {
+	vectors := make([][]float64, 0, len(inputs))
+	for _, input := range inputs {
+		cosine := 0.55
+		switch {
+		case strings.Contains(input, "winner-resource"):
+			cosine = 0.62
+		case strings.Contains(input, "sibling-source"):
+			cosine = 0.61
+		}
+		vectors = append(vectors, []float64{
+			cosine, math.Sqrt(1 - cosine*cosine),
+		})
+	}
+	return vectors, nil
+}
+func (corroboratedRecoveryEmbedder) EmbedQuery(
+	context.Context,
+	string,
+) ([]float64, error) {
+	return []float64{1, 0}, nil
+}
+
 func TestHybridBackendLensReranksWithoutChangingAuthorizationScores(t *testing.T) {
 	state, err := agentstate.Open(filepath.Join(t.TempDir(), "state", "agent.sqlite"), nil)
 	if err != nil {
@@ -445,6 +480,67 @@ func TestHybridBackendLensReranksWithoutChangingAuthorizationScores(t *testing.T
 		hits[0].Components["semantic_cosine"] != 0 ||
 		hits[0].Components["semantic_margin"] != 0 {
 		t.Fatalf("lens leaked into authorization components: %+v", hits[0])
+	}
+}
+
+func TestHybridCompactSearchWiresCorroboratedResourceRecoveryEndToEnd(t *testing.T) {
+	state, err := agentstate.Open(filepath.Join(t.TempDir(), "state", "agent.sqlite"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	resourceID := "resource-recovery-wiring"
+	repository := &projectionTestRepository{library: personalmemory.Library{
+		SchemaVersion: personalmemory.LibrarySchemaVersion,
+		Revision:      14,
+		Fingerprint:   strings.Repeat("4", 64),
+		Records: []personalmemory.CaptureRecord{
+			{
+				RecordID: "record-owner", SourceRef: "slack://fixture/owner",
+				RawText:     "sibling-source",
+				ResourceIDs: []string{resourceID},
+				ContentHash: strings.Repeat("a", 64),
+			},
+			{
+				RecordID: "record-distinct", SourceRef: "slack://fixture/distinct",
+				RawText:     "different-evidence",
+				ContentHash: strings.Repeat("b", 64),
+			},
+		},
+		Resources: []personalmemory.ResourceContext{{
+			ResourceID: resourceID,
+			Metadata: personalmemory.ResourceMetadata{
+				Title: "winner-resource quasar context memory",
+			},
+			ContentHash: strings.Repeat("c", 64),
+		}},
+	}}
+	backend := NewHybridBackend(
+		context.Background(), state, corroboratedRecoveryEmbedder{},
+	)
+	packet, err := personalmemory.NewRetriever(
+		repository, backend,
+	).SearchCompact(personalmemory.SearchRequest{
+		Query: "quasar retrieval memory",
+		Limit: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if packet.AnswerState != "answered" ||
+		len(packet.Citations) != 1 ||
+		packet.Citations[0].RecordID != "record-owner" {
+		t.Fatalf("hybrid recovery wiring did not return the canonical owner: %+v",
+			packet)
+	}
+	components := packet.Citations[0].ComponentScores
+	if components["semantic_margin"] >= personalmemory.DefaultCompactMinimumSemanticMargin ||
+		components["semantic_distinct_evidence_margin"] < personalmemory.DefaultCompactMinimumSemanticMargin ||
+		components["lexical_idf_coverage"] < personalmemory.DefaultCompactMinimumSemanticLexicalCover ||
+		components["semantic_distinct_evidence_valid"] != 1 ||
+		backend.MethodID() != "mindline_hybrid_local/v0.10" {
+		t.Fatalf("hybrid recovery evidence was not wired conservatively: %+v method=%s",
+			components, backend.MethodID())
 	}
 }
 
@@ -498,6 +594,166 @@ func TestFeedbackRelevanceChunksMoreThanOneHundredThousandCanonicalIDs(t *testin
 	if relevance[boundaryID] != 0.1 {
 		t.Fatalf("bounded relevance lookup lost the second-chunk judgment: %v",
 			relevance[boundaryID])
+	}
+}
+
+func TestDistinctEvidenceSemanticAuthorizationIgnoresOnlyExactResourceSibling(t *testing.T) {
+	resourceWinner := personalmemory.IndexDocument{
+		DocumentID:                   "resource-winner",
+		FeedbackAliases:              []string{"record-owner"},
+		AuthorizationEvidenceAliases: []string{"resource-a"},
+		AuthorizationEvidenceKind:    personalmemory.IndexEvidenceKindUniqueResource,
+	}
+	sameResourceSibling := personalmemory.IndexDocument{
+		DocumentID:                   "record-source-sibling",
+		FeedbackAliases:              []string{"record-owner"},
+		AuthorizationEvidenceAliases: []string{"resource-a"},
+		AuthorizationEvidenceKind:    personalmemory.IndexEvidenceKindRecordSource,
+	}
+	distinctRecord := personalmemory.IndexDocument{
+		DocumentID:                   "record-distinct",
+		FeedbackAliases:              []string{"record-distinct"},
+		AuthorizationEvidenceAliases: []string{"record-distinct"},
+		AuthorizationEvidenceKind:    personalmemory.IndexEvidenceKindRecordSource,
+	}
+	baselineDocuments := []personalmemory.IndexDocument{
+		resourceWinner, sameResourceSibling, distinctRecord,
+	}
+	baselineScores := map[string]float64{
+		"resource-winner":       0.62,
+		"record-source-sibling": 0.61,
+		"record-distinct":       0.55,
+	}
+	baseline, ok := distinctEvidenceSemanticAuthorization(
+		baselineScores, baselineDocuments,
+	)
+	if !ok || baseline.winnerID != "resource-winner" ||
+		baseline.runner != 0.55 ||
+		math.Abs(baseline.margin-0.07) > 0.000001 {
+		t.Fatalf("same-resource source sibling was not ignored: %+v ok=%v",
+			baseline, ok)
+	}
+	replayed, replayOK := distinctEvidenceSemanticAuthorization(
+		baselineScores,
+		[]personalmemory.IndexDocument{
+			distinctRecord, sameResourceSibling, resourceWinner,
+		},
+	)
+	if !replayOK || replayed != baseline {
+		t.Fatalf("distinct-evidence computation was not replay deterministic: first=%+v replay=%+v",
+			baseline, replayed)
+	}
+
+	for _, test := range []struct {
+		name       string
+		competitor personalmemory.IndexDocument
+	}{
+		{
+			name: "distinct resource with same owner",
+			competitor: personalmemory.IndexDocument{
+				DocumentID:                   "resource-same-owner",
+				FeedbackAliases:              []string{"record-owner"},
+				AuthorizationEvidenceAliases: []string{"resource-b"},
+				AuthorizationEvidenceKind:    personalmemory.IndexEvidenceKindUniqueResource,
+			},
+		},
+		{
+			name: "source overlaps winner and distinct resource",
+			competitor: personalmemory.IndexDocument{
+				DocumentID:                   "record-overlap",
+				FeedbackAliases:              []string{"record-owner"},
+				AuthorizationEvidenceAliases: []string{"resource-a", "resource-b"},
+				AuthorizationEvidenceKind:    personalmemory.IndexEvidenceKindRecordSource,
+			},
+		},
+		{
+			name: "different owner resource",
+			competitor: personalmemory.IndexDocument{
+				DocumentID:                   "resource-different-owner",
+				FeedbackAliases:              []string{"record-other"},
+				AuthorizationEvidenceAliases: []string{"resource-c"},
+				AuthorizationEvidenceKind:    personalmemory.IndexEvidenceKindUniqueResource,
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			scores := map[string]float64{
+				resourceWinner.DocumentID:      0.62,
+				sameResourceSibling.DocumentID: 0.61,
+				test.competitor.DocumentID:     0.61,
+			}
+			result, ok := distinctEvidenceSemanticAuthorization(
+				scores,
+				[]personalmemory.IndexDocument{
+					resourceWinner, sameResourceSibling, test.competitor,
+				},
+			)
+			if !ok || result.runner != 0.61 ||
+				math.Abs(result.margin-0.01) > 0.000001 {
+				t.Fatalf("distinct evidence did not remain a competitor: %+v ok=%v",
+					result, ok)
+			}
+		})
+	}
+}
+
+func TestDistinctEvidenceSemanticAuthorizationFailsClosedOnInvalidEvidence(t *testing.T) {
+	validWinner := personalmemory.IndexDocument{
+		DocumentID:                   "resource-winner",
+		AuthorizationEvidenceAliases: []string{"resource-a"},
+		AuthorizationEvidenceKind:    personalmemory.IndexEvidenceKindUniqueResource,
+	}
+	for _, test := range []struct {
+		name      string
+		documents []personalmemory.IndexDocument
+		scores    map[string]float64
+	}{
+		{
+			name: "missing alias",
+			documents: []personalmemory.IndexDocument{{
+				DocumentID:                "resource-winner",
+				AuthorizationEvidenceKind: personalmemory.IndexEvidenceKindUniqueResource,
+			}},
+			scores: map[string]float64{"resource-winner": 0.62},
+		},
+		{
+			name: "ambiguous duplicate alias",
+			documents: []personalmemory.IndexDocument{{
+				DocumentID:                   "resource-winner",
+				AuthorizationEvidenceAliases: []string{"resource-a", "resource-a"},
+				AuthorizationEvidenceKind:    personalmemory.IndexEvidenceKindUniqueResource,
+			}},
+			scores: map[string]float64{"resource-winner": 0.62},
+		},
+		{
+			name: "duplicate unique resource identity",
+			documents: []personalmemory.IndexDocument{
+				validWinner,
+				{
+					DocumentID:                   "resource-duplicate",
+					AuthorizationEvidenceAliases: []string{"resource-a"},
+					AuthorizationEvidenceKind:    personalmemory.IndexEvidenceKindUniqueResource,
+				},
+			},
+			scores: map[string]float64{
+				"resource-winner": 0.62, "resource-duplicate": 0.61,
+			},
+		},
+		{
+			name:      "non-finite score",
+			documents: []personalmemory.IndexDocument{validWinner},
+			scores: map[string]float64{
+				"resource-winner": math.NaN(),
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if result, ok := distinctEvidenceSemanticAuthorization(
+				test.scores, test.documents,
+			); ok {
+				t.Fatalf("invalid evidence authorized: %+v", result)
+			}
+		})
 	}
 }
 

@@ -36,13 +36,16 @@ const (
 	DefaultCompactMinimumLexicalWinnerMargin  = 0.15
 	DefaultCompactMinimumLexicalMatchedTerms  = 3
 	DefaultCompactMinimumOrderedPhraseTerms   = 3
-	CompactSemanticCalibrationIdentity        = "ollama/embeddinggemma:latest/retrieval-input-v0.2|query-prompt=search-result-v0.1|document-prompt=title-none-v0.1|document-projection=record-source+unique-current-resource-v0.8|chunk-runes=2000|chunk-overlap=200|max-chunks=8"
+	CompactSemanticCalibrationIdentity        = "ollama/embeddinggemma:latest/retrieval-input-v0.2|query-prompt=search-result-v0.1|document-prompt=title-none-v0.1|document-projection=record-source+unique-current-resource+authorization-evidence-alias-v0.10|distinct-resource-evidence-margin=v0.1|chunk-runes=2000|chunk-overlap=200|max-chunks=8"
 	compactLexicalEvidenceRule                = "rank1_ordered_phrase_or_rare_idf_coverage"
 	compactStopwordPolicy                     = "mindline-english-stopwords/v0.2"
-	compactRankingIdentity                    = "bm25-original-query|authorization-meaningful-query|candidate-pool=100|documents=record-source+unique-current-resource-v0.8|raw-hit-identity=fail-closed-v0.1|owner-expansion=post-authorization-v0.1|feedback-alias=observed-owner-mean-v0.1|relevance-lookup-chunk=100000|rrf-k=60|lexical-weight=2|semantic-weight=1|lens-rerank-only"
-	compactChunkingIdentity                   = "document-projection=record-source+unique-current-resource-v0.8|chunk-runes=2000|chunk-overlap=200|max-chunks=8"
+	compactRankingIdentity                    = "bm25-original-query|authorization-meaningful-query|candidate-pool=100|documents=record-source+unique-current-resource+authorization-evidence-alias-v0.10|raw-hit-identity=fail-closed-v0.1|authorization=existing-v0.7-then-calibrated-corroborated-resource-v0.1|owner-expansion=post-authorization-v0.1|feedback-alias=observed-owner-mean-v0.1|relevance-lookup-chunk=100000|rrf-k=60|lexical-weight=2|semantic-weight=1|lens-rerank-only"
+	compactChunkingIdentity                   = "document-projection=record-source+unique-current-resource+authorization-evidence-alias-v0.10|chunk-runes=2000|chunk-overlap=200|max-chunks=8"
 	compactResourceDocumentPrefix             = "compact-resource:"
 	maximumCompactDocumentIDRunes             = 128
+
+	IndexEvidenceKindRecordSource   = "record_source"
+	IndexEvidenceKindUniqueResource = "unique_resource"
 )
 
 // RetrieverPort is the agent-facing canonical Mindline contract.
@@ -76,6 +79,10 @@ type IndexDocument struct {
 	// FeedbackAliases are canonical item identities whose recorded relevance
 	// applies to this retrieval-only document. An empty set means DocumentID.
 	FeedbackAliases []string
+	// AuthorizationEvidenceAliases identify the independent evidence represented
+	// by this retrieval document. They are ranking-only and never packet output.
+	AuthorizationEvidenceAliases []string
+	AuthorizationEvidenceKind    string
 }
 
 type RankedHit struct {
@@ -200,7 +207,7 @@ func (retriever ContextRetriever) SearchCompact(request SearchRequest) (CompactC
 	if calibrated, ok := retriever.backend.(CompactSemanticCalibrationPort); ok {
 		calibrationID = strings.TrimSpace(calibrated.CompactSemanticCalibrationID())
 	}
-	rawHits = usableCompactHits(rawHits, policy, calibrationID)
+	rawHits = usableCompactHits(rawHits, policy, calibrationID, projection)
 	hits, selectedResources, err := expandCompactHits(rawHits, projection, callerLimit)
 	if err != nil {
 		return CompactContextPacket{}, err
@@ -382,12 +389,23 @@ func (retriever ContextRetriever) prepareCompactProjection() (compactRetrievalPr
 		}
 		projection.recordsByID[record.RecordID] = record
 		projection.ownersByDocumentID[record.RecordID] = []string{record.RecordID}
+		resources := currentResourceBundleForRecord(record, resourcesByID)
+		authorizationAliases := make([]string, 0, len(resources))
+		for _, resource := range resources {
+			authorizationAliases = append(authorizationAliases, resource.ResourceID)
+		}
+		authorizationAliases = uniqueSorted(authorizationAliases)
+		if len(authorizationAliases) == 0 {
+			authorizationAliases = []string{record.RecordID}
+		}
 		projection.indexDocuments = append(projection.indexDocuments, IndexDocument{
-			DocumentID:      record.RecordID,
-			Text:            strings.TrimSpace(record.RawText),
-			FeedbackAliases: []string{record.RecordID},
+			DocumentID:                   record.RecordID,
+			Text:                         strings.TrimSpace(record.RawText),
+			FeedbackAliases:              []string{record.RecordID},
+			AuthorizationEvidenceAliases: authorizationAliases,
+			AuthorizationEvidenceKind:    IndexEvidenceKindRecordSource,
 		})
-		for _, resource := range currentResourceBundleForRecord(record, resourcesByID) {
+		for _, resource := range resources {
 			ownersByResourceID[resource.ResourceID] = append(
 				ownersByResourceID[resource.ResourceID], record.RecordID,
 			)
@@ -427,9 +445,11 @@ func (retriever ContextRetriever) prepareCompactProjection() (compactRetrievalPr
 			}
 		}
 		projection.indexDocuments = append(projection.indexDocuments, IndexDocument{
-			DocumentID:      documentID,
-			Text:            compactResourceSearchText(resource, content),
-			FeedbackAliases: append([]string(nil), owners...),
+			DocumentID:                   documentID,
+			Text:                         compactResourceSearchText(resource, content),
+			FeedbackAliases:              append([]string(nil), owners...),
+			AuthorizationEvidenceAliases: []string{resourceID},
+			AuthorizationEvidenceKind:    IndexEvidenceKindUniqueResource,
 		})
 		projection.ownersByDocumentID[documentID] = owners
 		projection.resourceByDocumentID[documentID] = resourceID
@@ -973,6 +993,7 @@ func usableCompactHits(
 	hits []RankedHit,
 	policy CompactAbstentionPolicy,
 	calibrationID string,
+	projection compactRetrievalProjection,
 ) []RankedHit {
 	valid := make([]RankedHit, 0, len(hits))
 	seen := map[string]bool{}
@@ -984,10 +1005,78 @@ func usableCompactHits(
 		seen[hit.DocumentID] = true
 		valid = append(valid, hit)
 	}
-	if !compactQueryAuthorized(valid, policy, calibrationID) {
+	if !compactQueryAuthorized(valid, policy, calibrationID) &&
+		!compactCorroboratedResourceAuthorized(
+			valid, policy, calibrationID, projection,
+		) {
 		return nil
 	}
 	return valid
+}
+
+func compactCorroboratedResourceAuthorized(
+	hits []RankedHit,
+	policy CompactAbstentionPolicy,
+	calibrationID string,
+	projection compactRetrievalProjection,
+) bool {
+	if calibrationID != policy.SemanticCalibrationIdentity {
+		return false
+	}
+	var winner RankedHit
+	winnerCount := 0
+	for _, hit := range hits {
+		rank, ok := finiteComponent(hit, "semantic_rank")
+		if !ok || rank != 1 {
+			continue
+		}
+		winner = hit
+		winnerCount++
+	}
+	if winnerCount != 1 {
+		return false
+	}
+	resourceID, isResource := projection.resourceByDocumentID[winner.DocumentID]
+	if !isResource || strings.TrimSpace(resourceID) == "" {
+		return false
+	}
+	indexDocument, exists := compactIndexDocumentByID(
+		projection.indexDocuments, winner.DocumentID,
+	)
+	if !exists ||
+		indexDocument.AuthorizationEvidenceKind != IndexEvidenceKindUniqueResource ||
+		len(indexDocument.AuthorizationEvidenceAliases) != 1 ||
+		indexDocument.AuthorizationEvidenceAliases[0] != resourceID {
+		return false
+	}
+	cosine, cosineOK := finiteComponent(winner, "semantic_cosine")
+	margin, marginOK := finiteComponent(
+		winner, "semantic_distinct_evidence_margin",
+	)
+	coverage, coverageOK := finiteComponent(winner, "lexical_idf_coverage")
+	valid, validOK := finiteComponent(
+		winner, "semantic_distinct_evidence_valid",
+	)
+	return cosineOK && marginOK && coverageOK && validOK && valid == 1 &&
+		cosine >= policy.MinimumSemanticCosine &&
+		margin >= policy.MinimumSemanticMargin &&
+		coverage >= policy.MinimumSemanticLexicalCoverage
+}
+
+func compactIndexDocumentByID(
+	documents []IndexDocument,
+	documentID string,
+) (IndexDocument, bool) {
+	var matched IndexDocument
+	count := 0
+	for _, document := range documents {
+		if document.DocumentID != documentID {
+			continue
+		}
+		matched = document
+		count++
+	}
+	return matched, count == 1
 }
 
 func compactQueryAuthorized(
