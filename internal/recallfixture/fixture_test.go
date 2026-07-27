@@ -398,9 +398,9 @@ func (fetcher *fixtureFetcher) Fetch(_ context.Context, target resourcequeue.Tar
 	case fixtureUnreachableURL:
 		return resourcequeue.FetchResult{BlockedReason: "unreachable", Usage: resourcequeue.Usage{Requests: 1}}, errors.New("fixture unreachable public URL")
 	case fixtureBudgetURL:
-		// This synthetic response is rejected by the frozen aggregate budget
-		// before any fetched payload may be merged.
-		return resourcequeue.FetchResult{State: resourcequeue.StateComplete, Usage: resourcequeue.Usage{Requests: 1, DownloadedBytes: target.Remaining.DownloadedBytes + 1}}, nil
+		// Full per-response exhaustion is a permanent resource outcome. Run-wide
+		// aggregate exhaustion is covered separately by continuation fixtures.
+		return resourcequeue.FetchResult{BlockedReason: resourcequeue.ReasonBudgetExhausted, Usage: resourcequeue.Usage{Requests: 1}}, nil
 	default:
 		return resourcequeue.FetchResult{}, errors.New("fixture fetcher received an unknown safe resource")
 	}

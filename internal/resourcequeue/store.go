@@ -377,11 +377,21 @@ func (store *Store) StartNextGeneration() (Queue, bool, error) {
 
 func globalBudgetExhausted(queue Queue) bool {
 	return queue.Counters.ProcessedResources >= queue.Profile.MaxResources ||
-		queue.Counters.Requests+queue.Counters.ReservedRequests >= queue.Profile.MaxRequests
+		queue.Counters.Requests+queue.Counters.ReservedRequests >= queue.Profile.MaxRequests ||
+		queue.Counters.DownloadedBytes >= queue.Profile.MaxDownloadedBytes ||
+		queue.Counters.DecodedBytes >= queue.Profile.MaxDecodedBytes ||
+		queue.Counters.ExtractedBytes >= queue.Profile.MaxExtractedBytes ||
+		queue.Counters.RuntimeStorageBytes >= queue.Profile.MaxRuntimeStorageBytes ||
+		queue.Counters.WallSeconds >= queue.Profile.MaxRunWallSeconds
 }
 
 func budgetDefersItem(queue Queue, item Item) bool {
-	if queue.Counters.Requests+queue.Counters.ReservedRequests >= queue.Profile.MaxRequests {
+	if queue.Counters.Requests+queue.Counters.ReservedRequests >= queue.Profile.MaxRequests ||
+		queue.Counters.DownloadedBytes >= queue.Profile.MaxDownloadedBytes ||
+		queue.Counters.DecodedBytes >= queue.Profile.MaxDecodedBytes ||
+		queue.Counters.ExtractedBytes >= queue.Profile.MaxExtractedBytes ||
+		queue.Counters.RuntimeStorageBytes >= queue.Profile.MaxRuntimeStorageBytes ||
+		queue.Counters.WallSeconds >= queue.Profile.MaxRunWallSeconds {
 		return true
 	}
 	return queue.Counters.ProcessedResources >= queue.Profile.MaxResources && item.Attempts == 0

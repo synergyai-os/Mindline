@@ -144,7 +144,7 @@ func (runner Runner) ProcessNext(ctx context.Context) (bool, error) {
 	if exhausted, err := runner.Store.Consume(item.ResourceID, result.Usage); err != nil {
 		return true, err
 	} else if exhausted {
-		item.State, item.Reason = StateBlocked, ReasonBudgetExhausted
+		item.State, item.Reason = StateBlocked, ReasonRunBudgetDeferred
 		return true, runner.mergeAndFinish(target, item, FetchResult{})
 	}
 	if retryEligible(result) && item.Attempts < runner.profileAttempts() {

@@ -469,6 +469,165 @@ func TestGlobalBudgetRemainderSettlesInOneCanonicalBatch(t *testing.T) {
 	}
 }
 
+type fixedUsageFetcher struct{ usage Usage }
+
+func (fetcher fixedUsageFetcher) Fetch(context.Context, Target) (FetchResult, error) {
+	return FetchResult{State: StatePartial, Usage: fetcher.usage}, nil
+}
+
+func TestEveryGlobalBudgetDimensionDefersAndContinuesExactlyOneGeneration(t *testing.T) {
+	tests := []struct {
+		name  string
+		limit func(*BudgetProfile)
+		usage Usage
+	}{
+		{name: "resources", limit: func(profile *BudgetProfile) { profile.MaxResources = 1 }},
+		{name: "requests", limit: func(profile *BudgetProfile) { profile.MaxRequests = 1 }, usage: Usage{Requests: 2}},
+		{name: "downloaded", limit: func(profile *BudgetProfile) { profile.MaxDownloadedBytes = 1 }, usage: Usage{DownloadedBytes: 2}},
+		{name: "decoded", limit: func(profile *BudgetProfile) { profile.MaxDecodedBytes = 1 }, usage: Usage{DecodedBytes: 2}},
+		{name: "extracted", limit: func(profile *BudgetProfile) { profile.MaxExtractedBytes = 1 }, usage: Usage{ExtractedBytes: 2}},
+		{name: "runtime-storage", limit: func(profile *BudgetProfile) { profile.MaxRuntimeStorageBytes = 1 }, usage: Usage{RuntimeStorageBytes: 2}},
+		{name: "wall", limit: func(profile *BudgetProfile) { profile.MaxRunWallSeconds = 1 }, usage: Usage{WallSeconds: 2}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			profile := FixtureProfile()
+			profile.Name = "fixture-generation-" + test.name
+			profile.MaxResources = 10
+			test.limit(&profile)
+			profile = SealProfile(profile)
+			store, err := NewStore(t.TempDir()+"/queue", profile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resourceIDs := []string{"resource-a", "resource-b", "resource-c"}
+			if _, err := store.Enqueue(resourceIDs); err != nil {
+				t.Fatal(err)
+			}
+			repository := &batchRecordingRepository{library: personalmemory.Library{
+				Resources: []personalmemory.ResourceContext{
+					{ResourceID: resourceIDs[0], CanonicalURL: "https://example.com/a"},
+					{ResourceID: resourceIDs[1], CanonicalURL: "https://example.com/b"},
+					{ResourceID: resourceIDs[2], CanonicalURL: "https://example.com/c"},
+				},
+			}}
+			if err := (Runner{Store: store, Repository: repository, Fetcher: fixedUsageFetcher{usage: test.usage}}).Drain(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			before, err := store.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			beforeDeferred, beforePartial := queueOutcomeCounts(before)
+			if beforeDeferred == 0 {
+				t.Fatalf("%s cap did not preserve deferred work: %+v", test.name, before)
+			}
+			if test.name == "resources" {
+				if beforePartial != 1 || beforeDeferred != 2 {
+					t.Fatalf("resource cap outcomes = partial:%d deferred:%d", beforePartial, beforeDeferred)
+				}
+			} else if beforePartial != 0 || beforeDeferred != 3 {
+				t.Fatalf("%s aggregate overage did not defer current and remainder: partial:%d deferred:%d", test.name, beforePartial, beforeDeferred)
+			}
+			if _, started, err := store.StartNextGeneration(); err != nil || !started {
+				t.Fatalf("start %s continuation = %v %v", test.name, started, err)
+			}
+			if err := (Runner{Store: store, Repository: repository, Fetcher: fixedUsageFetcher{}}).Drain(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			after, err := store.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			afterDeferred, afterPartial := queueOutcomeCounts(after)
+			if after.Generation != 1 || afterPartial <= beforePartial || afterDeferred >= beforeDeferred {
+				t.Fatalf("%s continuation did not progress exactly one generation: before=%+v after=%+v", test.name, before, after)
+			}
+			if after.Counters.ProcessedResources > profile.MaxResources ||
+				after.Counters.Requests > profile.MaxRequests ||
+				after.Counters.DownloadedBytes > profile.MaxDownloadedBytes ||
+				after.Counters.DecodedBytes > profile.MaxDecodedBytes ||
+				after.Counters.ExtractedBytes > profile.MaxExtractedBytes ||
+				after.Counters.RuntimeStorageBytes > profile.MaxRuntimeStorageBytes ||
+				after.Counters.WallSeconds > profile.MaxRunWallSeconds {
+				t.Fatalf("%s continuation crossed frozen profile: %+v", test.name, after.Counters)
+			}
+		})
+	}
+}
+
+func TestAggregateCapCrashDefersRecoveredAttemptAndRemainderWithinNextGeneration(t *testing.T) {
+	profile := FixtureProfile()
+	profile.Name = "fixture-decoded-crash-continuation"
+	profile.MaxResources = 10
+	profile.MaxDecodedBytes = 1
+	profile = SealProfile(profile)
+	store, err := NewStore(t.TempDir()+"/queue", profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resourceIDs := []string{"resource-a", "resource-b"}
+	if _, err := store.Enqueue(resourceIDs); err != nil {
+		t.Fatal(err)
+	}
+	claimed, found, err := store.ClaimNext()
+	if err != nil || !found || claimed.Attempts != 1 {
+		t.Fatalf("crash claim = %+v %v %v", claimed, found, err)
+	}
+	if exhausted, err := store.Consume(claimed.ResourceID, Usage{DecodedBytes: 1}); err != nil || exhausted {
+		t.Fatalf("exact cap consume = exhausted:%v err:%v", exhausted, err)
+	}
+	repository := &batchRecordingRepository{library: personalmemory.Library{
+		Resources: []personalmemory.ResourceContext{
+			{ResourceID: resourceIDs[0], CanonicalURL: "https://example.com/a"},
+			{ResourceID: resourceIDs[1], CanonicalURL: "https://example.com/b"},
+		},
+	}}
+	if err := (Runner{Store: store, Repository: repository, Fetcher: fixedUsageFetcher{}}).Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	crashed, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	deferred, partial := queueOutcomeCounts(crashed)
+	if deferred != 2 || partial != 0 || crashed.Counters.DecodedBytes != profile.MaxDecodedBytes {
+		t.Fatalf("crash recovery escaped exhausted generation: %+v", crashed)
+	}
+	if _, started, err := store.StartNextGeneration(); err != nil || !started {
+		t.Fatalf("start recovered generation = %v %v", started, err)
+	}
+	if err := (Runner{Store: store, Repository: repository, Fetcher: fixedUsageFetcher{}}).Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	deferred, partial = queueOutcomeCounts(resumed)
+	if resumed.Generation != 1 || deferred != 0 || partial != 2 ||
+		resumed.Counters.DecodedBytes > profile.MaxDecodedBytes {
+		t.Fatalf("recovered generation did not finish safely: %+v", resumed)
+	}
+	for _, item := range resumed.Items {
+		if item.ResourceID == claimed.ResourceID && item.Attempts != 2 {
+			t.Fatalf("recovered attempt was not bounded and retained: %+v", item)
+		}
+	}
+}
+
+func queueOutcomeCounts(queue Queue) (deferred, partial int) {
+	for _, item := range queue.Items {
+		if item.State == StateBlocked && item.Reason == ReasonRunBudgetDeferred {
+			deferred++
+		}
+		if item.State == StatePartial {
+			partial++
+		}
+	}
+	return deferred, partial
+}
+
 func TestStartNextGenerationMigratesOnlyNeverAttemptedLegacyRemainder(t *testing.T) {
 	profile := FixtureProfile()
 	store, err := NewStore(t.TempDir()+"/queue", profile)

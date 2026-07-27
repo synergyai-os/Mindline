@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -213,58 +214,58 @@ func (fetcher queueFetcher) Fetch(ctx context.Context, target resourcequeue.Targ
 		return resourcequeue.FetchResult{}, err
 	}
 	if target.Remaining.Requests < 1 {
-		return resourcequeue.FetchResult{State: "blocked", BlockedReason: "budget_exhausted"}, nil
+		return resourcequeue.FetchResult{State: "blocked", BlockedReason: resourcequeue.ReasonRunBudgetDeferred}, nil
 	}
 	if target.Remaining.DownloadedBytes < 1 || target.Remaining.DecodedBytes < 1 ||
 		target.Remaining.ExtractedBytes < 1 || target.Remaining.RuntimeStorageBytes < 1 ||
 		target.Remaining.WallSeconds < 1 {
-		return resourcequeue.FetchResult{State: "blocked", BlockedReason: "budget_exhausted"}, nil
+		return resourcequeue.FetchResult{State: "blocked", BlockedReason: resourcequeue.ReasonRunBudgetDeferred}, nil
 	}
+	narrowed := false
 	maxRedirects := target.Remaining.Requests - 1
 	if maxRedirects < policy.MaximumRedirects {
 		policy.MaximumRedirects = maxRedirects
+		narrowed = true
 	}
-	policy.MaximumWireBytes = minimumInt64(policy.MaximumWireBytes, target.Remaining.DownloadedBytes)
-	policy.MaximumDecodedBytes = minimumInt64(policy.MaximumDecodedBytes, target.Remaining.DecodedBytes)
+	if target.Remaining.DownloadedBytes < policy.MaximumWireBytes {
+		policy.MaximumWireBytes = target.Remaining.DownloadedBytes
+		narrowed = true
+	}
+	if target.Remaining.DecodedBytes < policy.MaximumDecodedBytes {
+		policy.MaximumDecodedBytes = target.Remaining.DecodedBytes
+		narrowed = true
+	}
 	if int64(policy.MaximumExtractedBytes) > target.Remaining.ExtractedBytes {
 		policy.MaximumExtractedBytes = int(target.Remaining.ExtractedBytes)
+		narrowed = true
+	}
+	if int64(policy.MaximumExtractedBytes) > target.Remaining.RuntimeStorageBytes {
+		policy.MaximumExtractedBytes = int(target.Remaining.RuntimeStorageBytes)
+		narrowed = true
 	}
 	if wallLimit := time.Duration(target.Remaining.WallSeconds) * time.Second; wallLimit < policy.RequestTimeout {
 		policy.RequestTimeout = wallLimit
+		narrowed = true
 	}
 	// The narrowed policy is bound to both the sealed profile and target
 	// allowance. The port must echo it exactly or the result is rejected.
-	policy.Fingerprint = policy.Fingerprint + "/requests-" + itoa(target.Remaining.Requests)
+	policy.Fingerprint += "/requests-" + strconv.Itoa(target.Remaining.Requests) +
+		"/wire-" + strconv.FormatInt(policy.MaximumWireBytes, 10) +
+		"/decoded-" + strconv.FormatInt(policy.MaximumDecodedBytes, 10) +
+		"/extracted-" + strconv.Itoa(policy.MaximumExtractedBytes) +
+		"/wall-nanos-" + strconv.FormatInt(int64(policy.RequestTimeout), 10)
 	result := fetcher.port.Fetch(ctx, target.CanonicalURL, policy)
 	if result.PolicyFingerprint != policy.Fingerprint {
 		return resourcequeue.FetchResult{}, errors.New("resource fetch policy fingerprint mismatch")
 	}
 	adapted := resourcequeue.FromResourcefetchResult(result)
+	if narrowed && adapted.BlockedReason == resourcequeue.ReasonBudgetExhausted {
+		adapted.BlockedReason = resourcequeue.ReasonRunBudgetDeferred
+	}
 	if adapted.Usage.Requests > target.Remaining.Requests {
-		return resourcequeue.FetchResult{State: "blocked", BlockedReason: "budget_exhausted"}, nil
+		return resourcequeue.FetchResult{State: "blocked", BlockedReason: resourcequeue.ReasonRunBudgetDeferred}, nil
 	}
 	return adapted, nil
-}
-
-func minimumInt64(left, right int64) int64 {
-	if left < right {
-		return left
-	}
-	return right
-}
-
-func itoa(value int) string {
-	if value == 0 {
-		return "0"
-	}
-	bytes := [20]byte{}
-	pos := len(bytes)
-	for value > 0 {
-		pos--
-		bytes[pos] = byte('0' + value%10)
-		value /= 10
-	}
-	return string(bytes[pos:])
 }
 
 type Status struct {

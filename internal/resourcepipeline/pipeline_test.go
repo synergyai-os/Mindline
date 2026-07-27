@@ -110,6 +110,68 @@ func TestPipelineRejectsPolicyFingerprintMismatch(t *testing.T) {
 	}
 }
 
+type budgetBlockedPort struct{ calls int }
+
+func (port *budgetBlockedPort) Fetch(_ context.Context, _ string, policy resourcefetch.FrozenPolicy) resourcefetch.Result {
+	port.calls++
+	return resourcefetch.Result{
+		State: "blocked", Reason: resourcefetch.ReasonBudgetExhausted,
+		RequestCount: 1, PolicyFingerprint: policy.Fingerprint,
+	}
+}
+
+func TestQueueFetcherDistinguishesNarrowedRunBudgetFromPerResponseBudget(t *testing.T) {
+	profile := resourcequeue.FixtureProfile()
+	base, err := ProfilePolicy(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	full := resourcequeue.Usage{
+		Requests:            base.MaximumRedirects + 1,
+		DownloadedBytes:     base.MaximumWireBytes,
+		DecodedBytes:        base.MaximumDecodedBytes,
+		ExtractedBytes:      int64(base.MaximumExtractedBytes),
+		RuntimeStorageBytes: int64(base.MaximumExtractedBytes),
+		WallSeconds:         int64(base.RequestTimeout / time.Second),
+	}
+	port := &budgetBlockedPort{}
+	fetcher := queueFetcher{profile: profile, port: port}
+	result, err := fetcher.Fetch(context.Background(), resourcequeue.Target{CanonicalURL: "https://example.com/full", Remaining: full})
+	if err != nil || result.BlockedReason != resourcequeue.ReasonBudgetExhausted {
+		t.Fatalf("full per-response oversize was not terminal: %+v err=%v", result, err)
+	}
+	tests := []struct {
+		name   string
+		narrow func(*resourcequeue.Usage)
+	}{
+		{name: "requests", narrow: func(usage *resourcequeue.Usage) { usage.Requests-- }},
+		{name: "downloaded", narrow: func(usage *resourcequeue.Usage) { usage.DownloadedBytes-- }},
+		{name: "decoded", narrow: func(usage *resourcequeue.Usage) { usage.DecodedBytes-- }},
+		{name: "extracted", narrow: func(usage *resourcequeue.Usage) { usage.ExtractedBytes-- }},
+		{name: "runtime-storage", narrow: func(usage *resourcequeue.Usage) { usage.RuntimeStorageBytes-- }},
+		{name: "wall", narrow: func(usage *resourcequeue.Usage) { usage.WallSeconds-- }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			remaining := full
+			test.narrow(&remaining)
+			result, err := fetcher.Fetch(context.Background(), resourcequeue.Target{
+				CanonicalURL: "https://example.com/narrowed", Remaining: remaining,
+			})
+			if err != nil || result.BlockedReason != resourcequeue.ReasonRunBudgetDeferred {
+				t.Fatalf("%s narrowed budget was not resumable: %+v err=%v", test.name, result, err)
+			}
+		})
+	}
+	zero := full
+	zero.DecodedBytes = 0
+	before := port.calls
+	result, err = fetcher.Fetch(context.Background(), resourcequeue.Target{CanonicalURL: "https://example.com/exhausted", Remaining: zero})
+	if err != nil || result.BlockedReason != resourcequeue.ReasonRunBudgetDeferred || port.calls != before {
+		t.Fatalf("fully exhausted run budget called the port or became terminal: %+v calls=%d/%d err=%v", result, before, port.calls, err)
+	}
+}
+
 func TestPipelineContinuationAdvancesOneBoundedGenerationAndClearsCanonicalDeferredMissingness(t *testing.T) {
 	root := t.TempDir()
 	repository, err := personalmemory.NewFileRepository(root+"/library", func() time.Time {
