@@ -15,7 +15,7 @@ import (
 	"github.com/synergyai-os/Mindline/internal/personalmemory"
 )
 
-func TestAgentCLIRequestsCompactFormatAndCapabilities(t *testing.T) {
+func TestAgentCLIDefaultsToCompactFormatAndReportsCapabilities(t *testing.T) {
 	root, err := os.MkdirTemp("/tmp", "mindline-agent-cli-v03-")
 	if err != nil {
 		t.Fatal(err)
@@ -56,9 +56,9 @@ func TestAgentCLIRequestsCompactFormatAndCapabilities(t *testing.T) {
 	stderr.Reset()
 	if code := runner.Run([]string{
 		"agent", "search", "what", "is", "this", "and", "how",
-		"--format", "compact-v0.3", "--config", configPath,
+		"--config", configPath,
 	}, &stdout, &stderr); code != ExitOK {
-		t.Fatalf("compact search code=%d stderr=%s", code, stderr.String())
+		t.Fatalf("default compact search code=%d stderr=%s", code, stderr.String())
 	}
 	var packet personalmemory.CompactContextPacket
 	if err := json.Unmarshal(stdout.Bytes(), &packet); err != nil ||
@@ -88,7 +88,7 @@ func TestAgentCLIRejectsAmbiguousFeedbackIdentityBeforeConnecting(t *testing.T) 
 	}
 }
 
-func TestAgentCLICompactRequestFallsBackToLegacyService(t *testing.T) {
+func TestAgentCLIDefaultCompactRequestFallsBackToLegacyService(t *testing.T) {
 	root, err := os.MkdirTemp("/tmp", "mindline-agent-cli-legacy-")
 	if err != nil {
 		t.Fatal(err)
@@ -129,8 +129,7 @@ func TestAgentCLICompactRequestFallsBackToLegacyService(t *testing.T) {
 	go func() { result <- server.Serve(listener) }()
 	var stdout, stderr bytes.Buffer
 	code := NewRunner(NewOSFileSystem()).Run([]string{
-		"agent", "search", "durable", "memory", "--format", "compact-v0.3",
-		"--config", configPath,
+		"agent", "search", "durable", "memory", "--config", configPath,
 	}, &stdout, &stderr)
 	if code != ExitOK {
 		t.Fatalf("legacy fallback code=%d stderr=%s", code, stderr.String())

@@ -182,18 +182,22 @@ func (pipeline *Pipeline) Continue(ctx context.Context) error {
 		return err
 	}
 	if len(queue.Items) == 0 {
-		err = pipeline.RebuildCurrent()
-	} else {
-		err = pipeline.EnqueueCurrent()
-	}
-	if err != nil {
-		return err
+		if err := pipeline.RebuildCurrent(); err != nil {
+			return err
+		}
 	}
 	runner := pipeline.runner()
 	if err := runner.Recover(); err != nil {
 		return err
 	}
 	if _, _, err := pipeline.Store.StartNextGeneration(); err != nil {
+		return err
+	}
+	// Open the next generation before adopting resources discovered by the
+	// prior one. Otherwise a terminal generation whose counters are already at
+	// a cap immediately defers those discoveries and requires a second
+	// continuation command before any useful work can resume.
+	if err := pipeline.EnqueueCurrent(); err != nil {
 		return err
 	}
 	return runner.Drain(ctx)

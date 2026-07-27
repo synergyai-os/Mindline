@@ -109,7 +109,7 @@ func (r Runner) runAgentSearch(args []string, stdout, stderr io.Writer) int {
 	input := localservice.SearchInput{
 		Query: strings.Join(options.positionals, " "), LensID: options.values["lens"], Limit: limit,
 	}
-	if format == "" || format == "legacy-v0.2" {
+	if format == "legacy-v0.2" {
 		packet, err := client.Search(context.Background(), input)
 		if err != nil {
 			return agentFailure(stderr, err)

@@ -314,6 +314,76 @@ func TestPipelineContinuationRecoversCrashedGenerationWithoutOpeningAnother(t *t
 	}
 }
 
+type discoveringFetchPort struct {
+	calls int
+}
+
+func (port *discoveringFetchPort) Fetch(_ context.Context, _ string, policy resourcefetch.FrozenPolicy) resourcefetch.Result {
+	port.calls++
+	result := resourcefetch.Result{
+		State: "complete", PolicyFingerprint: policy.Fingerprint, RequestCount: 1,
+		MediaType: "text/plain", Text: "network-free public context",
+		WireBytes: 27, DecodedBytes: 27, ExtractedBytes: 27,
+	}
+	if port.calls == 1 {
+		result.RelatedURLs = []string{"https://example.com/discovered"}
+	}
+	return result
+}
+
+func TestPipelineContinuationAdoptsPriorGenerationDiscoveriesBeforeDrainingNextGeneration(t *testing.T) {
+	root := t.TempDir()
+	repository, err := personalmemory.NewFileRepository(root+"/library", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := personalmemory.NewCaptureRecord(personalmemory.CaptureRecordInput{
+		SourceAdapter: "slack", SourceScopeID: "workspace", SourceContainerID: "self",
+		ExternalID: "message-discovery", OccurredAt: "2026-07-27T12:00:00Z",
+		SourceRef:       "slack://workspace/self/message-discovery",
+		RawText:         "https://example.com/one https://example.com/two",
+		EditDeleteState: "original", Missingness: []string{"permalink_unavailable"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch, err := personalmemory.NewCaptureBatch(personalmemory.CaptureBatchInput{
+		SourceIdentity: "slack:workspace:self", LowerInclusive: "1", UpperInclusive: "1",
+		Watermark: "1", DeclaredRecords: 1, Records: []personalmemory.CaptureRecord{record},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.Import(batch); err != nil {
+		t.Fatal(err)
+	}
+	profile := resourcequeue.FixtureProfile()
+	profile.MaxResources = 1
+	profile = resourcequeue.SealProfile(profile)
+	port := &discoveringFetchPort{}
+	pipeline, err := New(root+"/queue", repository, profile, port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pipeline.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	library, err := repository.Load()
+	if err != nil || len(library.Resources) != 3 {
+		t.Fatalf("discovered resource was not retained: resources=%d err=%v", len(library.Resources), err)
+	}
+	if err := pipeline.Continue(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	status, err := pipeline.StructuralStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Generation != 1 || port.calls != 2 || status.DeferredCount != 1 {
+		t.Fatalf("discovery required an empty continuation: status=%+v calls=%d", status, port.calls)
+	}
+}
+
 func assertGenerationState(t *testing.T, pipeline *Pipeline, repository *personalmemory.FileRepository, generation, complete, deferred int, profile resourcequeue.BudgetProfile) {
 	t.Helper()
 	status, err := pipeline.StructuralStatus()
