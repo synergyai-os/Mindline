@@ -208,11 +208,19 @@ func Run(ctx context.Context, manifest OwnerManifest, binding RunBinding, compac
 		for _, compactCitation := range packet.Citations {
 			evidence, err := canonical.GetCanonicalEvidence(ctx, compactCitation.RecordID)
 			if err != nil {
-				return RunResult{}, fmt.Errorf("canonical hydration %s: %w", item.CaseID, err)
+				caseResult.Citations = append(caseResult.Citations, Citation{
+					RecordFingerprint: invalidCitationCommitment(compactCitation.RecordID),
+					Valid:             false,
+				})
+				continue
 			}
 			commitment, err := CanonicalEvidenceCommitment(evidence)
 			if err != nil {
-				return RunResult{}, err
+				caseResult.Citations = append(caseResult.Citations, Citation{
+					RecordFingerprint: invalidCitationCommitment(compactCitation.RecordID),
+					Valid:             false,
+				})
+				continue
 			}
 			caseResult.Citations = append(caseResult.Citations, Citation{RecordFingerprint: commitment, Valid: true})
 		}
@@ -220,6 +228,11 @@ func Run(ctx context.Context, manifest OwnerManifest, binding RunBinding, compac
 		result.UnselectedHydratedContent = result.UnselectedHydratedContent || packet.UnselectedHydratedContent
 	}
 	return RunResult{Evaluation: result, Binding: binding}, nil
+}
+
+func invalidCitationCommitment(recordID string) string {
+	digest := sha256.Sum256([]byte("invalid-canonical-citation\x00" + recordID))
+	return "sha256:" + hex.EncodeToString(digest[:])
 }
 
 func CompareRuns(manifest OwnerManifest, baseline, candidate RunResult) (ThresholdResult, error) {

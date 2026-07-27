@@ -28,11 +28,27 @@ func TestRunHydratesAndVerifiesCompactCitationsEndToEnd(t *testing.T) {
 	}
 }
 
-func TestRunRejectsNonCurrentCanonicalEvidence(t *testing.T) {
+func TestRunScoresNonCurrentCanonicalEvidenceAsInvalidCitation(t *testing.T) {
 	manifest, port := syntheticOwnerManifest(t)
 	port.evidence["record-01"] = CanonicalEvidence{RecordID: "record-01", SourceCommitment: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", AuthorityClass: "personal_evidence", Current: false, ContentHash: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
-	if _, err := Run(context.Background(), manifest, manifest.Baseline, port, port); err == nil {
-		t.Fatal("Run accepted a non-current citation")
+	result, err := Run(context.Background(), manifest, manifest.Baseline, port, port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	citation := result.Evaluation.Cases[0].Citations[0]
+	if citation.Valid || citation.RecordFingerprint != invalidCitationCommitment("record-01") {
+		t.Fatalf("non-current citation was not scored invalid: %+v", citation)
+	}
+	structural, err := structuralManifest(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metrics, err := Score(structural, result.Evaluation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metrics.CitationCompleteness >= 1 {
+		t.Fatalf("invalid citation did not lower completeness: %+v", metrics)
 	}
 }
 
