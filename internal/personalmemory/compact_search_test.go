@@ -440,7 +440,10 @@ func TestCompactSemanticAbstentionThresholdIsFrozenAndBoundToPacket(t *testing.T
 		policy.SchemaVersion != CompactAbstentionPolicySchemaVersion ||
 		policy.MinimumSemanticCosine != DefaultCompactMinimumSemanticCosine ||
 		policy.MinimumSemanticMargin != DefaultCompactMinimumSemanticMargin ||
-		policy.Fingerprint != "4fc4293b1d1459308c979300b8c1c606d21f0749d3ad2b28c40add8c414b8250" {
+		policy.MinimumSemanticOnlyCosine != DefaultCompactMinimumSemanticOnlyCosine ||
+		policy.MinimumSemanticOnlyMargin != DefaultCompactMinimumSemanticOnlyMargin ||
+		policy.MinimumSemanticLexicalCoverage != DefaultCompactMinimumSemanticLexicalCover ||
+		policy.Fingerprint != "ee1330f42a618800b01fd810e46e18f37d7affd03858feadbc0fae886469dc45" {
 		t.Fatalf("compact abstention policy is not deterministic: %+v", policy)
 	}
 	repository := &compactRepository{library: Library{
@@ -517,6 +520,124 @@ func TestCompactSemanticAnswerRequiresWinnerMargin(t *testing.T) {
 	}
 	if packet.AnswerState != "abstained" || len(packet.Citations) != 0 {
 		t.Fatalf("flat semantic ranking did not abstain: %+v", packet)
+	}
+}
+
+func TestCompactSemanticV07ExpandsCalibratedAuthorizationWithoutWeakeningAbsentGuards(t *testing.T) {
+	repository := &compactRepository{library: Library{
+		SchemaVersion: LibrarySchemaVersion, Revision: 1,
+		Fingerprint: strings.Repeat("7", 64),
+		Records: []CaptureRecord{
+			{
+				RecordID: "record-first", SourceRef: "slack://fixture/v07-first",
+				RawText: "first retained context", ContentHash: strings.Repeat("8", 64),
+			},
+			{
+				RecordID: "record-neighbor", SourceRef: "slack://fixture/v07-neighbor",
+				RawText: "near-neighbor retained context", ContentHash: strings.Repeat("9", 64),
+			},
+		},
+	}}
+	semanticOnlyExpanded := RankedHit{
+		DocumentID: "record-first", Score: 1,
+		Components: map[string]float64{
+			"semantic_cosine": 0.66, "semantic_rank": 1, "semantic_margin": 0.05,
+		},
+	}
+	corroboratedExpanded := RankedHit{
+		DocumentID: "record-first", Score: 1,
+		Components: map[string]float64{
+			"semantic_cosine": 0.62, "semantic_rank": 1, "semantic_margin": 0.035,
+			"lexical_idf_coverage": 0.40,
+		},
+	}
+	for _, test := range []struct {
+		name          string
+		calibrationID string
+		hits          []RankedHit
+		expected      string
+	}{
+		{
+			name:          "semantic-only band below v0.6 is authorized",
+			calibrationID: CompactSemanticCalibrationIdentity,
+			hits:          []RankedHit{semanticOnlyExpanded},
+			expected:      "answered",
+		},
+		{
+			name:          "semantic plus lexical band below v0.6 is authorized",
+			calibrationID: CompactSemanticCalibrationIdentity,
+			hits:          []RankedHit{corroboratedExpanded},
+			expected:      "answered",
+		},
+		{
+			name:          "unknown calibration remains forbidden",
+			calibrationID: CompactSemanticCalibrationIdentity + "|stale-policy=v0.6",
+			hits:          []RankedHit{semanticOnlyExpanded},
+			expected:      "abstained",
+		},
+		{
+			name:          "near-neighbor below semantic-only margin abstains",
+			calibrationID: CompactSemanticCalibrationIdentity,
+			hits: []RankedHit{
+				{
+					DocumentID: "record-first", Score: 1,
+					Components: map[string]float64{
+						"semantic_cosine": 0.80, "semantic_rank": 1,
+						"semantic_margin": DefaultCompactMinimumSemanticOnlyMargin - 0.000001,
+					},
+				},
+				{
+					DocumentID: "record-neighbor", Score: 0.99,
+					Components: map[string]float64{
+						"semantic_cosine": 0.80 - DefaultCompactMinimumSemanticOnlyMargin + 0.000001,
+						"semantic_rank":   2,
+						"semantic_margin": DefaultCompactMinimumSemanticOnlyMargin - 0.000001,
+					},
+				},
+			},
+			expected: "abstained",
+		},
+		{
+			name:          "low-margin corroborated neighbor abstains",
+			calibrationID: CompactSemanticCalibrationIdentity,
+			hits: []RankedHit{{
+				DocumentID: "record-first", Score: 1,
+				Components: map[string]float64{
+					"semantic_cosine": 0.80, "semantic_rank": 1,
+					"semantic_margin":      DefaultCompactMinimumSemanticMargin - 0.000001,
+					"lexical_idf_coverage": 1,
+				},
+			}},
+			expected: "abstained",
+		},
+		{
+			name:          "low-coverage corroboration abstains",
+			calibrationID: CompactSemanticCalibrationIdentity,
+			hits: []RankedHit{{
+				DocumentID: "record-first", Score: 1,
+				Components: map[string]float64{
+					"semantic_cosine": DefaultCompactMinimumSemanticCosine,
+					"semantic_rank":   1, "semantic_margin": DefaultCompactMinimumSemanticMargin,
+					"lexical_idf_coverage": DefaultCompactMinimumSemanticLexicalCover - 0.000001,
+				},
+			}},
+			expected: "abstained",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			packet, err := NewRetriever(repository, compactHitsBackend{
+				calibrationID: test.calibrationID, hits: test.hits,
+			}).SearchCompact(SearchRequest{Query: "v07 calibration boundary", Limit: 3})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if packet.AnswerState != test.expected {
+				t.Fatalf("v0.7 authorization result=%+v", packet)
+			}
+			if test.expected == "abstained" && len(packet.Citations) != 0 {
+				t.Fatalf("v0.7 abstention leaked citations: %+v", packet)
+			}
+		})
 	}
 }
 

@@ -41,7 +41,7 @@ func NewHybridBackend(ctx context.Context, state *agentstate.Store, embedder emb
 	}
 	return &HybridBackend{
 		context: ctx, state: state, embedder: embedder,
-		method: "mindline_hybrid_local/v0.6", retrievalState: "hybrid",
+		method: "mindline_hybrid_local/v0.7", retrievalState: "hybrid",
 	}
 }
 
@@ -350,7 +350,7 @@ func (backend *HybridBackend) setMode(semanticErr error) {
 	backend.mu.Lock()
 	defer backend.mu.Unlock()
 	if semanticErr == nil {
-		backend.method = "mindline_hybrid_local/v0.6"
+		backend.method = "mindline_hybrid_local/v0.7"
 		backend.retrievalState = "hybrid"
 		backend.degradedReason = ""
 		return

@@ -160,7 +160,8 @@ func TestHybridBackendUsesAsymmetricChunkEmbeddingsForLateEvidence(t *testing.T)
 	}
 	defer state.Close()
 	embedder := &asymmetricFakeEmbedder{}
-	hits, err := NewHybridBackend(context.Background(), state, embedder).Rank(
+	backend := NewHybridBackend(context.Background(), state, embedder)
+	hits, err := backend.Rank(
 		personalmemory.SearchRequest{Query: "conceptual answer", Limit: 2},
 		[]personalmemory.IndexDocument{
 			{
@@ -178,6 +179,10 @@ func TestHybridBackendUsesAsymmetricChunkEmbeddingsForLateEvidence(t *testing.T)
 		!strings.Contains(embedder.queryInputs[0], "conceptual answer") {
 		t.Fatalf("asymmetric inputs not used: docs=%d queries=%v",
 			len(embedder.documentInputs), embedder.queryInputs)
+	}
+	if backend.MethodID() != "mindline_hybrid_local/v0.7" {
+		t.Fatalf("semantic authorization policy change kept stale method identity: %s",
+			backend.MethodID())
 	}
 }
 

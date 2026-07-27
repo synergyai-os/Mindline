@@ -23,12 +23,12 @@ const (
 	DefaultSearchLimit           = 10
 	MaximumSearchLimit           = 100
 
-	CompactAbstentionPolicySchemaVersion      = "mindline-compact-abstention-policy/v0.6"
-	DefaultCompactMinimumSemanticCosine       = 0.65
-	DefaultCompactMinimumSemanticMargin       = 0.05
-	DefaultCompactMinimumSemanticOnlyCosine   = 0.70
-	DefaultCompactMinimumSemanticOnlyMargin   = 0.08
-	DefaultCompactMinimumSemanticLexicalCover = 0.50
+	CompactAbstentionPolicySchemaVersion      = "mindline-compact-abstention-policy/v0.7"
+	DefaultCompactMinimumSemanticCosine       = 0.60
+	DefaultCompactMinimumSemanticMargin       = 0.03
+	DefaultCompactMinimumSemanticOnlyCosine   = 0.64
+	DefaultCompactMinimumSemanticOnlyMargin   = 0.04
+	DefaultCompactMinimumSemanticLexicalCover = 0.35
 	DefaultCompactMinimumLexicalIDFCoverage   = 0.80
 	DefaultCompactMaximumLexicalDocumentRatio = 0.01
 	DefaultCompactMinimumLexicalWinnerMargin  = 0.15
