@@ -23,9 +23,9 @@ const (
 	DefaultSearchLimit           = 10
 	MaximumSearchLimit           = 100
 
-	CompactAbstentionPolicySchemaVersion = "mindline-compact-abstention-policy/v0.1"
-	DefaultCompactMinimumSemanticCosine  = 0.35
-	compactLexicalEvidenceRule           = "matched_terms_or_positive_lexical_raw"
+	CompactAbstentionPolicySchemaVersion = "mindline-compact-abstention-policy/v0.2"
+	DefaultCompactMinimumSemanticCosine  = 0.65
+	compactLexicalEvidenceRule           = "two_meaningful_query_terms_or_all_for_single_term"
 	compactStopwordPolicy                = "mindline-english-stopwords/v0.1"
 )
 
@@ -153,7 +153,7 @@ func (retriever ContextRetriever) SearchCompact(request SearchRequest) (CompactC
 	if err != nil {
 		return CompactContextPacket{}, err
 	}
-	hits = usableCompactHits(hits, policy)
+	hits = usableCompactHits(hits, policy, queryTerms)
 	packet := assembleCompactContextPacket(request, library, hits, byID, method, policy)
 	if diagnostics, ok := retriever.backend.(RetrievalDiagnosticsPort); ok {
 		packet.RetrievalState, packet.DegradedReason = diagnostics.RetrievalDiagnostics()
@@ -263,7 +263,7 @@ func (retriever ContextRetriever) prepareDocuments() (Library, []evidenceDocumen
 	}
 	resourceRevisions := groupResourceRevisions(library.ResourceRevisions)
 	hydratedBytes := 0
-	documents := make([]evidenceDocument, 0, len(library.Records)+len(library.Revisions))
+	documents := make([]evidenceDocument, 0, len(library.Records))
 	for _, record := range library.Records {
 		document, err := retriever.prepareDocument(record.RecordID, record, "current", resourcesByID, resourceRevisions, &hydratedBytes)
 		if err != nil {
@@ -297,17 +297,6 @@ func (retriever ContextRetriever) prepareCompactDocuments() (Library, []evidence
 	for _, record := range library.Records {
 		document, err := retriever.prepareCompactDocument(
 			record.RecordID, record, "current", resourcesByID, resourceRevisions, &hydratedBytes,
-			contentCache,
-		)
-		if err != nil {
-			return Library{}, nil, err
-		}
-		documents = append(documents, document)
-	}
-	for _, revision := range library.Revisions {
-		document, err := retriever.prepareCompactDocument(
-			revision.RevisionID, revision.Record, "superseded",
-			resourcesByID, resourceRevisions, &hydratedBytes,
 			contentCache,
 		)
 		if err != nil {
@@ -685,13 +674,17 @@ func DefaultCompactAbstentionPolicy() CompactAbstentionPolicy {
 	}
 }
 
-func usableCompactHits(hits []RankedHit, policy CompactAbstentionPolicy) []RankedHit {
+func usableCompactHits(
+	hits []RankedHit,
+	policy CompactAbstentionPolicy,
+	queryTerms []string,
+) []RankedHit {
 	filtered := make([]RankedHit, 0, len(hits))
 	seen := map[string]bool{}
 	for _, hit := range hits {
 		if strings.TrimSpace(hit.DocumentID) == "" || seen[hit.DocumentID] ||
 			math.IsNaN(hit.Score) || math.IsInf(hit.Score, 0) || hit.Score <= 0 ||
-			!hasCompactRetrievalEvidence(hit, policy) {
+			!hasCompactRetrievalEvidence(hit, policy, queryTerms) {
 			continue
 		}
 		seen[hit.DocumentID] = true
@@ -700,8 +693,27 @@ func usableCompactHits(hits []RankedHit, policy CompactAbstentionPolicy) []Ranke
 	return filtered
 }
 
-func hasCompactRetrievalEvidence(hit RankedHit, policy CompactAbstentionPolicy) bool {
-	if len(hit.MatchedTerms) > 0 || hit.Components["lexical_raw"] > 0 {
+func hasCompactRetrievalEvidence(
+	hit RankedHit,
+	policy CompactAbstentionPolicy,
+	queryTerms []string,
+) bool {
+	requiredMatches := 2
+	if len(queryTerms) < requiredMatches {
+		requiredMatches = len(queryTerms)
+	}
+	querySet := make(map[string]bool, len(queryTerms))
+	for _, term := range queryTerms {
+		querySet[term] = true
+	}
+	matched := map[string]bool{}
+	for _, term := range hit.MatchedTerms {
+		term = strings.ToLower(strings.TrimSpace(term))
+		if querySet[term] {
+			matched[term] = true
+		}
+	}
+	if requiredMatches > 0 && len(matched) >= requiredMatches {
 		return true
 	}
 	semanticScore, hasSemanticScore := hit.Components["semantic_cosine"]

@@ -117,6 +117,33 @@ func TestCompactSearchIndexesContentPrivatelyAndOmitsHistoricalMissingnessAndPat
 	}
 }
 
+func TestCompactSearchIndexesOnlyCurrentRecords(t *testing.T) {
+	repository := &compactRepository{library: Library{
+		SchemaVersion: LibrarySchemaVersion, Revision: 2,
+		Fingerprint: strings.Repeat("7", 64),
+		Records: []CaptureRecord{{
+			RecordID: "record-current", SourceRef: "slack://fixture/current",
+			RawText: "current portable lesson", ContentHash: strings.Repeat("8", 64),
+		}},
+		Revisions: []CaptureRevision{{
+			RevisionID: "revision-superseded",
+			Record: CaptureRecord{
+				RecordID: "record-current", SourceRef: "slack://fixture/current",
+				RawText: "obsolete quartz folklore", ContentHash: strings.Repeat("9", 64),
+			},
+		}},
+	}}
+	packet, err := NewLexicalRetriever(repository).SearchCompact(SearchRequest{
+		Query: "obsolete quartz folklore", Limit: 3,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if packet.AnswerState != "abstained" || len(packet.Citations) != 0 {
+		t.Fatalf("compact search returned a superseded revision: %+v", packet)
+	}
+}
+
 func TestCompactChangesDoNotAlterLegacyV02PacketShape(t *testing.T) {
 	repository := &compactRepository{library: Library{
 		SchemaVersion: LibrarySchemaVersion, Revision: 1,
@@ -249,12 +276,55 @@ func TestCompactSearchDiscardsUnsubstantiatedRankerNoise(t *testing.T) {
 	}
 }
 
+func TestCompactLexicalEvidenceRequiresTwoMeaningfulTerms(t *testing.T) {
+	repository := &compactRepository{library: Library{
+		SchemaVersion: LibrarySchemaVersion, Revision: 1,
+		Fingerprint: strings.Repeat("1", 64),
+		Records: []CaptureRecord{{
+			RecordID: "record-lexical", SourceRef: "slack://fixture/lexical",
+			RawText: "retained context", ContentHash: strings.Repeat("2", 64),
+		}},
+	}}
+	for _, test := range []struct {
+		name         string
+		query        string
+		matchedTerms []string
+		expected     string
+	}{
+		{
+			name: "one coincidental term is insufficient", query: "portable quantum orchards",
+			matchedTerms: []string{"portable"}, expected: "abstained",
+		},
+		{
+			name: "two meaningful terms provide evidence", query: "portable quantum orchards",
+			matchedTerms: []string{"portable", "quantum"}, expected: "answered",
+		},
+		{
+			name: "single term queries require their term", query: "portable",
+			matchedTerms: []string{"portable"}, expected: "answered",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			packet, err := NewRetriever(repository, compactNoiseBackend{hit: RankedHit{
+				DocumentID: "record-lexical", Score: 1, MatchedTerms: test.matchedTerms,
+				Components: map[string]float64{"lexical_raw": 1},
+			}}).SearchCompact(SearchRequest{Query: test.query, Limit: 3})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if packet.AnswerState != test.expected {
+				t.Fatalf("lexical evidence result=%+v", packet)
+			}
+		})
+	}
+}
+
 func TestCompactSemanticAbstentionThresholdIsFrozenAndBoundToPacket(t *testing.T) {
 	policy := DefaultCompactAbstentionPolicy()
 	if policy != DefaultCompactAbstentionPolicy() ||
 		policy.SchemaVersion != CompactAbstentionPolicySchemaVersion ||
 		policy.MinimumSemanticCosine != DefaultCompactMinimumSemanticCosine ||
-		policy.Fingerprint != "11c67d7afbfd2c38c00ca23db5bac827d034f2be7a9f41c15fd2ddaf1be02497" {
+		policy.Fingerprint != "a764430a1dabaad7c58940f995bd600ec45fca7ffa217096f0fa6042171c2d4c" {
 		t.Fatalf("compact abstention policy is not deterministic: %+v", policy)
 	}
 	repository := &compactRepository{library: Library{
