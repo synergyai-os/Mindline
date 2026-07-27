@@ -319,7 +319,7 @@ func TestCompactSearchDiscardsUnsubstantiatedRankerNoise(t *testing.T) {
 	}
 }
 
-func TestCompactLexicalEvidenceRequiresTwoMeaningfulTerms(t *testing.T) {
+func TestCompactLexicalEvidenceRequiresPhraseOrRareCoverage(t *testing.T) {
 	repository := &compactRepository{library: Library{
 		SchemaVersion: LibrarySchemaVersion, Revision: 1,
 		Fingerprint: strings.Repeat("1", 64),
@@ -332,25 +332,28 @@ func TestCompactLexicalEvidenceRequiresTwoMeaningfulTerms(t *testing.T) {
 		name         string
 		query        string
 		matchedTerms []string
+		evidence     float64
 		expected     string
 	}{
 		{
 			name: "one coincidental term is insufficient", query: "portable quantum orchards",
-			matchedTerms: []string{"portable"}, expected: "abstained",
+			matchedTerms: []string{"portable"}, evidence: 0, expected: "abstained",
 		},
 		{
-			name: "two meaningful terms provide evidence", query: "portable quantum orchards",
-			matchedTerms: []string{"portable", "quantum"}, expected: "answered",
+			name: "adjacent or rare covered terms provide evidence", query: "portable quantum orchards",
+			matchedTerms: []string{"portable", "quantum"}, evidence: 1, expected: "answered",
 		},
 		{
-			name: "single term queries require their term", query: "portable",
-			matchedTerms: []string{"portable"}, expected: "answered",
+			name: "single term queries require corpus rarity", query: "portable",
+			matchedTerms: []string{"portable"}, evidence: 1, expected: "answered",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			packet, err := NewRetriever(repository, compactNoiseBackend{hit: RankedHit{
 				DocumentID: "record-lexical", Score: 1, MatchedTerms: test.matchedTerms,
-				Components: map[string]float64{"lexical_raw": 1},
+				Components: map[string]float64{
+					"lexical_raw": 1, "lexical_evidence": test.evidence,
+				},
 			}}).SearchCompact(SearchRequest{Query: test.query, Limit: 3})
 			if err != nil {
 				t.Fatal(err)
@@ -362,13 +365,47 @@ func TestCompactLexicalEvidenceRequiresTwoMeaningfulTerms(t *testing.T) {
 	}
 }
 
+func TestLexicalEvidenceUsesPhraseOrCorpusRarity(t *testing.T) {
+	documents := make([]IndexDocument, 0, 101)
+	for index := 0; index < 100; index++ {
+		documents = append(documents, IndexDocument{
+			DocumentID: "common-" + string(rune('Ā'+index)),
+			Text:       "portable filler quantum",
+		})
+	}
+	documents = append(documents, IndexDocument{
+		DocumentID: "rare", Text: "portable unique quantum",
+	})
+	hits, err := (LexicalBM25Backend{}).Rank(SearchRequest{
+		Query: "unique governance portable", Limit: 100,
+	}, documents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence := map[string]float64{}
+	for _, hit := range hits {
+		evidence[hit.DocumentID] = hit.Components["lexical_evidence"]
+	}
+	if evidence["common-Ā"] != 0 || evidence["rare"] != 1 {
+		t.Fatalf("lexical rarity evidence mismatch: common=%v rare=%v",
+			evidence["common-Ā"], evidence["rare"])
+	}
+	phraseHits, err := (LexicalBM25Backend{}).Rank(SearchRequest{
+		Query: "portable filler", Limit: 1,
+	}, documents)
+	if err != nil || len(phraseHits) != 1 ||
+		phraseHits[0].Components["lexical_evidence"] != 1 {
+		t.Fatalf("adjacent phrase evidence mismatch: hits=%+v err=%v", phraseHits, err)
+	}
+}
+
 func TestCompactSemanticAbstentionThresholdIsFrozenAndBoundToPacket(t *testing.T) {
 	policy := DefaultCompactAbstentionPolicy()
 	if policy != DefaultCompactAbstentionPolicy() ||
 		policy.SchemaVersion != CompactAbstentionPolicySchemaVersion ||
 		policy.MinimumSemanticCosine != DefaultCompactMinimumSemanticCosine ||
 		policy.MinimumSemanticMargin != DefaultCompactMinimumSemanticMargin ||
-		policy.Fingerprint != "532dd7d21a440620d6e1a130f890c889eab013b309ceb34ff526bdc4748ebbdf" {
+		policy.Fingerprint != "4a7f737afc19ddc1dcef21ada09a4b7a6ca8ff46169fa5176b9410c368ba71f6" {
 		t.Fatalf("compact abstention policy is not deterministic: %+v", policy)
 	}
 	repository := &compactRepository{library: Library{

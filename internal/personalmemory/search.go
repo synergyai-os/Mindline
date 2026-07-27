@@ -23,10 +23,10 @@ const (
 	DefaultSearchLimit           = 10
 	MaximumSearchLimit           = 100
 
-	CompactAbstentionPolicySchemaVersion = "mindline-compact-abstention-policy/v0.4"
+	CompactAbstentionPolicySchemaVersion = "mindline-compact-abstention-policy/v0.5"
 	DefaultCompactMinimumSemanticCosine  = 0.65
 	DefaultCompactMinimumSemanticMargin  = 0.05
-	compactLexicalEvidenceRule           = "two_meaningful_query_terms_or_all_for_single_term"
+	compactLexicalEvidenceRule           = "phrase_or_rare_term_coverage"
 	compactStopwordPolicy                = "mindline-english-stopwords/v0.2"
 )
 
@@ -441,6 +441,7 @@ func (LexicalBM25Backend) Rank(request SearchRequest, documents []IndexDocument)
 		query = request.LexicalQuery
 	}
 	queryTerms := uniqueSorted(tokenize(query))
+	orderedQueryTerms := meaningfulQueryTermsInOrder(request.Query)
 	if len(queryTerms) == 0 {
 		return nil, errors.New("search query is empty")
 	}
@@ -478,12 +479,17 @@ func (LexicalBM25Backend) Rank(request SearchRequest, documents []IndexDocument)
 	for _, document := range preparedDocuments {
 		score := 0.0
 		matched := []string{}
+		rarestDocumentRatio := 1.0
 		for _, term := range queryTerms {
 			tf := document.counts[term]
 			if tf == 0 {
 				continue
 			}
 			matched = append(matched, term)
+			ratio := float64(documentFrequency[term]) / float64(len(preparedDocuments))
+			if ratio < rarestDocumentRatio {
+				rarestDocumentRatio = ratio
+			}
 			idf := math.Log(1 + (float64(len(preparedDocuments)-documentFrequency[term])+0.5)/(float64(documentFrequency[term])+0.5))
 			numerator := float64(tf) * 2.2
 			denominator := float64(tf) + 1.2*(0.25+0.75*float64(len(document.terms))/averageLength)
@@ -492,10 +498,33 @@ func (LexicalBM25Backend) Rank(request SearchRequest, documents []IndexDocument)
 		if score == 0 {
 			continue
 		}
-		if strings.Contains(strings.ToLower(document.document.Text), strings.ToLower(strings.TrimSpace(query))) {
+		exactPhrase := len(orderedQueryTerms) >= 2 &&
+			containsTermSequence(document.terms, orderedQueryTerms)
+		adjacentPhrase := containsAnyAdjacentPair(document.terms, orderedQueryTerms)
+		if exactPhrase {
 			score += 2
 		}
-		hits = append(hits, RankedHit{DocumentID: document.document.DocumentID, Score: score, MatchedTerms: uniqueSorted(matched)})
+		coverage := float64(len(matched)) / float64(len(queryTerms))
+		strongLexical := exactPhrase ||
+			(len(matched) >= 2 && adjacentPhrase) ||
+			(len(matched) >= 2 && coverage >= 0.5 && rarestDocumentRatio <= 0.05) ||
+			(len(queryTerms) == 1 && rarestDocumentRatio <= 0.01)
+		lexicalEvidence := 0.0
+		if strongLexical {
+			lexicalEvidence = 1
+		}
+		hits = append(hits, RankedHit{
+			DocumentID: document.document.DocumentID, Score: score,
+			MatchedTerms: uniqueSorted(matched),
+			Components: map[string]float64{
+				"lexical_raw": score, "lexical_query_terms": float64(len(queryTerms)),
+				"lexical_matched_terms": float64(len(matched)),
+				"lexical_coverage":      coverage, "lexical_rarest_document_ratio": rarestDocumentRatio,
+				"lexical_exact_phrase":    boolScore(exactPhrase),
+				"lexical_adjacent_phrase": boolScore(adjacentPhrase),
+				"lexical_evidence":        lexicalEvidence,
+			},
+		})
 	}
 	sort.Slice(hits, func(i, j int) bool {
 		if hits[i].Score == hits[j].Score {
@@ -730,13 +759,6 @@ func hasCompactRetrievalEvidence(
 	queryTerms []string,
 	strongSemanticWinner bool,
 ) bool {
-	requiredMatches := 2
-	if len(queryTerms) < requiredMatches {
-		requiredMatches = len(queryTerms)
-	}
-	if len(queryTerms) > 1 && requiredMatches < 2 {
-		requiredMatches = 2
-	}
 	querySet := make(map[string]bool, len(queryTerms))
 	for _, term := range queryTerms {
 		querySet[term] = true
@@ -748,10 +770,16 @@ func hasCompactRetrievalEvidence(
 			matched[term] = true
 		}
 	}
-	if requiredMatches > 0 && len(matched) >= requiredMatches {
+	if len(matched) > 0 {
+		if evidence, exists := finiteComponent(hit, "lexical_evidence"); exists &&
+			evidence >= 1 {
+			return true
+		}
+	}
+	if strongSemanticWinner {
 		return true
 	}
-	return strongSemanticWinner
+	return false
 }
 
 func finiteComponent(hit RankedHit, name string) (float64, bool) {
@@ -760,6 +788,11 @@ func finiteComponent(hit RankedHit, name string) (float64, bool) {
 }
 
 func meaningfulQueryTerms(query string) []string {
+	terms := uniqueSorted(meaningfulQueryTermsInOrder(query))
+	return terms
+}
+
+func meaningfulQueryTermsInOrder(query string) []string {
 	stopwords := map[string]bool{
 		"a": true, "an": true, "and": true, "are": true, "as": true, "at": true,
 		"be": true, "by": true, "do": true, "for": true, "from": true, "how": true,
@@ -773,7 +806,7 @@ func meaningfulQueryTerms(query string) []string {
 		"using": true, "way": true, "ways": true, "work": true, "works": true,
 		"working": true, "would": true,
 	}
-	terms := uniqueSorted(tokenize(query))
+	terms := tokenize(query)
 	filtered := make([]string, 0, len(terms))
 	for _, term := range terms {
 		if stopwords[term] || len([]rune(term)) < 2 {
@@ -782,6 +815,41 @@ func meaningfulQueryTerms(query string) []string {
 		filtered = append(filtered, term)
 	}
 	return filtered
+}
+
+func containsTermSequence(documentTerms, queryTerms []string) bool {
+	if len(queryTerms) == 0 || len(queryTerms) > len(documentTerms) {
+		return false
+	}
+	for start := 0; start+len(queryTerms) <= len(documentTerms); start++ {
+		matched := true
+		for offset := range queryTerms {
+			if documentTerms[start+offset] != queryTerms[offset] {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
+}
+
+func containsAnyAdjacentPair(documentTerms, queryTerms []string) bool {
+	for index := 0; index+1 < len(queryTerms); index++ {
+		if containsTermSequence(documentTerms, queryTerms[index:index+2]) {
+			return true
+		}
+	}
+	return false
+}
+
+func boolScore(value bool) float64 {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func copyScores(scores map[string]float64) map[string]float64 {

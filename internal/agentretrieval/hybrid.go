@@ -40,7 +40,7 @@ func NewHybridBackend(ctx context.Context, state *agentstate.Store, embedder emb
 	}
 	return &HybridBackend{
 		context: ctx, state: state, embedder: embedder,
-		method: "mindline_hybrid_local/v0.4", retrievalState: "hybrid",
+		method: "mindline_hybrid_local/v0.5", retrievalState: "hybrid",
 	}
 }
 
@@ -109,11 +109,11 @@ func (backend *HybridBackend) Rank(request personalmemory.SearchRequest, documen
 		return nil, err
 	}
 	lexicalRanks := make(map[string]int, len(lexicalHits))
-	lexicalRaw := make(map[string]float64, len(lexicalHits))
+	lexicalComponents := make(map[string]map[string]float64, len(lexicalHits))
 	matchedTerms := make(map[string][]string, len(lexicalHits))
 	for index, hit := range lexicalHits {
 		lexicalRanks[hit.DocumentID] = index + 1
-		lexicalRaw[hit.DocumentID] = hit.Score
+		lexicalComponents[hit.DocumentID] = hit.Components
 		matchedTerms[hit.DocumentID] = hit.MatchedTerms
 	}
 	semanticRanks := rankScores(semanticScores, maximumSemanticRanks)
@@ -131,17 +131,25 @@ func (backend *HybridBackend) Rank(request personalmemory.SearchRequest, documen
 		if semanticErr != nil {
 			base = lexicalRRFWeight * lexicalRRF
 		}
+		if lexicalComponents[document.DocumentID]["lexical_evidence"] >= 1 {
+			base += 1
+		}
 		if base > maximumBase {
 			maximumBase = base
 		}
 		candidates = append(candidates, scored{
 			id: document.DocumentID,
 			components: map[string]float64{
-				"lexical_raw":     lexicalRaw[document.DocumentID],
-				"lexical_rrf":     lexicalRRF,
-				"semantic_cosine": semanticScores[document.DocumentID],
-				"semantic_rrf":    semanticRRF,
-				"lens_feedback":   relevance[document.DocumentID],
+				"lexical_raw":                   lexicalComponents[document.DocumentID]["lexical_raw"],
+				"lexical_rrf":                   lexicalRRF,
+				"lexical_coverage":              lexicalComponents[document.DocumentID]["lexical_coverage"],
+				"lexical_rarest_document_ratio": lexicalComponents[document.DocumentID]["lexical_rarest_document_ratio"],
+				"lexical_exact_phrase":          lexicalComponents[document.DocumentID]["lexical_exact_phrase"],
+				"lexical_adjacent_phrase":       lexicalComponents[document.DocumentID]["lexical_adjacent_phrase"],
+				"lexical_evidence":              lexicalComponents[document.DocumentID]["lexical_evidence"],
+				"semantic_cosine":               semanticScores[document.DocumentID],
+				"semantic_rrf":                  semanticRRF,
+				"lens_feedback":                 relevance[document.DocumentID],
 			},
 		})
 	}
@@ -150,6 +158,9 @@ func (backend *HybridBackend) Rank(request personalmemory.SearchRequest, documen
 		base := lexicalRRFWeight * candidate.components["lexical_rrf"]
 		if semanticErr == nil {
 			base += semanticRRFWeight * candidate.components["semantic_rrf"]
+		}
+		if candidate.components["lexical_evidence"] >= 1 {
+			base += 1
 		}
 		if base == 0 {
 			continue
@@ -317,7 +328,7 @@ func (backend *HybridBackend) setMode(semanticErr error) {
 	backend.mu.Lock()
 	defer backend.mu.Unlock()
 	if semanticErr == nil {
-		backend.method = "mindline_hybrid_local/v0.4"
+		backend.method = "mindline_hybrid_local/v0.5"
 		backend.retrievalState = "hybrid"
 		backend.degradedReason = ""
 		return
