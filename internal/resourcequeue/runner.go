@@ -131,7 +131,7 @@ func (runner Runner) ProcessNext(ctx context.Context) (bool, error) {
 		return true, errors.New("complete resource fetch requires content")
 	}
 	item.State, item.Reason = result.State, ""
-	return true, runner.mergeAndFinish(target, item, result)
+	return true, runner.mergeFetchedOrBlock(target, item, result)
 }
 
 func (runner Runner) profileAttempts() int {
@@ -227,7 +227,27 @@ func blockedHasPayload(result FetchResult) bool {
 	return evidence.CanonicalItemID != "" || evidence.Metadata.Title != "" || evidence.Metadata.Author != "" || evidence.Metadata.PublishedAt != "" || len(evidence.Excerpts) != 0 || len(evidence.RelatedURLs) != 0
 }
 
+// A fetched public page is still untrusted input. If its payload cannot cross
+// the canonical validation boundary, discard that payload and record a fixed
+// manual-processing terminal instead of stopping every later resource. A
+// genuine repository/storage failure also rejects the payload-free fallback,
+// so infrastructure failures continue to fail closed.
+func (runner Runner) mergeFetchedOrBlock(target Target, item Item, result FetchResult) error {
+	if err := runner.mergeCanonical(target, item, result); err != nil {
+		item.State, item.Reason = StateBlocked, "manual_processing_required"
+		return runner.mergeAndFinish(target, item, FetchResult{})
+	}
+	return runner.finishQueueItem(item)
+}
+
 func (runner Runner) mergeAndFinish(target Target, item Item, result FetchResult) error {
+	if err := runner.mergeCanonical(target, item, result); err != nil {
+		return err
+	}
+	return runner.finishQueueItem(item)
+}
+
+func (runner Runner) mergeCanonical(target Target, item Item, result FetchResult) error {
 	canonicalState, missingness, err := CanonicalState(item.State, item.Reason)
 	if err != nil {
 		return err
@@ -251,9 +271,11 @@ func (runner Runner) mergeAndFinish(target Target, item Item, result FetchResult
 		content.CanonicalURL = target.CanonicalURL
 		batch.Contents = []personalmemory.ExtractedContent{content}
 	}
-	if _, err := runner.Repository.MergeEnrichment(batch); err != nil {
-		return err
-	}
+	_, err = runner.Repository.MergeEnrichment(batch)
+	return err
+}
+
+func (runner Runner) finishQueueItem(item Item) error {
 	// A capacity terminal item was never marked processing; persist it directly
 	// after canonical readback has succeeded.
 	if item.State == StateBlocked && item.Attempts == 0 {

@@ -2,6 +2,7 @@ package resourcequeue
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -345,6 +346,106 @@ func TestNormalRetryableFetchResultRetriesBeforeTerminalMapping(t *testing.T) {
 		queue.Items[0].Attempts != 3 || queue.Counters.Requests != 3 {
 		t.Fatalf("retry lifecycle did not settle exactly once: calls=%d delays=%d merges=%d queue=%+v",
 			fetcher.calls, delays, repository.merges, queue)
+	}
+}
+
+type invalidFetchedContentRepository struct {
+	library       personalmemory.Library
+	mergeAttempts int
+	fallbackState string
+}
+
+func (repository *invalidFetchedContentRepository) Load() (personalmemory.Library, error) {
+	return repository.library, nil
+}
+
+func (repository *invalidFetchedContentRepository) MergeEnrichment(batch personalmemory.EnrichmentBatch) (personalmemory.EnrichmentReceipt, error) {
+	repository.mergeAttempts++
+	if len(batch.Contents) != 0 {
+		return personalmemory.EnrichmentReceipt{}, errors.New("untrusted fetched content rejected")
+	}
+	if len(batch.Resources) == 1 {
+		repository.fallbackState = batch.Resources[0].State
+	}
+	return personalmemory.EnrichmentReceipt{}, nil
+}
+
+type completeContentFetcher struct{}
+
+func (completeContentFetcher) Fetch(context.Context, Target) (FetchResult, error) {
+	return FetchResult{
+		State:   StateComplete,
+		Content: &personalmemory.ExtractedContent{},
+		Usage:   Usage{Requests: 1},
+	}, nil
+}
+
+func TestRejectedFetchedPayloadBecomesManualTerminalAndDrainContinues(t *testing.T) {
+	store, err := NewStore(t.TempDir()+"/queue", FixtureProfile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	resourceID := "resource-untrusted"
+	if _, err := store.Enqueue([]string{resourceID}); err != nil {
+		t.Fatal(err)
+	}
+	repository := &invalidFetchedContentRepository{library: personalmemory.Library{
+		Resources: []personalmemory.ResourceContext{{
+			ResourceID: resourceID, CanonicalURL: "https://example.com/untrusted",
+		}},
+	}}
+	runner := Runner{Store: store, Repository: repository, Fetcher: completeContentFetcher{}}
+	if err := runner.Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	queue, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repository.mergeAttempts != 2 || repository.fallbackState != "inaccessible" ||
+		len(queue.Items) != 1 || queue.Items[0].State != StateBlocked ||
+		queue.Items[0].Reason != "manual_processing_required" {
+		t.Fatalf("unsafe payload did not settle as a manual terminal: merges=%d fallback=%q queue=%+v",
+			repository.mergeAttempts, repository.fallbackState, queue)
+	}
+}
+
+type unavailableRepository struct {
+	library personalmemory.Library
+}
+
+func (repository *unavailableRepository) Load() (personalmemory.Library, error) {
+	return repository.library, nil
+}
+
+func (*unavailableRepository) MergeEnrichment(personalmemory.EnrichmentBatch) (personalmemory.EnrichmentReceipt, error) {
+	return personalmemory.EnrichmentReceipt{}, errors.New("storage unavailable")
+}
+
+func TestFetchedPayloadFallbackDoesNotHideRepositoryFailure(t *testing.T) {
+	store, err := NewStore(t.TempDir()+"/queue", FixtureProfile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	resourceID := "resource-storage-failure"
+	if _, err := store.Enqueue([]string{resourceID}); err != nil {
+		t.Fatal(err)
+	}
+	repository := &unavailableRepository{library: personalmemory.Library{
+		Resources: []personalmemory.ResourceContext{{
+			ResourceID: resourceID, CanonicalURL: "https://example.com/storage-failure",
+		}},
+	}}
+	runner := Runner{Store: store, Repository: repository, Fetcher: completeContentFetcher{}}
+	if err := runner.Drain(context.Background()); err == nil {
+		t.Fatal("repository failure was hidden by the payload fallback")
+	}
+	queue, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(queue.Items) != 1 || queue.Items[0].State != StateProcessing {
+		t.Fatalf("failed infrastructure item was incorrectly terminalized: %+v", queue)
 	}
 }
 
