@@ -2,8 +2,10 @@ package agentretrieval
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -12,6 +14,32 @@ import (
 )
 
 type fakeEmbedder struct{}
+
+type projectionTestRepository struct {
+	library personalmemory.Library
+}
+
+func (repository *projectionTestRepository) Load() (personalmemory.Library, error) {
+	return repository.library, nil
+}
+
+func (*projectionTestRepository) Import(
+	personalmemory.CaptureBatch,
+) (personalmemory.ImportReceipt, error) {
+	return personalmemory.ImportReceipt{}, nil
+}
+
+func (*projectionTestRepository) MergeEnrichment(
+	personalmemory.EnrichmentBatch,
+) (personalmemory.EnrichmentReceipt, error) {
+	return personalmemory.EnrichmentReceipt{}, nil
+}
+
+func (*projectionTestRepository) LoadContent(
+	personalmemory.ContentArtifactRef,
+) (personalmemory.ExtractedContentArtifact, error) {
+	return personalmemory.ExtractedContentArtifact{}, nil
+}
 
 func (fakeEmbedder) ModelID() string { return "fake/v1" }
 
@@ -129,6 +157,126 @@ func TestHybridBackendUsesSemanticLensAndReversibleFeedback(t *testing.T) {
 	}
 }
 
+func TestCompactResourceProjectionUsesCanonicalSharedOwnerFeedback(t *testing.T) {
+	state, err := agentstate.Open(filepath.Join(t.TempDir(), "state", "agent.sqlite"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	ctx := context.Background()
+	lens, err := state.PutLens(ctx, agentstate.Lens{
+		ID: "shared-resource", Name: "Shared resource",
+		Query: "portable quantum orchards",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sharedResourceID := "resource-a-shared"
+	otherResourceID := "resource-z-other"
+	repository := &projectionTestRepository{library: personalmemory.Library{
+		SchemaVersion: personalmemory.LibrarySchemaVersion,
+		Revision:      8,
+		Fingerprint:   strings.Repeat("8", 64),
+		Records: []personalmemory.CaptureRecord{
+			{
+				RecordID: "record-a", SourceRef: "slack://fixture/a",
+				RawText:     "first unrelated save",
+				ResourceIDs: []string{sharedResourceID},
+				ContentHash: strings.Repeat("a", 64),
+			},
+			{
+				RecordID: "record-a2", SourceRef: "slack://fixture/a2",
+				RawText:     "second unrelated save",
+				ResourceIDs: []string{sharedResourceID},
+				ContentHash: strings.Repeat("b", 64),
+			},
+			{
+				RecordID: "record-z", SourceRef: "slack://fixture/z",
+				RawText:     "third unrelated save",
+				ResourceIDs: []string{otherResourceID},
+				ContentHash: strings.Repeat("c", 64),
+			},
+		},
+		Resources: []personalmemory.ResourceContext{
+			{
+				ResourceID: sharedResourceID,
+				Metadata: personalmemory.ResourceMetadata{
+					Title: "portable quantum orchards",
+				},
+				ContentHash: strings.Repeat("d", 64),
+			},
+			{
+				ResourceID: otherResourceID,
+				Metadata: personalmemory.ResourceMetadata{
+					Title: "portable quantum orchards",
+				},
+				ContentHash: strings.Repeat("e", 64),
+			},
+		},
+	}}
+	backend := NewHybridBackend(ctx, state, failingEmbedder{})
+	retriever := personalmemory.NewRetriever(repository, backend)
+	request := personalmemory.SearchRequest{
+		Query:  "portable quantum orchards",
+		LensID: lens.ID,
+		Limit:  3,
+	}
+	before, err := retriever.SearchCompact(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before.Citations) != 3 ||
+		before.Citations[0].RecordID != "record-a" ||
+		before.Citations[1].RecordID != "record-a2" {
+		t.Fatalf("shared resource did not expand to deterministic canonical owners: %+v",
+			before)
+	}
+	candidates := make([]agentstate.CandidateTrace, 0, len(before.Citations))
+	for rank, citation := range before.Citations {
+		candidates = append(candidates, agentstate.CandidateTrace{
+			RecordID:       citation.RecordID,
+			Rank:           rank + 1,
+			FinalScore:     citation.Score,
+			ComponentScore: citation.ComponentScores,
+		})
+	}
+	if err := state.SaveRetrieval(ctx, agentstate.RetrievalTrace{
+		RunID: "shared-resource-feedback",
+		Query: request.Query, LensID: request.LensID,
+		RetrievalMethod:    before.RetrievalMethod,
+		LibraryFingerprint: before.LibraryFingerprint,
+		CreatedAt:          "2026-07-27T10:00:00Z",
+		Candidates:         candidates,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.ApplyJudgment(ctx, agentstate.JudgmentRequest{
+		IdempotencyKey: "dismiss-shared-owner",
+		RunID:          "shared-resource-feedback", LensID: request.LensID,
+		RecordID: "record-a2", Actor: "user", Disposition: "dismissed",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	after, err := retriever.SearchCompact(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after.Citations) != 3 ||
+		after.Citations[0].RecordID != "record-z" ||
+		after.Citations[1].ComponentScores["lens_feedback"] != -0.1 ||
+		after.Citations[2].ComponentScores["lens_feedback"] != -0.1 {
+		t.Fatalf("canonical shared-owner feedback did not rerank the resource: %+v",
+			after)
+	}
+	data, err := json.Marshal(after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "compact-resource:") {
+		t.Fatalf("retrieval-only resource identity leaked into packet: %s", data)
+	}
+}
+
 func TestHybridBackendReportsLexicalDegradation(t *testing.T) {
 	t.Parallel()
 	state, err := agentstate.Open(filepath.Join(t.TempDir(), "state", "agent.sqlite"), nil)
@@ -147,7 +295,7 @@ func TestHybridBackendReportsLexicalDegradation(t *testing.T) {
 		t.Fatalf("hits=%+v err=%v", hits, err)
 	}
 	stateName, reason := backend.RetrievalDiagnostics()
-	if backend.MethodID() != "mindline_lexical_degraded/v0.1" ||
+	if backend.MethodID() != "mindline_lexical_degraded/v0.2" ||
 		stateName != "degraded" || reason != "semantic provider offline" {
 		t.Fatalf("method=%s state=%s reason=%s", backend.MethodID(), stateName, reason)
 	}
@@ -180,7 +328,7 @@ func TestHybridBackendUsesAsymmetricChunkEmbeddingsForLateEvidence(t *testing.T)
 		t.Fatalf("asymmetric inputs not used: docs=%d queries=%v",
 			len(embedder.documentInputs), embedder.queryInputs)
 	}
-	if backend.MethodID() != "mindline_hybrid_local/v0.7" {
+	if backend.MethodID() != "mindline_hybrid_local/v0.9" {
 		t.Fatalf("semantic authorization policy change kept stale method identity: %s",
 			backend.MethodID())
 	}
@@ -297,6 +445,59 @@ func TestHybridBackendLensReranksWithoutChangingAuthorizationScores(t *testing.T
 		hits[0].Components["semantic_cosine"] != 0 ||
 		hits[0].Components["semantic_margin"] != 0 {
 		t.Fatalf("lens leaked into authorization components: %+v", hits[0])
+	}
+}
+
+func TestFeedbackRelevanceChunksMoreThanOneHundredThousandCanonicalIDs(t *testing.T) {
+	state, err := agentstate.Open(filepath.Join(t.TempDir(), "state", "agent.sqlite"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	ctx := context.Background()
+	lens, err := state.PutLens(ctx, agentstate.Lens{
+		ID: "large-projection", Name: "Large projection", Query: "bounded relevance",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const boundaryID = "zzzz-boundary-record"
+	if err := state.SaveRetrieval(ctx, agentstate.RetrievalTrace{
+		RunID: "large-projection-run",
+		Query: "bounded relevance", LensID: lens.ID,
+		RetrievalMethod: "fixture", LibraryFingerprint: "fixture",
+		CreatedAt: "2026-07-27T10:00:00Z",
+		Candidates: []agentstate.CandidateTrace{{
+			RecordID: boundaryID, Rank: 1, FinalScore: 1,
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.ApplyJudgment(ctx, agentstate.JudgmentRequest{
+		IdempotencyKey: "large-projection-feedback",
+		RunID:          "large-projection-run", LensID: lens.ID,
+		RecordID: boundaryID, Actor: "user", Disposition: "used",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	documents := make([]personalmemory.IndexDocument, 0, maximumRelevanceIDs+1)
+	for index := 0; index < maximumRelevanceIDs; index++ {
+		documents = append(documents, personalmemory.IndexDocument{
+			DocumentID: "record-" + strconv.Itoa(index),
+		})
+	}
+	documents = append(documents, personalmemory.IndexDocument{
+		DocumentID: boundaryID,
+	})
+	relevance, err := NewHybridBackend(
+		ctx, state, failingEmbedder{},
+	).feedbackRelevance(lens.ID, documents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if relevance[boundaryID] != 0.1 {
+		t.Fatalf("bounded relevance lookup lost the second-chunk judgment: %v",
+			relevance[boundaryID])
 	}
 }
 

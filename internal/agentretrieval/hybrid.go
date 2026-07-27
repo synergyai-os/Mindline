@@ -20,6 +20,7 @@ const (
 	embeddingChunkOverlap  = 200
 	maximumEmbeddingChunks = 8
 	maximumSemanticRanks   = 100
+	maximumRelevanceIDs    = 100_000
 	lexicalRRFWeight       = 2.0
 	semanticRRFWeight      = 1.0
 )
@@ -41,7 +42,7 @@ func NewHybridBackend(ctx context.Context, state *agentstate.Store, embedder emb
 	}
 	return &HybridBackend{
 		context: ctx, state: state, embedder: embedder,
-		method: "mindline_hybrid_local/v0.7", retrievalState: "hybrid",
+		method: "mindline_hybrid_local/v0.9", retrievalState: "hybrid",
 	}
 }
 
@@ -115,11 +116,7 @@ func (backend *HybridBackend) Rank(request personalmemory.SearchRequest, documen
 	}
 	backend.setMode(semanticErr)
 
-	documentIDs := make([]string, 0, len(documents))
-	for _, document := range documents {
-		documentIDs = append(documentIDs, document.DocumentID)
-	}
-	relevance, err := backend.state.Relevance(backend.context, request.LensID, documentIDs)
+	relevance, err := backend.feedbackRelevance(request.LensID, documents)
 	if err != nil {
 		return nil, err
 	}
@@ -288,6 +285,84 @@ func (backend *HybridBackend) semanticScores(query string, documents []personalm
 	return scores, nil
 }
 
+func (backend *HybridBackend) feedbackRelevance(
+	lensID string,
+	documents []personalmemory.IndexDocument,
+) (map[string]float64, error) {
+	documentRelevance := make(map[string]float64, len(documents))
+	if strings.TrimSpace(lensID) == "" || len(documents) == 0 {
+		return documentRelevance, nil
+	}
+	aliasesByDocument := make(map[string][]string, len(documents))
+	aliasSet := map[string]bool{}
+	for _, document := range documents {
+		aliases := sortedUniqueFeedbackAliases(document)
+		aliasesByDocument[document.DocumentID] = aliases
+		for _, alias := range aliases {
+			aliasSet[alias] = true
+		}
+	}
+	aliases := make([]string, 0, len(aliasSet))
+	for alias := range aliasSet {
+		aliases = append(aliases, alias)
+	}
+	sort.Strings(aliases)
+	relevanceByAlias := make(map[string]float64, len(aliases))
+	for start := 0; start < len(aliases); start += maximumRelevanceIDs {
+		end := start + maximumRelevanceIDs
+		if end > len(aliases) {
+			end = len(aliases)
+		}
+		values, err := backend.state.Relevance(
+			backend.context, lensID, aliases[start:end],
+		)
+		if err != nil {
+			return nil, err
+		}
+		for alias, value := range values {
+			relevanceByAlias[alias] = value
+		}
+	}
+	for _, document := range documents {
+		total := 0.0
+		observed := 0
+		for _, alias := range aliasesByDocument[document.DocumentID] {
+			value, exists := relevanceByAlias[alias]
+			if !exists {
+				continue
+			}
+			total += value
+			observed++
+		}
+		if observed > 0 {
+			documentRelevance[document.DocumentID] = total / float64(observed)
+		}
+	}
+	return documentRelevance, nil
+}
+
+func sortedUniqueFeedbackAliases(document personalmemory.IndexDocument) []string {
+	values := document.FeedbackAliases
+	if len(values) == 0 {
+		values = []string{document.DocumentID}
+	}
+	seen := map[string]bool{}
+	aliases := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		aliases = append(aliases, value)
+	}
+	if len(aliases) == 0 && strings.TrimSpace(document.DocumentID) != "" {
+		aliases = append(aliases, strings.TrimSpace(document.DocumentID))
+	}
+	sort.Strings(aliases)
+	return aliases
+}
+
 func (backend *HybridBackend) embedDocuments(inputs []string) ([][]float64, error) {
 	if retriever, ok := backend.embedder.(embedding.RetrievalPort); ok {
 		return retriever.EmbedDocuments(backend.context, inputs)
@@ -350,12 +425,12 @@ func (backend *HybridBackend) setMode(semanticErr error) {
 	backend.mu.Lock()
 	defer backend.mu.Unlock()
 	if semanticErr == nil {
-		backend.method = "mindline_hybrid_local/v0.7"
+		backend.method = "mindline_hybrid_local/v0.9"
 		backend.retrievalState = "hybrid"
 		backend.degradedReason = ""
 		return
 	}
-	backend.method = "mindline_lexical_degraded/v0.1"
+	backend.method = "mindline_lexical_degraded/v0.2"
 	backend.retrievalState = "degraded"
 	backend.degradedReason = semanticErr.Error()
 }

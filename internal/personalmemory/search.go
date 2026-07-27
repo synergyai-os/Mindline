@@ -20,6 +20,8 @@ const (
 	MaximumCitationEvidenceRefs  = 32
 	MaximumCompactResourceStates = 32
 	MaximumCompactSnippetRunes   = 500
+	MaximumCompactIndexDocuments = MaximumRecords + MaximumResources
+	MaximumCompactOwnerLinks     = 1_000_000
 	DefaultSearchLimit           = 10
 	MaximumSearchLimit           = 100
 
@@ -34,11 +36,13 @@ const (
 	DefaultCompactMinimumLexicalWinnerMargin  = 0.15
 	DefaultCompactMinimumLexicalMatchedTerms  = 3
 	DefaultCompactMinimumOrderedPhraseTerms   = 3
-	CompactSemanticCalibrationIdentity        = "ollama/embeddinggemma:latest/retrieval-input-v0.2|query-prompt=search-result-v0.1|document-prompt=title-none-v0.1|chunk-runes=2000|chunk-overlap=200|max-chunks=8"
+	CompactSemanticCalibrationIdentity        = "ollama/embeddinggemma:latest/retrieval-input-v0.2|query-prompt=search-result-v0.1|document-prompt=title-none-v0.1|document-projection=record-source+unique-current-resource-v0.8|chunk-runes=2000|chunk-overlap=200|max-chunks=8"
 	compactLexicalEvidenceRule                = "rank1_ordered_phrase_or_rare_idf_coverage"
 	compactStopwordPolicy                     = "mindline-english-stopwords/v0.2"
-	compactRankingIdentity                    = "bm25-original-query|authorization-meaningful-query|candidate-pool=100|rrf-k=60|lexical-weight=2|semantic-weight=1|lens-rerank-only"
-	compactChunkingIdentity                   = "chunk-runes=2000|chunk-overlap=200|max-chunks=8"
+	compactRankingIdentity                    = "bm25-original-query|authorization-meaningful-query|candidate-pool=100|documents=record-source+unique-current-resource-v0.8|raw-hit-identity=fail-closed-v0.1|owner-expansion=post-authorization-v0.1|feedback-alias=observed-owner-mean-v0.1|relevance-lookup-chunk=100000|rrf-k=60|lexical-weight=2|semantic-weight=1|lens-rerank-only"
+	compactChunkingIdentity                   = "document-projection=record-source+unique-current-resource-v0.8|chunk-runes=2000|chunk-overlap=200|max-chunks=8"
+	compactResourceDocumentPrefix             = "compact-resource:"
+	maximumCompactDocumentIDRunes             = 128
 )
 
 // RetrieverPort is the agent-facing canonical Mindline contract.
@@ -69,6 +73,9 @@ type CompactSemanticCalibrationPort interface {
 type IndexDocument struct {
 	DocumentID string
 	Text       string
+	// FeedbackAliases are canonical item identities whose recorded relevance
+	// applies to this retrieval-only document. An empty set means DocumentID.
+	FeedbackAliases []string
 }
 
 type RankedHit struct {
@@ -108,6 +115,17 @@ type evidenceDocument struct {
 	searchText        string
 }
 
+type compactRetrievalProjection struct {
+	library              Library
+	indexDocuments       []IndexDocument
+	recordsByID          map[string]CaptureRecord
+	resourcesByID        map[string]ResourceContext
+	ownersByDocumentID   map[string][]string
+	resourceByDocumentID map[string]string
+	contentCache         map[string]ExtractedContentArtifact
+	hydratedBytes        int
+}
+
 func (retriever ContextRetriever) Search(request SearchRequest) (ContextPacket, error) {
 	if retriever.backend == nil {
 		return ContextPacket{}, errors.New("personal evidence retrieval backend is unavailable")
@@ -141,10 +159,6 @@ func (retriever ContextRetriever) SearchCompact(request SearchRequest) (CompactC
 	if retriever.backend == nil {
 		return CompactContextPacket{}, errors.New("personal evidence retrieval backend is unavailable")
 	}
-	library, documents, err := retriever.prepareCompactDocuments()
-	if err != nil {
-		return CompactContextPacket{}, err
-	}
 	method := strings.TrimSpace(retriever.backend.MethodID())
 	if method == "" {
 		return CompactContextPacket{}, errors.New("personal evidence retrieval backend has no method identity")
@@ -159,36 +173,47 @@ func (retriever ContextRetriever) SearchCompact(request SearchRequest) (CompactC
 	}
 	queryTerms := meaningfulQueryTerms(request.Query)
 	if len(queryTerms) == 0 {
+		library, err := retriever.repository.Load()
+		if err != nil {
+			return CompactContextPacket{}, err
+		}
 		packet := assembleCompactContextPacket(request, library, nil, nil, method, policy)
 		packet.AnswerState = "abstained"
 		packet.AbstentionReason = "query_has_no_meaningful_terms"
 		return packet, nil
 	}
+	projection, err := retriever.prepareCompactProjection()
+	if err != nil {
+		return CompactContextPacket{}, err
+	}
 	rankingRequest := request
 	rankingRequest.LexicalQuery = strings.Join(queryTerms, " ")
 	rankingRequest.Limit = MaximumSearchLimit
-	indexDocuments := make([]IndexDocument, 0, len(documents))
-	byID := make(map[string]evidenceDocument, len(documents))
-	for _, document := range documents {
-		indexDocuments = append(indexDocuments, IndexDocument{
-			DocumentID: document.id,
-			Text:       document.searchText,
-		})
-		byID[document.id] = document
-	}
-	hits, err := retriever.backend.Rank(rankingRequest, indexDocuments)
+	rawHits, err := retriever.backend.Rank(rankingRequest, projection.indexDocuments)
 	if err != nil {
+		return CompactContextPacket{}, err
+	}
+	if err := validateCompactRawHitIdentities(rawHits, projection); err != nil {
 		return CompactContextPacket{}, err
 	}
 	calibrationID := ""
 	if calibrated, ok := retriever.backend.(CompactSemanticCalibrationPort); ok {
 		calibrationID = strings.TrimSpace(calibrated.CompactSemanticCalibrationID())
 	}
-	hits = usableCompactHits(hits, policy, calibrationID)
-	if len(hits) > callerLimit {
-		hits = hits[:callerLimit]
+	rawHits = usableCompactHits(rawHits, policy, calibrationID)
+	hits, selectedResources, err := expandCompactHits(rawHits, projection, callerLimit)
+	if err != nil {
+		return CompactContextPacket{}, err
 	}
-	packet := assembleCompactContextPacket(request, library, hits, byID, method, policy)
+	documents, err := retriever.hydrateCompactRecords(
+		hits, selectedResources, &projection,
+	)
+	if err != nil {
+		return CompactContextPacket{}, err
+	}
+	packet := assembleCompactContextPacket(
+		request, projection.library, hits, documents, method, policy,
+	)
 	if diagnostics, ok := retriever.backend.(RetrievalDiagnosticsPort); ok {
 		packet.RetrievalState, packet.DegradedReason = diagnostics.RetrievalDiagnostics()
 	}
@@ -315,47 +340,204 @@ func (retriever ContextRetriever) prepareDocuments() (Library, []evidenceDocumen
 	return library, documents, nil
 }
 
-func (retriever ContextRetriever) prepareCompactDocuments() (Library, []evidenceDocument, error) {
+func (retriever ContextRetriever) prepareCompactProjection() (compactRetrievalProjection, error) {
 	library, err := retriever.repository.Load()
 	if err != nil {
-		return Library{}, nil, err
+		return compactRetrievalProjection{}, err
+	}
+	if len(library.Records) > MaximumRecords || len(library.Resources) > MaximumResources {
+		return compactRetrievalProjection{}, errors.New("personal evidence library exceeds compact retrieval bounds")
 	}
 	resourcesByID := make(map[string]ResourceContext, len(library.Resources))
 	for _, resource := range library.Resources {
+		if strings.TrimSpace(resource.ResourceID) == "" {
+			return compactRetrievalProjection{}, errors.New("personal evidence resource has no stable identity")
+		}
+		if _, exists := resourcesByID[resource.ResourceID]; exists {
+			return compactRetrievalProjection{}, errors.New("personal evidence resource identity is duplicated")
+		}
 		resourcesByID[resource.ResourceID] = resource
 	}
-	resourceRevisions := groupResourceRevisions(library.ResourceRevisions)
-	hydratedBytes := 0
-	contentCache := map[string]ExtractedContentArtifact{}
-	documents := make([]evidenceDocument, 0, len(library.Records)+len(library.Revisions))
-	for _, record := range library.Records {
-		document, err := retriever.prepareCompactDocument(
-			record.RecordID, record, "current", resourcesByID, resourceRevisions, &hydratedBytes,
-			contentCache,
-		)
-		if err != nil {
-			return Library{}, nil, err
-		}
-		documents = append(documents, document)
+	projection := compactRetrievalProjection{
+		library:              library,
+		indexDocuments:       make([]IndexDocument, 0, len(library.Records)+len(library.Resources)),
+		recordsByID:          make(map[string]CaptureRecord, len(library.Records)),
+		resourcesByID:        resourcesByID,
+		ownersByDocumentID:   make(map[string][]string, len(library.Records)+len(library.Resources)),
+		resourceByDocumentID: make(map[string]string, len(library.Resources)),
+		contentCache:         map[string]ExtractedContentArtifact{},
 	}
-	return library, documents, nil
+	records := append([]CaptureRecord(nil), library.Records...)
+	sort.Slice(records, func(i, j int) bool {
+		return records[i].RecordID < records[j].RecordID
+	})
+	ownersByResourceID := map[string][]string{}
+	ownerLinks := 0
+	for _, record := range records {
+		if err := validateCompactDocumentID(record.RecordID); err != nil {
+			return compactRetrievalProjection{}, err
+		}
+		if _, exists := projection.recordsByID[record.RecordID]; exists {
+			return compactRetrievalProjection{}, errors.New("personal evidence record identity is duplicated")
+		}
+		projection.recordsByID[record.RecordID] = record
+		projection.ownersByDocumentID[record.RecordID] = []string{record.RecordID}
+		projection.indexDocuments = append(projection.indexDocuments, IndexDocument{
+			DocumentID:      record.RecordID,
+			Text:            strings.TrimSpace(record.RawText),
+			FeedbackAliases: []string{record.RecordID},
+		})
+		for _, resource := range currentResourceBundleForRecord(record, resourcesByID) {
+			ownersByResourceID[resource.ResourceID] = append(
+				ownersByResourceID[resource.ResourceID], record.RecordID,
+			)
+			ownerLinks++
+			if ownerLinks > MaximumCompactOwnerLinks {
+				return compactRetrievalProjection{}, errors.New("personal evidence compact owner map exceeds its execution budget")
+			}
+		}
+	}
+	resourceIDs := make([]string, 0, len(ownersByResourceID))
+	for resourceID := range ownersByResourceID {
+		resourceIDs = append(resourceIDs, resourceID)
+	}
+	sort.Strings(resourceIDs)
+	for _, resourceID := range resourceIDs {
+		resource := resourcesByID[resourceID]
+		documentID, err := compactResourceDocumentID(resourceID)
+		if err != nil {
+			return compactRetrievalProjection{}, err
+		}
+		owners := uniqueSorted(ownersByResourceID[resourceID])
+		if len(owners) == 0 {
+			return compactRetrievalProjection{}, errors.New("personal evidence resource index document has no current owner")
+		}
+		if _, exists := projection.ownersByDocumentID[documentID]; exists {
+			return compactRetrievalProjection{}, errors.New("personal evidence compact document identity is duplicated")
+		}
+		var content ExtractedContentArtifact
+		if resource.Content == nil {
+			content = ExtractedContentArtifact{}
+		} else {
+			content, err = retriever.loadCompactRetrievalContent(
+				*resource.Content, &projection.hydratedBytes, projection.contentCache,
+			)
+			if err != nil {
+				return compactRetrievalProjection{}, err
+			}
+		}
+		projection.indexDocuments = append(projection.indexDocuments, IndexDocument{
+			DocumentID:      documentID,
+			Text:            compactResourceSearchText(resource, content),
+			FeedbackAliases: append([]string(nil), owners...),
+		})
+		projection.ownersByDocumentID[documentID] = owners
+		projection.resourceByDocumentID[documentID] = resourceID
+	}
+	if len(projection.indexDocuments) > MaximumCompactIndexDocuments {
+		return compactRetrievalProjection{}, errors.New("personal evidence compact index exceeds its document budget")
+	}
+	return projection, nil
 }
 
-func (retriever ContextRetriever) prepareCompactDocument(
-	id string,
+func validateCompactRawHitIdentities(
+	rawHits []RankedHit,
+	projection compactRetrievalProjection,
+) error {
+	for _, hit := range rawHits {
+		owners, exists := projection.ownersByDocumentID[hit.DocumentID]
+		if !exists {
+			return errors.New("personal evidence backend returned an unknown compact document identity")
+		}
+		if len(owners) == 0 {
+			return errors.New("personal evidence backend returned an ownerless compact document identity")
+		}
+		if resourceID := projection.resourceByDocumentID[hit.DocumentID]; resourceID == "" {
+			if len(owners) != 1 || owners[0] != hit.DocumentID {
+				return errors.New("personal evidence record document does not map to itself")
+			}
+		}
+	}
+	return nil
+}
+
+func expandCompactHits(
+	rawHits []RankedHit,
+	projection compactRetrievalProjection,
+	limit int,
+) ([]RankedHit, map[string]string, error) {
+	hits := make([]RankedHit, 0, min(limit, len(rawHits)))
+	selectedResources := map[string]string{}
+	seenRecords := map[string]bool{}
+	for _, rawHit := range rawHits {
+		owners, exists := projection.ownersByDocumentID[rawHit.DocumentID]
+		if !exists {
+			continue
+		}
+		resourceID := projection.resourceByDocumentID[rawHit.DocumentID]
+		if resourceID != "" && len(owners) == 0 {
+			return nil, nil, errors.New("personal evidence resource hit has no current owner")
+		}
+		for _, recordID := range owners {
+			if seenRecords[recordID] {
+				continue
+			}
+			if _, exists := projection.recordsByID[recordID]; !exists {
+				return nil, nil, errors.New("personal evidence resource owner is not a current record")
+			}
+			seenRecords[recordID] = true
+			hit := rawHit
+			hit.DocumentID = recordID
+			hit.MatchedTerms = append([]string(nil), rawHit.MatchedTerms...)
+			hit.Components = copyScores(rawHit.Components)
+			hits = append(hits, hit)
+			if resourceID != "" {
+				selectedResources[recordID] = resourceID
+			}
+			if len(hits) == limit {
+				return hits, selectedResources, nil
+			}
+		}
+	}
+	return hits, selectedResources, nil
+}
+
+func (retriever ContextRetriever) hydrateCompactRecords(
+	hits []RankedHit,
+	selectedResources map[string]string,
+	projection *compactRetrievalProjection,
+) (map[string]evidenceDocument, error) {
+	documents := make(map[string]evidenceDocument, len(hits))
+	for _, hit := range hits {
+		record, exists := projection.recordsByID[hit.DocumentID]
+		if !exists {
+			return nil, errors.New("personal evidence compact hit is not a current record")
+		}
+		document, err := retriever.prepareCompactRecordDocument(
+			record, projection.resourcesByID, &projection.hydratedBytes, projection.contentCache,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if resourceID := selectedResources[record.RecordID]; resourceID != "" {
+			document.resources, err = resourceFirst(document.resources, resourceID)
+			if err != nil {
+				return nil, err
+			}
+		}
+		documents[record.RecordID] = document
+	}
+	return documents, nil
+}
+
+func (retriever ContextRetriever) prepareCompactRecordDocument(
 	record CaptureRecord,
-	state string,
 	resourcesByID map[string]ResourceContext,
-	revisionsByResourceID map[string][]ResourceRevision,
 	hydratedBytes *int,
 	contentCache map[string]ExtractedContentArtifact,
 ) (evidenceDocument, error) {
-	resources, revisions := resourceBundleForRecord(record, resourcesByID, revisionsByResourceID)
-	if state == "current" {
-		revisions = nil
-	}
+	resources := currentResourceBundleForRecord(record, resourcesByID)
 	contents := map[string]ExtractedContentArtifact{}
-	revisionContents := map[string]ExtractedContentArtifact{}
 	for _, resource := range resources {
 		if resource.Content == nil {
 			continue
@@ -368,22 +550,9 @@ func (retriever ContextRetriever) prepareCompactDocument(
 		}
 		contents[resource.ResourceID] = content
 	}
-	for _, revision := range revisions {
-		if revision.Resource.Content == nil {
-			continue
-		}
-		content, err := retriever.loadCompactRetrievalContent(
-			*revision.Resource.Content, hydratedBytes, contentCache,
-		)
-		if err != nil {
-			return evidenceDocument{}, err
-		}
-		revisionContents[revision.RevisionID] = content
-	}
 	return evidenceDocument{
-		id: id, record: record, versionState: state, resources: resources,
-		resourceRevisions: revisions, contents: contents, revisionContents: revisionContents,
-		searchText: searchableText(record, resources, revisions, contents, revisionContents),
+		id: record.RecordID, record: record, versionState: "current", resources: resources,
+		contents: contents, revisionContents: map[string]ExtractedContentArtifact{},
 	}, nil
 }
 
@@ -1111,6 +1280,103 @@ func searchableResourceText(resource ResourceContext, content ExtractedContentAr
 		parts = append(parts, content.Text)
 	}
 	return parts
+}
+
+func compactResourceSearchText(resource ResourceContext, content ExtractedContentArtifact) string {
+	parts := []string{
+		strings.TrimSpace(resource.Metadata.Title),
+		strings.TrimSpace(resource.Metadata.Author),
+		strings.TrimSpace(resource.Metadata.PublishedAt),
+	}
+	for _, excerpt := range resource.Excerpts {
+		if GenericExtractorReferenceExcerpt(excerpt) {
+			continue
+		}
+		parts = append(parts, strings.TrimSpace(excerpt.Text), strings.TrimSpace(excerpt.Locator))
+	}
+	if content.Reference.ArtifactID != "" {
+		parts = append(parts, strings.TrimSpace(content.Text))
+	}
+	nonempty := parts[:0]
+	for _, part := range parts {
+		if part != "" {
+			nonempty = append(nonempty, part)
+		}
+	}
+	return strings.Join(nonempty, "\n")
+}
+
+func compactResourceDocumentID(resourceID string) (string, error) {
+	resourceID = strings.TrimSpace(resourceID)
+	if resourceID == "" {
+		return "", errors.New("personal evidence resource has no stable identity")
+	}
+	documentID := compactResourceDocumentPrefix + resourceID
+	if err := validateCompactDocumentID(documentID); err != nil {
+		return "", err
+	}
+	return documentID, nil
+}
+
+func validateCompactDocumentID(documentID string) error {
+	if strings.TrimSpace(documentID) == "" {
+		return errors.New("personal evidence compact document has no stable identity")
+	}
+	if len([]rune(documentID)) > maximumCompactDocumentIDRunes {
+		return errors.New("personal evidence compact document identity exceeds its execution budget")
+	}
+	return nil
+}
+
+func currentResourceBundleForRecord(
+	record CaptureRecord,
+	resourcesByID map[string]ResourceContext,
+) []ResourceContext {
+	resources := []ResourceContext{}
+	seen := map[string]bool{}
+	queue := uniqueSorted(record.ResourceIDs)
+	for len(queue) > 0 {
+		resourceID := queue[0]
+		queue = queue[1:]
+		if seen[resourceID] {
+			continue
+		}
+		resource, exists := resourcesByID[resourceID]
+		if !exists {
+			continue
+		}
+		seen[resourceID] = true
+		resources = append(resources, resource)
+		relatedIDs := []string{}
+		for _, related := range resource.RelatedURLs {
+			if FollowableRelatedResource(related) {
+				relatedIDs = append(relatedIDs, stableResourceID(related.URL))
+			}
+		}
+		queue = append(queue, uniqueSorted(relatedIDs)...)
+	}
+	return resources
+}
+
+func resourceFirst(resources []ResourceContext, resourceID string) ([]ResourceContext, error) {
+	index := -1
+	for position, resource := range resources {
+		if resource.ResourceID == resourceID {
+			index = position
+			break
+		}
+	}
+	if index < 0 {
+		return nil, errors.New("personal evidence resource hit is not reachable from its current owner")
+	}
+	if index == 0 {
+		return resources, nil
+	}
+	ordered := make([]ResourceContext, 0, len(resources))
+	ordered = append(ordered, resources[index])
+	ordered = append(ordered, resources[:index]...)
+	ordered = append(ordered, resources[index+1:]...)
+	return ordered, nil
 }
 
 func resourceBundleForRecord(record CaptureRecord, resourcesByID map[string]ResourceContext, revisionsByResourceID map[string][]ResourceRevision) ([]ResourceContext, []ResourceRevision) {
