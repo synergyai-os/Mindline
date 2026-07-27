@@ -35,6 +35,38 @@ func (failingEmbedder) Embed(context.Context, []string) ([][]float64, error) {
 	return nil, errors.New("semantic provider offline")
 }
 
+type asymmetricFakeEmbedder struct {
+	documentInputs []string
+	queryInputs    []string
+}
+
+func (*asymmetricFakeEmbedder) ModelID() string { return "fake/asymmetric-v1" }
+func (*asymmetricFakeEmbedder) Embed(context.Context, []string) ([][]float64, error) {
+	return nil, errors.New("generic embedding path should not be used")
+}
+func (embedder *asymmetricFakeEmbedder) EmbedDocuments(
+	_ context.Context,
+	inputs []string,
+) ([][]float64, error) {
+	embedder.documentInputs = append(embedder.documentInputs, inputs...)
+	vectors := make([][]float64, 0, len(inputs))
+	for _, input := range inputs {
+		if strings.Contains(input, "late-semantic-signal") {
+			vectors = append(vectors, []float64{1, 0})
+		} else {
+			vectors = append(vectors, []float64{0, 1})
+		}
+	}
+	return vectors, nil
+}
+func (embedder *asymmetricFakeEmbedder) EmbedQuery(
+	_ context.Context,
+	input string,
+) ([]float64, error) {
+	embedder.queryInputs = append(embedder.queryInputs, input)
+	return []float64{1, 0}, nil
+}
+
 func TestHybridBackendUsesSemanticLensAndReversibleFeedback(t *testing.T) {
 	t.Parallel()
 	state, err := agentstate.Open(filepath.Join(t.TempDir(), "state", "agent.sqlite"), nil)
@@ -118,6 +150,64 @@ func TestHybridBackendReportsLexicalDegradation(t *testing.T) {
 	if backend.MethodID() != "mindline_lexical_degraded/v0.1" ||
 		stateName != "degraded" || reason != "semantic provider offline" {
 		t.Fatalf("method=%s state=%s reason=%s", backend.MethodID(), stateName, reason)
+	}
+}
+
+func TestHybridBackendUsesAsymmetricChunkEmbeddingsForLateEvidence(t *testing.T) {
+	state, err := agentstate.Open(filepath.Join(t.TempDir(), "state", "agent.sqlite"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	embedder := &asymmetricFakeEmbedder{}
+	hits, err := NewHybridBackend(context.Background(), state, embedder).Rank(
+		personalmemory.SearchRequest{Query: "conceptual answer", Limit: 2},
+		[]personalmemory.IndexDocument{
+			{
+				DocumentID: "relevant",
+				Text: strings.Repeat("earlier unrelated context ", 800) +
+					" late-semantic-signal",
+			},
+			{DocumentID: "noise", Text: "short unrelated note"},
+		},
+	)
+	if err != nil || len(hits) != 2 || hits[0].DocumentID != "relevant" {
+		t.Fatalf("chunked semantic hits=%+v err=%v", hits, err)
+	}
+	if len(embedder.documentInputs) < 3 || len(embedder.queryInputs) != 1 ||
+		!strings.Contains(embedder.queryInputs[0], "conceptual answer") {
+		t.Fatalf("asymmetric inputs not used: docs=%d queries=%v",
+			len(embedder.documentInputs), embedder.queryInputs)
+	}
+}
+
+func TestHybridBackendFusesOnlyFiniteSemanticCandidates(t *testing.T) {
+	state, err := agentstate.Open(filepath.Join(t.TempDir(), "state", "agent.sqlite"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	embedder := &asymmetricFakeEmbedder{}
+	documents := []personalmemory.IndexDocument{{
+		DocumentID: "relevant", Text: "late-semantic-signal",
+	}}
+	for index := 0; index < maximumSemanticRanks; index++ {
+		documents = append(documents, personalmemory.IndexDocument{
+			DocumentID: "noise-" + string(rune('Ā'+index)),
+			Text:       "unrelated note",
+		})
+	}
+	documents = append(documents, personalmemory.IndexDocument{
+		DocumentID: "zzz-lexical-distractor",
+		Text:       "conceptual answer",
+	})
+	hits, err := NewHybridBackend(context.Background(), state, embedder).Rank(
+		personalmemory.SearchRequest{Query: "conceptual answer", Limit: 5},
+		documents,
+	)
+	if err != nil || len(hits) == 0 || hits[0].DocumentID != "relevant" {
+		t.Fatalf("semantic rank one lost to lexical-only distractor: hits=%+v err=%v",
+			hits, err)
 	}
 }
 

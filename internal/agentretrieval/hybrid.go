@@ -14,7 +14,14 @@ import (
 	"github.com/synergyai-os/Mindline/internal/personalmemory"
 )
 
-const maximumEmbeddingRunes = 16 << 10
+const (
+	embeddingChunkRunes    = 2_000
+	embeddingChunkOverlap  = 200
+	maximumEmbeddingChunks = 8
+	maximumSemanticRanks   = 100
+	lexicalRRFWeight       = 1.0
+	semanticRRFWeight      = 2.0
+)
 
 type HybridBackend struct {
 	context  context.Context
@@ -33,7 +40,7 @@ func NewHybridBackend(ctx context.Context, state *agentstate.Store, embedder emb
 	}
 	return &HybridBackend{
 		context: ctx, state: state, embedder: embedder,
-		method: "mindline_hybrid_local/v0.1", retrievalState: "hybrid",
+		method: "mindline_hybrid_local/v0.3", retrievalState: "hybrid",
 	}
 }
 
@@ -69,8 +76,15 @@ func (backend *HybridBackend) Rank(request personalmemory.SearchRequest, documen
 	if lexicalLimit > 100 {
 		lexicalLimit = 100
 	}
+	lexicalQuery := strings.TrimSpace(request.LexicalQuery)
+	if lexicalQuery == "" {
+		lexicalQuery = query
+	}
 	lexicalHits, err := (personalmemory.LexicalBM25Backend{}).Rank(
-		personalmemory.SearchRequest{Query: query, Limit: lexicalLimit}, documents,
+		personalmemory.SearchRequest{
+			Query: query, LexicalQuery: lexicalQuery, Limit: lexicalLimit,
+		},
+		documents,
 	)
 	if err != nil {
 		return nil, err
@@ -102,7 +116,7 @@ func (backend *HybridBackend) Rank(request personalmemory.SearchRequest, documen
 		lexicalRaw[hit.DocumentID] = hit.Score
 		matchedTerms[hit.DocumentID] = hit.MatchedTerms
 	}
-	semanticRanks := rankScores(semanticScores)
+	semanticRanks := rankScores(semanticScores, maximumSemanticRanks)
 	type scored struct {
 		id         string
 		score      float64
@@ -113,9 +127,9 @@ func (backend *HybridBackend) Rank(request personalmemory.SearchRequest, documen
 	for _, document := range documents {
 		lexicalRRF := reciprocalRank(lexicalRanks[document.DocumentID])
 		semanticRRF := reciprocalRank(semanticRanks[document.DocumentID])
-		base := lexicalRRF + semanticRRF
+		base := lexicalRRFWeight*lexicalRRF + semanticRRFWeight*semanticRRF
 		if semanticErr != nil {
-			base = lexicalRRF
+			base = lexicalRRFWeight * lexicalRRF
 		}
 		if base > maximumBase {
 			maximumBase = base
@@ -133,9 +147,9 @@ func (backend *HybridBackend) Rank(request personalmemory.SearchRequest, documen
 	}
 	hits := make([]personalmemory.RankedHit, 0, len(candidates))
 	for _, candidate := range candidates {
-		base := candidate.components["lexical_rrf"]
+		base := lexicalRRFWeight * candidate.components["lexical_rrf"]
 		if semanticErr == nil {
-			base += candidate.components["semantic_rrf"]
+			base += semanticRRFWeight * candidate.components["semantic_rrf"]
 		}
 		if base == 0 {
 			continue
@@ -168,21 +182,37 @@ func (backend *HybridBackend) semanticScores(query string, documents []personalm
 		return nil, errors.New("semantic provider is not configured")
 	}
 	scores := make(map[string]float64, len(documents))
-	vectors := make(map[string][]float64, len(documents))
-	missing := []personalmemory.IndexDocument{}
+	type semanticChunk struct {
+		id       string
+		recordID string
+		text     string
+	}
+	chunks := []semanticChunk{}
 	for _, document := range documents {
-		fingerprint := textFingerprint(document.Text)
+		for index, text := range embeddingChunks(document.Text) {
+			chunks = append(chunks, semanticChunk{
+				id:       document.DocumentID + "\x00chunk:" + stringID(index),
+				recordID: document.DocumentID,
+				text:     text,
+			})
+		}
+	}
+	vectors := make(map[string][]float64, len(chunks))
+	missing := []semanticChunk{}
+	modelID := backend.embedder.ModelID()
+	for _, chunk := range chunks {
+		fingerprint := textFingerprint(chunk.text)
 		vector, exists, err := backend.state.LoadEmbedding(
-			backend.context, document.DocumentID, fingerprint, backend.embedder.ModelID(),
+			backend.context, chunk.id, fingerprint, modelID,
 		)
 		if err != nil {
 			return nil, err
 		}
 		if exists {
-			vectors[document.DocumentID] = vector
+			vectors[chunk.id] = vector
 			continue
 		}
-		missing = append(missing, document)
+		missing = append(missing, chunk)
 	}
 	for start := 0; start < len(missing); start += 32 {
 		end := start + 32
@@ -190,43 +220,104 @@ func (backend *HybridBackend) semanticScores(query string, documents []personalm
 			end = len(missing)
 		}
 		inputs := make([]string, 0, end-start)
-		for _, document := range missing[start:end] {
-			inputs = append(inputs, truncateRunes(document.Text, maximumEmbeddingRunes))
+		for _, chunk := range missing[start:end] {
+			inputs = append(inputs, chunk.text)
 		}
-		embedded, err := backend.embedder.Embed(backend.context, inputs)
+		embedded, err := backend.embedDocuments(inputs)
 		if err != nil {
 			return nil, err
 		}
 		for index, vector := range embedded {
-			document := missing[start+index]
-			vectors[document.DocumentID] = vector
+			chunk := missing[start+index]
+			vectors[chunk.id] = vector
 			if err := backend.state.SaveEmbedding(backend.context, agentstate.Embedding{
-				DocumentID: document.DocumentID, DocumentFingerprint: textFingerprint(document.Text),
-				Model: backend.embedder.ModelID(), Vector: vector,
+				DocumentID: chunk.id, DocumentFingerprint: textFingerprint(chunk.text),
+				Model: modelID, Vector: vector,
 			}); err != nil {
 				return nil, err
 			}
 		}
 	}
-	queryVectors, err := backend.embedder.Embed(backend.context, []string{truncateRunes(query, maximumEmbeddingRunes)})
+	queryVector, err := backend.embedQuery(truncateRunes(query, embeddingChunkRunes))
 	if err != nil {
 		return nil, err
 	}
-	for documentID, vector := range vectors {
-		score, err := embedding.Cosine(queryVectors[0], vector)
+	for _, chunk := range chunks {
+		vector := vectors[chunk.id]
+		score, err := embedding.Cosine(queryVector, vector)
 		if err != nil {
 			return nil, err
 		}
-		scores[documentID] = score
+		if current, exists := scores[chunk.recordID]; !exists || score > current {
+			scores[chunk.recordID] = score
+		}
 	}
 	return scores, nil
+}
+
+func (backend *HybridBackend) embedDocuments(inputs []string) ([][]float64, error) {
+	if retriever, ok := backend.embedder.(embedding.RetrievalPort); ok {
+		return retriever.EmbedDocuments(backend.context, inputs)
+	}
+	return backend.embedder.Embed(backend.context, inputs)
+}
+
+func (backend *HybridBackend) embedQuery(input string) ([]float64, error) {
+	if retriever, ok := backend.embedder.(embedding.RetrievalPort); ok {
+		return retriever.EmbedQuery(backend.context, input)
+	}
+	vectors, err := backend.embedder.Embed(backend.context, []string{input})
+	if err != nil {
+		return nil, err
+	}
+	return vectors[0], nil
+}
+
+func embeddingChunks(value string) []string {
+	runes := []rune(strings.TrimSpace(value))
+	if len(runes) == 0 {
+		return nil
+	}
+	if len(runes) <= embeddingChunkRunes {
+		return []string{string(runes)}
+	}
+	chunks := make([]string, 0, maximumEmbeddingChunks)
+	coveredRunes := embeddingChunkRunes +
+		(maximumEmbeddingChunks-1)*(embeddingChunkRunes-embeddingChunkOverlap)
+	for index := 0; index < maximumEmbeddingChunks; index++ {
+		start := index * (embeddingChunkRunes - embeddingChunkOverlap)
+		if len(runes) > coveredRunes {
+			start = index * (len(runes) - embeddingChunkRunes) /
+				(maximumEmbeddingChunks - 1)
+		}
+		end := start + embeddingChunkRunes
+		if end > len(runes) {
+			end = len(runes)
+		}
+		chunk := strings.TrimSpace(string(runes[start:end]))
+		if chunk != "" {
+			chunks = append(chunks, chunk)
+		}
+		if end >= len(runes) {
+			break
+		}
+	}
+	return chunks
+}
+
+func stringID(value int) string {
+	const digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+	if value < len(digits) {
+		return string(digits[value])
+	}
+	return "x"
 }
 
 func (backend *HybridBackend) setMode(semanticErr error) {
 	backend.mu.Lock()
 	defer backend.mu.Unlock()
 	if semanticErr == nil {
-		backend.method = "mindline_hybrid_local/v0.1"
+		backend.method = "mindline_hybrid_local/v0.3"
 		backend.retrievalState = "hybrid"
 		backend.degradedReason = ""
 		return
@@ -236,7 +327,7 @@ func (backend *HybridBackend) setMode(semanticErr error) {
 	backend.degradedReason = semanticErr.Error()
 }
 
-func rankScores(scores map[string]float64) map[string]int {
+func rankScores(scores map[string]float64, limit int) map[string]int {
 	type item struct {
 		id    string
 		score float64
@@ -253,6 +344,9 @@ func rankScores(scores map[string]float64) map[string]int {
 	})
 	ranks := make(map[string]int, len(items))
 	for index, item := range items {
+		if limit > 0 && index >= limit {
+			break
+		}
 		ranks[item.id] = index + 1
 	}
 	return ranks

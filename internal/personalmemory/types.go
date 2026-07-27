@@ -193,10 +193,11 @@ type Status struct {
 }
 
 type SearchRequest struct {
-	Query  string `json:"query"`
-	Limit  int    `json:"limit"`
-	RunID  string `json:"run_id,omitempty"`
-	LensID string `json:"lens_id,omitempty"`
+	Query        string `json:"query"`
+	LexicalQuery string `json:"-"`
+	Limit        int    `json:"limit"`
+	RunID        string `json:"run_id,omitempty"`
+	LensID       string `json:"lens_id,omitempty"`
 }
 
 type Citation struct {
@@ -267,6 +268,7 @@ type CompactContextPacket struct {
 type CompactAbstentionPolicy struct {
 	SchemaVersion         string  `json:"schema_version"`
 	MinimumSemanticCosine float64 `json:"minimum_semantic_cosine"`
+	MinimumSemanticMargin float64 `json:"minimum_semantic_margin"`
 	LexicalEvidenceRule   string  `json:"lexical_evidence_rule"`
 	StopwordPolicy        string  `json:"stopword_policy"`
 	Fingerprint           string  `json:"fingerprint"`

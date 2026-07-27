@@ -23,10 +23,11 @@ const (
 	DefaultSearchLimit           = 10
 	MaximumSearchLimit           = 100
 
-	CompactAbstentionPolicySchemaVersion = "mindline-compact-abstention-policy/v0.2"
+	CompactAbstentionPolicySchemaVersion = "mindline-compact-abstention-policy/v0.3"
 	DefaultCompactMinimumSemanticCosine  = 0.65
-	compactLexicalEvidenceRule           = "two_meaningful_query_terms_or_all_for_single_term"
-	compactStopwordPolicy                = "mindline-english-stopwords/v0.1"
+	DefaultCompactMinimumSemanticMargin  = 0.05
+	compactLexicalEvidenceRule           = "majority_meaningful_terms_minimum_two_or_all_for_single_term"
+	compactStopwordPolicy                = "mindline-english-stopwords/v0.2"
 )
 
 // RetrieverPort is the agent-facing canonical Mindline contract.
@@ -139,7 +140,7 @@ func (retriever ContextRetriever) SearchCompact(request SearchRequest) (CompactC
 		return packet, nil
 	}
 	rankingRequest := request
-	rankingRequest.Query = strings.Join(queryTerms, " ")
+	rankingRequest.LexicalQuery = strings.Join(queryTerms, " ")
 	indexDocuments := make([]IndexDocument, 0, len(documents))
 	byID := make(map[string]evidenceDocument, len(documents))
 	for _, document := range documents {
@@ -435,7 +436,11 @@ func findRevision(revisions []CaptureRevision, revisionID string) (CaptureRevisi
 }
 
 func (LexicalBM25Backend) Rank(request SearchRequest, documents []IndexDocument) ([]RankedHit, error) {
-	queryTerms := uniqueSorted(tokenize(request.Query))
+	query := request.Query
+	if strings.TrimSpace(request.LexicalQuery) != "" {
+		query = request.LexicalQuery
+	}
+	queryTerms := uniqueSorted(tokenize(query))
 	if len(queryTerms) == 0 {
 		return nil, errors.New("search query is empty")
 	}
@@ -487,7 +492,7 @@ func (LexicalBM25Backend) Rank(request SearchRequest, documents []IndexDocument)
 		if score == 0 {
 			continue
 		}
-		if strings.Contains(strings.ToLower(document.document.Text), strings.ToLower(strings.TrimSpace(request.Query))) {
+		if strings.Contains(strings.ToLower(document.document.Text), strings.ToLower(strings.TrimSpace(query))) {
 			score += 2
 		}
 		hits = append(hits, RankedHit{DocumentID: document.document.DocumentID, Score: score, MatchedTerms: uniqueSorted(matched)})
@@ -661,6 +666,9 @@ func DefaultCompactAbstentionPolicy() CompactAbstentionPolicy {
 		"minimum_semantic_cosine=" + strconv.FormatFloat(
 			DefaultCompactMinimumSemanticCosine, 'f', 6, 64,
 		),
+		"minimum_semantic_margin=" + strconv.FormatFloat(
+			DefaultCompactMinimumSemanticMargin, 'f', 6, 64,
+		),
 		"lexical_evidence_rule=" + compactLexicalEvidenceRule,
 		"stopword_policy=" + compactStopwordPolicy,
 	}, "\n")
@@ -668,6 +676,7 @@ func DefaultCompactAbstentionPolicy() CompactAbstentionPolicy {
 	return CompactAbstentionPolicy{
 		SchemaVersion:         CompactAbstentionPolicySchemaVersion,
 		MinimumSemanticCosine: DefaultCompactMinimumSemanticCosine,
+		MinimumSemanticMargin: DefaultCompactMinimumSemanticMargin,
 		LexicalEvidenceRule:   compactLexicalEvidenceRule,
 		StopwordPolicy:        compactStopwordPolicy,
 		Fingerprint:           hex.EncodeToString(sum[:]),
@@ -681,10 +690,33 @@ func usableCompactHits(
 ) []RankedHit {
 	filtered := make([]RankedHit, 0, len(hits))
 	seen := map[string]bool{}
-	for _, hit := range hits {
+	semanticWinner := -1
+	semanticWinnerScore := math.Inf(-1)
+	semanticRunnerUpScore := math.Inf(-1)
+	for index, hit := range hits {
+		score, exists := finiteComponent(hit, "semantic_cosine")
+		if !exists {
+			continue
+		}
+		if score > semanticWinnerScore {
+			semanticRunnerUpScore = semanticWinnerScore
+			semanticWinnerScore = score
+			semanticWinner = index
+		} else if score > semanticRunnerUpScore {
+			semanticRunnerUpScore = score
+		}
+	}
+	semanticWinnerStrong := semanticWinner >= 0 &&
+		semanticWinnerScore >= policy.MinimumSemanticCosine &&
+		(math.IsInf(semanticRunnerUpScore, -1) ||
+			semanticWinnerScore-semanticRunnerUpScore >= policy.MinimumSemanticMargin)
+	for index, hit := range hits {
 		if strings.TrimSpace(hit.DocumentID) == "" || seen[hit.DocumentID] ||
 			math.IsNaN(hit.Score) || math.IsInf(hit.Score, 0) || hit.Score <= 0 ||
-			!hasCompactRetrievalEvidence(hit, policy, queryTerms) {
+			!hasCompactRetrievalEvidence(
+				hit, queryTerms,
+				semanticWinnerStrong && index == semanticWinner,
+			) {
 			continue
 		}
 		seen[hit.DocumentID] = true
@@ -695,12 +727,12 @@ func usableCompactHits(
 
 func hasCompactRetrievalEvidence(
 	hit RankedHit,
-	policy CompactAbstentionPolicy,
 	queryTerms []string,
+	strongSemanticWinner bool,
 ) bool {
-	requiredMatches := 2
-	if len(queryTerms) < requiredMatches {
-		requiredMatches = len(queryTerms)
+	requiredMatches := (len(queryTerms) + 1) / 2
+	if len(queryTerms) > 1 && requiredMatches < 2 {
+		requiredMatches = 2
 	}
 	querySet := make(map[string]bool, len(queryTerms))
 	for _, term := range queryTerms {
@@ -716,10 +748,12 @@ func hasCompactRetrievalEvidence(
 	if requiredMatches > 0 && len(matched) >= requiredMatches {
 		return true
 	}
-	semanticScore, hasSemanticScore := hit.Components["semantic_cosine"]
-	return hasSemanticScore && !math.IsNaN(semanticScore) &&
-		!math.IsInf(semanticScore, 0) &&
-		semanticScore >= policy.MinimumSemanticCosine
+	return strongSemanticWinner
+}
+
+func finiteComponent(hit RankedHit, name string) (float64, bool) {
+	value, exists := hit.Components[name]
+	return value, exists && !math.IsNaN(value) && !math.IsInf(value, 0)
 }
 
 func meaningfulQueryTerms(query string) []string {
@@ -730,6 +764,11 @@ func meaningfulQueryTerms(query string) []string {
 		"of": true, "on": true, "or": true, "that": true, "the": true, "this": true,
 		"to": true, "was": true, "were": true, "what": true, "when": true,
 		"where": true, "which": true, "who": true, "why": true, "with": true,
+		"can": true, "could": true, "get": true, "gets": true, "got": true,
+		"idea": true, "ideas": true, "know": true, "make": true, "makes": true,
+		"should": true, "thing": true, "things": true, "use": true, "used": true,
+		"using": true, "way": true, "ways": true, "work": true, "works": true,
+		"working": true, "would": true,
 	}
 	terms := uniqueSorted(tokenize(query))
 	filtered := make([]string, 0, len(terms))

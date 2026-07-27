@@ -16,12 +16,40 @@ type compactNoiseBackend struct {
 	hit RankedHit
 }
 
+type compactHitsBackend struct {
+	hits []RankedHit
+}
+
+type compactQueryCaptureBackend struct {
+	request SearchRequest
+}
+
 func (backend compactNoiseBackend) MethodID() string {
 	return "compact-noise-fixture/v0.1"
 }
 
 func (backend compactNoiseBackend) Rank(SearchRequest, []IndexDocument) ([]RankedHit, error) {
 	return []RankedHit{backend.hit}, nil
+}
+
+func (backend compactHitsBackend) MethodID() string {
+	return "compact-hits-fixture/v0.1"
+}
+
+func (backend compactHitsBackend) Rank(SearchRequest, []IndexDocument) ([]RankedHit, error) {
+	return append([]RankedHit(nil), backend.hits...), nil
+}
+
+func (backend *compactQueryCaptureBackend) MethodID() string {
+	return "compact-query-capture/v0.1"
+}
+
+func (backend *compactQueryCaptureBackend) Rank(
+	request SearchRequest,
+	_ []IndexDocument,
+) ([]RankedHit, error) {
+	backend.request = request
+	return nil, nil
 }
 
 func (repository *compactRepository) Load() (Library, error) {
@@ -246,6 +274,21 @@ func TestCompactSearchAbstainsForStopwordOnlyAndNoiseResults(t *testing.T) {
 	}
 }
 
+func TestCompactSearchPreservesSemanticQueryAndSeparatesLexicalTerms(t *testing.T) {
+	backend := &compactQueryCaptureBackend{}
+	repository := &compactRepository{library: EmptyLibrary()}
+	_, err := NewRetriever(repository, backend).SearchCompact(SearchRequest{
+		Query: "How should contextual agents work?", Limit: 3,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if backend.request.Query != "How should contextual agents work?" ||
+		backend.request.LexicalQuery != "agents contextual" {
+		t.Fatalf("compact ranking query was damaged: %+v", backend.request)
+	}
+}
+
 func TestCompactSearchDiscardsUnsubstantiatedRankerNoise(t *testing.T) {
 	repository := &compactRepository{library: Library{
 		SchemaVersion: LibrarySchemaVersion, Revision: 1,
@@ -324,7 +367,8 @@ func TestCompactSemanticAbstentionThresholdIsFrozenAndBoundToPacket(t *testing.T
 	if policy != DefaultCompactAbstentionPolicy() ||
 		policy.SchemaVersion != CompactAbstentionPolicySchemaVersion ||
 		policy.MinimumSemanticCosine != DefaultCompactMinimumSemanticCosine ||
-		policy.Fingerprint != "a764430a1dabaad7c58940f995bd600ec45fca7ffa217096f0fa6042171c2d4c" {
+		policy.MinimumSemanticMargin != DefaultCompactMinimumSemanticMargin ||
+		policy.Fingerprint != "92923ac1bddaa0199a5d0f4effd5a2cadbdeaaa9e2438686e6d2d45f52301352" {
 		t.Fatalf("compact abstention policy is not deterministic: %+v", policy)
 	}
 	repository := &compactRepository{library: Library{
@@ -356,6 +400,39 @@ func TestCompactSemanticAbstentionThresholdIsFrozenAndBoundToPacket(t *testing.T
 				t.Fatalf("threshold result=%+v policy=%+v", packet, policy)
 			}
 		})
+	}
+}
+
+func TestCompactSemanticAnswerRequiresWinnerMargin(t *testing.T) {
+	repository := &compactRepository{library: Library{
+		SchemaVersion: LibrarySchemaVersion, Revision: 1,
+		Fingerprint: strings.Repeat("a", 64),
+		Records: []CaptureRecord{
+			{
+				RecordID: "record-first", SourceRef: "slack://fixture/first",
+				RawText: "first context", ContentHash: strings.Repeat("b", 64),
+			},
+			{
+				RecordID: "record-second", SourceRef: "slack://fixture/second",
+				RawText: "second context", ContentHash: strings.Repeat("c", 64),
+			},
+		},
+	}}
+	packet, err := NewRetriever(repository, compactHitsBackend{hits: []RankedHit{
+		{
+			DocumentID: "record-first", Score: 1,
+			Components: map[string]float64{"semantic_cosine": 0.80},
+		},
+		{
+			DocumentID: "record-second", Score: 0.9,
+			Components: map[string]float64{"semantic_cosine": 0.79},
+		},
+	}}).SearchCompact(SearchRequest{Query: "semantic ambiguity", Limit: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if packet.AnswerState != "abstained" || len(packet.Citations) != 0 {
+		t.Fatalf("flat semantic ranking did not abstain: %+v", packet)
 	}
 }
 
