@@ -260,6 +260,70 @@ func (store *Store) ClaimNext() (Item, bool, error) {
 	return selected, found, err
 }
 
+// BudgetRemainder returns all still-queued jobs once a global frozen budget is
+// exhausted. It is read-only so the canonical repository can settle the whole
+// remainder atomically before the derived queue is advanced.
+func (store *Store) BudgetRemainder() ([]string, bool, error) {
+	queue, err := store.Load()
+	if err != nil {
+		return nil, false, err
+	}
+	if !globalBudgetExhausted(queue) {
+		return nil, false, nil
+	}
+	resourceIDs := make([]string, 0)
+	for _, item := range queue.Items {
+		if item.State == StateQueued {
+			resourceIDs = append(resourceIDs, item.ResourceID)
+		}
+	}
+	sort.Strings(resourceIDs)
+	return resourceIDs, len(resourceIDs) != 0, nil
+}
+
+// TerminalizeBudgetRemainder advances only the exact queued identities that
+// were already committed canonically as budget-exhausted. A crash between the
+// canonical write and this derived transition safely replays the same
+// idempotent canonical batch on restart.
+func (store *Store) TerminalizeBudgetRemainder(resourceIDs []string) error {
+	if len(resourceIDs) == 0 {
+		return nil
+	}
+	_, err := store.update(func(queue *Queue) error {
+		if !globalBudgetExhausted(*queue) {
+			return errors.New("resource queue budget is not exhausted")
+		}
+		expected := make(map[string]bool, len(resourceIDs))
+		for _, resourceID := range resourceIDs {
+			if resourceID == "" || expected[resourceID] {
+				return errors.New("invalid resource queue budget remainder")
+			}
+			expected[resourceID] = true
+		}
+		for index := range queue.Items {
+			item := &queue.Items[index]
+			if !expected[item.ResourceID] {
+				continue
+			}
+			if item.State != StateQueued {
+				return errors.New("resource queue budget remainder changed")
+			}
+			item.State, item.Reason = StateBlocked, "budget_exhausted"
+			delete(expected, item.ResourceID)
+		}
+		if len(expected) != 0 {
+			return errors.New("resource queue budget remainder is incomplete")
+		}
+		return nil
+	})
+	return err
+}
+
+func globalBudgetExhausted(queue Queue) bool {
+	return queue.Counters.ProcessedResources >= queue.Profile.MaxResources ||
+		queue.Counters.Requests+queue.Counters.ReservedRequests >= queue.Profile.MaxRequests
+}
+
 func (store *Store) Requeue(resourceID string) error {
 	_, err := store.update(func(queue *Queue) error {
 		for index := range queue.Items {

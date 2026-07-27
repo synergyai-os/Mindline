@@ -380,6 +380,63 @@ func (completeContentFetcher) Fetch(context.Context, Target) (FetchResult, error
 	}, nil
 }
 
+type partialFetcher struct{}
+
+func (partialFetcher) Fetch(context.Context, Target) (FetchResult, error) {
+	return FetchResult{State: StatePartial, Usage: Usage{Requests: 1}}, nil
+}
+
+type batchRecordingRepository struct {
+	library    personalmemory.Library
+	batchSizes []int
+}
+
+func (repository *batchRecordingRepository) Load() (personalmemory.Library, error) {
+	return repository.library, nil
+}
+
+func (repository *batchRecordingRepository) MergeEnrichment(batch personalmemory.EnrichmentBatch) (personalmemory.EnrichmentReceipt, error) {
+	repository.batchSizes = append(repository.batchSizes, len(batch.Resources))
+	return personalmemory.EnrichmentReceipt{}, nil
+}
+
+func TestGlobalBudgetRemainderSettlesInOneCanonicalBatch(t *testing.T) {
+	profile := FixtureProfile()
+	profile.MaxResources = 1
+	profile = SealProfile(profile)
+	store, err := NewStore(t.TempDir()+"/queue", profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resourceIDs := []string{"resource-a", "resource-b", "resource-c"}
+	if _, err := store.Enqueue(resourceIDs); err != nil {
+		t.Fatal(err)
+	}
+	repository := &batchRecordingRepository{library: personalmemory.Library{
+		Resources: []personalmemory.ResourceContext{
+			{ResourceID: resourceIDs[0], CanonicalURL: "https://example.com/a"},
+			{ResourceID: resourceIDs[1], CanonicalURL: "https://example.com/b"},
+			{ResourceID: resourceIDs[2], CanonicalURL: "https://example.com/c"},
+		},
+	}}
+	runner := Runner{Store: store, Repository: repository, Fetcher: partialFetcher{}}
+	if err := runner.Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	queue, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repository.batchSizes) != 2 || repository.batchSizes[0] != 1 || repository.batchSizes[1] != 2 {
+		t.Fatalf("budget remainder was not one canonical batch: %#v", repository.batchSizes)
+	}
+	if queue.Items[0].State != StatePartial ||
+		queue.Items[1].State != StateBlocked || queue.Items[1].Reason != "budget_exhausted" ||
+		queue.Items[2].State != StateBlocked || queue.Items[2].Reason != "budget_exhausted" {
+		t.Fatalf("budget remainder did not settle terminally: %+v", queue)
+	}
+}
+
 func TestRejectedFetchedPayloadBecomesManualTerminalAndDrainContinues(t *testing.T) {
 	store, err := NewStore(t.TempDir()+"/queue", FixtureProfile())
 	if err != nil {

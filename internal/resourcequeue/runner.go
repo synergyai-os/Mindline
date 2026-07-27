@@ -66,6 +66,13 @@ func (runner Runner) Drain(ctx context.Context) error {
 		return err
 	}
 	for {
+		settled, err := runner.settleBudgetRemainder()
+		if err != nil {
+			return err
+		}
+		if settled {
+			continue
+		}
 		processed, err := runner.ProcessNext(ctx)
 		if err != nil {
 			return err
@@ -74,6 +81,44 @@ func (runner Runner) Drain(ctx context.Context) error {
 			return nil
 		}
 	}
+}
+
+func (runner Runner) settleBudgetRemainder() (bool, error) {
+	resourceIDs, found, err := runner.Store.BudgetRemainder()
+	if err != nil || !found {
+		return false, err
+	}
+	library, err := runner.Repository.Load()
+	if err != nil {
+		return false, err
+	}
+	urls := make(map[string]string, len(library.Resources))
+	for _, resource := range library.Resources {
+		urls[resource.ResourceID] = resource.CanonicalURL
+	}
+	resources := make([]acquisition.ImportedEvidence, 0, len(resourceIDs))
+	for _, resourceID := range resourceIDs {
+		canonicalURL, exists := urls[resourceID]
+		if !exists {
+			return false, errors.New("queued resource is absent from canonical library")
+		}
+		resources = append(resources, acquisition.ImportedEvidence{
+			CanonicalURL: canonicalURL,
+			State:        "failed",
+			AccessClass:  "public",
+			Missingness:  []string{"resource_blocked:budget_exhausted"},
+		})
+	}
+	if _, err := runner.Repository.MergeEnrichment(personalmemory.EnrichmentBatch{
+		SchemaVersion: personalmemory.EnrichmentBatchSchemaVersion,
+		Resources:     resources,
+	}); err != nil {
+		return false, err
+	}
+	if err := runner.Store.TerminalizeBudgetRemainder(resourceIDs); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (runner Runner) ProcessNext(ctx context.Context) (bool, error) {
