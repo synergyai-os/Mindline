@@ -20,6 +20,9 @@ const (
 	backupFileName  = "library.backup.json"
 	lockFileName    = "library.lock"
 	contentDirName  = "content"
+	// MaximumCaptureLibraryBytes reserves room beneath MaximumLibraryBytes for
+	// atomic recovery. All Slack capture entry points use this admission limit.
+	MaximumCaptureLibraryBytes = 48 << 20
 )
 
 type RepositoryPort interface {
@@ -90,8 +93,18 @@ func (repository *FileRepository) Load() (Library, error) {
 }
 
 func (repository *FileRepository) Import(batch CaptureBatch) (ImportReceipt, error) {
+	return repository.ImportWithinBudget(batch, MaximumCaptureLibraryBytes)
+}
+
+// ImportWithinBudget is the only capture-admission path. It holds the
+// repository lock while applying the canonical transition and serializing the
+// exact next library, so callers cannot race a separate estimate with commit.
+func (repository *FileRepository) ImportWithinBudget(batch CaptureBatch, maximumBytes int64) (ImportReceipt, error) {
 	if err := validateCaptureBatch(batch); err != nil {
 		return ImportReceipt{}, err
+	}
+	if maximumBytes <= 0 || maximumBytes > MaximumLibraryBytes {
+		return ImportReceipt{}, errors.New("personal evidence capture admission limit is invalid")
 	}
 	batchFingerprint := captureBatchFingerprint(batch)
 	lock, err := privateio.AcquireAdvisoryLock(repository.root, repository.lockPath)
@@ -173,7 +186,7 @@ func (repository *FileRepository) Import(batch CaptureBatch) (ImportReceipt, err
 	library.Revision++
 	library.Imports = append(library.Imports, receipt)
 	library = sealLibrary(library)
-	if err := repository.persistLibrary(library); err != nil {
+	if err := repository.persistLibraryWithinBudget(library, maximumBytes); err != nil {
 		return ImportReceipt{}, err
 	}
 	return receipt, nil
@@ -589,9 +602,16 @@ func captureBatchFingerprint(batch CaptureBatch) string {
 }
 
 func (repository *FileRepository) persistLibrary(library Library) error {
+	return repository.persistLibraryWithinBudget(library, MaximumLibraryBytes)
+}
+
+func (repository *FileRepository) persistLibraryWithinBudget(library Library, maximumBytes int64) error {
 	next, err := privateio.CanonicalJSONBytes(library)
 	if err != nil {
 		return errors.New("personal evidence library unavailable")
+	}
+	if int64(len(next)) > maximumBytes {
+		return errors.New("personal evidence library exceeds capture admission limit")
 	}
 	var prior []byte
 	if _, err := os.Lstat(repository.libraryPath); err == nil {

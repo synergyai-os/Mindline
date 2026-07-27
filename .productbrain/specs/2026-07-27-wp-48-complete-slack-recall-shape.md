@@ -1,6 +1,6 @@
 # WP-48 complete Slack recall — Shape
 
-Status: Shape V2 for defect review  
+Status: signed in DEC-427  
 Stop when: full delivery and founder-reviewable end-to-end proof  
 Dependency: PR #47 commit `c5a56170381b4a3b4fa81e9c23bcdeba40402c08` or its merged equivalent
 

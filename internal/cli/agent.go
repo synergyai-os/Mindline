@@ -23,10 +23,14 @@ func (r Runner) runAgent(args []string, stdout, stderr io.Writer) int {
 		return r.runAgentInstall(args[1:], stdout, stderr)
 	case "restart":
 		return r.runAgentRestart(args[1:], stdout, stderr)
+	case "rollback":
+		return r.runAgentRollback(args[1:], stdout, stderr)
 	case "uninstall":
 		return r.runAgentUninstall(args[1:], stdout, stderr)
 	case "status":
 		return r.runAgentStatus(args[1:], stdout, stderr)
+	case "capabilities":
+		return r.runAgentCapabilities(args[1:], stdout, stderr)
 	case "search":
 		return r.runAgentSearch(args[1:], stdout, stderr)
 	case "get":
@@ -65,9 +69,26 @@ func (r Runner) runAgentStatus(args []string, stdout, stderr io.Writer) int {
 	return encodePersonalMemoryJSON(stdout, stderr, status)
 }
 
+func (r Runner) runAgentCapabilities(args []string, stdout, stderr io.Writer) int {
+	options, err := parseAgentOptions(args)
+	if err != nil || len(options.positionals) != 0 || len(options.values) != 0 {
+		return agentUsage(stderr)
+	}
+	client, err := agentClient(options.configPath)
+	if err != nil {
+		return agentFailure(stderr, err)
+	}
+	capabilities, err := client.Capabilities(context.Background())
+	if err != nil {
+		return agentFailure(stderr, err)
+	}
+	return encodePersonalMemoryJSON(stdout, stderr, capabilities)
+}
+
 func (r Runner) runAgentSearch(args []string, stdout, stderr io.Writer) int {
 	options, err := parseAgentOptions(args)
-	if err != nil || len(options.positionals) == 0 || !onlyAgentKeys(options.values, "lens", "limit") {
+	if err != nil || len(options.positionals) == 0 ||
+		!onlyAgentKeys(options.values, "lens", "limit", "format") {
 		return agentUsage(stderr)
 	}
 	limit := 10
@@ -77,17 +98,48 @@ func (r Runner) runAgentSearch(args []string, stdout, stderr io.Writer) int {
 			return agentUsage(stderr)
 		}
 	}
+	format := options.values["format"]
+	if format != "" && format != "legacy-v0.2" && format != "compact-v0.3" {
+		return agentUsage(stderr)
+	}
 	client, err := agentClient(options.configPath)
 	if err != nil {
 		return agentFailure(stderr, err)
 	}
-	packet, err := client.Search(context.Background(), localservice.SearchInput{
+	input := localservice.SearchInput{
 		Query: strings.Join(options.positionals, " "), LensID: options.values["lens"], Limit: limit,
-	})
+	}
+	if format == "" || format == "legacy-v0.2" {
+		packet, err := client.Search(context.Background(), input)
+		if err != nil {
+			return agentFailure(stderr, err)
+		}
+		return encodePersonalMemoryJSON(stdout, stderr, packet)
+	}
+	capabilities, capabilityErr := client.Capabilities(context.Background())
+	if capabilityErr == nil && supportsSearchFormat(
+		capabilities.SearchFormats, "mindline-agent-context-packet/v0.3",
+	) {
+		packet, compactErr := client.SearchCompact(context.Background(), input)
+		if compactErr != nil {
+			return agentFailure(stderr, compactErr)
+		}
+		return encodePersonalMemoryJSON(stdout, stderr, packet)
+	}
+	packet, err := client.Search(context.Background(), input)
 	if err != nil {
 		return agentFailure(stderr, err)
 	}
 	return encodePersonalMemoryJSON(stdout, stderr, packet)
+}
+
+func supportsSearchFormat(formats []string, expected string) bool {
+	for _, format := range formats {
+		if format == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func (r Runner) runAgentGet(args []string, stdout, stderr io.Writer) int {

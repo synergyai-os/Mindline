@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +11,8 @@ import (
 
 	acquisitionslack "github.com/synergyai-os/Mindline/internal/acquisition/slack"
 	slackadapter "github.com/synergyai-os/Mindline/internal/adapters/slack"
+	"github.com/synergyai-os/Mindline/internal/founderreview"
+	"github.com/synergyai-os/Mindline/internal/ingestioncontroller"
 	"github.com/synergyai-os/Mindline/internal/personalmemory"
 	"github.com/synergyai-os/Mindline/internal/privateio"
 )
@@ -22,6 +25,22 @@ func (r Runner) runPersonalMemory(args []string, stdout, stderr io.Writer) int {
 		return ExitUsage
 	}
 	switch args[0] {
+	case "resources-run":
+		return r.runResourceCommand(args[1:], stdout, stderr, "run")
+	case "resources-status":
+		return r.runResourceCommand(args[1:], stdout, stderr, "status")
+	case "resources-proof":
+		return r.runResourceCommand(args[1:], stdout, stderr, "proof")
+	case "resources-rebuild-proof":
+		return r.runResourceCommand(args[1:], stdout, stderr, "rebuild")
+	case "founder-review":
+		return r.runFounderReview(args[1:], stdout, stderr)
+	case "ingest-slack-run":
+		return r.runIngestionApply(args[1:], stdout, stderr)
+	case "ingest-slack-run-status":
+		return r.runIngestionStatus(args[1:], stdout, stderr, false)
+	case "ingest-slack-run-proof":
+		return r.runIngestionStatus(args[1:], stdout, stderr, true)
 	case "import-slack":
 		return r.runPersonalMemoryImportSlack(args[1:], stdout, stderr)
 	case "enrich":
@@ -37,6 +56,147 @@ func (r Runner) runPersonalMemory(args []string, stdout, stderr io.Writer) int {
 	default:
 		fmt.Fprint(stderr, usage)
 		return ExitUsage
+	}
+}
+
+type founderReviewInput struct {
+	ProofRunID                 string                `json:"proof_run_id"`
+	StructuralProofFingerprint string                `json:"structural_proof_fingerprint"`
+	CitedRecordsFingerprint    string                `json:"cited_records_fingerprint"`
+	Verdict                    founderreview.Verdict `json:"verdict"`
+	RetryToken                 string                `json:"retry_token"`
+}
+
+func (r Runner) runFounderReview(args []string, stdout, stderr io.Writer) int {
+	positionals, root, _, err := parsePersonalMemoryArgs(args, false)
+	if err != nil || len(positionals) != 1 || positionals[0] != "-" {
+		fmt.Fprint(stderr, usage)
+		return ExitUsage
+	}
+	root, err = resolvePersonalMemoryRoot(root)
+	if err != nil {
+		fmt.Fprintln(stderr, "open founder review: unavailable")
+		return ExitProcess
+	}
+	input, err := r.readPersonalMemoryInput("-")
+	if err != nil || int64(len(input)) > founderreview.MaxRecordBytes {
+		fmt.Fprintln(stderr, "read founder review: invalid closed schema")
+		return ExitUsage
+	}
+	var request founderReviewInput
+	if err := privateio.DecodeJSONStrict(input, &request); err != nil {
+		fmt.Fprintln(stderr, "read founder review: invalid closed schema")
+		return ExitUsage
+	}
+	repository, err := founderreview.NewRepository(
+		filepath.Join(filepath.Dir(root), "founder-review-runtime"),
+		founderreview.Options{},
+	)
+	if err != nil {
+		fmt.Fprintln(stderr, "open founder review: unavailable")
+		return ExitProcess
+	}
+	record, err := repository.Create(context.Background(), founderreview.Request{
+		ProofRunID:                 request.ProofRunID,
+		StructuralProofFingerprint: request.StructuralProofFingerprint,
+		CitedRecordsFingerprint:    request.CitedRecordsFingerprint,
+		Verdict:                    request.Verdict, RetryToken: request.RetryToken,
+	})
+	if err != nil {
+		fmt.Fprintln(stderr, "record founder review: unavailable")
+		return ExitProcess
+	}
+	return encodePersonalMemoryJSON(stdout, stderr, record.Receipt())
+}
+
+type ingestionProof struct {
+	SchemaVersion           string `json:"schema_version"`
+	State                   string `json:"state"`
+	DeliveredCount          int    `json:"delivered_count"`
+	UniqueNativeCount       int    `json:"unique_native_count"`
+	CanonicalDeclaredCount  int    `json:"canonical_declared_count"`
+	StructuralExcludedCount int    `json:"structural_excluded_count"`
+	UserAuthoredExcluded    int    `json:"user_authored_excluded_count"`
+	OwnedCount              int    `json:"owned_count"`
+	RetainedCount           int    `json:"retained_count"`
+	WithheldCount           int    `json:"withheld_count"`
+	OverlapCount            int    `json:"overlap_count"`
+	GapCount                int    `json:"gap_count"`
+	ThreadCount             int    `json:"thread_count"`
+	AggregateCommitment     string `json:"aggregate_commitment"`
+	CanonicalFingerprint    string `json:"canonical_fingerprint"`
+}
+
+func (r Runner) runIngestionStatus(args []string, stdout, stderr io.Writer, proof bool) int {
+	positionals, root, _, err := parsePersonalMemoryArgs(args, false)
+	if err != nil || len(positionals) != 0 {
+		fmt.Fprint(stderr, usage)
+		return ExitUsage
+	}
+	root, err = resolvePersonalMemoryRoot(root)
+	if err != nil {
+		fmt.Fprintln(stderr, "open ingestion ledger: unavailable")
+		return ExitProcess
+	}
+	store, err := ingestioncontroller.NewLedgerStore(filepath.Join(filepath.Dir(root), "ingestion-ledger"))
+	if err != nil {
+		fmt.Fprintln(stderr, "open ingestion ledger: unavailable")
+		return ExitProcess
+	}
+	ledger, err := store.Load()
+	if err != nil {
+		fmt.Fprintln(stderr, "read ingestion ledger: unavailable")
+		return ExitProcess
+	}
+	_ = proof
+	return encodePersonalMemoryJSON(stdout, stderr, projectIngestionProof(ledger))
+}
+
+func (r Runner) runIngestionApply(args []string, stdout, stderr io.Writer) int {
+	positionals, root, _, err := parsePersonalMemoryArgs(args, false)
+	if err != nil || len(positionals) != 1 || positionals[0] != "-" {
+		fmt.Fprint(stderr, usage)
+		return ExitUsage
+	}
+	root, err = resolvePersonalMemoryRoot(root)
+	if err != nil {
+		fmt.Fprintln(stderr, "open personal evidence library: stable root unavailable")
+		return ExitProcess
+	}
+	envelope, err := ingestioncontroller.DecodeEnvelope(r.nativeInput)
+	if err != nil {
+		fmt.Fprintln(stderr, "read ingestion envelope: invalid closed framing")
+		return ExitUsage
+	}
+	repository, err := personalmemory.NewFileRepository(root, nil)
+	if err != nil {
+		fmt.Fprintln(stderr, "open personal evidence library: unavailable")
+		return ExitProcess
+	}
+	ledger, err := ingestioncontroller.NewLedgerStore(filepath.Join(filepath.Dir(root), "ingestion-ledger"))
+	if err != nil {
+		fmt.Fprintln(stderr, "open ingestion ledger: unavailable")
+		return ExitProcess
+	}
+	result, err := (ingestioncontroller.Controller{Repository: repository, Ledger: ledger}).Apply(envelope)
+	if err != nil {
+		fmt.Fprintln(stderr, "apply ingestion envelope: incomplete")
+		return ExitProcess
+	}
+	return encodePersonalMemoryJSON(stdout, stderr, projectIngestionProof(result))
+}
+
+func projectIngestionProof(ledger ingestioncontroller.Ledger) ingestionProof {
+	return ingestionProof{
+		SchemaVersion: ledger.SchemaVersion, State: ledger.State,
+		DeliveredCount: ledger.DeliveredCount, UniqueNativeCount: ledger.OwnedCount,
+		CanonicalDeclaredCount:  ledger.CanonicalDeclaredCount,
+		StructuralExcludedCount: ledger.StructuralExcludedCount,
+		UserAuthoredExcluded:    0, OwnedCount: ledger.OwnedCount,
+		RetainedCount: ledger.RetainedCount, WithheldCount: ledger.WithheldCount,
+		OverlapCount: ledger.OverlapCount, GapCount: ledger.GapCount,
+		ThreadCount: ledger.ThreadCount, AggregateCommitment: ledger.AggregateCommitment,
+		CanonicalFingerprint: ledger.CanonicalAfterFingerprint,
 	}
 }
 

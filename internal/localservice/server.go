@@ -86,8 +86,10 @@ func (server *Server) Serve() error {
 	}
 	server.listener = listener
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/capabilities", server.handleCapabilities)
 	mux.HandleFunc("GET /v1/status", server.handleStatus)
 	mux.HandleFunc("POST /v1/search", server.handleSearch)
+	mux.HandleFunc("POST /v1/search/compact", server.handleSearchCompact)
 	mux.HandleFunc("GET /v1/captures/{recordID}", server.handleGet)
 	mux.HandleFunc("GET /v1/lenses", server.handleListLenses)
 	mux.HandleFunc("PUT /v1/lenses/{lensID}", server.handlePutLens)
@@ -124,6 +126,17 @@ func (server *Server) Close(ctx context.Context) error {
 	return first
 }
 
+func (server *Server) handleCapabilities(writer http.ResponseWriter, _ *http.Request) {
+	writeJSON(writer, http.StatusOK, Capabilities{
+		SchemaVersion:            CapabilitiesSchemaVersion,
+		SearchFormats:            []string{"mindline-agent-context-packet/v0.2", "mindline-agent-context-packet/v0.3"},
+		CompactSearchEndpoint:    "/v1/search/compact",
+		CompactAbstentionPolicy:  personalmemory.DefaultCompactAbstentionPolicy(),
+		ExplicitHydrationCommand: "agent get",
+		FeedbackRetryToken:       true,
+	})
+}
+
 func (server *Server) handleStatus(writer http.ResponseWriter, _ *http.Request) {
 	memory, err := server.repository.Status()
 	if err != nil {
@@ -140,8 +153,17 @@ func (server *Server) handleStatus(writer http.ResponseWriter, _ *http.Request) 
 	}
 	writeJSON(writer, http.StatusOK, Status{
 		SchemaVersion: APISchemaVersion, ServiceState: "ready",
-		Memory: memory, State: state,
+		Memory: memory, State: projectAgentStateStatus(state),
 	})
+}
+
+func projectAgentStateStatus(state agentstate.Status) PublicAgentStateStatus {
+	return PublicAgentStateStatus{
+		SchemaVersion: state.SchemaVersion, LensCount: state.LensCount,
+		RetrievalRunCount: state.RetrievalRunCount, JudgmentCount: state.JudgmentCount,
+		EmbeddingCount: state.EmbeddingCount, IndexedFingerprint: state.IndexedFingerprint,
+		RecoveryState: state.RecoveryState,
+	}
 }
 
 func (server *Server) handleSearch(writer http.ResponseWriter, request *http.Request) {
@@ -169,6 +191,50 @@ func (server *Server) handleSearch(writer http.ResponseWriter, request *http.Req
 		LibraryFingerprint: packet.LibraryFingerprint,
 		CreatedAt:          server.now().UTC().Format(time.RFC3339Nano),
 		Candidates:         make([]agentstate.CandidateTrace, 0, len(packet.Citations)),
+	}
+	for rank, citation := range packet.Citations {
+		trace.Candidates = append(trace.Candidates, agentstate.CandidateTrace{
+			RecordID: citation.RecordID, Rank: rank + 1, FinalScore: citation.Score,
+			ComponentScore: citation.ComponentScores,
+		})
+	}
+	if err := server.state.SaveRetrieval(request.Context(), trace); err != nil {
+		writeError(writer, http.StatusInternalServerError, err)
+		return
+	}
+	if err := server.state.SetIndexedFingerprint(request.Context(), packet.LibraryFingerprint); err != nil {
+		writeError(writer, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, packet)
+}
+
+func (server *Server) handleSearchCompact(writer http.ResponseWriter, request *http.Request) {
+	var input SearchInput
+	if err := decodeRequest(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	runID, err := randomID("retrieval")
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, err)
+		return
+	}
+	backend := agentretrieval.NewHybridBackend(request.Context(), server.state, server.embedder)
+	packet, err := personalmemory.NewRetriever(server.repository, backend).SearchCompact(
+		personalmemory.SearchRequest{
+			Query: input.Query, Limit: input.Limit, RunID: runID, LensID: input.LensID,
+		},
+	)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	trace := agentstate.RetrievalTrace{
+		RunID: runID, Query: packet.Query, LensID: packet.LensID,
+		RetrievalMethod: packet.RetrievalMethod, LibraryFingerprint: packet.LibraryFingerprint,
+		CreatedAt:  server.now().UTC().Format(time.RFC3339Nano),
+		Candidates: make([]agentstate.CandidateTrace, 0, len(packet.Citations)),
 	}
 	for rank, citation := range packet.Citations {
 		trace.Candidates = append(trace.Candidates, agentstate.CandidateTrace{

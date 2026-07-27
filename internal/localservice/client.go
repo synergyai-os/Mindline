@@ -42,9 +42,21 @@ func (client *Client) Status(ctx context.Context) (Status, error) {
 	return status, err
 }
 
+func (client *Client) Capabilities(ctx context.Context) (Capabilities, error) {
+	var capabilities Capabilities
+	err := client.do(ctx, http.MethodGet, "/v1/capabilities", nil, &capabilities)
+	return capabilities, err
+}
+
 func (client *Client) Search(ctx context.Context, input SearchInput) (personalmemory.ContextPacket, error) {
 	var packet personalmemory.ContextPacket
 	err := client.do(ctx, http.MethodPost, "/v1/search", input, &packet)
+	return packet, err
+}
+
+func (client *Client) SearchCompact(ctx context.Context, input SearchInput) (personalmemory.CompactContextPacket, error) {
+	var packet personalmemory.CompactContextPacket
+	err := client.do(ctx, http.MethodPost, "/v1/search/compact", input, &packet)
 	return packet, err
 }
 

@@ -55,6 +55,28 @@ func TestPersonalEvidenceLibraryPersistsEverySlackRecordAndReplaysIdempotently(t
 	}
 }
 
+func TestImportWithinBudgetRejectsBeforeCanonicalPersistence(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "library")
+	repository, err := NewFileRepository(root, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch := captureBatchForTest(t, fixtureBatch())
+	if _, err := repository.ImportWithinBudget(batch, 1); err == nil {
+		t.Fatal("expected lock-held admission rejection")
+	}
+	status, err := repository.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.RecordCount != 0 || status.Fingerprint != EmptyLibrary().Fingerprint {
+		t.Fatalf("rejected admission mutated canonical state: %+v", status)
+	}
+	if _, err := repository.ImportWithinBudget(batch, MaximumCaptureLibraryBytes); err != nil {
+		t.Fatalf("expected admitted import: %v", err)
+	}
+}
+
 func TestEditedSlackCapturePreservesSearchableImmutableRevision(t *testing.T) {
 	repository := populatedRepository(t)
 	updated := fixtureBatch()

@@ -15,19 +15,28 @@ import (
 
 func (r Runner) runAgentFeedback(args []string, stdout, stderr io.Writer, reversal bool) int {
 	options, err := parseAgentOptions(args)
-	allowed := []string{"actor", "idempotency-key", "reason"}
+	allowed := []string{"actor", "idempotency-key", "retry-token", "reason"}
 	if !reversal {
 		allowed = append(allowed, "run", "lens", "record", "disposition")
 	} else {
 		allowed = append(allowed, "judgment")
 	}
 	if err != nil || len(options.positionals) != 0 || !onlyAgentKeys(options.values, allowed...) ||
-		options.values["actor"] == "" || options.values["idempotency-key"] == "" {
+		options.values["actor"] == "" {
+		return agentUsage(stderr)
+	}
+	explicitKey := options.values["idempotency-key"]
+	retryToken := options.values["retry-token"]
+	if reversal {
+		if explicitKey == "" || retryToken != "" {
+			return agentUsage(stderr)
+		}
+	} else if (explicitKey == "") == (retryToken == "") {
 		return agentUsage(stderr)
 	}
 	input := agentstate.JudgmentRequest{
-		IdempotencyKey: options.values["idempotency-key"],
-		Actor:          options.values["actor"], Reason: options.values["reason"],
+		IdempotencyKey: explicitKey, RetryToken: retryToken,
+		Actor: options.values["actor"], Reason: options.values["reason"],
 	}
 	if reversal {
 		input.ReversesID = options.values["judgment"]

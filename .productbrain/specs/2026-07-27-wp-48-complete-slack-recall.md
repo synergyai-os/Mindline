@@ -1,7 +1,7 @@
-# WP-48 complete Slack recall — signed-spec candidate
+# WP-48 complete Slack recall — signed Spec
 
 Date: 2026-07-27  
-Status: review candidate; implementation blocked until signed  
+Status: signed in DEC-428  
 Shape authority: DEC-427  
 Depends on: WP-47 at `c5a5617` or a merged equivalent  
 Governing authority: DEC-422, DEC-424, DEC-425, DEC-426, STD-20,

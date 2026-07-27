@@ -247,6 +247,71 @@ type ContextPacket struct {
 	ResourceRevisions  []ResourceRevision `json:"resource_revisions"`
 }
 
+type CompactContextPacket struct {
+	SchemaVersion               string            `json:"schema_version"`
+	RunID                       string            `json:"run_id,omitempty"`
+	Query                       string            `json:"query"`
+	LensID                      string            `json:"lens_id,omitempty"`
+	RetrievalMethod             string            `json:"retrieval_method"`
+	RetrievalState              string            `json:"retrieval_state,omitempty"`
+	DegradedReason              string            `json:"degraded_reason,omitempty"`
+	AbstentionPolicyFingerprint string            `json:"abstention_policy_fingerprint"`
+	AuthorityClass              string            `json:"authority_class"`
+	LibraryRevision             uint64            `json:"library_revision"`
+	LibraryFingerprint          string            `json:"library_fingerprint"`
+	AnswerState                 string            `json:"answer_state"`
+	AbstentionReason            string            `json:"abstention_reason,omitempty"`
+	Citations                   []CompactCitation `json:"citations"`
+}
+
+type CompactAbstentionPolicy struct {
+	SchemaVersion         string  `json:"schema_version"`
+	MinimumSemanticCosine float64 `json:"minimum_semantic_cosine"`
+	LexicalEvidenceRule   string  `json:"lexical_evidence_rule"`
+	StopwordPolicy        string  `json:"stopword_policy"`
+	Fingerprint           string  `json:"fingerprint"`
+}
+
+type CompactCitation struct {
+	RecordID                string                     `json:"record_id"`
+	LogicalRecordID         string                     `json:"logical_record_id"`
+	VersionState            string                     `json:"version_state"`
+	SourceRef               string                     `json:"source_ref"`
+	OccurredAt              string                     `json:"occurred_at"`
+	Author                  string                     `json:"author,omitempty"`
+	Snippet                 string                     `json:"snippet"`
+	MatchedTerms            []string                   `json:"matched_terms"`
+	Score                   float64                    `json:"score"`
+	ComponentScores         map[string]float64         `json:"component_scores,omitempty"`
+	ContentHash             string                     `json:"content_hash"`
+	ContextState            string                     `json:"context_state"`
+	Missingness             []string                   `json:"missingness"`
+	EvidenceRefs            []CompactEvidenceReference `json:"evidence_refs"`
+	ResourceStates          []ResourceStateSummary     `json:"resource_states"`
+	ResourceStatesTruncated bool                       `json:"resource_states_truncated,omitempty"`
+	AuthorityClass          string                     `json:"authority_class"`
+}
+
+type CompactEvidenceReference struct {
+	ResourceID           string `json:"resource_id"`
+	ResourceHash         string `json:"resource_hash"`
+	ResourceVersionState string `json:"resource_version_state"`
+	ResourceRevisionID   string `json:"resource_revision_id,omitempty"`
+	ExcerptID            string `json:"excerpt_id,omitempty"`
+	ArtifactID           string `json:"artifact_id,omitempty"`
+	Locator              string `json:"locator"`
+	MatchedSnippet       string `json:"matched_snippet"`
+}
+
+type ResourceStateSummary struct {
+	ResourceID     string   `json:"resource_id"`
+	State          string   `json:"state"`
+	AccessClass    string   `json:"access_class"`
+	ContentHash    string   `json:"content_hash"`
+	Missingness    []string `json:"missingness"`
+	AuthorityClass string   `json:"authority_class"`
+}
+
 type HydratedCapture struct {
 	SchemaVersion     string                     `json:"schema_version"`
 	RecordID          string                     `json:"record_id"`

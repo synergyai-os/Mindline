@@ -1,7 +1,7 @@
-# WP-48 complete Slack recall — implementation plan candidate
+# WP-48 complete Slack recall — signed implementation Plan
 
 Date: 2026-07-27  
-Status: review candidate; delivery blocked until signed  
+Status: signed in DEC-429
 Authority: DEC-427, DEC-428, WP-48  
 Signed Spec:
 `.productbrain/specs/2026-07-27-wp-48-complete-slack-recall.md`

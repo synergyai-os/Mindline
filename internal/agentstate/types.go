@@ -38,6 +38,7 @@ type RetrievalTrace struct {
 
 type JudgmentRequest struct {
 	IdempotencyKey string `json:"idempotency_key"`
+	RetryToken     string `json:"retry_token,omitempty"`
 	RunID          string `json:"run_id,omitempty"`
 	LensID         string `json:"lens_id"`
 	RecordID       string `json:"record_id,omitempty"`

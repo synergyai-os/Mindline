@@ -5,10 +5,13 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
 )
+
+const maximumFeedbackRetryTokenRunes = 256
 
 func (store *Store) ApplyJudgment(ctx context.Context, request JudgmentRequest) (Judgment, error) {
 	store.mutationMu.Lock()
@@ -21,6 +24,20 @@ func (store *Store) ApplyJudgment(ctx context.Context, request JudgmentRequest) 
 	request.Disposition = strings.TrimSpace(request.Disposition)
 	request.Reason = strings.TrimSpace(request.Reason)
 	request.ReversesID = strings.TrimSpace(request.ReversesID)
+	request.RetryToken = strings.TrimSpace(request.RetryToken)
+	var retryPrefix string
+	if request.RetryToken != "" {
+		var err error
+		request.IdempotencyKey, retryPrefix, err = feedbackRetryIdentity(request)
+		if err != nil {
+			return Judgment{}, err
+		}
+	} else if request.ReversesID == "" && !validBounded(request.IdempotencyKey, 1024) {
+		return Judgment{}, errors.New("invalid judgment idempotency key")
+	}
+	if request.RetryToken != "" && strings.TrimSpace(request.IdempotencyKey) == "" {
+		return Judgment{}, errors.New("invalid feedback retry identity")
+	}
 	if !validBounded(request.IdempotencyKey, 1024) {
 		return Judgment{}, errors.New("invalid judgment idempotency key")
 	}
@@ -34,8 +51,18 @@ func (store *Store) ApplyJudgment(ctx context.Context, request JudgmentRequest) 
 		(request.ReversesID != "" &&
 			(!validBounded(request.ReversesID, 256) ||
 				request.RunID != "" || request.LensID != "" ||
-				request.RecordID != "" || request.Disposition != "")) {
+				request.RecordID != "" || request.Disposition != "" ||
+				request.RetryToken != "")) {
 		return Judgment{}, errors.New("invalid judgment")
+	}
+	if retryPrefix != "" {
+		existingKey, exists, err := store.judgmentKeyByRetryPrefix(ctx, retryPrefix)
+		if err != nil {
+			return Judgment{}, err
+		}
+		if exists && existingKey != request.IdempotencyKey {
+			return Judgment{}, errors.New("feedback retry token conflicts with a different intent")
+		}
 	}
 	if existing, exists, err := store.judgmentByIdempotency(ctx, request.IdempotencyKey); err != nil {
 		return Judgment{}, err
@@ -105,6 +132,42 @@ func (store *Store) ApplyJudgment(ctx context.Context, request JudgmentRequest) 
 		return Judgment{}, err
 	}
 	return judgment, nil
+}
+
+func FeedbackIdempotencyKey(request JudgmentRequest) (string, error) {
+	key, _, err := feedbackRetryIdentity(request)
+	return key, err
+}
+
+func feedbackRetryIdentity(request JudgmentRequest) (string, string, error) {
+	request.RetryToken = strings.TrimSpace(request.RetryToken)
+	request.RunID = strings.TrimSpace(request.RunID)
+	request.LensID = strings.TrimSpace(request.LensID)
+	request.RecordID = strings.TrimSpace(request.RecordID)
+	request.Actor = strings.TrimSpace(request.Actor)
+	request.Disposition = strings.TrimSpace(request.Disposition)
+	request.Reason = strings.TrimSpace(request.Reason)
+	if request.IdempotencyKey != "" || request.ReversesID != "" ||
+		!validBounded(request.RetryToken, maximumFeedbackRetryTokenRunes) ||
+		!validBounded(request.RunID, 256) || !validBounded(request.LensID, 256) ||
+		!validBounded(request.RecordID, 1024) ||
+		(request.Actor != "user" && request.Actor != "agent") ||
+		(request.Disposition != "used" && request.Disposition != "dismissed") ||
+		!validOptional(request.Reason, 4096) {
+		return "", "", errors.New("invalid feedback retry identity")
+	}
+	reasonHash := sha256.Sum256([]byte(request.Reason))
+	payload, err := json.Marshal([]string{
+		"v1", request.RunID, request.LensID, request.RecordID, request.Actor,
+		request.Disposition, hex.EncodeToString(reasonHash[:]), request.RetryToken,
+	})
+	if err != nil {
+		return "", "", errors.New("derive feedback retry identity")
+	}
+	eventHash := sha256.Sum256(payload)
+	tokenHash := sha256.Sum256([]byte(request.RetryToken))
+	prefix := "feedback-v1:" + hex.EncodeToString(tokenHash[:]) + ":"
+	return prefix + hex.EncodeToString(eventHash[:]), prefix, nil
 }
 
 func sameJudgmentRequest(existing Judgment, request JudgmentRequest) bool {
@@ -205,6 +268,22 @@ func (store *Store) judgmentByIdempotency(ctx context.Context, key string) (Judg
 		return Judgment{}, false, errors.New("read judgment")
 	}
 	return judgment, true, nil
+}
+
+func (store *Store) judgmentKeyByRetryPrefix(ctx context.Context, prefix string) (string, bool, error) {
+	var key string
+	err := store.db.QueryRowContext(ctx,
+		`SELECT idempotency_key FROM judgments
+		WHERE idempotency_key LIKE ? ORDER BY created_at, judgment_id LIMIT 1`,
+		prefix+"%",
+	).Scan(&key)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, errors.New("read feedback retry identity")
+	}
+	return key, true, nil
 }
 
 func (store *Store) judgmentByID(ctx context.Context, id string) (Judgment, error) {
