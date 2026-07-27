@@ -113,6 +113,17 @@ func (store *Store) Enqueue(resourceIDs []string) (Queue, error) {
 // attempts, generation, and consumed counters. Removed in-flight jobs release
 // only their unconsumed request reservation; consumed budget is never refunded.
 func (store *Store) SyncMembership(resourceIDs []string) (Queue, error) {
+	return store.updateMembership(resourceIDs, true)
+}
+
+// PruneMembership atomically removes jobs outside the current processable set
+// without adopting newly discovered work. Continue uses this before advancing
+// a terminal generation so new work cannot prevent the fresh budget opening.
+func (store *Store) PruneMembership(resourceIDs []string) (Queue, error) {
+	return store.updateMembership(resourceIDs, false)
+}
+
+func (store *Store) updateMembership(resourceIDs []string, addMissing bool) (Queue, error) {
 	desired := make(map[string]bool, len(resourceIDs))
 	for _, resourceID := range resourceIDs {
 		if resourceID == "" || desired[resourceID] {
@@ -138,7 +149,7 @@ func (store *Store) SyncMembership(resourceIDs []string) (Queue, error) {
 			known[item.ResourceID] = true
 		}
 		for _, resourceID := range resourceIDs {
-			if known[resourceID] {
+			if !addMissing || known[resourceID] {
 				continue
 			}
 			retained = append(retained, Item{

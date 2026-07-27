@@ -83,6 +83,17 @@ func NewLive(root string, repository resourcequeue.Repository, profile resourceq
 // before any fetch can claim them; matching job state and consumed budgets are
 // preserved.
 func (pipeline *Pipeline) EnqueueCurrent() error {
+	return pipeline.updateCurrentMembership(true)
+}
+
+// PruneCurrent removes unsafe or unprocessable derived jobs without adopting
+// newly discovered work. This preserves Continue's ability to open the next
+// bounded generation before useful new work enters the queue.
+func (pipeline *Pipeline) PruneCurrent() error {
+	return pipeline.updateCurrentMembership(false)
+}
+
+func (pipeline *Pipeline) updateCurrentMembership(addMissing bool) error {
 	if pipeline == nil || pipeline.Store == nil || pipeline.Repository == nil {
 		return errors.New("resource pipeline is incomplete")
 	}
@@ -100,7 +111,11 @@ func (pipeline *Pipeline) EnqueueCurrent() error {
 		ids = append(ids, resource.ResourceID)
 	}
 	sort.Strings(ids)
-	_, err = pipeline.Store.SyncMembership(ids)
+	if addMissing {
+		_, err = pipeline.Store.SyncMembership(ids)
+	} else {
+		_, err = pipeline.Store.PruneMembership(ids)
+	}
 	return err
 }
 
@@ -257,7 +272,7 @@ func (pipeline *Pipeline) Continue(ctx context.Context) error {
 		if err := pipeline.RebuildCurrent(); err != nil {
 			return err
 		}
-	} else if err := pipeline.EnqueueCurrent(); err != nil {
+	} else if err := pipeline.PruneCurrent(); err != nil {
 		return err
 	}
 	runner := pipeline.runner()

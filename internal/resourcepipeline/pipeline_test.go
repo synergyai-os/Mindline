@@ -315,6 +315,111 @@ func TestPipelineContinuationRecoversCrashedGenerationWithoutOpeningAnother(t *t
 	}
 }
 
+func TestContinuePrunesStaleGenericThenAdoptsCuratedWorkIntoFreshGeneration(t *testing.T) {
+	const (
+		parentID   = "a-parent"
+		deferredID = "zz-deferred"
+	)
+	curatedURL := "https://example.com/curated-target"
+	curatedID := "resource-" + digest(curatedURL)[:24]
+	genericURL := "https://example.com/stale-generic"
+	genericID := "resource-" + digest(genericURL)[:24]
+	repository := &reconcileRepository{library: personalmemory.Library{
+		Records: []personalmemory.CaptureRecord{{
+			ResourceIDs: []string{parentID, deferredID},
+		}},
+		Resources: []personalmemory.ResourceContext{
+			{
+				ResourceID: parentID, CanonicalURL: "https://example.com/parent",
+				State: "complete",
+			},
+			{
+				ResourceID: deferredID, CanonicalURL: "https://example.com/deferred",
+				State: "failed", Missingness: []string{
+					"resource_blocked:" + resourcequeue.ReasonRunBudgetDeferred,
+				},
+			},
+		},
+	}}
+	profile := resourcequeue.FixtureProfile()
+	profile.MaxResources = 1
+	profile = resourcequeue.SealProfile(profile)
+	port := &fakeFetchPort{}
+	pipeline, err := New(t.TempDir()+"/queue", repository, profile, port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pipeline.Store.Rebuild([]resourcequeue.RebuildItem{
+		{ResourceID: parentID, State: resourcequeue.StateQueued},
+		{ResourceID: deferredID, State: resourcequeue.StateQueued},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	parent, found, err := pipeline.Store.ClaimNext()
+	if err != nil || !found || parent.ResourceID != parentID {
+		t.Fatalf("prior generation parent claim=%+v found=%v err=%v", parent, found, err)
+	}
+	if exhausted, err := pipeline.Store.Consume(parentID, resourcequeue.Usage{Requests: 1}); err != nil || exhausted {
+		t.Fatalf("prior generation usage exhausted=%v err=%v", exhausted, err)
+	}
+	if err := pipeline.Store.Finish(parentID, resourcequeue.StateComplete, ""); err != nil {
+		t.Fatal(err)
+	}
+	deferred, found, err := pipeline.Store.ClaimNext()
+	if err != nil || !found || deferred.ResourceID != deferredID ||
+		deferred.State != resourcequeue.StateBlocked ||
+		deferred.Reason != resourcequeue.ReasonRunBudgetDeferred {
+		t.Fatalf("prior generation deferred item=%+v found=%v err=%v", deferred, found, err)
+	}
+
+	repository.library.Resources[0].RelatedURLs = []personalmemory.RelatedResource{
+		{
+			URL: curatedURL, Relation: "source_links_to",
+			DiscoveryEvidenceRef: "curated-proof", SemanticallyRelevant: true,
+		},
+		{
+			URL: genericURL, Relation: "source_links_to",
+			DiscoveryEvidenceRef: "related-legacy", SemanticallyRelevant: true,
+		},
+	}
+	repository.library.Resources = append(
+		repository.library.Resources,
+		personalmemory.ResourceContext{
+			ResourceID: curatedID, CanonicalURL: curatedURL, State: "not_attempted",
+		},
+		personalmemory.ResourceContext{
+			ResourceID: genericID, CanonicalURL: genericURL,
+			State: "not_attempted",
+		},
+	)
+	if _, err := pipeline.Store.Enqueue([]string{genericID}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := pipeline.Continue(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	queue, err := pipeline.Store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queue.Generation != 1 || port.calls != 1 {
+		t.Fatalf("curated work missed fresh generation: queue=%+v calls=%d", queue, port.calls)
+	}
+	foundCurated := false
+	for _, item := range queue.Items {
+		if item.ResourceID == genericID {
+			t.Fatalf("stale generic job survived pruning: %+v", item)
+		}
+		if item.ResourceID == curatedID {
+			foundCurated = item.State == resourcequeue.StateComplete
+		}
+	}
+	if !foundCurated {
+		t.Fatalf("one continuation did not produce useful curated terminal: %+v", queue.Items)
+	}
+}
+
 type discoveringFetchPort struct {
 	calls int
 }
