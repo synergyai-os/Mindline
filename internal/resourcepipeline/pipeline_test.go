@@ -111,13 +111,18 @@ func TestPipelineRejectsPolicyFingerprintMismatch(t *testing.T) {
 	}
 }
 
-type budgetBlockedPort struct{ calls int }
+type budgetBlockedPort struct {
+	calls     int
+	dimension string
+}
 
 func (port *budgetBlockedPort) Fetch(_ context.Context, _ string, policy resourcefetch.FrozenPolicy) resourcefetch.Result {
 	port.calls++
 	return resourcefetch.Result{
 		State: "blocked", Reason: resourcefetch.ReasonBudgetExhausted,
-		RequestCount: 1, PolicyFingerprint: policy.Fingerprint,
+		ExhaustedBudgetDimension: port.dimension,
+		RequestCount:             1,
+		PolicyFingerprint:        policy.Fingerprint,
 	}
 }
 
@@ -135,41 +140,137 @@ func TestQueueFetcherDistinguishesNarrowedRunBudgetFromPerResponseBudget(t *test
 		RuntimeStorageBytes: int64(base.MaximumExtractedBytes),
 		WallSeconds:         int64(base.RequestTimeout / time.Second),
 	}
-	port := &budgetBlockedPort{}
+	port := &budgetBlockedPort{dimension: resourcefetch.BudgetDimensionWire}
 	fetcher := queueFetcher{profile: profile, port: port}
 	result, err := fetcher.Fetch(context.Background(), resourcequeue.Target{CanonicalURL: "https://example.com/full", Remaining: full})
 	if err != nil || result.BlockedReason != resourcequeue.ReasonBudgetExhausted {
 		t.Fatalf("full per-response oversize was not terminal: %+v err=%v", result, err)
 	}
 	tests := []struct {
-		name   string
-		narrow func(*resourcequeue.Usage)
+		name          string
+		narrow        func(*resourcequeue.Usage)
+		dimension     string
+		wantDimension string
+		close         bool
 	}{
-		{name: "requests", narrow: func(usage *resourcequeue.Usage) { usage.Requests-- }},
-		{name: "downloaded", narrow: func(usage *resourcequeue.Usage) { usage.DownloadedBytes-- }},
-		{name: "decoded", narrow: func(usage *resourcequeue.Usage) { usage.DecodedBytes-- }},
-		{name: "extracted", narrow: func(usage *resourcequeue.Usage) { usage.ExtractedBytes-- }},
-		{name: "runtime-storage", narrow: func(usage *resourcequeue.Usage) { usage.RuntimeStorageBytes-- }},
-		{name: "wall", narrow: func(usage *resourcequeue.Usage) { usage.WallSeconds-- }},
+		{name: "requests", narrow: func(usage *resourcequeue.Usage) { usage.Requests-- }, dimension: resourcefetch.BudgetDimensionWire, wantDimension: resourcequeue.BudgetDimensionWire},
+		{name: "downloaded", narrow: func(usage *resourcequeue.Usage) { usage.DownloadedBytes-- }, dimension: resourcefetch.BudgetDimensionWire, wantDimension: resourcequeue.BudgetDimensionWire},
+		{name: "decoded", narrow: func(usage *resourcequeue.Usage) { usage.DecodedBytes-- }, dimension: resourcefetch.BudgetDimensionDecoded, wantDimension: resourcequeue.BudgetDimensionDecoded, close: true},
+		{name: "extracted", narrow: func(usage *resourcequeue.Usage) { usage.ExtractedBytes-- }, dimension: resourcefetch.BudgetDimensionExtracted, wantDimension: resourcequeue.BudgetDimensionExtracted, close: true},
+		{name: "runtime-storage", narrow: func(usage *resourcequeue.Usage) { usage.RuntimeStorageBytes-- }, dimension: resourcefetch.BudgetDimensionExtracted, wantDimension: resourcequeue.BudgetDimensionRuntimeStorage, close: true},
+		{name: "wall", narrow: func(usage *resourcequeue.Usage) { usage.WallSeconds-- }, dimension: resourcefetch.BudgetDimensionWire, wantDimension: resourcequeue.BudgetDimensionWire},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			remaining := full
 			test.narrow(&remaining)
+			port.dimension = test.dimension
 			result, err := fetcher.Fetch(context.Background(), resourcequeue.Target{
 				CanonicalURL: "https://example.com/narrowed", Remaining: remaining,
 			})
-			if err != nil || result.BlockedReason != resourcequeue.ReasonRunBudgetDeferred {
+			if err != nil || result.BlockedReason != resourcequeue.ReasonRunBudgetDeferred ||
+				result.ExhaustedBudgetDimension != test.wantDimension ||
+				result.CloseGeneration != test.close {
 				t.Fatalf("%s narrowed budget was not resumable: %+v err=%v", test.name, result, err)
 			}
 		})
 	}
 	zero := full
 	zero.DecodedBytes = 0
+	port.dimension = resourcefetch.BudgetDimensionDecoded
 	before := port.calls
 	result, err = fetcher.Fetch(context.Background(), resourcequeue.Target{CanonicalURL: "https://example.com/exhausted", Remaining: zero})
-	if err != nil || result.BlockedReason != resourcequeue.ReasonRunBudgetDeferred || port.calls != before {
+	if err != nil || result.BlockedReason != resourcequeue.ReasonRunBudgetDeferred ||
+		result.CloseGeneration || port.calls != before {
 		t.Fatalf("fully exhausted run budget called the port or became terminal: %+v calls=%d/%d err=%v", result, before, port.calls, err)
+	}
+}
+
+func TestQueueFetcherCombinedNarrowingClosesOnlyForExhaustedBinding(t *testing.T) {
+	profile := resourcequeue.FixtureProfile()
+	base, err := ProfilePolicy(profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	full := resourcequeue.Usage{
+		Requests: base.MaximumRedirects + 1, DownloadedBytes: base.MaximumWireBytes,
+		DecodedBytes:        base.MaximumDecodedBytes,
+		ExtractedBytes:      int64(base.MaximumExtractedBytes),
+		RuntimeStorageBytes: int64(base.MaximumExtractedBytes),
+		WallSeconds:         int64(base.RequestTimeout / time.Second),
+	}
+	tests := []struct {
+		name          string
+		narrow        func(*resourcequeue.Usage)
+		dimension     string
+		wantDimension string
+		close         bool
+	}{
+		{
+			name: "wire wins over decoded", dimension: resourcefetch.BudgetDimensionWire, wantDimension: resourcequeue.BudgetDimensionWire,
+			narrow: func(usage *resourcequeue.Usage) {
+				usage.DownloadedBytes--
+				usage.DecodedBytes--
+			},
+		},
+		{
+			name: "decoded binding wins in same envelope", dimension: resourcefetch.BudgetDimensionDecoded, wantDimension: resourcequeue.BudgetDimensionDecoded, close: true,
+			narrow: func(usage *resourcequeue.Usage) {
+				usage.DownloadedBytes--
+				usage.DecodedBytes--
+			},
+		},
+		{
+			name: "wire wins over extracted", dimension: resourcefetch.BudgetDimensionWire, wantDimension: resourcequeue.BudgetDimensionWire,
+			narrow: func(usage *resourcequeue.Usage) {
+				usage.Requests--
+				usage.ExtractedBytes--
+			},
+		},
+		{
+			name: "extracted binding wins over request", dimension: resourcefetch.BudgetDimensionExtracted, wantDimension: resourcequeue.BudgetDimensionExtracted, close: true,
+			narrow: func(usage *resourcequeue.Usage) {
+				usage.Requests--
+				usage.ExtractedBytes--
+			},
+		},
+		{
+			name: "storage binds extracted envelope", dimension: resourcefetch.BudgetDimensionExtracted, wantDimension: resourcequeue.BudgetDimensionRuntimeStorage, close: true,
+			narrow: func(usage *resourcequeue.Usage) {
+				usage.RuntimeStorageBytes--
+				usage.WallSeconds--
+			},
+		},
+		{
+			name: "storage is tighter than extracted", dimension: resourcefetch.BudgetDimensionExtracted, wantDimension: resourcequeue.BudgetDimensionRuntimeStorage, close: true,
+			narrow: func(usage *resourcequeue.Usage) {
+				usage.ExtractedBytes--
+				usage.RuntimeStorageBytes -= 2
+			},
+		},
+		{
+			name: "extracted is tighter than storage", dimension: resourcefetch.BudgetDimensionExtracted, wantDimension: resourcequeue.BudgetDimensionExtracted, close: true,
+			narrow: func(usage *resourcequeue.Usage) {
+				usage.ExtractedBytes -= 2
+				usage.RuntimeStorageBytes--
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			remaining := full
+			test.narrow(&remaining)
+			port := &budgetBlockedPort{dimension: test.dimension}
+			result, err := (queueFetcher{profile: profile, port: port}).Fetch(
+				context.Background(),
+				resourcequeue.Target{CanonicalURL: "https://example.com/combined", Remaining: remaining},
+			)
+			if err != nil || result.BlockedReason != resourcequeue.ReasonRunBudgetDeferred ||
+				result.ExhaustedBudgetDimension != test.wantDimension ||
+				result.CloseGeneration != test.close {
+				t.Fatalf("combined narrowing result=%+v err=%v", result, err)
+			}
+		})
 	}
 }
 

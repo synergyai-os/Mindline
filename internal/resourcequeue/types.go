@@ -24,6 +24,11 @@ const (
 
 	ReasonBudgetExhausted   = "budget_exhausted"
 	ReasonRunBudgetDeferred = "run_budget_deferred"
+
+	BudgetDimensionWire           = "wire"
+	BudgetDimensionDecoded        = "decoded"
+	BudgetDimensionExtracted      = "extracted"
+	BudgetDimensionRuntimeStorage = "runtime_storage"
 )
 
 var fixedBlockedReasons = map[string]bool{
@@ -192,6 +197,10 @@ type Queue struct {
 	// GenerationKind lets a canceled operator retry resume idempotently without
 	// treating an unrelated reconciled queue as the same operation.
 	GenerationKind string `json:"generation_kind,omitempty"`
+	// GenerationClosed prevents any later claim after a narrowed decoded,
+	// extracted, or storage envelope proved unable to fit the next resource.
+	// Omitempty preserves fingerprints written before this boundary existed.
+	GenerationClosed bool `json:"generation_closed,omitempty"`
 	// Rebuilds cannot safely distinguish a historical global remainder from a
 	// per-resource budget failure. This derived marker prevents an ambiguous
 	// rebuilt budget_exhausted item from entering the one-time legacy migration.

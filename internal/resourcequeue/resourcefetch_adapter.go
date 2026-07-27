@@ -17,7 +17,16 @@ import (
 // Resourcefetch publishes exact redirect-inclusive RequestCount, so the queue
 // can reserve and settle the request budget without approximation.
 func FromResourcefetchResult(result resourcefetch.Result) FetchResult {
-	adapted := FetchResult{State: result.State, BlockedReason: result.Reason, Usage: Usage{Requests: result.RequestCount, DownloadedBytes: result.WireBytes, DecodedBytes: result.DecodedBytes, ExtractedBytes: int64(result.ExtractedBytes), RuntimeStorageBytes: int64(result.ExtractedBytes), WallSeconds: result.WallSeconds}, RetryAfterSeconds: int64(result.RetryAfterSeconds)}
+	adapted := FetchResult{
+		State: result.State, BlockedReason: result.Reason,
+		ExhaustedBudgetDimension: result.ExhaustedBudgetDimension,
+		Usage: Usage{
+			Requests: result.RequestCount, DownloadedBytes: result.WireBytes,
+			DecodedBytes: result.DecodedBytes, ExtractedBytes: int64(result.ExtractedBytes),
+			RuntimeStorageBytes: int64(result.ExtractedBytes), WallSeconds: result.WallSeconds,
+		},
+		RetryAfterSeconds: int64(result.RetryAfterSeconds),
+	}
 	if result.State == "blocked" {
 		if result.Reason == resourcefetch.ReasonBudgetExhausted {
 			adapted.BlockedReason = "budget_exhausted"

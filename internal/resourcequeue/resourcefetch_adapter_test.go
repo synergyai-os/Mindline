@@ -23,3 +23,13 @@ func TestResourcefetchDiscoveredLinksRemainUnclassifiedReferenceEvidence(t *test
 		t.Fatal("generic reference lost bounded provenance")
 	}
 }
+
+func TestResourcefetchBudgetDimensionRemainsStructural(t *testing.T) {
+	result := FromResourcefetchResult(resourcefetch.Result{
+		State: "blocked", Reason: resourcefetch.ReasonBudgetExhausted,
+		ExhaustedBudgetDimension: resourcefetch.BudgetDimensionDecoded,
+	})
+	if result.ExhaustedBudgetDimension != BudgetDimensionDecoded {
+		t.Fatalf("budget dimension was lost: %+v", result)
+	}
+}

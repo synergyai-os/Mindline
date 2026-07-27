@@ -354,6 +354,8 @@ func (fetcher queueFetcher) Fetch(ctx context.Context, target resourcequeue.Targ
 		return resourcequeue.FetchResult{State: "blocked", BlockedReason: resourcequeue.ReasonRunBudgetDeferred}, nil
 	}
 	narrowed := false
+	decodedCapacityNarrowed := false
+	extractedCapacityDimension := ""
 	maxRedirects := target.Remaining.Requests - 1
 	if maxRedirects < policy.MaximumRedirects {
 		policy.MaximumRedirects = maxRedirects
@@ -366,14 +368,17 @@ func (fetcher queueFetcher) Fetch(ctx context.Context, target resourcequeue.Targ
 	if target.Remaining.DecodedBytes < policy.MaximumDecodedBytes {
 		policy.MaximumDecodedBytes = target.Remaining.DecodedBytes
 		narrowed = true
+		decodedCapacityNarrowed = true
 	}
 	if int64(policy.MaximumExtractedBytes) > target.Remaining.ExtractedBytes {
 		policy.MaximumExtractedBytes = int(target.Remaining.ExtractedBytes)
 		narrowed = true
+		extractedCapacityDimension = resourcequeue.BudgetDimensionExtracted
 	}
 	if int64(policy.MaximumExtractedBytes) > target.Remaining.RuntimeStorageBytes {
 		policy.MaximumExtractedBytes = int(target.Remaining.RuntimeStorageBytes)
 		narrowed = true
+		extractedCapacityDimension = resourcequeue.BudgetDimensionRuntimeStorage
 	}
 	if wallLimit := time.Duration(target.Remaining.WallSeconds) * time.Second; wallLimit < policy.RequestTimeout {
 		policy.RequestTimeout = wallLimit
@@ -393,6 +398,15 @@ func (fetcher queueFetcher) Fetch(ctx context.Context, target resourcequeue.Targ
 	adapted := resourcequeue.FromResourcefetchResult(result)
 	if narrowed && adapted.BlockedReason == resourcequeue.ReasonBudgetExhausted {
 		adapted.BlockedReason = resourcequeue.ReasonRunBudgetDeferred
+		switch adapted.ExhaustedBudgetDimension {
+		case resourcequeue.BudgetDimensionDecoded:
+			adapted.CloseGeneration = decodedCapacityNarrowed
+		case resourcequeue.BudgetDimensionExtracted:
+			if extractedCapacityDimension != "" {
+				adapted.ExhaustedBudgetDimension = extractedCapacityDimension
+				adapted.CloseGeneration = true
+			}
+		}
 	}
 	if adapted.Usage.Requests > target.Remaining.Requests {
 		return resourcequeue.FetchResult{State: "blocked", BlockedReason: resourcequeue.ReasonRunBudgetDeferred}, nil
@@ -406,6 +420,7 @@ type Status struct {
 	QueueFingerprint                         string                 `json:"queue_fingerprint"`
 	Generation                               int                    `json:"generation"`
 	GenerationKind                           string                 `json:"generation_kind,omitempty"`
+	GenerationClosed                         bool                   `json:"generation_closed,omitempty"`
 	CanonicalResourceCount                   int                    `json:"canonical_resource_count"`
 	ProcessableResourceCount                 int                    `json:"processable_resource_count"`
 	QueueResourceCount                       int                    `json:"queue_resource_count"`
@@ -444,6 +459,7 @@ func (pipeline *Pipeline) StructuralStatus() (Status, error) {
 		SchemaVersion:     "mindline-resource-pipeline-status/v0.2",
 		BudgetFingerprint: queue.Profile.Fingerprint, QueueFingerprint: queue.Fingerprint,
 		Generation: queue.Generation, GenerationKind: queue.GenerationKind,
+		GenerationClosed:         queue.GenerationClosed,
 		CanonicalResourceCount:   len(library.Resources),
 		ProcessableResourceCount: len(processable), QueueResourceCount: len(queue.Items),
 		Counters: queue.Counters, TerminalCounts: map[string]int{}, ReasonCounts: map[string]int{},

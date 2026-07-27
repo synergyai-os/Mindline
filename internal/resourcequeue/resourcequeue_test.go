@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/synergyai-os/Mindline/internal/personalmemory"
+	"github.com/synergyai-os/Mindline/internal/privateio"
 )
 
 func TestTerminalMappingIsCanonicalAndFixed(t *testing.T) {
@@ -39,7 +40,9 @@ func TestQueueGenerationIsBackwardCompatibleAndNonnegative(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(payload), `"generation"`) || strings.Contains(string(payload), `"legacy_budget_migration_complete"`) {
+	if strings.Contains(string(payload), `"generation"`) ||
+		strings.Contains(string(payload), `"generation_closed"`) ||
+		strings.Contains(string(payload), `"legacy_budget_migration_complete"`) {
 		t.Fatalf("zero-value continuation fields changed the legacy queue envelope: %s", payload)
 	}
 	store, err := NewStore(t.TempDir()+"/queue", profile)
@@ -466,6 +469,192 @@ func TestGlobalBudgetRemainderSettlesInOneCanonicalBatch(t *testing.T) {
 		queue.Items[1].State != StateBlocked || queue.Items[1].Reason != ReasonRunBudgetDeferred ||
 		queue.Items[2].State != StateBlocked || queue.Items[2].Reason != ReasonRunBudgetDeferred {
 		t.Fatalf("budget remainder did not settle terminally: %+v", queue)
+	}
+}
+
+type generationClosingFetcher struct{ calls int }
+
+func (fetcher *generationClosingFetcher) Fetch(context.Context, Target) (FetchResult, error) {
+	fetcher.calls++
+	return FetchResult{
+		BlockedReason:            ReasonRunBudgetDeferred,
+		CloseGeneration:          true,
+		ExhaustedBudgetDimension: BudgetDimensionDecoded,
+		Usage:                    Usage{Requests: 1},
+	}, nil
+}
+
+func TestNarrowedCapacityFailureClosesAndSettlesRemainderAfterOneProbe(t *testing.T) {
+	profile := FixtureProfile()
+	profile.MaxResources = 10
+	profile = SealProfile(profile)
+	store, err := NewStore(t.TempDir()+"/queue", profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resourceIDs := []string{"resource-a", "resource-b", "resource-c"}
+	if _, err := store.Enqueue(resourceIDs); err != nil {
+		t.Fatal(err)
+	}
+	repository := &batchRecordingRepository{library: personalmemory.Library{
+		Resources: []personalmemory.ResourceContext{
+			{ResourceID: resourceIDs[0], CanonicalURL: "https://example.com/a"},
+			{ResourceID: resourceIDs[1], CanonicalURL: "https://example.com/b"},
+			{ResourceID: resourceIDs[2], CanonicalURL: "https://example.com/c"},
+		},
+	}}
+	fetcher := &generationClosingFetcher{}
+	if err := (Runner{Store: store, Repository: repository, Fetcher: fetcher}).Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	queue, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fetcher.calls != 1 || len(repository.batchSizes) != 1 ||
+		repository.batchSizes[0] != len(resourceIDs) ||
+		!queue.GenerationClosed || queue.Counters.Requests != 1 ||
+		queue.Counters.Requests == profile.MaxRequests {
+		t.Fatalf("generation did not close in one truthful batch: queue=%+v calls=%d batches=%v", queue, fetcher.calls, repository.batchSizes)
+	}
+	for _, item := range queue.Items {
+		if item.State != StateBlocked || item.Reason != ReasonRunBudgetDeferred {
+			t.Fatalf("closed generation retained runnable work: %+v", item)
+		}
+	}
+}
+
+func TestClosedGenerationCrashReplaysSettlementWithoutAnotherProbe(t *testing.T) {
+	profile := FixtureProfile()
+	profile.MaxResources = 10
+	profile = SealProfile(profile)
+	root := t.TempDir() + "/queue"
+	store, err := NewStore(root, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resourceIDs := []string{"resource-a", "resource-b", "resource-c"}
+	if _, err := store.Enqueue(resourceIDs); err != nil {
+		t.Fatal(err)
+	}
+	claimed, found, err := store.ClaimNext()
+	if err != nil || !found {
+		t.Fatalf("claim=%+v found=%v err=%v", claimed, found, err)
+	}
+	before, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedCounters := before.Counters
+	expectedCounters.Requests++
+	expectedCounters.ReservedRequests -= claimed.ReservedRequests
+	injected := false
+	store.faultInjector = func(point privateio.FaultPoint) error {
+		if point == privateio.FaultAfterCurrentRename {
+			injected = true
+			return errors.New("injected crash after atomic rename")
+		}
+		return nil
+	}
+	if exhausted, err := store.ConsumeAndCloseGeneration(
+		claimed.ResourceID, Usage{Requests: 1},
+	); err == nil || exhausted {
+		t.Fatalf("injected atomic close = exhausted:%v err:%v", exhausted, err)
+	}
+	if !injected {
+		t.Fatal("atomic close did not reach the injected crash boundary")
+	}
+	restarted, err := NewStore(root, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed, err := restarted.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !closed.GenerationClosed || closed.Counters != expectedCounters {
+		t.Fatalf("atomic close persisted split state: counters=%+v want=%+v closed=%v", closed.Counters, expectedCounters, closed.GenerationClosed)
+	}
+	for _, item := range closed.Items {
+		if item.ResourceID == claimed.ResourceID &&
+			(item.State != StateQueued || item.ReservedRequests != 0) {
+			t.Fatalf("atomic close retained a partial claim: %+v", item)
+		}
+	}
+	repository := &batchRecordingRepository{library: personalmemory.Library{
+		Resources: []personalmemory.ResourceContext{
+			{ResourceID: resourceIDs[0], CanonicalURL: "https://example.com/a"},
+			{ResourceID: resourceIDs[1], CanonicalURL: "https://example.com/b"},
+			{ResourceID: resourceIDs[2], CanonicalURL: "https://example.com/c"},
+		},
+	}}
+	fetcher := &generationClosingFetcher{}
+	runner := Runner{Store: restarted, Repository: repository, Fetcher: fetcher}
+	if err := runner.Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	settled, err := restarted.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fetcher.calls != 0 || len(repository.batchSizes) != 1 ||
+		repository.batchSizes[0] != len(resourceIDs) {
+		t.Fatalf("restart reprobed a closed generation: calls=%d batches=%v", fetcher.calls, repository.batchSizes)
+	}
+	beforeReplay := settled.Fingerprint
+	if err := runner.Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := restarted.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.Fingerprint != beforeReplay || fetcher.calls != 0 ||
+		len(repository.batchSizes) != 1 {
+		t.Fatalf("closed settlement replay changed state: before=%s after=%+v calls=%d batches=%v", beforeReplay, replayed, fetcher.calls, repository.batchSizes)
+	}
+}
+
+func TestClosedGenerationContinuationClearsMarkerAndProgresses(t *testing.T) {
+	profile := FixtureProfile()
+	profile.MaxResources = 10
+	profile = SealProfile(profile)
+	store, err := NewStore(t.TempDir()+"/queue", profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resourceIDs := []string{"resource-a", "resource-b"}
+	if _, err := store.Enqueue(resourceIDs); err != nil {
+		t.Fatal(err)
+	}
+	repository := &batchRecordingRepository{library: personalmemory.Library{
+		Resources: []personalmemory.ResourceContext{
+			{ResourceID: resourceIDs[0], CanonicalURL: "https://example.com/a"},
+			{ResourceID: resourceIDs[1], CanonicalURL: "https://example.com/b"},
+		},
+	}}
+	if err := (Runner{
+		Store: store, Repository: repository, Fetcher: &generationClosingFetcher{},
+	}).Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if next, started, err := store.StartNextGeneration(); err != nil || !started ||
+		next.Generation != 1 || next.GenerationClosed {
+		t.Fatalf("closed continuation start=%v queue=%+v err=%v", started, next, err)
+	}
+	if err := (Runner{
+		Store: store, Repository: repository, Fetcher: fixedUsageFetcher{},
+	}).Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	deferred, partial := queueOutcomeCounts(resumed)
+	if resumed.Generation != 1 || resumed.GenerationClosed ||
+		deferred != 0 || partial != len(resourceIDs) {
+		t.Fatalf("closed continuation did not progress: %+v", resumed)
 	}
 }
 

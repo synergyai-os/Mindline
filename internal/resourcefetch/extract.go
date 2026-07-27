@@ -13,34 +13,35 @@ import (
 // Result contains bounded public context only. It is intentionally separate
 // from the canonical schema; resourcequeue performs the later explicit merge.
 type Result struct {
-	State             string
-	Reason            string
-	Retryable         bool
-	RetryAfterSeconds int
-	RequestCount      int
-	PolicyFingerprint string
-	RetrievedAt       time.Time
-	Profile           Profile
-	MediaType         string
-	Title             string
-	Author            string
-	PublishedAt       string
-	Text              string
-	RelatedURLs       []string
-	Missingness       []string
-	WireBytes         int64
-	DecodedBytes      int64
-	ExtractedBytes    int
-	WallSeconds       int64
+	State                    string
+	Reason                   string
+	Retryable                bool
+	RetryAfterSeconds        int
+	RequestCount             int
+	PolicyFingerprint        string
+	RetrievedAt              time.Time
+	Profile                  Profile
+	MediaType                string
+	Title                    string
+	Author                   string
+	PublishedAt              string
+	Text                     string
+	RelatedURLs              []string
+	Missingness              []string
+	WireBytes                int64
+	DecodedBytes             int64
+	ExtractedBytes           int
+	WallSeconds              int64
+	ExhaustedBudgetDimension string
 }
 
-func boundedRead(reader io.Reader, maximum int64) ([]byte, error) {
+func boundedRead(reader io.Reader, maximum int64, dimension string) ([]byte, error) {
 	payload, err := io.ReadAll(io.LimitReader(reader, maximum+1))
 	if err != nil {
 		return nil, reasonError(ReasonUnreachable)
 	}
 	if int64(len(payload)) > maximum {
-		return nil, reasonError(ReasonBudgetExhausted)
+		return nil, budgetError(dimension)
 	}
 	return payload, nil
 }
@@ -55,7 +56,7 @@ func decodeBody(wire []byte, encoding string, maximumDecodedBytes int64) ([]byte
 			return nil, reasonError(ReasonUnreachable)
 		}
 		defer reader.Close()
-		return boundedRead(reader, maximumDecodedBytes)
+		return boundedRead(reader, maximumDecodedBytes, BudgetDimensionDecoded)
 	default:
 		return nil, reasonError(ReasonUnsupportedMIME)
 	}
@@ -71,7 +72,7 @@ var (
 
 func extract(decoded []byte, mediaType string, target PreparedURL, policy FrozenPolicy) (Result, error) {
 	if len(decoded) > int(policy.MaximumDecodedBytes) {
-		return Result{}, reasonError(ReasonBudgetExhausted)
+		return Result{}, budgetError(BudgetDimensionDecoded)
 	}
 	profile := ProfileForHost(target.Host)
 	text := string(decoded)
@@ -85,7 +86,7 @@ func extract(decoded []byte, mediaType string, target PreparedURL, policy Frozen
 		return Result{}, reasonError(ReasonUnreachable)
 	}
 	if len([]byte(text)) > policy.MaximumExtractedBytes {
-		return Result{}, reasonError(ReasonBudgetExhausted)
+		return Result{}, budgetError(BudgetDimensionExtracted)
 	}
 	text = truncateUTF8(text, policy.MaximumExtractedBytes)
 	result.Text, result.ExtractedBytes = text, len([]byte(text))

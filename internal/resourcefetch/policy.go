@@ -24,6 +24,10 @@ const (
 	ReasonRateLimited          = "rate_limited"
 	ReasonUnsafeNetworkTarget  = "unsafe_network_target"
 	ReasonBudgetExhausted      = "budget_exhausted"
+
+	BudgetDimensionWire      = "wire"
+	BudgetDimensionDecoded   = "decoded"
+	BudgetDimensionExtracted = "extracted"
 )
 
 // FrozenPolicy is supplied by the run's persisted, fingerprinted resource
@@ -64,11 +68,16 @@ type Error struct {
 	Reason            string
 	Retryable         bool
 	RetryAfterSeconds int
+	BudgetDimension   string
 }
 
 func (err *Error) Error() string { return "resource fetch blocked: " + err.Reason }
 
 func reasonError(reason string) error { return &Error{Reason: reason} }
+
+func budgetError(dimension string) error {
+	return &Error{Reason: ReasonBudgetExhausted, BudgetDimension: dimension}
+}
 
 func retryableError(reason string, retryAfterSeconds int) error {
 	return &Error{Reason: reason, Retryable: true, RetryAfterSeconds: retryAfterSeconds}
@@ -80,6 +89,14 @@ func ReasonOf(err error) string {
 		return fetchError.Reason
 	}
 	return ReasonUnreachable
+}
+
+func BudgetDimensionOf(err error) string {
+	var fetchError *Error
+	if errors.As(err, &fetchError) && fetchError.Reason == ReasonBudgetExhausted {
+		return fetchError.BudgetDimension
+	}
+	return ""
 }
 
 func retryOf(err error) (bool, int) {

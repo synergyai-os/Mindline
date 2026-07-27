@@ -147,7 +147,7 @@ func (fetcher Fetcher) fetchOnce(parent context.Context, target PreparedURL) (Re
 	if err != nil {
 		return Result{}, "", true, err
 	}
-	wire, err := boundedRead(response.Body, fetcher.policy.MaximumWireBytes)
+	wire, err := boundedRead(response.Body, fetcher.policy.MaximumWireBytes, BudgetDimensionWire)
 	if err != nil {
 		return Result{}, "", true, err
 	}
@@ -168,7 +168,11 @@ func blocked(reason string) Result { return Result{State: "blocked", Reason: rea
 
 func blockedError(err error) Result {
 	retryable, retryAfterSeconds := retryOf(err)
-	return Result{State: "blocked", Reason: ReasonOf(err), Retryable: retryable, RetryAfterSeconds: retryAfterSeconds}
+	return Result{
+		State: "blocked", Reason: ReasonOf(err), Retryable: retryable,
+		RetryAfterSeconds:        retryAfterSeconds,
+		ExhaustedBudgetDimension: BudgetDimensionOf(err),
+	}
 }
 
 func statusError(status int, retryAfter string, now time.Time, maximumRetryAfterSeconds int) error {

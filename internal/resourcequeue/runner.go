@@ -33,9 +33,13 @@ type FetchResult struct {
 	State         string
 	BlockedReason string
 	Retryable     bool
-	Evidence      acquisition.ImportedEvidence
-	Content       *personalmemory.ExtractedContent
-	Usage         Usage
+	// CloseGeneration is emitted only when a no-payload fetch proved the next
+	// resource cannot fit the remaining decoded/extracted/storage envelope.
+	CloseGeneration          bool
+	ExhaustedBudgetDimension string
+	Evidence                 acquisition.ImportedEvidence
+	Content                  *personalmemory.ExtractedContent
+	Usage                    Usage
 	// Retry eligibility is derived only from a transient transport failure, 429,
 	// or 5xx. Adapters must not label arbitrary failures retryable.
 	TransientNetwork  bool
@@ -153,19 +157,36 @@ func (runner Runner) ProcessNext(ctx context.Context) (bool, error) {
 	}
 
 	result, fetchErr := runner.Fetcher.Fetch(ctx, target)
-	exhausted, err := runner.Store.Consume(item.ResourceID, result.Usage)
-	if err != nil {
-		return true, err
-	}
 	cancelErr := ctx.Err()
 	if cancelErr == nil && errors.Is(fetchErr, context.Canceled) {
 		cancelErr = context.Canceled
+	}
+	validClose := result.CloseGeneration && fetchErr == nil &&
+		result.BlockedReason == ReasonRunBudgetDeferred &&
+		(result.ExhaustedBudgetDimension == BudgetDimensionDecoded ||
+			result.ExhaustedBudgetDimension == BudgetDimensionExtracted ||
+			result.ExhaustedBudgetDimension == BudgetDimensionRuntimeStorage) &&
+		!blockedHasPayload(result)
+	if validClose && cancelErr == nil {
+		if _, err := runner.Store.ConsumeAndCloseGeneration(
+			item.ResourceID, result.Usage,
+		); err != nil {
+			return true, err
+		}
+		return true, nil
+	}
+	exhausted, err := runner.Store.Consume(item.ResourceID, result.Usage)
+	if err != nil {
+		return true, err
 	}
 	if cancelErr != nil {
 		if err := runner.Store.Requeue(item.ResourceID); err != nil {
 			return true, err
 		}
 		return true, cancelErr
+	}
+	if result.CloseGeneration {
+		return true, errors.New("resource fetch requested an invalid generation close")
 	}
 	if exhausted {
 		item.State, item.Reason = StateBlocked, ReasonRunBudgetDeferred

@@ -186,15 +186,20 @@ func TestRedirectAndBodyLimitsFailClosed(t *testing.T) {
 	if _, err := validateMIME("application/vnd.github.raw", "raw.githubusercontent.com"); err != nil {
 		t.Fatalf("GitHub raw MIME rejected: %v", err)
 	}
-	if _, err := boundedRead(strings.NewReader(strings.Repeat("x", int(policy.MaximumWireBytes)+1)), policy.MaximumWireBytes); ReasonOf(err) != ReasonBudgetExhausted {
-		t.Fatalf("wire cap reason = %q", ReasonOf(err))
+	if _, err := boundedRead(
+		strings.NewReader(strings.Repeat("x", int(policy.MaximumWireBytes)+1)),
+		policy.MaximumWireBytes, BudgetDimensionWire,
+	); ReasonOf(err) != ReasonBudgetExhausted ||
+		BudgetDimensionOf(err) != BudgetDimensionWire {
+		t.Fatalf("wire cap reason = %q dimension=%q", ReasonOf(err), BudgetDimensionOf(err))
 	}
 	var compressed bytes.Buffer
 	writer := gzip.NewWriter(&compressed)
 	_, _ = writer.Write([]byte(strings.Repeat("x", int(policy.MaximumDecodedBytes)+1)))
 	_ = writer.Close()
-	if _, err := decodeBody(compressed.Bytes(), "gzip", policy.MaximumDecodedBytes); ReasonOf(err) != ReasonBudgetExhausted {
-		t.Fatalf("decoded cap reason = %q", ReasonOf(err))
+	if _, err := decodeBody(compressed.Bytes(), "gzip", policy.MaximumDecodedBytes); ReasonOf(err) != ReasonBudgetExhausted ||
+		BudgetDimensionOf(err) != BudgetDimensionDecoded {
+		t.Fatalf("decoded cap reason = %q dimension=%q", ReasonOf(err), BudgetDimensionOf(err))
 	}
 }
 
@@ -214,8 +219,9 @@ func TestProviderProfilesAndExtractedCap(t *testing.T) {
 	if !strings.Contains(strings.Join(result.Missingness, ","), "transcript_not_publicly_accessible") {
 		t.Fatalf("missing transcript status: %#v", result.Missingness)
 	}
-	if _, err := extract([]byte("a"+strings.Repeat("b", policy.MaximumExtractedBytes)), "text/plain", target, policy); ReasonOf(err) != ReasonBudgetExhausted {
-		t.Fatalf("extracted cap reason = %q", ReasonOf(err))
+	if _, err := extract([]byte("a"+strings.Repeat("b", policy.MaximumExtractedBytes)), "text/plain", target, policy); ReasonOf(err) != ReasonBudgetExhausted ||
+		BudgetDimensionOf(err) != BudgetDimensionExtracted {
+		t.Fatalf("extracted cap reason = %q dimension=%q", ReasonOf(err), BudgetDimensionOf(err))
 	}
 }
 
@@ -262,7 +268,9 @@ func TestFrozenPolicyControlsCapsAndIsReturnedStructurally(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := fetcher.Fetch(context.Background(), "http://public.example/capped")
-	if result.State != "blocked" || result.Reason != ReasonBudgetExhausted || result.RequestCount != 1 || result.PolicyFingerprint != policy.Fingerprint {
+	if result.State != "blocked" || result.Reason != ReasonBudgetExhausted ||
+		result.ExhaustedBudgetDimension != BudgetDimensionWire ||
+		result.RequestCount != 1 || result.PolicyFingerprint != policy.Fingerprint {
 		t.Fatalf("capped result = %#v", result)
 	}
 }

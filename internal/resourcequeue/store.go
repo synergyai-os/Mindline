@@ -24,6 +24,7 @@ const (
 type Store struct {
 	root, path, backup, lock string
 	profile                  BudgetProfile
+	faultInjector            privateio.FaultInjector
 }
 
 func NewStore(root string, profile BudgetProfile) (*Store, error) {
@@ -83,7 +84,7 @@ func (store *Store) update(change func(*Queue) error) (Queue, error) {
 			return err
 		}
 		return Validate(candidate)
-	}, nil); err != nil {
+	}, store.faultInjector); err != nil {
 		return Queue{}, errors.New("resource queue persistence failed")
 	}
 	return queue, nil
@@ -164,6 +165,7 @@ func (store *Store) updateMembership(resourceIDs []string, addMissing bool) (Que
 			legacyDeferredAllowed := !queue.LegacyBudgetMigrationComplete
 			queue.Generation++
 			queue.GenerationKind = "continuation"
+			queue.GenerationClosed = false
 			queue.Counters = Counters{}
 			queue.LegacyBudgetMigrationComplete = true
 			for index := range retained {
@@ -207,6 +209,7 @@ func (store *Store) Rebuild(items []RebuildItem) (Queue, error) {
 	return store.update(func(queue *Queue) error {
 		queue.Counters = Counters{}
 		queue.GenerationKind = ""
+		queue.GenerationClosed = false
 		// Canonical run_budget_deferred is sufficient to preserve future
 		// continuation. A rebuild deliberately opts out of the ambiguous
 		// budget_exhausted legacy migration because canonical state does not
@@ -247,53 +250,109 @@ func (store *Store) Rebuild(items []RebuildItem) (Queue, error) {
 // Consume records only structurally bounded fetch usage. A violating adapter
 // receives exhausted=true; no fetched text or metadata may then be merged.
 func (store *Store) Consume(resourceID string, usage Usage) (exhausted bool, err error) {
-	if usage.Requests < 0 || usage.DownloadedBytes < 0 || usage.DecodedBytes < 0 || usage.ExtractedBytes < 0 || usage.RuntimeStorageBytes < 0 || usage.WallSeconds < 0 {
-		return false, errors.New("resource usage is invalid")
+	if err := validateUsage(usage); err != nil {
+		return false, err
 	}
 	_, err = store.update(func(queue *Queue) error {
+		var settleErr error
+		exhausted, settleErr = consumeUsage(queue, resourceID, usage)
+		return settleErr
+	})
+	return exhausted, err
+}
+
+// ConsumeAndCloseGeneration commits reported usage, releases the current
+// reservation, requeues that exact item, and closes the generation in one
+// durable transition. A crash can therefore expose either the untouched claim
+// or the fully settled close, never consumed counters without the close marker.
+func (store *Store) ConsumeAndCloseGeneration(resourceID string, usage Usage) (exhausted bool, err error) {
+	if err := validateUsage(usage); err != nil {
+		return false, err
+	}
+	_, err = store.update(func(queue *Queue) error {
+		if queue.GenerationClosed {
+			return errors.New("resource queue generation is already closed")
+		}
+		var settleErr error
+		exhausted, settleErr = consumeUsage(queue, resourceID, usage)
+		if settleErr != nil {
+			return settleErr
+		}
 		for index := range queue.Items {
 			item := &queue.Items[index]
 			if item.ResourceID != resourceID || item.State != StateProcessing {
 				continue
 			}
-			if usage.Requests > item.ReservedRequests || usage.Requests > queue.Profile.FetchPolicy.MaxRedirects+1 {
-				exhausted = true
-				queue.Counters.ReservedRequests -= item.ReservedRequests
-				item.ReservedRequests = 0
-				queue.Counters.Requests = queue.Profile.MaxRequests
-				return nil
+			if item.ReservedRequests != 0 {
+				return errors.New("resource queue request reservation is not settled")
 			}
-			nextDownload := queue.Counters.DownloadedBytes + usage.DownloadedBytes
-			nextDecoded := queue.Counters.DecodedBytes + usage.DecodedBytes
-			nextExtracted := queue.Counters.ExtractedBytes + usage.ExtractedBytes
-			nextStorage := queue.Counters.RuntimeStorageBytes + usage.RuntimeStorageBytes
-			nextWall := queue.Counters.WallSeconds + usage.WallSeconds
-			if nextDownload > queue.Profile.MaxDownloadedBytes || nextDecoded > queue.Profile.MaxDecodedBytes || nextExtracted > queue.Profile.MaxExtractedBytes ||
-				nextStorage > queue.Profile.MaxRuntimeStorageBytes || nextWall > queue.Profile.MaxRunWallSeconds {
-				exhausted = true
-				queue.Counters.ReservedRequests -= item.ReservedRequests
-				queue.Counters.Requests = minimumInt(queue.Profile.MaxRequests, queue.Counters.Requests+usage.Requests)
-				queue.Counters.DownloadedBytes = minimumInt64(queue.Profile.MaxDownloadedBytes, nextDownload)
-				queue.Counters.DecodedBytes = minimumInt64(queue.Profile.MaxDecodedBytes, nextDecoded)
-				queue.Counters.ExtractedBytes = minimumInt64(queue.Profile.MaxExtractedBytes, nextExtracted)
-				queue.Counters.RuntimeStorageBytes = minimumInt64(queue.Profile.MaxRuntimeStorageBytes, nextStorage)
-				queue.Counters.WallSeconds = minimumInt64(queue.Profile.MaxRunWallSeconds, nextWall)
-				item.ReservedRequests = 0
-				return nil
-			}
-			queue.Counters.ReservedRequests -= item.ReservedRequests
-			queue.Counters.Requests += usage.Requests
-			item.ReservedRequests = 0
-			queue.Counters.DownloadedBytes = nextDownload
-			queue.Counters.DecodedBytes = nextDecoded
-			queue.Counters.ExtractedBytes = nextExtracted
-			queue.Counters.RuntimeStorageBytes = nextStorage
-			queue.Counters.WallSeconds = nextWall
+			item.State = StateQueued
+			queue.GenerationClosed = true
 			return nil
 		}
 		return errors.New("resource queue item is not processing")
 	})
 	return exhausted, err
+}
+
+func validateUsage(usage Usage) error {
+	if usage.Requests < 0 || usage.DownloadedBytes < 0 || usage.DecodedBytes < 0 ||
+		usage.ExtractedBytes < 0 || usage.RuntimeStorageBytes < 0 ||
+		usage.WallSeconds < 0 {
+		return errors.New("resource usage is invalid")
+	}
+	return nil
+}
+
+func consumeUsage(queue *Queue, resourceID string, usage Usage) (bool, error) {
+	exhausted := false
+	for index := range queue.Items {
+		item := &queue.Items[index]
+		if item.ResourceID != resourceID || item.State != StateProcessing {
+			continue
+		}
+		if usage.Requests > item.ReservedRequests ||
+			usage.Requests > queue.Profile.FetchPolicy.MaxRedirects+1 {
+			exhausted = true
+			queue.Counters.ReservedRequests -= item.ReservedRequests
+			item.ReservedRequests = 0
+			queue.Counters.Requests = queue.Profile.MaxRequests
+			return exhausted, nil
+		}
+		nextDownload := queue.Counters.DownloadedBytes + usage.DownloadedBytes
+		nextDecoded := queue.Counters.DecodedBytes + usage.DecodedBytes
+		nextExtracted := queue.Counters.ExtractedBytes + usage.ExtractedBytes
+		nextStorage := queue.Counters.RuntimeStorageBytes + usage.RuntimeStorageBytes
+		nextWall := queue.Counters.WallSeconds + usage.WallSeconds
+		if nextDownload > queue.Profile.MaxDownloadedBytes ||
+			nextDecoded > queue.Profile.MaxDecodedBytes ||
+			nextExtracted > queue.Profile.MaxExtractedBytes ||
+			nextStorage > queue.Profile.MaxRuntimeStorageBytes ||
+			nextWall > queue.Profile.MaxRunWallSeconds {
+			exhausted = true
+			queue.Counters.ReservedRequests -= item.ReservedRequests
+			queue.Counters.Requests = minimumInt(
+				queue.Profile.MaxRequests, queue.Counters.Requests+usage.Requests,
+			)
+			queue.Counters.DownloadedBytes = minimumInt64(queue.Profile.MaxDownloadedBytes, nextDownload)
+			queue.Counters.DecodedBytes = minimumInt64(queue.Profile.MaxDecodedBytes, nextDecoded)
+			queue.Counters.ExtractedBytes = minimumInt64(queue.Profile.MaxExtractedBytes, nextExtracted)
+			queue.Counters.RuntimeStorageBytes = minimumInt64(queue.Profile.MaxRuntimeStorageBytes, nextStorage)
+			queue.Counters.WallSeconds = minimumInt64(queue.Profile.MaxRunWallSeconds, nextWall)
+			item.ReservedRequests = 0
+			return exhausted, nil
+		}
+		queue.Counters.ReservedRequests -= item.ReservedRequests
+		queue.Counters.Requests += usage.Requests
+		item.ReservedRequests = 0
+		queue.Counters.DownloadedBytes = nextDownload
+		queue.Counters.DecodedBytes = nextDecoded
+		queue.Counters.ExtractedBytes = nextExtracted
+		queue.Counters.RuntimeStorageBytes = nextStorage
+		queue.Counters.WallSeconds = nextWall
+		return exhausted, nil
+	}
+	return false, errors.New("resource queue item is not processing")
 }
 
 func minimumInt(left, right int) int {
@@ -458,6 +517,7 @@ func (store *Store) StartNextGeneration() (Queue, bool, error) {
 		}
 		queue.Generation++
 		queue.GenerationKind = "continuation"
+		queue.GenerationClosed = false
 		queue.Counters = Counters{}
 		queue.LegacyBudgetMigrationComplete = true
 		for _, index := range eligible {
@@ -501,6 +561,7 @@ func (store *Store) StartRetryGeneration(reason string) (Queue, bool, error) {
 		}
 		queue.Generation++
 		queue.GenerationKind = kind
+		queue.GenerationClosed = false
 		queue.Counters = Counters{}
 		queue.LegacyBudgetMigrationComplete = true
 		for _, index := range eligible {
@@ -516,7 +577,8 @@ func (store *Store) StartRetryGeneration(reason string) (Queue, bool, error) {
 }
 
 func globalBudgetExhausted(queue Queue) bool {
-	return queue.Counters.ProcessedResources >= queue.Profile.MaxResources ||
+	return queue.GenerationClosed ||
+		queue.Counters.ProcessedResources >= queue.Profile.MaxResources ||
 		queue.Counters.Requests+queue.Counters.ReservedRequests >= queue.Profile.MaxRequests ||
 		queue.Counters.DownloadedBytes >= queue.Profile.MaxDownloadedBytes ||
 		queue.Counters.DecodedBytes >= queue.Profile.MaxDecodedBytes ||
@@ -526,7 +588,8 @@ func globalBudgetExhausted(queue Queue) bool {
 }
 
 func budgetDefersItem(queue Queue, item Item) bool {
-	if queue.Counters.Requests+queue.Counters.ReservedRequests >= queue.Profile.MaxRequests ||
+	if queue.GenerationClosed ||
+		queue.Counters.Requests+queue.Counters.ReservedRequests >= queue.Profile.MaxRequests ||
 		queue.Counters.DownloadedBytes >= queue.Profile.MaxDownloadedBytes ||
 		queue.Counters.DecodedBytes >= queue.Profile.MaxDecodedBytes ||
 		queue.Counters.ExtractedBytes >= queue.Profile.MaxExtractedBytes ||
