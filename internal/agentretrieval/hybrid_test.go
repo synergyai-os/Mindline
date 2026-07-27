@@ -181,7 +181,7 @@ func TestHybridBackendUsesAsymmetricChunkEmbeddingsForLateEvidence(t *testing.T)
 	}
 }
 
-func TestHybridBackendFusesOnlyFiniteSemanticCandidates(t *testing.T) {
+func TestHybridBackendPreservesStrongLexicalEvidenceDuringFusion(t *testing.T) {
 	state, err := agentstate.Open(filepath.Join(t.TempDir(), "state", "agent.sqlite"), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -205,8 +205,8 @@ func TestHybridBackendFusesOnlyFiniteSemanticCandidates(t *testing.T) {
 		personalmemory.SearchRequest{Query: "conceptual answer", Limit: 5},
 		documents,
 	)
-	if err != nil || len(hits) == 0 || hits[0].DocumentID != "relevant" {
-		t.Fatalf("semantic rank one lost to lexical-only distractor: hits=%+v err=%v",
+	if err != nil || len(hits) == 0 || hits[0].DocumentID != "zzz-lexical-distractor" {
+		t.Fatalf("strong lexical evidence was displaced by semantic-only evidence: hits=%+v err=%v",
 			hits, err)
 	}
 }

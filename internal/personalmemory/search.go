@@ -23,10 +23,10 @@ const (
 	DefaultSearchLimit           = 10
 	MaximumSearchLimit           = 100
 
-	CompactAbstentionPolicySchemaVersion = "mindline-compact-abstention-policy/v0.3"
+	CompactAbstentionPolicySchemaVersion = "mindline-compact-abstention-policy/v0.4"
 	DefaultCompactMinimumSemanticCosine  = 0.65
 	DefaultCompactMinimumSemanticMargin  = 0.05
-	compactLexicalEvidenceRule           = "majority_meaningful_terms_minimum_two_or_all_for_single_term"
+	compactLexicalEvidenceRule           = "two_meaningful_query_terms_or_all_for_single_term"
 	compactStopwordPolicy                = "mindline-english-stopwords/v0.2"
 )
 
@@ -730,7 +730,10 @@ func hasCompactRetrievalEvidence(
 	queryTerms []string,
 	strongSemanticWinner bool,
 ) bool {
-	requiredMatches := (len(queryTerms) + 1) / 2
+	requiredMatches := 2
+	if len(queryTerms) < requiredMatches {
+		requiredMatches = len(queryTerms)
+	}
 	if len(queryTerms) > 1 && requiredMatches < 2 {
 		requiredMatches = 2
 	}

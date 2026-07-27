@@ -19,8 +19,8 @@ const (
 	embeddingChunkOverlap  = 200
 	maximumEmbeddingChunks = 8
 	maximumSemanticRanks   = 100
-	lexicalRRFWeight       = 1.0
-	semanticRRFWeight      = 2.0
+	lexicalRRFWeight       = 2.0
+	semanticRRFWeight      = 1.0
 )
 
 type HybridBackend struct {
@@ -40,7 +40,7 @@ func NewHybridBackend(ctx context.Context, state *agentstate.Store, embedder emb
 	}
 	return &HybridBackend{
 		context: ctx, state: state, embedder: embedder,
-		method: "mindline_hybrid_local/v0.3", retrievalState: "hybrid",
+		method: "mindline_hybrid_local/v0.4", retrievalState: "hybrid",
 	}
 }
 
@@ -317,7 +317,7 @@ func (backend *HybridBackend) setMode(semanticErr error) {
 	backend.mu.Lock()
 	defer backend.mu.Unlock()
 	if semanticErr == nil {
-		backend.method = "mindline_hybrid_local/v0.3"
+		backend.method = "mindline_hybrid_local/v0.4"
 		backend.retrievalState = "hybrid"
 		backend.degradedReason = ""
 		return

@@ -368,7 +368,7 @@ func TestCompactSemanticAbstentionThresholdIsFrozenAndBoundToPacket(t *testing.T
 		policy.SchemaVersion != CompactAbstentionPolicySchemaVersion ||
 		policy.MinimumSemanticCosine != DefaultCompactMinimumSemanticCosine ||
 		policy.MinimumSemanticMargin != DefaultCompactMinimumSemanticMargin ||
-		policy.Fingerprint != "92923ac1bddaa0199a5d0f4effd5a2cadbdeaaa9e2438686e6d2d45f52301352" {
+		policy.Fingerprint != "532dd7d21a440620d6e1a130f890c889eab013b309ceb34ff526bdc4748ebbdf" {
 		t.Fatalf("compact abstention policy is not deterministic: %+v", policy)
 	}
 	repository := &compactRepository{library: Library{
