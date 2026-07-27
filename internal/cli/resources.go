@@ -23,6 +23,27 @@ import (
 // errors nor JSON responses contain a canonical root, queue root, URL, or
 // fetched material.
 func (r Runner) runResourceCommand(args []string, stdout, stderr io.Writer, command string) int {
+	retryReason := ""
+	if command == "retry" {
+		filtered := make([]string, 0, len(args))
+		for index := 0; index < len(args); index++ {
+			if args[index] != "--reason" {
+				filtered = append(filtered, args[index])
+				continue
+			}
+			index++
+			if index >= len(args) || retryReason != "" {
+				fmt.Fprint(stderr, usage)
+				return ExitUsage
+			}
+			retryReason = args[index]
+		}
+		args = filtered
+		if !resourcequeue.IsRetryableTerminalReason(retryReason) {
+			fmt.Fprint(stderr, usage)
+			return ExitUsage
+		}
+	}
 	positionals, root, _, err := parsePersonalMemoryArgs(args, false)
 	if err != nil || len(positionals) != 0 {
 		fmt.Fprint(stderr, usage)
@@ -44,11 +65,25 @@ func (r Runner) runResourceCommand(args []string, stdout, stderr io.Writer, comm
 		fmt.Fprintln(stderr, "open resource processing: unavailable")
 		return ExitProcess
 	}
-	if command == "run" || command == "continue" {
+	if command == "reconcile" {
+		if err := pipeline.Reconcile(context.Background()); err != nil {
+			fmt.Fprintln(stderr, "reconcile resource processing: unavailable")
+			return ExitProcess
+		}
+		status, err := pipeline.StructuralStatus()
+		if err != nil {
+			fmt.Fprintln(stderr, "read reconciled resource processing: unavailable")
+			return ExitProcess
+		}
+		return encodePersonalMemoryJSON(stdout, stderr, status)
+	}
+	if command == "run" || command == "continue" || command == "retry" {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 		var runErr error
-		if command == "continue" {
+		if command == "retry" {
+			runErr = pipeline.Retry(ctx, retryReason)
+		} else if command == "continue" {
 			runErr = pipeline.Continue(ctx)
 		} else {
 			runErr = pipeline.Run(ctx)

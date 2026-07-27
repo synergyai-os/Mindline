@@ -1126,7 +1126,9 @@ func resourceBundleForRecord(record CaptureRecord, resourcesByID map[string]Reso
 		seen[resourceID] = true
 		resources = append(resources, resource)
 		for _, related := range resource.RelatedURLs {
-			queue = append(queue, stableResourceID(related.URL))
+			if FollowableRelatedResource(related) {
+				queue = append(queue, stableResourceID(related.URL))
+			}
 		}
 		for _, revision := range revisionsByResourceID[resourceID] {
 			if seenRevisions[revision.RevisionID] {
@@ -1135,7 +1137,9 @@ func resourceBundleForRecord(record CaptureRecord, resourcesByID map[string]Reso
 			seenRevisions[revision.RevisionID] = true
 			revisions = append(revisions, revision)
 			for _, related := range revision.Resource.RelatedURLs {
-				queue = append(queue, stableResourceID(related.URL))
+				if FollowableRelatedResource(related) {
+					queue = append(queue, stableResourceID(related.URL))
+				}
 			}
 		}
 	}

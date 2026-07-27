@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/synergyai-os/Mindline/internal/acquisition"
 	"github.com/synergyai-os/Mindline/internal/personalmemory"
 	"github.com/synergyai-os/Mindline/internal/resourcefetch"
 	"github.com/synergyai-os/Mindline/internal/resourcequeue"
@@ -331,7 +332,7 @@ func (port *discoveringFetchPort) Fetch(_ context.Context, _ string, policy reso
 	return result
 }
 
-func TestPipelineContinuationAdoptsPriorGenerationDiscoveriesBeforeDrainingNextGeneration(t *testing.T) {
+func TestPipelineContinuationRetainsButDoesNotFollowGenericExtractorReferences(t *testing.T) {
 	root := t.TempDir()
 	repository, err := personalmemory.NewFileRepository(root+"/library", nil)
 	if err != nil {
@@ -369,8 +370,19 @@ func TestPipelineContinuationAdoptsPriorGenerationDiscoveriesBeforeDrainingNextG
 		t.Fatal(err)
 	}
 	library, err := repository.Load()
-	if err != nil || len(library.Resources) != 3 {
-		t.Fatalf("discovered resource was not retained: resources=%d err=%v", len(library.Resources), err)
+	if err != nil || len(library.Resources) != 2 {
+		t.Fatalf("generic reference created a processable placeholder: resources=%d err=%v", len(library.Resources), err)
+	}
+	foundReference := false
+	for _, resource := range library.Resources {
+		for _, related := range resource.RelatedURLs {
+			if related.DiscoveryEvidenceRef != "" && !related.SemanticallyRelevant {
+				foundReference = true
+			}
+		}
+	}
+	if !foundReference {
+		t.Fatal("generic reference provenance was not retained on its source")
 	}
 	if err := pipeline.Continue(context.Background()); err != nil {
 		t.Fatal(err)
@@ -379,8 +391,152 @@ func TestPipelineContinuationAdoptsPriorGenerationDiscoveriesBeforeDrainingNextG
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.Generation != 1 || port.calls != 2 || status.DeferredCount != 1 {
-		t.Fatalf("discovery required an empty continuation: status=%+v calls=%d", status, port.calls)
+	if status.Generation != 1 || port.calls != 2 || status.DeferredCount != 0 {
+		t.Fatalf("generic reference entered continuation work: status=%+v calls=%d", status, port.calls)
+	}
+}
+
+type reconcileRepository struct {
+	library personalmemory.Library
+}
+
+func (repository *reconcileRepository) Load() (personalmemory.Library, error) {
+	return repository.library, nil
+}
+
+func (repository *reconcileRepository) MergeEnrichment(batch personalmemory.EnrichmentBatch) (personalmemory.EnrichmentReceipt, error) {
+	for _, input := range batch.Resources {
+		for index := range repository.library.Resources {
+			if repository.library.Resources[index].CanonicalURL != input.CanonicalURL {
+				continue
+			}
+			repository.library.Resources[index].State = input.State
+			repository.library.Resources[index].AccessClass = input.AccessClass
+			repository.library.Resources[index].Missingness = append([]string(nil), input.Missingness...)
+		}
+	}
+	return personalmemory.EnrichmentReceipt{DeclaredResources: len(batch.Resources)}, nil
+}
+
+func TestPipelineReconcilePrunesUnfollowableQueueAndTerminalizesOnlyPlaceholder(t *testing.T) {
+	parentID := "resource-parent"
+	genericID := "resource-generic"
+	acquiredID := "resource-acquired"
+	repository := &reconcileRepository{library: personalmemory.Library{
+		Records: []personalmemory.CaptureRecord{{ResourceIDs: []string{parentID}}},
+		Resources: []personalmemory.ResourceContext{
+			{
+				ResourceID: parentID, CanonicalURL: "https://example.com/parent", State: "not_attempted",
+				RelatedURLs: []personalmemory.RelatedResource{{
+					URL: "https://example.com/generic", Relation: "source_links_to",
+					DiscoveryEvidenceRef: "related-legacy", SemanticallyRelevant: true,
+				}},
+			},
+			{ResourceID: genericID, CanonicalURL: "https://example.com/generic", State: "not_attempted"},
+			{ResourceID: acquiredID, CanonicalURL: "https://example.com/acquired", State: "partial"},
+		},
+	}}
+	pipeline, err := New(t.TempDir()+"/queue", repository, resourcequeue.FixtureProfile(), &fakeFetchPort{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pipeline.Store.Enqueue([]string{parentID, genericID, acquiredID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pipeline.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	queue, err := pipeline.Store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(queue.Items) != 1 || queue.Items[0].ResourceID != parentID ||
+		queue.Items[0].State != resourcequeue.StateQueued || queue.GenerationKind != "" {
+		t.Fatalf("reconciled queue retained unprocessable work: %+v", queue)
+	}
+	library, err := repository.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, resource := range library.Resources {
+		switch resource.ResourceID {
+		case genericID:
+			if resource.State != "inaccessible" ||
+				len(resource.Missingness) != 1 ||
+				resource.Missingness[0] != "resource_blocked:manual_processing_required" {
+				t.Fatalf("generic placeholder did not become honest terminal: %+v", resource)
+			}
+		case acquiredID:
+			if resource.State != "partial" {
+				t.Fatalf("acquired orphan evidence changed: %+v", resource)
+			}
+		case parentID:
+			if len(resource.RelatedURLs) != 1 {
+				t.Fatal("parent generic provenance was discarded")
+			}
+		}
+	}
+}
+
+func TestPipelineRetryRunsOnceAndCompletedReplayIsIdempotent(t *testing.T) {
+	root := t.TempDir()
+	repository, err := personalmemory.NewFileRepository(root+"/library", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := personalmemory.NewCaptureRecord(personalmemory.CaptureRecordInput{
+		SourceAdapter: "slack", SourceScopeID: "workspace", SourceContainerID: "self",
+		ExternalID: "retry-message", OccurredAt: "2026-07-27T12:00:00Z",
+		SourceRef: "slack://workspace/self/retry-message",
+		RawText:   "https://example.com/retry", EditDeleteState: "original",
+		Missingness: []string{"permalink_unavailable"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch, err := personalmemory.NewCaptureBatch(personalmemory.CaptureBatchInput{
+		SourceIdentity: "slack:workspace:self", LowerInclusive: "1", UpperInclusive: "1",
+		Watermark: "1", DeclaredRecords: 1, Records: []personalmemory.CaptureRecord{record},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.Import(batch); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.MergeEnrichment(personalmemory.EnrichmentBatch{
+		SchemaVersion: personalmemory.EnrichmentBatchSchemaVersion,
+		Resources: []acquisition.ImportedEvidence{{
+			CanonicalURL: "https://example.com/retry", State: "failed", AccessClass: "public",
+			Missingness: []string{"resource_blocked:unreachable"},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	port := &fakeFetchPort{}
+	pipeline, err := New(root+"/queue", repository, resourcequeue.FixtureProfile(), port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pipeline.RebuildCurrent(); err != nil {
+		t.Fatal(err)
+	}
+	if err := pipeline.Retry(context.Background(), "unreachable"); err != nil {
+		t.Fatal(err)
+	}
+	status, err := pipeline.StructuralStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if port.calls != 1 || status.Generation != 1 || status.GenerationKind != "retry:unreachable" ||
+		status.TerminalCounts[resourcequeue.StateComplete] != 1 {
+		t.Fatalf("retry generation did not finish exactly once: status=%+v calls=%d", status, port.calls)
+	}
+	if err := pipeline.Retry(context.Background(), "unreachable"); err != nil {
+		t.Fatal(err)
+	}
+	if port.calls != 1 {
+		t.Fatalf("completed retry replay fetched again: calls=%d", port.calls)
 	}
 }
 

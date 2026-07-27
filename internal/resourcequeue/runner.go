@@ -62,10 +62,16 @@ func (runner Runner) Recover() error {
 // Drain processes deterministic queued work until no item is immediately
 // runnable. Retryable work remains queued for a later explicitly bounded run.
 func (runner Runner) Drain(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := runner.Recover(); err != nil {
 		return err
 	}
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		settled, err := runner.settleBudgetRemainder()
 		if err != nil {
 			return err
@@ -125,12 +131,18 @@ func (runner Runner) ProcessNext(ctx context.Context) (bool, error) {
 	if runner.Store == nil || runner.Repository == nil || runner.Fetcher == nil {
 		return false, errors.New("resource queue runner is incomplete")
 	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	item, found, err := runner.Store.ClaimNext()
 	if err != nil || !found {
 		return found, err
 	}
 	target, err := runner.target(item.ResourceID)
 	if err != nil {
+		if ctx.Err() != nil {
+			_ = runner.Store.Requeue(item.ResourceID)
+		}
 		return true, err
 	}
 	if item.State == StateBlocked {
@@ -141,14 +153,29 @@ func (runner Runner) ProcessNext(ctx context.Context) (bool, error) {
 	}
 
 	result, fetchErr := runner.Fetcher.Fetch(ctx, target)
-	if exhausted, err := runner.Store.Consume(item.ResourceID, result.Usage); err != nil {
+	exhausted, err := runner.Store.Consume(item.ResourceID, result.Usage)
+	if err != nil {
 		return true, err
-	} else if exhausted {
+	}
+	cancelErr := ctx.Err()
+	if cancelErr == nil && errors.Is(fetchErr, context.Canceled) {
+		cancelErr = context.Canceled
+	}
+	if cancelErr != nil {
+		if err := runner.Store.Requeue(item.ResourceID); err != nil {
+			return true, err
+		}
+		return true, cancelErr
+	}
+	if exhausted {
 		item.State, item.Reason = StateBlocked, ReasonRunBudgetDeferred
 		return true, runner.mergeAndFinish(target, item, FetchResult{})
 	}
 	if retryEligible(result) && item.Attempts < runner.profileAttempts() {
 		if err := runner.sleepRetry(ctx, item.Attempts, result.RetryAfterSeconds); err != nil {
+			if requeueErr := runner.Store.Requeue(item.ResourceID); requeueErr != nil {
+				return true, requeueErr
+			}
 			return true, err
 		}
 		return true, runner.Store.Requeue(item.ResourceID)

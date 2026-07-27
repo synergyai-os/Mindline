@@ -112,6 +112,7 @@ func (store *Store) Enqueue(resourceIDs []string) (Queue, error) {
 func (store *Store) Rebuild(items []RebuildItem) (Queue, error) {
 	return store.update(func(queue *Queue) error {
 		queue.Counters = Counters{}
+		queue.GenerationKind = ""
 		// Canonical run_budget_deferred is sufficient to preserve future
 		// continuation. A rebuild deliberately opts out of the ambiguous
 		// budget_exhausted legacy migration because canonical state does not
@@ -362,11 +363,56 @@ func (store *Store) StartNextGeneration() (Queue, bool, error) {
 			return nil
 		}
 		queue.Generation++
+		queue.GenerationKind = "continuation"
 		queue.Counters = Counters{}
 		queue.LegacyBudgetMigrationComplete = true
 		for _, index := range eligible {
 			queue.Items[index].State = StateQueued
 			queue.Items[index].Reason = ""
+			queue.Items[index].ReservedRequests = 0
+		}
+		started = true
+		return nil
+	})
+	return queue, started, err
+}
+
+// StartRetryGeneration atomically opens one operator-authorized retry
+// generation for a fixed transient terminal reason. It refuses active work,
+// resets the selected resources' attempt budgets, and leaves every permanent
+// terminal untouched.
+func (store *Store) StartRetryGeneration(reason string) (Queue, bool, error) {
+	if !IsRetryableTerminalReason(reason) {
+		return Queue{}, false, errors.New("resource retry reason is not approved")
+	}
+	started := false
+	queue, err := store.update(func(queue *Queue) error {
+		for _, item := range queue.Items {
+			if item.State == StateQueued || item.State == StateProcessing {
+				return errors.New("resource queue is not terminal")
+			}
+		}
+		kind := "retry:" + reason
+		if queue.GenerationKind == kind {
+			return nil
+		}
+		eligible := make([]int, 0)
+		for index, item := range queue.Items {
+			if item.State == StateBlocked && item.Reason == reason {
+				eligible = append(eligible, index)
+			}
+		}
+		if len(eligible) == 0 {
+			return nil
+		}
+		queue.Generation++
+		queue.GenerationKind = kind
+		queue.Counters = Counters{}
+		queue.LegacyBudgetMigrationComplete = true
+		for _, index := range eligible {
+			queue.Items[index].State = StateQueued
+			queue.Items[index].Reason = ""
+			queue.Items[index].Attempts = 0
 			queue.Items[index].ReservedRequests = 0
 		}
 		started = true

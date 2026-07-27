@@ -15,7 +15,7 @@ import (
 func TestResourceCommandsReturnStructuralOnlyStatusForEmptyLibrary(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "personal-memory")
 	runner := NewRunner(NewOSFileSystem())
-	for _, command := range []string{"resources-run", "resources-continue", "resources-status", "resources-proof"} {
+	for _, command := range []string{"resources-run", "resources-continue", "resources-reconcile", "resources-status", "resources-proof"} {
 		t.Run(command, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
 			if code := runner.Run([]string{"memory", command, "--root", root}, &stdout, &stderr); code != ExitOK {
@@ -35,6 +35,93 @@ func TestResourceCommandsReturnStructuralOnlyStatusForEmptyLibrary(t *testing.T)
 				t.Fatalf("%s structural JSON = %#v err=%v", command, status, err)
 			}
 		})
+	}
+}
+
+func TestResourceRetryRequiresApprovedReasonAndEmptyReplayIsStructural(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "personal-memory")
+	runner := NewRunner(NewOSFileSystem())
+	var stdout, stderr bytes.Buffer
+	if code := runner.Run([]string{"memory", "resources-retry", "--root", root}, &stdout, &stderr); code != ExitUsage {
+		t.Fatalf("missing retry reason exit=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"memory", "resources-retry", "--reason", "access_denied", "--root", root}, &stdout, &stderr); code != ExitUsage {
+		t.Fatalf("permanent retry reason exit=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := runner.Run([]string{"memory", "resources-retry", "--reason", "unreachable", "--root", root}, &stdout, &stderr); code != ExitOK {
+		t.Fatalf("empty retry exit=%d stderr=%q", code, stderr.String())
+	}
+	if strings.Contains(stdout.String(), root) || strings.Contains(stdout.String(), "http") {
+		t.Fatalf("retry leaked private structure: %q", stdout.String())
+	}
+	var status struct {
+		Generation     int            `json:"generation"`
+		GenerationKind string         `json:"generation_kind"`
+		TerminalCounts map[string]int `json:"terminal_counts"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &status); err != nil ||
+		status.Generation != 0 || status.GenerationKind != "" || len(status.TerminalCounts) != 0 {
+		t.Fatalf("empty retry status=%+v err=%v", status, err)
+	}
+}
+
+func TestResourceReconcileReturnsNonterminalStructuralStatusWithoutNetwork(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "private-memory")
+	repository, err := personalmemory.NewFileRepository(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	privateURL := "https://private.example.test/pending"
+	record, err := personalmemory.NewCaptureRecord(personalmemory.CaptureRecordInput{
+		SourceAdapter: "slack", SourceScopeID: "workspace", SourceContainerID: "self",
+		ExternalID: "private-pending", OccurredAt: "2026-07-27T12:00:00Z",
+		SourceRef: "slack://workspace/self/private-pending", RawText: privateURL,
+		EditDeleteState: "original", Missingness: []string{"permalink_unavailable"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch, err := personalmemory.NewCaptureBatch(personalmemory.CaptureBatchInput{
+		SourceIdentity: "slack:workspace:self", LowerInclusive: "1", UpperInclusive: "1",
+		Watermark: "1", DeclaredRecords: 1, Records: []personalmemory.CaptureRecord{record},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.Import(batch); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run(
+		[]string{"memory", "resources-reconcile", "--root", root},
+		&stdout, &stderr,
+	)
+	if code != ExitOK {
+		t.Fatalf("reconcile exit=%d stderr=%q", code, stderr.String())
+	}
+	library, err := repository.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue, err := resourcequeue.NewStore(filepath.Join(filepath.Dir(root), "resource-queue"), resourcequeue.LiveProfile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	derived, err := queue.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(derived.Items) != 1 || derived.Items[0].State != resourcequeue.StateQueued {
+		t.Fatalf("reconcile did not return a truthful nonterminal queue: %+v", derived)
+	}
+	for _, privateValue := range []string{root, privateURL, library.Resources[0].ResourceID, "private-pending", "resource-queue"} {
+		if strings.Contains(stdout.String(), privateValue) || strings.Contains(stderr.String(), privateValue) {
+			t.Fatalf("reconcile leaked private value %q: stdout=%q stderr=%q", privateValue, stdout.String(), stderr.String())
+		}
 	}
 }
 

@@ -705,6 +705,145 @@ func TestStartNextGenerationIsNoOpWithoutDeferredWork(t *testing.T) {
 	}
 }
 
+func TestRetryGenerationSelectsOnlyApprovedTransientReasonAndReplaysSafely(t *testing.T) {
+	store, err := NewStore(t.TempDir()+"/queue", FixtureProfile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := []RebuildItem{
+		{ResourceID: "unreachable", State: StateBlocked, Reason: "unreachable"},
+		{ResourceID: "rate", State: StateBlocked, Reason: "rate_limited"},
+		{ResourceID: "access", State: StateBlocked, Reason: "access_denied"},
+		{ResourceID: "unsafe", State: StateBlocked, Reason: "unsafe_network_target"},
+		{ResourceID: "manual", State: StateBlocked, Reason: "manual_processing_required"},
+		{ResourceID: "unsupported", State: StateBlocked, Reason: "unsupported_mime"},
+	}
+	if _, err := store.Rebuild(items); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.update(func(queue *Queue) error {
+		queue.Counters = Counters{ProcessedResources: 4, Requests: 5}
+		for index := range queue.Items {
+			queue.Items[index].Attempts = 3
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	queue, started, err := store.StartRetryGeneration("unreachable")
+	if err != nil || !started || queue.Generation != 1 ||
+		queue.GenerationKind != "retry:unreachable" || queue.Counters != (Counters{}) {
+		t.Fatalf("retry generation = started:%v queue:%+v err:%v", started, queue, err)
+	}
+	for _, item := range queue.Items {
+		if item.ResourceID == "unreachable" {
+			if item.State != StateQueued || item.Reason != "" || item.Attempts != 0 {
+				t.Fatalf("approved retry was not reset: %+v", item)
+			}
+			continue
+		}
+		if item.State != StateBlocked || item.Attempts != 3 {
+			t.Fatalf("non-selected terminal changed: %+v", item)
+		}
+	}
+	if _, _, err := store.StartRetryGeneration("unreachable"); err == nil {
+		t.Fatal("active retry generation was not refused")
+	}
+	completed, err := store.update(func(queue *Queue) error {
+		for index := range queue.Items {
+			if queue.Items[index].ResourceID == "unreachable" {
+				queue.Items[index].State = StateBlocked
+				queue.Items[index].Reason = "unreachable"
+				queue.Items[index].Attempts = 1
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, started, err := store.StartRetryGeneration("unreachable")
+	if err != nil || started || replayed.Generation != 1 || replayed.Fingerprint != completed.Fingerprint {
+		t.Fatalf("completed retry replay changed queue: started:%v queue:%+v err=%v", started, replayed, err)
+	}
+	for _, reason := range []string{"access_denied", "unsafe_network_target", "sensitive_or_ambiguous", "manual_processing_required", "unsupported_mime"} {
+		if _, _, err := store.StartRetryGeneration(reason); err == nil {
+			t.Fatalf("permanent reason %q became retryable", reason)
+		}
+	}
+}
+
+type cancelingUsageFetcher struct{ cancel context.CancelFunc }
+
+func (fetcher cancelingUsageFetcher) Fetch(context.Context, Target) (FetchResult, error) {
+	fetcher.cancel()
+	return FetchResult{Usage: Usage{Requests: 1, DecodedBytes: 1}}, context.Canceled
+}
+
+func TestCanceledFetchSettlesUsageAndRequeuesWithoutCanonicalFailure(t *testing.T) {
+	store, err := NewStore(t.TempDir()+"/queue", FixtureProfile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	resourceID := "resource-canceled"
+	if _, err := store.Enqueue([]string{resourceID}); err != nil {
+		t.Fatal(err)
+	}
+	repository := &batchRecordingRepository{library: personalmemory.Library{
+		Resources: []personalmemory.ResourceContext{{
+			ResourceID: resourceID, CanonicalURL: "https://example.com/canceled",
+		}},
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	err = (Runner{Store: store, Repository: repository, Fetcher: cancelingUsageFetcher{cancel: cancel}}).Drain(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled drain err=%v", err)
+	}
+	queue, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(queue.Items) != 1 || queue.Items[0].State != StateQueued ||
+		queue.Items[0].Reason != "" || queue.Items[0].Attempts != 1 ||
+		queue.Counters.Requests != 1 || queue.Counters.DecodedBytes != 1 ||
+		len(repository.batchSizes) != 0 {
+		t.Fatalf("canceled fetch persisted failure or lost usage: queue=%+v merges=%v", queue, repository.batchSizes)
+	}
+	if err := (Runner{Store: store, Repository: repository, Fetcher: fixedUsageFetcher{}}).Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	queue, err = store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queue.Items[0].State != StatePartial || queue.Items[0].Attempts != 2 || len(repository.batchSizes) != 1 {
+		t.Fatalf("recovered canceled fetch did not finish once: queue=%+v merges=%v", queue, repository.batchSizes)
+	}
+}
+
+func TestPreCanceledDrainDoesNotClaimWork(t *testing.T) {
+	store, err := NewStore(t.TempDir()+"/queue", FixtureProfile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Enqueue([]string{"resource-a"}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err = (Runner{Store: store, Repository: &batchRecordingRepository{}, Fetcher: fixedUsageFetcher{}}).Drain(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("pre-canceled drain err=%v", err)
+	}
+	queue, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queue.Items[0].State != StateQueued || queue.Items[0].Attempts != 0 || queue.Counters != (Counters{}) {
+		t.Fatalf("pre-canceled drain claimed work: %+v", queue)
+	}
+}
+
 func TestRejectedFetchedPayloadBecomesManualTerminalAndDrainContinues(t *testing.T) {
 	store, err := NewStore(t.TempDir()+"/queue", FixtureProfile())
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/synergyai-os/Mindline/internal/acquisition"
 	"github.com/synergyai-os/Mindline/internal/personalmemory"
 	"github.com/synergyai-os/Mindline/internal/resourcefetch"
 	"github.com/synergyai-os/Mindline/internal/resourcequeue"
@@ -87,8 +88,9 @@ func (pipeline *Pipeline) EnqueueCurrent() error {
 	if err != nil {
 		return err
 	}
-	ids := make([]string, 0, len(library.Resources))
-	for _, resource := range library.Resources {
+	resources := processableResources(library)
+	ids := make([]string, 0, len(resources))
+	for _, resource := range resources {
 		safe, state, err := routing.PrepareURLForStorage(resource.CanonicalURL)
 		if err != nil || state == routing.URLStorageSensitiveRedacted || safe != resource.CanonicalURL {
 			continue
@@ -111,8 +113,9 @@ func (pipeline *Pipeline) RebuildCurrent() error {
 	if err != nil {
 		return err
 	}
-	items := make([]resourcequeue.RebuildItem, 0, len(library.Resources))
-	for _, resource := range library.Resources {
+	resources := processableResources(library)
+	items := make([]resourcequeue.RebuildItem, 0, len(resources))
+	for _, resource := range resources {
 		safe, storageState, err := routing.PrepareURLForStorage(resource.CanonicalURL)
 		if err != nil || storageState == routing.URLStorageSensitiveRedacted || safe != resource.CanonicalURL {
 			continue
@@ -123,6 +126,67 @@ func (pipeline *Pipeline) RebuildCurrent() error {
 	sort.Slice(items, func(i, j int) bool { return items[i].ResourceID < items[j].ResourceID })
 	_, err = pipeline.Store.Rebuild(items)
 	return err
+}
+
+func processableResources(library personalmemory.Library) []personalmemory.ResourceContext {
+	byID := make(map[string]personalmemory.ResourceContext, len(library.Resources))
+	for _, resource := range library.Resources {
+		byID[resource.ResourceID] = resource
+	}
+	ids := personalmemory.ProcessableResourceIDs(library)
+	resources := make([]personalmemory.ResourceContext, 0, len(ids))
+	for _, resourceID := range ids {
+		if resource, exists := byID[resourceID]; exists {
+			resources = append(resources, resource)
+		}
+	}
+	return resources
+}
+
+// Reconcile disposes overbroad derived work without network access. Existing
+// unapproved reference-only placeholders become explicit fixed terminals in
+// canonical evidence; acquired evidence is retained unchanged. The rebuilt
+// queue contains only resources reachable from retained captures through
+// explicitly followable relations.
+func (pipeline *Pipeline) Reconcile(ctx context.Context) error {
+	if pipeline == nil || pipeline.Store == nil || pipeline.Repository == nil {
+		return errors.New("resource pipeline is incomplete")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	library, err := pipeline.Repository.Load()
+	if err != nil {
+		return err
+	}
+	processable := map[string]bool{}
+	for _, resourceID := range personalmemory.ProcessableResourceIDs(library) {
+		processable[resourceID] = true
+	}
+	referenceOnly := make([]acquisition.ImportedEvidence, 0)
+	for _, resource := range library.Resources {
+		if processable[resource.ResourceID] || resource.State != "not_attempted" {
+			continue
+		}
+		referenceOnly = append(referenceOnly, acquisition.ImportedEvidence{
+			CanonicalURL: resource.CanonicalURL,
+			State:        "inaccessible",
+			AccessClass:  "unsupported",
+			Missingness:  []string{"resource_blocked:manual_processing_required"},
+		})
+	}
+	if len(referenceOnly) != 0 {
+		if _, err := pipeline.Repository.MergeEnrichment(personalmemory.EnrichmentBatch{
+			SchemaVersion: personalmemory.EnrichmentBatchSchemaVersion,
+			Resources:     referenceOnly,
+		}); err != nil {
+			return err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return pipeline.RebuildCurrent()
 }
 
 func derivedQueueState(resource personalmemory.ResourceContext) (state, reason string) {
@@ -203,6 +267,45 @@ func (pipeline *Pipeline) Continue(ctx context.Context) error {
 	return runner.Drain(ctx)
 }
 
+// Retry opens or resumes one bounded operator-authorized transient retry
+// generation. Replaying the same completed retry is a no-op; unrelated active
+// work is refused rather than adopted implicitly.
+func (pipeline *Pipeline) Retry(ctx context.Context, reason string) error {
+	if pipeline == nil || pipeline.Store == nil || pipeline.Repository == nil ||
+		!resourcequeue.IsRetryableTerminalReason(reason) {
+		return errors.New("resource retry is unavailable")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	runner := pipeline.runner()
+	if err := runner.Recover(); err != nil {
+		return err
+	}
+	queue, err := pipeline.Store.Load()
+	if err != nil {
+		return err
+	}
+	active := false
+	for _, item := range queue.Items {
+		if item.State == resourcequeue.StateQueued || item.State == resourcequeue.StateProcessing {
+			active = true
+			break
+		}
+	}
+	kind := "retry:" + reason
+	if active {
+		if queue.GenerationKind != kind {
+			return errors.New("resource queue has unrelated active work")
+		}
+		return runner.Drain(ctx)
+	}
+	if _, _, err := pipeline.Store.StartRetryGeneration(reason); err != nil {
+		return err
+	}
+	return runner.Drain(ctx)
+}
+
 func (pipeline *Pipeline) runner() resourcequeue.Runner {
 	return resourcequeue.Runner{Store: pipeline.Store, Repository: pipeline.Repository, Fetcher: queueFetcher{profile: pipeline.Profile, port: pipeline.Port}, Sleep: pipeline.Sleep, Now: pipeline.Now}
 }
@@ -277,6 +380,7 @@ type Status struct {
 	BudgetFingerprint string                 `json:"budget_fingerprint"`
 	QueueFingerprint  string                 `json:"queue_fingerprint"`
 	Generation        int                    `json:"generation"`
+	GenerationKind    string                 `json:"generation_kind,omitempty"`
 	DeferredCount     int                    `json:"deferred_count"`
 	Counters          resourcequeue.Counters `json:"counters"`
 	TerminalCounts    map[string]int         `json:"terminal_counts"`
@@ -293,7 +397,7 @@ func (pipeline *Pipeline) StructuralStatus() (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	status := Status{SchemaVersion: "mindline-resource-pipeline-status/v0.2", BudgetFingerprint: queue.Profile.Fingerprint, QueueFingerprint: queue.Fingerprint, Generation: queue.Generation, Counters: queue.Counters, TerminalCounts: map[string]int{}, ReasonCounts: map[string]int{}}
+	status := Status{SchemaVersion: "mindline-resource-pipeline-status/v0.2", BudgetFingerprint: queue.Profile.Fingerprint, QueueFingerprint: queue.Fingerprint, Generation: queue.Generation, GenerationKind: queue.GenerationKind, Counters: queue.Counters, TerminalCounts: map[string]int{}, ReasonCounts: map[string]int{}}
 	for _, item := range queue.Items {
 		if item.State == resourcequeue.StateComplete || item.State == resourcequeue.StatePartial || item.State == resourcequeue.StateBlocked {
 			status.TerminalCounts[item.State]++

@@ -189,6 +189,9 @@ type Queue struct {
 	// Generation is zero for the original bounded run. Omitempty preserves the
 	// fingerprint of queues written before generational continuation existed.
 	Generation int `json:"generation,omitempty"`
+	// GenerationKind lets a canceled operator retry resume idempotently without
+	// treating an unrelated reconciled queue as the same operation.
+	GenerationKind string `json:"generation_kind,omitempty"`
 	// Rebuilds cannot safely distinguish a historical global remainder from a
 	// per-resource budget failure. This derived marker prevents an ambiguous
 	// rebuilt budget_exhausted item from entering the one-time legacy migration.
@@ -230,6 +233,7 @@ func Seal(queue Queue) Queue {
 
 func Validate(queue Queue) error {
 	if queue.SchemaVersion != SchemaVersion || ValidateProfile(queue.Profile) != nil || queue.Generation < 0 ||
+		!validGenerationKind(queue.GenerationKind) ||
 		queue.Counters.ProcessedResources < 0 || queue.Counters.Requests < 0 || queue.Counters.Attempts < 0 || queue.Counters.ReservedRequests < 0 ||
 		queue.Counters.DownloadedBytes < 0 || queue.Counters.DecodedBytes < 0 || queue.Counters.ExtractedBytes < 0 ||
 		queue.Counters.RuntimeStorageBytes < 0 || queue.Counters.WallSeconds < 0 {
@@ -263,6 +267,15 @@ func Validate(queue Queue) error {
 		return errors.New("resource queue fingerprint mismatch")
 	}
 	return nil
+}
+
+func validGenerationKind(kind string) bool {
+	return kind == "" || kind == "continuation" ||
+		kind == "retry:unreachable" || kind == "retry:rate_limited"
+}
+
+func IsRetryableTerminalReason(reason string) bool {
+	return reason == "unreachable" || reason == "rate_limited"
 }
 
 func IsBlockedReason(reason string) bool { return fixedBlockedReasons[reason] }

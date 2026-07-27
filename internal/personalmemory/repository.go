@@ -298,6 +298,10 @@ func (repository *FileRepository) MergeEnrichment(batch EnrichmentBatch) (Enrich
 	resourceGraph := make([]ResourceContext, 0, len(library.Resources)+len(resources))
 	resourceGraph = append(resourceGraph, library.Resources...)
 	resourceGraph = append(resourceGraph, resources...)
+	existingResourceIDs := make(map[string]bool, len(library.Resources))
+	for _, resource := range library.Resources {
+		existingResourceIDs[resource.ResourceID] = true
+	}
 	for changed := true; changed; {
 		changed = false
 		for _, resource := range resourceGraph {
@@ -305,6 +309,9 @@ func (repository *FileRepository) MergeEnrichment(batch EnrichmentBatch) (Enrich
 				continue
 			}
 			for _, related := range resource.RelatedURLs {
+				if !FollowableRelatedResource(related) {
+					continue
+				}
 				relatedID := stableResourceID(related.URL)
 				if !allowed[relatedID] {
 					allowed[relatedID] = true
@@ -314,7 +321,8 @@ func (repository *FileRepository) MergeEnrichment(batch EnrichmentBatch) (Enrich
 		}
 	}
 	for _, resource := range resources {
-		if !allowed[resource.ResourceID] {
+		if !allowed[resource.ResourceID] &&
+			!(existingResourceIDs[resource.ResourceID] && referenceOnlyTerminalization(resource)) {
 			return EnrichmentReceipt{}, errors.New("personal evidence enrichment is not reachable from a retained capture")
 		}
 	}
@@ -372,6 +380,9 @@ func (repository *FileRepository) MergeEnrichment(batch EnrichmentBatch) (Enrich
 	}
 	for _, resource := range resources {
 		for _, related := range resource.RelatedURLs {
+			if !FollowableRelatedResource(related) {
+				continue
+			}
 			resourceID := stableResourceID(related.URL)
 			if _, exists := byID[resourceID]; exists {
 				continue
@@ -391,6 +402,18 @@ func (repository *FileRepository) MergeEnrichment(batch EnrichmentBatch) (Enrich
 	}
 	committed = true
 	return receipt, nil
+}
+
+func referenceOnlyTerminalization(resource ResourceContext) bool {
+	return resource.State == "inaccessible" &&
+		resource.AccessClass == "unsupported" &&
+		resource.RetrievedAt == "" &&
+		resource.Metadata == (ResourceMetadata{}) &&
+		len(resource.Excerpts) == 0 &&
+		len(resource.RelatedURLs) == 0 &&
+		resource.Content == nil &&
+		len(resource.Missingness) == 1 &&
+		resource.Missingness[0] == "resource_blocked:manual_processing_required"
 }
 
 func (repository *FileRepository) LoadContent(reference ContentArtifactRef) (ExtractedContentArtifact, error) {

@@ -42,9 +42,9 @@ func FromResourcefetchResult(result resourcefetch.Result) FetchResult {
 			continue
 		}
 		sum := sha256.Sum256([]byte(related))
-		id := fmt.Sprintf("related-%s", hex.EncodeToString(sum[:])[:16])
+		id := fmt.Sprintf("%s%s", personalmemory.GenericExtractorEvidencePrefix, hex.EncodeToString(sum[:])[:16])
 		adapted.Evidence.Excerpts = append(adapted.Evidence.Excerpts, acquisition.ImportedExcerpt{ExcerptID: id, Text: related, Locator: "discovered_outbound_link"})
-		adapted.Evidence.RelatedURLs = append(adapted.Evidence.RelatedURLs, acquisition.ImportedRelated{URL: related, Relation: "source_links_to", DiscoveryEvidenceRef: id, SemanticallyRelevant: true})
+		adapted.Evidence.RelatedURLs = append(adapted.Evidence.RelatedURLs, acquisition.ImportedRelated{URL: related, Relation: "source_links_to", DiscoveryEvidenceRef: id, SemanticallyRelevant: false})
 	}
 	if result.Text != "" {
 		completeness := "full"
