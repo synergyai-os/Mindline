@@ -317,8 +317,7 @@ func TestPipelineContinuationRecoversCrashedGenerationWithoutOpeningAnother(t *t
 
 func TestContinuePrunesStaleGenericThenAdoptsCuratedWorkIntoFreshGeneration(t *testing.T) {
 	const (
-		parentID   = "a-parent"
-		deferredID = "zz-deferred"
+		parentID = "a-parent"
 	)
 	curatedURL := "https://example.com/curated-target"
 	curatedID := "resource-" + digest(curatedURL)[:24]
@@ -326,7 +325,7 @@ func TestContinuePrunesStaleGenericThenAdoptsCuratedWorkIntoFreshGeneration(t *t
 	genericID := "resource-" + digest(genericURL)[:24]
 	repository := &reconcileRepository{library: personalmemory.Library{
 		Records: []personalmemory.CaptureRecord{{
-			ResourceIDs: []string{parentID, deferredID},
+			ResourceIDs: []string{parentID},
 		}},
 		Resources: []personalmemory.ResourceContext{
 			{
@@ -334,10 +333,8 @@ func TestContinuePrunesStaleGenericThenAdoptsCuratedWorkIntoFreshGeneration(t *t
 				State: "complete",
 			},
 			{
-				ResourceID: deferredID, CanonicalURL: "https://example.com/deferred",
-				State: "failed", Missingness: []string{
-					"resource_blocked:" + resourcequeue.ReasonRunBudgetDeferred,
-				},
+				ResourceID: genericID, CanonicalURL: genericURL,
+				State: "not_attempted",
 			},
 		},
 	}}
@@ -351,7 +348,7 @@ func TestContinuePrunesStaleGenericThenAdoptsCuratedWorkIntoFreshGeneration(t *t
 	}
 	if _, err := pipeline.Store.Rebuild([]resourcequeue.RebuildItem{
 		{ResourceID: parentID, State: resourcequeue.StateQueued},
-		{ResourceID: deferredID, State: resourcequeue.StateQueued},
+		{ResourceID: genericID, State: resourcequeue.StateQueued},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -365,11 +362,11 @@ func TestContinuePrunesStaleGenericThenAdoptsCuratedWorkIntoFreshGeneration(t *t
 	if err := pipeline.Store.Finish(parentID, resourcequeue.StateComplete, ""); err != nil {
 		t.Fatal(err)
 	}
-	deferred, found, err := pipeline.Store.ClaimNext()
-	if err != nil || !found || deferred.ResourceID != deferredID ||
-		deferred.State != resourcequeue.StateBlocked ||
-		deferred.Reason != resourcequeue.ReasonRunBudgetDeferred {
-		t.Fatalf("prior generation deferred item=%+v found=%v err=%v", deferred, found, err)
+	stale, found, err := pipeline.Store.ClaimNext()
+	if err != nil || !found || stale.ResourceID != genericID ||
+		stale.State != resourcequeue.StateBlocked ||
+		stale.Reason != resourcequeue.ReasonRunBudgetDeferred {
+		t.Fatalf("prior generation stale generic item=%+v found=%v err=%v", stale, found, err)
 	}
 
 	repository.library.Resources[0].RelatedURLs = []personalmemory.RelatedResource{
@@ -387,14 +384,7 @@ func TestContinuePrunesStaleGenericThenAdoptsCuratedWorkIntoFreshGeneration(t *t
 		personalmemory.ResourceContext{
 			ResourceID: curatedID, CanonicalURL: curatedURL, State: "not_attempted",
 		},
-		personalmemory.ResourceContext{
-			ResourceID: genericID, CanonicalURL: genericURL,
-			State: "not_attempted",
-		},
 	)
-	if _, err := pipeline.Store.Enqueue([]string{genericID}); err != nil {
-		t.Fatal(err)
-	}
 
 	if err := pipeline.Continue(context.Background()); err != nil {
 		t.Fatal(err)
@@ -403,7 +393,11 @@ func TestContinuePrunesStaleGenericThenAdoptsCuratedWorkIntoFreshGeneration(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if queue.Generation != 1 || port.calls != 1 {
+	status, err := pipeline.StructuralStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if queue.Generation != 1 || port.calls != 1 || status.DeferredCount != 0 {
 		t.Fatalf("curated work missed fresh generation: queue=%+v calls=%d", queue, port.calls)
 	}
 	foundCurated := false
@@ -417,6 +411,17 @@ func TestContinuePrunesStaleGenericThenAdoptsCuratedWorkIntoFreshGeneration(t *t
 	}
 	if !foundCurated {
 		t.Fatalf("one continuation did not produce useful curated terminal: %+v", queue.Items)
+	}
+	beforeReplay := queue.Fingerprint
+	if err := pipeline.Continue(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := pipeline.Store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.Generation != 1 || replayed.Fingerprint != beforeReplay || port.calls != 1 {
+		t.Fatalf("continuation replay changed frozen state: before=%s after=%+v calls=%d", beforeReplay, replayed, port.calls)
 	}
 }
 

@@ -796,11 +796,14 @@ func TestSyncMembershipPrunesLegacyJobsWithoutResettingRetainedRunState(t *testi
 		for index := range queue.Items {
 			switch queue.Items[index].ResourceID {
 			case "keep":
+				queue.Items[index].State = StateProcessing
+				queue.Items[index].Reason = ""
 				queue.Items[index].Attempts = 2
+				queue.Items[index].ReservedRequests = 2
 			case "remove-processing":
 				queue.Items[index].State = StateProcessing
 				queue.Items[index].Attempts = 1
-				queue.Items[index].ReservedRequests = 4
+				queue.Items[index].ReservedRequests = 2
 			}
 		}
 		return nil
@@ -813,7 +816,7 @@ func TestSyncMembershipPrunesLegacyJobsWithoutResettingRetainedRunState(t *testi
 		t.Fatal(err)
 	}
 	expectedCounters := before.Counters
-	expectedCounters.ReservedRequests = 0
+	expectedCounters.ReservedRequests = 2
 	if after.Generation != before.Generation ||
 		after.GenerationKind != before.GenerationKind ||
 		after.Counters != expectedCounters || len(after.Items) != 2 {
@@ -822,8 +825,8 @@ func TestSyncMembershipPrunesLegacyJobsWithoutResettingRetainedRunState(t *testi
 	for _, item := range after.Items {
 		switch item.ResourceID {
 		case "keep":
-			if item.State != StateBlocked || item.Reason != ReasonRunBudgetDeferred ||
-				item.Attempts != 2 {
+			if item.State != StateProcessing || item.Reason != "" ||
+				item.Attempts != 2 || item.ReservedRequests != 2 {
 				t.Fatalf("retained item changed: %+v", item)
 			}
 		case "new":
@@ -833,6 +836,54 @@ func TestSyncMembershipPrunesLegacyJobsWithoutResettingRetainedRunState(t *testi
 		default:
 			t.Fatalf("removed legacy item survived: %+v", item)
 		}
+	}
+}
+
+func TestSyncMembershipOpensFreshGenerationAtomicallyAndReplaysByFingerprint(t *testing.T) {
+	root := t.TempDir() + "/queue"
+	profile := FixtureProfile()
+	store, err := NewStore(root, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Rebuild([]RebuildItem{{
+		ResourceID: "parent", State: StateComplete,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.update(func(queue *Queue) error {
+		queue.Counters = Counters{
+			ProcessedResources: profile.MaxResources,
+			Requests:           profile.MaxRequests,
+			Attempts:           profile.MaxResources,
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := store.SyncMembership([]string{"parent", "curated"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Generation != 1 || first.GenerationKind != "continuation" ||
+		first.Counters != (Counters{}) || len(first.Items) != 2 {
+		t.Fatalf("atomic adoption did not open a fresh generation: %+v", first)
+	}
+	for _, item := range first.Items {
+		if item.ResourceID == "curated" && item.State != StateQueued {
+			t.Fatalf("new curated work was not queued in fresh generation: %+v", item)
+		}
+	}
+	restarted, err := NewStore(root, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := restarted.SyncMembership([]string{"parent", "curated"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.Generation != 1 || replayed.Fingerprint != first.Fingerprint {
+		t.Fatalf("restart replay double-incremented or changed state: first=%+v replay=%+v", first, replayed)
 	}
 }
 

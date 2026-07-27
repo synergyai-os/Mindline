@@ -134,7 +134,7 @@ func (store *Store) updateMembership(resourceIDs []string, addMissing bool) (Que
 	return store.update(func(queue *Queue) error {
 		retained := make([]Item, 0, len(desired))
 		known := make(map[string]bool, len(desired))
-		added := false
+		active := false
 		for _, item := range queue.Items {
 			if !desired[item.ResourceID] {
 				if item.State == StateProcessing {
@@ -147,6 +147,38 @@ func (store *Store) updateMembership(resourceIDs []string, addMissing bool) (Que
 			}
 			retained = append(retained, item)
 			known[item.ResourceID] = true
+			if item.State == StateQueued || item.State == StateProcessing {
+				active = true
+			}
+		}
+		missing := false
+		if addMissing {
+			for _, resourceID := range resourceIDs {
+				if !known[resourceID] {
+					missing = true
+					break
+				}
+			}
+		}
+		if missing && !active {
+			legacyDeferredAllowed := !queue.LegacyBudgetMigrationComplete
+			queue.Generation++
+			queue.GenerationKind = "continuation"
+			queue.Counters = Counters{}
+			queue.LegacyBudgetMigrationComplete = true
+			for index := range retained {
+				item := &retained[index]
+				if item.State == StateBlocked &&
+					(item.Reason == ReasonRunBudgetDeferred ||
+						(legacyDeferredAllowed &&
+							item.Reason == ReasonBudgetExhausted &&
+							item.Attempts == 0)) {
+					item.State = StateQueued
+					item.Reason = ""
+					item.Attempts = 0
+					item.ReservedRequests = 0
+				}
+			}
 		}
 		for _, resourceID := range resourceIDs {
 			if !addMissing || known[resourceID] {
@@ -156,9 +188,8 @@ func (store *Store) updateMembership(resourceIDs []string, addMissing bool) (Que
 				JobID: JobIdentity(queue.Profile, resourceID), ResourceID: resourceID,
 				State: StateQueued,
 			})
-			added = true
 		}
-		if added && strings.HasPrefix(queue.GenerationKind, "retry:") {
+		if missing && active && strings.HasPrefix(queue.GenerationKind, "retry:") {
 			// A retry generation identifies only its selected transient
 			// terminals. Newly discovered direct work is unrelated and makes
 			// retry resumption ambiguous; Continue may still adopt the mixed
