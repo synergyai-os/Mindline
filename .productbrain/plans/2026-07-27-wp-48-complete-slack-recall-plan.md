@@ -67,16 +67,23 @@ Gates:
 
 ## Increment 1 — source-neutral ingestion controller
 
-Outcome: deterministic strict frames can be imported, receipt-checked, read
-back, replayed, and resumed without persisting raw Slack frames.
+Outcome: deterministic strict frames can be adopted, canonically
+receipt-checked, read back, replayed, and resumed without persisting raw Slack
+frames.
 
 Test first:
 
 - 11-identity overlapping fixture with exact denominator;
-- intact v1 frame receipt equality, including repeated overlap identities;
+- whole-frame strict validation plus per-unit adoption equality
+  `delivered_native = canonical_declared + structural_excluded`;
+- canonical import receipt equality to `canonical_declared`, including repeated
+  overlap identities;
 - zero user-authored exclusion;
 - edit revision and delete tombstone;
 - final-owner union/overlap/gap/parent/reply/thread closure;
+- overlapping occurrences of one native key must have identical structural
+  author class and disposition; conflict fails incomplete before import and
+  preserves the prior canonical fingerprint;
 - truncation, missing/duplicate ordinal, descriptor/total/end mismatch,
   trailing data, 32-MiB unit, 128-MiB aggregate, and 100,000-message breach all
   fail incomplete before first import and preserve the prior canonical
@@ -98,9 +105,10 @@ Implement:
   - lifecycle, structural counts, unit states, receipts, commitments;
 - `internal/ingestioncontroller/controller.go`
   - validate intact frame;
+  - classify each delivered identity retain/withhold/objective-exclude;
   - call repository-owned lock-held 48 MiB admission;
-  - normalize/import;
-  - compare delivered count and receipt;
+  - normalize/import every non-excluded identity, including overlap repeats;
+  - seal adoption equation and compare canonical declared count/receipt;
   - fresh canonical readback;
   - exact in-memory final union;
 - `internal/ingestioncontroller/ledger.go`
@@ -140,8 +148,9 @@ Closed-envelope protocol:
 
 Design constraints:
 
-- every NativeBatch v1 frame imports unchanged and intact;
-- final ownership is reconciliation only;
+- every NativeBatch v1 frame is validated whole and unchanged;
+- structural exclusion is the only pre-canonical filter; final overlap
+  ownership is reconciliation only;
 - raw frames and individual native identities are never persisted in the
   structural ledger;
 - restart reacquires from the frozen scope beginning;
@@ -286,9 +295,9 @@ Actions:
 
 1. Register WP-48 proof groups in the assurance manifest.
 2. Run failure injection immediately before and after closed-envelope receive,
-   strict-frame validation, final union/reconciliation, canonical import,
-   canonical readback, resource enqueue, resource processing, enrichment
-   merge, and ledger advancement.
+   strict-frame validation, disposition/adoption sealing, final
+   union/reconciliation, canonical import, canonical readback, resource
+   enqueue, resource processing, enrichment merge, and ledger advancement.
    The integrated group also deletes/rebuilds the derived queue and re-runs
    canonical fingerprint plus compact/get state/missingness readback.
    It also runs every malformed/over-cap closed-envelope case and asserts zero
@@ -369,8 +378,9 @@ Gate:
   assurance-manifest, and configuration binding;
 - live repository-admission and queue-rebuild-independent canonical/compact/get
   readback gates pass;
-- exact denominator, receipt/readback, terminal-resource, restart/replay,
-  retention, owner-mode, and privacy gates pass;
+- exact denominator, per-unit adoption equation, canonical receipt/readback,
+  terminal-resource, restart/replay, retention, owner-mode, and privacy gates
+  pass;
 - otherwise stop with a structural blocker and no completeness claim.
 
 ## Increment 6 — same-library retrieval evaluation

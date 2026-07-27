@@ -140,7 +140,8 @@ The source-neutral controller accepts a versioned ephemeral envelope
 - one strict native batch per adoption unit;
 - connector assertions for channel-history exhaustion, thread exhaustion, and
   frozen watermark;
-- structural author class: `user`, `non_user`, or `unknown`.
+- one ephemeral identity-bound structural author class for each native message:
+  `user`, `non_user`, or `unknown`.
 
 The envelope carries no token. Raw message content and native identities may
 exist in memory while processing but are never written to the structural
@@ -171,25 +172,32 @@ For each attempt the controller recomputes the complete union in memory. It:
 2. constructs the unique key
    `(workspace, channel, native_message_id)`;
 3. assigns repeated keys to one final owner using the lexicographically first
-   ordered adoption-unit descriptor;
+   ordered adoption-unit descriptor, and requires every occurrence of a
+   repeated key to have the same structural author class and resulting
+   disposition;
 4. verifies exact unique, overlap, gap, parent, reply, and thread-closure
    counts;
 5. creates a sorted aggregate SHA-256 commitment over the unique native keys;
-6. imports every strict native batch intact through the existing
-   Slack-to-canonical normalization and `FileRepository.Import`, including
-   identities repeated by an overlapping batch;
-7. compares each import receipt with that intact batch's delivered declared
-   count; repeated identities must be reported as unchanged or as a truthful
-   edit/delete revision under the existing canonical idempotency contract;
-8. performs a fresh canonical status/readback;
-9. advances the structural ledger atomically only after steps 1–8 pass.
+6. assigns each delivered identity one structural disposition: retain,
+   withhold, or objectively exclude;
+7. passes every non-excluded identity through Slack-to-canonical normalization
+   and `FileRepository.Import`, including withheld identities and identities
+   repeated by an overlapping batch;
+8. creates an adoption receipt satisfying
+   `delivered_native = canonical_declared + structural_excluded`, verifies the
+   canonical import receipt against `canonical_declared`, and requires repeated
+   identities to be unchanged or a truthful edit/delete revision under the
+   existing canonical idempotency contract;
+9. performs a fresh canonical status/readback;
+10. advances the structural ledger atomically only after steps 1–9 pass.
 
-Final ownership is a denominator/reconciliation fact only. It does not filter
-or rewrite an unchanged v1 batch. The ledger never stores individual native
-identities. If a process stops before final reconciliation, restart reacquires
-and replays the frozen scope from its beginning. Already imported canonical
-evidence remains useful and idempotent; the run remains `recovering` or
-`incomplete`, never `complete`.
+The strict v1 frame is always validated whole. Structural exclusion is the only
+pre-canonical filter; overlap ownership never filters delivery. Final ownership
+is a denominator/reconciliation fact only. The ledger never stores individual
+native identities. If a process stops before final reconciliation, restart
+reacquires and replays the frozen scope from its beginning. Already imported
+canonical evidence remains useful and idempotent; the run remains `recovering`
+or `incomplete`, never `complete`.
 
 Completion requires:
 
@@ -197,7 +205,9 @@ Completion requires:
 - exact unique-key union and aggregate commitment;
 - one final owner per unique key;
 - no unresolved gap, overlap, parent, reply, or thread-closure count;
-- import receipt equality and fresh canonical readback for every adoption unit;
+- no conflicting author class or disposition for an overlapping native key;
+- adoption equation, canonical import receipt equality, and fresh canonical
+  readback for every adoption unit;
 - `unique_native = retained + excluded + withheld`;
 - `user_authored_excluded = 0`.
 
@@ -233,7 +243,8 @@ The owner-only, atomically replaced ledger uses
 - fixed policy/budget configuration and fingerprint;
 - per-unit strict-validation, pagination/thread, adoption, receipt, and
   canonical-readback states;
-- declared/owned/retained/excluded/withheld/overlap/gap/thread counts;
+- delivered/canonical-declared/owned/retained/excluded/withheld/overlap/gap/
+  thread counts and the adoption equation result;
 - aggregate native commitment;
 - post-sanitization batch, canonical-before, and canonical-after counts and
   fingerprints;
@@ -571,7 +582,12 @@ The fixture must also prove:
 
 - `unique = retained + excluded + withheld = 11`;
 - `user_authored_excluded = 0`;
+- every unit satisfies
+  `delivered_native = canonical_declared + structural_excluded`, and its
+  canonical import receipt matches `canonical_declared`;
 - exact ownership, overlap, gap, parent/reply, and thread closure;
+- conflicting author class or disposition for one overlapping native key fails
+  incomplete before import and preserves the prior canonical fingerprint;
 - closed-envelope truncation, missing/duplicate unit, descriptor/total/end
   mismatch, trailing data, 32-MiB frame, 128-MiB aggregate, and 100,000-message
   breaches all fail incomplete before the first import and preserve the prior
@@ -601,8 +617,9 @@ The private runtime must prove:
   frame, aggregate-byte, and message-count caps;
 - `unique_native = retained + excluded + withheld`;
 - no user-authored item excluded and no unresolved reconciliation count;
-- every acknowledged unit has strict validation, matching receipt, and fresh
-  canonical readback;
+- every acknowledged unit has strict validation, a passing adoption equation,
+  a canonical import receipt matching `canonical_declared`, and fresh canonical
+  readback;
 - every import passed the repository-owned 48-MiB admission operation while
   holding the canonical lock;
 - every safe resource is terminal `complete`, `partial`, or `blocked`;
