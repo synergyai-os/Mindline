@@ -1,6 +1,6 @@
 # Evidence-sufficient resource deepening successor — Shape
 
-Status: proposed after signed Diagnose `D-ES-2`  
+Status: proposed amendment to signed Shape `DEC-432` after Spec review  
 Reserved candidate identity: `MINDLINE-RESOURCE-EVIDENCE-DEEPENING`  
 Builds on: delivered WP-48 resource/library/evaluation outputs, especially the
 FEAT-27 and FEAT-29 implementation surfaces; it does not depend on WP-48
@@ -32,6 +32,14 @@ The founder job remains:
 Operational terminality and semantic evidence readiness are different facts.
 Mindline needs to model and prove both.
 
+The founder also clarified that relevance is contextual. One saved source may
+matter for Product Brain governance, for AI-native organization design, or for
+content creation at different strengths. Multiple agents must be able to work
+over the same retained evidence without copying or mutating it, while each
+project, lens, and agent keeps a bounded, inspectable relevance history. The
+same query may therefore authorize the same evidence but order it differently
+under two contexts. Contextual relevance is not canonical truth.
+
 ## Evidence and claim boundary
 
 ### Decided authority
@@ -47,6 +55,20 @@ Mindline needs to model and prove both.
   presented as complete.
 - STD-20, PRI-1, and BR-1 govern private values, public fetching, owner-only
   evidence, and emitted surfaces.
+- STD-21 keeps evidence, relevance, disposition, and destination separate;
+  contextual ranking cannot become canonical truth.
+- DEC-413 and DEC-424 make user-selected lenses/scopes contextual and preserve
+  personal-evidence authority. This amendment extends those contexts with
+  stable local agent attribution and actor-isolated feedback.
+- DEC-426 keeps the local CLI/skill as the primary agent interface and makes
+  feedback derived, reversible, and non-authoritative. This amendment newly
+  requires contained proof of the exact candidate before default installation.
+
+DEC-433 at `a17b0e7` and the current WP-49 materialization are stale for this
+amended scope and are not delivery authority. After this Shape amendment is
+captured, the amended Spec must be reviewed and captured, then existing WP-49
+must be reconciled to those exact authorities before any Plan, build, staged
+proof, or installation proceeds.
 
 ### Observed local evidence, not general authority
 
@@ -91,9 +113,19 @@ For a bounded selected subset of the already drained personal library:
    precommitted insufficient resources into sufficient evidence, then passes a
    fresh held-out retrieval gate without regressing the six already matched
    cases.
-7. A fresh outside agent uses the unchanged installed workflow to return useful
-   cited context, honest missingness, and abstention before Randy judges the
-   result.
+7. Evidence is stored once. An owner-defined project scope and lens rerank only
+   the query-authorized candidate set. User judgment is shared within that
+   context; an agent sees its own agent feedback, not another agent's private
+   ranking history. No relevance event changes retention or evidence.
+8. Before the default installation changes, a fresh outside agent uses the
+   exact candidate CLI and skill in a contained staged runtime under one
+   bounded owner-authorized disclosure grant. Its final cited answer or honest
+   abstention is captured as the proof output Randy judges.
+9. Only Randy's bound `useful` verdict permits crash-safe installation of the
+   exact proven candidate. A non-useful verdict leaves the current installation
+   plus canonical evidence and canonical relevance state unchanged; only
+   owner-private proof/audit receipts may remain after staged feedback is
+   destroyed.
 
 ## Product-model fit
 
@@ -109,6 +141,14 @@ patterns. It does not introduce a new memory store or destination model.
 - the derived queue owns leases, retry budgets, progressive scheduling, and
   restart;
 - retrieval consumes canonical ready evidence and never becomes a fetcher;
+- canonical personal memory owns a narrow read-only evidence port that returns
+  one coherent immutable library/catalog snapshot with validated current
+  evidence and citation commitments, never mutation, queue, provider, path, or
+  file-layout types;
+- local agent state owns project scopes, lenses, and append-only user/agent
+  relevance events as derived, reversible projections over shared evidence;
+- a contained candidate deployment proves the consumer experience before the
+  default installation changes;
 - Product Brain remains delivery authority only and is not a runtime
   dependency.
 
@@ -189,9 +229,11 @@ Attempt identity additionally binds:
 
 Selected retrieval may return one bounded `deepening_request` intent and
 `evidence_pending`; it never fetches or mutates the queue synchronously. An
-application orchestration port owns the at-most-once queue mutation. Search,
-get, and feedback remain read-only and network-free. The same intent is a no-op
-when the current attestation already satisfies the logical identity. Promotion
+application orchestration port owns the at-most-once queue mutation. Search and
+get are read-only over canonical evidence and queue state. Feedback is
+network-free and may append only to derived local-agent state; it never mutates
+canonical evidence, retention, or queue state. The same intent is a no-op when
+the current attestation already satisfies the logical identity. Promotion
 cannot recursively schedule another attempt under the same policy and refresh
 generation.
 
@@ -229,6 +271,14 @@ artifact, capability, and readiness attestation. Readback and evaluation must
 recompute or validate readiness from the artifact and frozen capability
 contract rather than trust a stored status field.
 
+Retrieval, evaluation, and the staged runtime consume the same narrow
+`EvidenceReadPort`. One call returns an immutable coherent snapshot keyed by
+library and evidence-catalog fingerprints. It exposes validated current
+evidence and citation commitments only and copies no canonical evidence into
+staged state. The Spec must freeze fingerprint-keyed cache invalidation and
+per-index/per-read byte, memory, and latency caps so validation cannot become
+unbounded at search time.
+
 Slack source text remains independently searchable and is not downgraded by
 resource readiness. Metadata, generic related links, shells, and unverified
 legacy artifacts may help describe missingness but cannot authorize a
@@ -237,7 +287,67 @@ resource-body claim.
 The ranking algorithm, thresholds, model/provider assumptions, and query
 network behavior remain unchanged during the intervention.
 
-### 6. Preserve the private-fetch boundary
+### 6. Keep relevance contextual and reversible
+
+Canonical evidence is shared. Retention, readiness, provenance, and citation
+identity never vary by project, lens, or agent.
+
+Every contextual retrieval binds one owner-defined active project scope, one
+owner-defined active lens within that scope, and one stable local agent actor.
+The original query establishes the authorized base candidate set. Scope and
+lens text may rerank only that set. Effective feedback is the combination of
+owner feedback for that exact scope/lens and feedback previously recorded by
+the current agent for that exact scope/lens. Feedback from a different scope,
+lens, or agent cannot affect the order. Conflicts remain attributed events,
+not evidence changes. Owner and agent events retain the existing fixed `1.0`
+and `0.25` contribution weights; "owner precedence" means that existing
+weighting, not an absolute override or new scorer rule.
+
+Existing lenses migrate into an owner root scope without changing prior search
+output or losing judgments. Historical generic-agent events map to one reserved
+`legacy_agent_actor` and affect only the legacy-compatible context; no new
+stable agent inherits them. Scope, lens, and actor identifiers are additive
+local-agent-state metadata, never access grants. This slice freezes the
+existing relevance weights and adds identity/isolation only. It does not add a
+cross-agent aggregation formula, learned personalization, agent-created lens
+operation, or a claim that different contexts must always produce different
+orders.
+
+Users may create any practical number of scopes and lenses through the owner
+surface. Storage, pagination, field sizes, and per-request work are bounded;
+the product does not impose a fixed global lens count.
+
+### 7. Prove the exact candidate before installing it
+
+The current installed workflow is the rollback control and must remain
+unchanged while usefulness is unknown. A fresh outside-agent task is bound to
+one owner authorization, exact candidate tree/binary/skill behavior, staged
+runtime, project/lens/actor context, fixed query, and short-lived disclosure
+budget. Search, one selected hydration, and optional feedback use only the
+staged copy. The staged runtime has distinct config, socket, lock, and agent
+state and cannot serve through default paths.
+
+Disclosure is deny-by-default, one authorization can issue only one manifest
+and one grant, private-response allowance is reserved durably before evidence
+is read, and ambiguous crashes consume rather than replay the allowance. The
+agent's terminal output is a bounded `answered` or `abstained` receipt that
+binds the exact task/run, output commitment, cited subset, citation validation,
+and missingness. Randy's verdict binds that receipt. A valid abstention does
+not require fabricated record feedback.
+
+Teardown is crash-resumable and destroys/readbacks all staged private state.
+Only a settled useful verdict for the exact candidate permits installation.
+Installation uses an immutable recovery bootstrap or equivalent autostart
+quarantine outside the replaceable deployment, so no default service can serve
+a mixed or nonterminal install. Every fault returns to either the exact prior
+installation or the exact smoked candidate. If missing or corrupt authority
+prevents proving either state, the only third outcome is
+`quarantined_no_service`; the bootstrap keeps the service stopped and reports
+the structural recovery fault. The immutable bootstrap—not a replaceable
+candidate or rollback binary—owns autostart, journal validation, recovery, and
+quarantine before any default component can run.
+
+### 8. Preserve the private-fetch boundary
 
 Every fetch remains subject to the existing:
 
@@ -374,17 +484,34 @@ Public fixtures prove:
 - canonical readback, rollback, privacy, SSRF, credential, secret, and
   owner-only containment gates.
 
+Public contextual-relevance fixtures also prove:
+
+- identical query/library inputs yield the same authorized base candidates and
+  citations across two project/lens contexts;
+- at least one precommitted fixture yields a different post-authorization
+  order under those contexts;
+- owner feedback applies only to its exact scope/lens and has precedence;
+- each of at least two agents sees only owner feedback plus its own feedback in
+  that scope/lens, before and after restart;
+- feedback never changes evidence, retention, readiness, or another context;
+- existing lenses migrate into the owner root scope with byte-equivalent legacy
+  output and no lost or reinterpreted judgments; historical generic-agent
+  events remain isolated to the reserved legacy actor.
+
 ### Live and founder proof
 
 The live run remains founder-private and sample-bound. Structural proof reports
 counts, states, fingerprints, and blocked claims only. It emits no private
 content, URLs, hostnames, queries, labels, excerpts, or resource identities.
 
-Only after every executable gate passes may the candidate binary and skill be
-installed. A fresh outside agent must then use only the installed Mindline
-skill and CLI for cited recall, hydration, abstention, and retry-safe feedback.
-WP-48 and its evidence-deepening successor remain open until Randy records the
-cited recall as useful.
+Only after every non-founder executable gate passes may a fresh outside agent
+use the exact contained candidate skill and CLI for cited recall, hydration,
+honest abstention, and bounded retry-safe feedback. Its terminal answer receipt
+and staged-state teardown must pass before Randy can record `useful` or
+`not_useful`. Only `useful` authorizes exact candidate installation, followed by
+post-install smoke or complete rollback. WP-48 and its evidence-deepening
+successor remain open until Randy records the cited recall as useful and the
+installed proof reproduces it.
 
 ## Exclusions
 
@@ -396,6 +523,8 @@ cited recall as useful.
 - no synchronous fetch from search, get, or feedback;
 - no replacement of canonical personal memory or copying LocalDB;
 - no ranking-threshold tuning in the evidence intervention;
+- no agent-created scope/lens operation, shared cross-agent aggregation,
+  learned actor weighting, or global personalization in this slice;
 - no cross-user, production-scale, broad-provider, generalization, autonomy, or
   no-human claim;
 - no committed private source fixture or runtime artifact.
@@ -410,10 +539,15 @@ Shape is complete when two unchanged five-role reviews agree that:
 3. semantic readiness, deepening, promotion, replay, and migration are coherent;
 4. privacy and query/network boundaries fail closed;
 5. the evidence-only intervention is executable and falsifiable;
-6. the next Spec may define exact schemas and tests without reopening product
+6. shared evidence plus project/lens/agent-scoped derived relevance is coherent,
+   isolated, reversible, and does not change query authorization;
+7. contained fresh-agent proof before default installation is fail-closed,
+   bounded, recoverable, and binds Randy's verdict to the agent's actual cited
+   answer or abstention;
+8. the next Spec may define exact schemas and tests without reopening product
    direction;
-7. Product Brain contains a signed-Shape decision with reserved unique candidate
+9. Product Brain contains a signed-Shape decision with reserved unique candidate
    identity `MINDLINE-RESOURCE-EVIDENCE-DEEPENING`, a relation to WP-48, and the
    exact artifact/evidence reference. An untracked file or chat review is not
-   delivery authority. The work package is materialized only after Spec
+   delivery authority. Existing WP-49 is reconciled only after amended Spec
    Authority passes.
