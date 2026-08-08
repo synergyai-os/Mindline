@@ -239,15 +239,21 @@ Before opening, updating, or merging a PR that changes Mindline product behavior
 
 ## Chain-Bounded Autonomous Delivery
 
-Authoritative anchors: `DEC-414`, `STD-22`, and `SETUP-RULE-MINDLINE_CHAIN_BOUNDED_DELIVERY`. This section is a repository projection; update Product Brain first when the operating contract changes.
+Authoritative anchors: `DEC-414`, `DEC-437`, `STD-22`, `STD-28`, and `SETUP-RULE-MINDLINE_CHAIN_BOUNDED_DELIVERY`. This section is a repository projection; update Product Brain first when the operating contract changes.
 
 - Codex has full execution autonomy inside an unchanged signed Shape, Spec, Plan, work package, privacy boundary, claim boundary, and destination-write policy. A material change to any boundary requires new Chain authority before implementation continues.
 - The parent orchestrates an empowered product team. Product owns outcome and user value; Architecture owns modularity and evolutionary boundaries; Delivery owns implementation and operability; Chain Steward owns authority and phase gates; Risk/Safety owns privacy, credentials, mutations, rollback, and claims; Delivery Quality owns independent regression and lifecycle proof.
 - Apply Team Topologies deliberately: a stream-aligned team owns the end-to-end outcome; platform capabilities supply reusable ingestion, queue, evaluation, security, and observability paths; retrieval/enrichment and semantic evaluation may be complicated subsystems; temporary collaboration must exit into a stable API or ownership boundary.
 - Use `pb promote` and `pb verify` only for governance transitions authorized by signed phase evidence. The local `pb` CLI is never Mindline's runtime Product Brain destination transport.
 - Keep credentials in approved in-memory/session boundaries only. Never place them in Chain entries, files, commands, logs, traces, URLs, or generated instructions.
-- Build the smallest coherent vertical value slice and treat security, privacy, observability, recovery, rate limits, idempotency, exact acknowledgement/readback, replay, and rollback as part of its definition of done.
-- A reviewer defect restarts the required clean-pass sequence on the corrected frozen tree. Close only when the user outcome is visible, executable proof passes, unchanged-tree reviewers agree, and Product Brain states the exact result and remaining obligations.
+- Build the smallest coherent source-to-user vertical slice first. Documentation, schemas, manifests, and successful commands are evidence, not delivered value.
+- Planning plus pre-build review may use at most 15% of an explicit delivery budget. Without an explicit budget, use one authority brief of at most 1,500 words and one bounded pre-build review for a reversible local proof.
+- Reviewers may block a currently in-scope safety, privacy, authority, or correctness defect. They may not silently expand the active slice; broader concerns become separate Chain follow-up work.
+- If the same phase has not converged after two review passes, simplify the slice or ask Randy for the smallest real founder decision. Do not continue consuming the delivery budget on the same review loop.
+- Use heavier multi-round governance only before installation, release, irreversible mutation, external destination writes, or broad quality, autonomy, production, or generalization claims.
+- At each checkpoint report the budget split across planning, implementation, proof, and rework. Stop and simplify when planning exceeds its cap or one review cycle produces no executable artifact.
+- Scale security, privacy, observability, recovery, rate limits, idempotency, acknowledgement/readback, replay, and rollback proof to the actual risk of the current slice.
+- Close only when the bounded user outcome is visible, executable proof passes, independent review finds no in-scope blocker, and Product Brain states the exact result and remaining obligations.
 
 <!-- pb:region:start — managed by `pb handshake`; edit only OUTSIDE this block -->
 ## Product Brain — operating context (managed)

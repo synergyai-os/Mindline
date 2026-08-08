@@ -12,6 +12,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/synergyai-os/Mindline/internal/agentretrieval"
@@ -33,6 +34,13 @@ type Server struct {
 	listener   net.Listener
 	now        func() time.Time
 	recovery   string
+
+	semanticMu         sync.Mutex
+	semanticIndex      SemanticIndexStatus
+	semanticCancel     context.CancelFunc
+	semanticDone       chan struct{}
+	semanticGeneration uint64
+	semanticClosing    bool
 }
 
 func NewServer(config Config, now func() time.Time, httpClient *http.Client) (*Server, error) {
@@ -69,6 +77,7 @@ func NewServer(config Config, now func() time.Time, httpClient *http.Client) (*S
 	return &Server{
 		config: config, repository: repository, state: state,
 		embedder: embedder, lock: lock, now: now, recovery: recovery,
+		semanticIndex: SemanticIndexStatus{State: "stale"},
 	}, nil
 }
 
@@ -99,6 +108,7 @@ func (server *Server) Serve() error {
 		Handler: mux, ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout: 30 * time.Second, WriteTimeout: 2 * time.Minute,
 	}
+	server.ensureSemanticIndex()
 	err = server.httpServer.Serve(listener)
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
@@ -108,6 +118,7 @@ func (server *Server) Serve() error {
 
 func (server *Server) Close(ctx context.Context) error {
 	var first error
+	semanticDone := server.beginSemanticShutdown()
 	if server.httpServer != nil {
 		if err := server.httpServer.Shutdown(ctx); err != nil {
 			first = err
@@ -115,6 +126,15 @@ func (server *Server) Close(ctx context.Context) error {
 	}
 	if server.listener != nil {
 		_ = server.listener.Close()
+	}
+	if semanticDone != nil {
+		select {
+		case <-semanticDone:
+		case <-ctx.Done():
+			if first == nil {
+				first = errors.New("stop semantic index worker")
+			}
+		}
 	}
 	_ = os.Remove(server.config.SocketPath)
 	if err := server.state.Close(); first == nil {
@@ -154,6 +174,7 @@ func (server *Server) handleStatus(writer http.ResponseWriter, _ *http.Request) 
 	writeJSON(writer, http.StatusOK, Status{
 		SchemaVersion: APISchemaVersion, ServiceState: "ready",
 		Memory: memory, State: projectAgentStateStatus(state),
+		SemanticIndex: server.semanticIndexStatus(memory.Fingerprint, state.IndexedFingerprint),
 	})
 }
 
@@ -177,7 +198,7 @@ func (server *Server) handleSearch(writer http.ResponseWriter, request *http.Req
 		writeError(writer, http.StatusInternalServerError, err)
 		return
 	}
-	backend := agentretrieval.NewHybridBackend(request.Context(), server.state, server.embedder)
+	backend := server.retrievalBackend(request.Context())
 	packet, err := personalmemory.NewRetriever(server.repository, backend).Search(personalmemory.SearchRequest{
 		Query: input.Query, Limit: input.Limit, RunID: runID, LensID: input.LensID,
 	})
@@ -202,10 +223,6 @@ func (server *Server) handleSearch(writer http.ResponseWriter, request *http.Req
 		writeError(writer, http.StatusInternalServerError, err)
 		return
 	}
-	if err := server.state.SetIndexedFingerprint(request.Context(), packet.LibraryFingerprint); err != nil {
-		writeError(writer, http.StatusInternalServerError, err)
-		return
-	}
 	writeJSON(writer, http.StatusOK, packet)
 }
 
@@ -220,7 +237,7 @@ func (server *Server) handleSearchCompact(writer http.ResponseWriter, request *h
 		writeError(writer, http.StatusInternalServerError, err)
 		return
 	}
-	backend := agentretrieval.NewHybridBackend(request.Context(), server.state, server.embedder)
+	backend := server.retrievalBackend(request.Context())
 	packet, err := personalmemory.NewRetriever(server.repository, backend).SearchCompact(
 		personalmemory.SearchRequest{
 			Query: input.Query, Limit: input.Limit, RunID: runID, LensID: input.LensID,
@@ -246,11 +263,187 @@ func (server *Server) handleSearchCompact(writer http.ResponseWriter, request *h
 		writeError(writer, http.StatusInternalServerError, err)
 		return
 	}
-	if err := server.state.SetIndexedFingerprint(request.Context(), packet.LibraryFingerprint); err != nil {
-		writeError(writer, http.StatusInternalServerError, err)
+	writeJSON(writer, http.StatusOK, packet)
+}
+
+func (server *Server) retrievalBackend(ctx context.Context) *agentretrieval.HybridBackend {
+	server.ensureSemanticIndex()
+	status := server.semanticIndexSnapshot()
+	if status.State == "ready" {
+		return agentretrieval.NewHybridBackend(ctx, server.state, server.embedder)
+	}
+	reason := status.Reason
+	if reason == "" {
+		reason = "semantic index is not ready; lexical retrieval is available"
+	}
+	return agentretrieval.NewDegradedBackend(ctx, server.state, reason)
+}
+
+func (server *Server) ensureSemanticIndex() {
+	server.semanticMu.Lock()
+	closing := server.semanticClosing
+	server.semanticMu.Unlock()
+	if closing {
 		return
 	}
-	writeJSON(writer, http.StatusOK, packet)
+	memory, err := server.repository.Status()
+	if err != nil {
+		server.setSemanticUnavailable("semantic index cannot read the current library")
+		return
+	}
+	state, err := server.state.Status(context.Background())
+	if err != nil {
+		server.setSemanticUnavailable("semantic index state is unavailable")
+		return
+	}
+	server.semanticMu.Lock()
+	defer server.semanticMu.Unlock()
+	if server.semanticClosing {
+		return
+	}
+	if server.semanticIndex.State == "building" &&
+		server.semanticIndex.LibraryFingerprint == memory.Fingerprint {
+		return
+	}
+	// Recheck the cache once per service lifetime even when an older service
+	// recorded this fingerprint. Prior versions could record it after a
+	// degraded request without proving every current document was embedded.
+	if server.semanticIndex.State == "ready" &&
+		state.IndexedFingerprint == memory.Fingerprint {
+		return
+	}
+	if server.semanticCancel != nil {
+		server.semanticCancel()
+	}
+	server.semanticGeneration++
+	generation := server.semanticGeneration
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	server.semanticCancel = cancel
+	server.semanticDone = done
+	server.semanticIndex = SemanticIndexStatus{
+		State: "building", LibraryFingerprint: memory.Fingerprint,
+		IndexedFingerprint: state.IndexedFingerprint,
+		Reason:             "semantic index is building; lexical retrieval is available",
+	}
+	go server.prepareSemanticIndex(ctx, generation, memory.Fingerprint, done)
+}
+
+func (server *Server) beginSemanticShutdown() <-chan struct{} {
+	server.semanticMu.Lock()
+	defer server.semanticMu.Unlock()
+	server.semanticClosing = true
+	if server.semanticCancel != nil {
+		server.semanticCancel()
+	}
+	return server.semanticDone
+}
+
+func (server *Server) prepareSemanticIndex(
+	ctx context.Context,
+	generation uint64,
+	expectedFingerprint string,
+	done chan struct{},
+) {
+	defer close(done)
+	snapshot, err := personalmemory.NewLexicalRetriever(server.repository).PrepareCompactIndex()
+	if err != nil {
+		server.finishSemanticIndex(generation, "unavailable", expectedFingerprint,
+			"semantic index preparation failed; lexical retrieval is available")
+		return
+	}
+	if snapshot.LibraryFingerprint != expectedFingerprint {
+		server.finishSemanticIndex(generation, "stale", snapshot.LibraryFingerprint,
+			"the library changed while semantic indexing started; lexical retrieval is available")
+		return
+	}
+	backend := agentretrieval.NewHybridBackend(ctx, server.state, server.embedder)
+	err = backend.PrepareIndex(snapshot.Documents, func(progress agentretrieval.IndexProgress) {
+		server.updateSemanticProgress(generation, progress)
+	})
+	if err != nil {
+		if ctx.Err() != nil {
+			server.finishSemanticIndex(generation, "stale", expectedFingerprint,
+				"semantic indexing was interrupted; lexical retrieval is available")
+			return
+		}
+		server.finishSemanticIndex(generation, "unavailable", expectedFingerprint,
+			"semantic index provider is unavailable; lexical retrieval is available")
+		return
+	}
+	current, err := server.repository.Status()
+	if err != nil || current.Fingerprint != expectedFingerprint {
+		server.finishSemanticIndex(generation, "stale", expectedFingerprint,
+			"the library changed during semantic indexing; lexical retrieval is available")
+		return
+	}
+	if err := server.state.SetIndexedFingerprint(ctx, expectedFingerprint); err != nil {
+		server.finishSemanticIndex(generation, "unavailable", expectedFingerprint,
+			"semantic index readiness could not be recorded; lexical retrieval is available")
+		return
+	}
+	server.finishSemanticIndex(generation, "ready", expectedFingerprint, "")
+}
+
+func (server *Server) updateSemanticProgress(
+	generation uint64,
+	progress agentretrieval.IndexProgress,
+) {
+	server.semanticMu.Lock()
+	defer server.semanticMu.Unlock()
+	if generation != server.semanticGeneration || server.semanticIndex.State != "building" {
+		return
+	}
+	server.semanticIndex.Completed = progress.Completed
+	server.semanticIndex.Target = progress.Target
+}
+
+func (server *Server) finishSemanticIndex(
+	generation uint64,
+	state string,
+	fingerprint string,
+	reason string,
+) {
+	server.semanticMu.Lock()
+	defer server.semanticMu.Unlock()
+	if generation != server.semanticGeneration {
+		return
+	}
+	server.semanticIndex.State = state
+	server.semanticIndex.LibraryFingerprint = fingerprint
+	server.semanticIndex.Reason = reason
+	if state == "ready" {
+		server.semanticIndex.IndexedFingerprint = fingerprint
+		server.semanticIndex.Completed = server.semanticIndex.Target
+	}
+	server.semanticCancel = nil
+}
+
+func (server *Server) setSemanticUnavailable(reason string) {
+	server.semanticMu.Lock()
+	defer server.semanticMu.Unlock()
+	server.semanticIndex.State = "unavailable"
+	server.semanticIndex.Reason = reason
+}
+
+func (server *Server) semanticIndexSnapshot() SemanticIndexStatus {
+	server.semanticMu.Lock()
+	defer server.semanticMu.Unlock()
+	return server.semanticIndex
+}
+
+func (server *Server) semanticIndexStatus(
+	libraryFingerprint string,
+	indexedFingerprint string,
+) SemanticIndexStatus {
+	status := server.semanticIndexSnapshot()
+	status.LibraryFingerprint = libraryFingerprint
+	status.IndexedFingerprint = indexedFingerprint
+	if status.State == "ready" && indexedFingerprint != libraryFingerprint {
+		status.State = "stale"
+		status.Reason = "semantic index is stale; lexical retrieval is available"
+	}
+	return status
 }
 
 func (server *Server) handleGet(writer http.ResponseWriter, request *http.Request) {

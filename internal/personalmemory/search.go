@@ -97,6 +97,14 @@ type ContextRetriever struct {
 	backend    RetrievalBackendPort
 }
 
+// CompactIndexSnapshot exposes the source-neutral, retrieval-only projection
+// used by compact search so the local service can prepare derived indexes
+// outside the request path. It never exposes this projection over the API.
+type CompactIndexSnapshot struct {
+	LibraryFingerprint string
+	Documents          []IndexDocument
+}
+
 type LexicalBM25Backend struct{}
 
 func (LexicalBM25Backend) MethodID() string {
@@ -109,6 +117,19 @@ func NewRetriever(repository RepositoryPort, backend RetrievalBackendPort) Conte
 
 func NewLexicalRetriever(repository RepositoryPort) ContextRetriever {
 	return NewRetriever(repository, LexicalBM25Backend{})
+}
+
+func (retriever ContextRetriever) PrepareCompactIndex() (CompactIndexSnapshot, error) {
+	projection, err := retriever.prepareCompactProjection()
+	if err != nil {
+		return CompactIndexSnapshot{}, err
+	}
+	documents := make([]IndexDocument, len(projection.indexDocuments))
+	copy(documents, projection.indexDocuments)
+	return CompactIndexSnapshot{
+		LibraryFingerprint: projection.library.Fingerprint,
+		Documents:          documents,
+	}, nil
 }
 
 type evidenceDocument struct {
@@ -199,6 +220,12 @@ func (retriever ContextRetriever) SearchCompact(request SearchRequest) (CompactC
 	rawHits, err := retriever.backend.Rank(rankingRequest, projection.indexDocuments)
 	if err != nil {
 		return CompactContextPacket{}, err
+	}
+	// Rank may switch a hybrid backend into an explicit degraded mode. Read the
+	// method afterwards so the packet describes the retrieval that actually ran.
+	method = strings.TrimSpace(retriever.backend.MethodID())
+	if method == "" {
+		return CompactContextPacket{}, errors.New("personal evidence retrieval backend has no method identity")
 	}
 	if err := validateCompactRawHitIdentities(rawHits, projection); err != nil {
 		return CompactContextPacket{}, err

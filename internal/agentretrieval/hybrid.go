@@ -26,14 +26,26 @@ const (
 )
 
 type HybridBackend struct {
-	context  context.Context
-	state    *agentstate.Store
-	embedder embedding.Port
+	context              context.Context
+	state                *agentstate.Store
+	embedder             embedding.Port
+	forcedDegradedReason string
 
 	mu             sync.Mutex
 	method         string
 	retrievalState string
 	degradedReason string
+}
+
+type semanticChunk struct {
+	id       string
+	recordID string
+	text     string
+}
+
+type IndexProgress struct {
+	Completed int
+	Target    int
 }
 
 type distinctEvidenceAuthorization struct {
@@ -51,6 +63,19 @@ func NewHybridBackend(ctx context.Context, state *agentstate.Store, embedder emb
 		context: ctx, state: state, embedder: embedder,
 		method: "mindline_hybrid_local/v0.10", retrievalState: "hybrid",
 	}
+}
+
+func NewDegradedBackend(
+	ctx context.Context,
+	state *agentstate.Store,
+	reason string,
+) *HybridBackend {
+	backend := NewHybridBackend(ctx, state, nil)
+	backend.forcedDegradedReason = strings.TrimSpace(reason)
+	if backend.forcedDegradedReason == "" {
+		backend.forcedDegradedReason = "semantic retrieval is not ready"
+	}
+	return backend
 }
 
 func (backend *HybridBackend) MethodID() string {
@@ -114,7 +139,14 @@ func (backend *HybridBackend) Rank(request personalmemory.SearchRequest, documen
 		}
 		lensQuery = lens.Query
 	}
-	authorizationSemanticScores, semanticErr := backend.semanticScores(query, documents)
+	var authorizationSemanticScores map[string]float64
+	var semanticErr error
+	if backend.forcedDegradedReason != "" {
+		authorizationSemanticScores = map[string]float64{}
+		semanticErr = errors.New(backend.forcedDegradedReason)
+	} else {
+		authorizationSemanticScores, semanticErr = backend.semanticScores(query, documents)
+	}
 	rankingSemanticScores := authorizationSemanticScores
 	if semanticErr == nil && strings.TrimSpace(lensQuery) != "" {
 		rankingSemanticScores, semanticErr = backend.semanticScores(
@@ -228,11 +260,43 @@ func (backend *HybridBackend) semanticScores(query string, documents []personalm
 		return nil, errors.New("semantic provider is not configured")
 	}
 	scores := make(map[string]float64, len(documents))
-	type semanticChunk struct {
-		id       string
-		recordID string
-		text     string
+	chunks := semanticChunks(documents)
+	vectors, err := backend.prepareDocumentEmbeddings(chunks, nil)
+	if err != nil {
+		return nil, err
 	}
+	queryVector, err := backend.embedQuery(truncateRunes(query, embeddingChunkRunes))
+	if err != nil {
+		return nil, err
+	}
+	for _, chunk := range chunks {
+		vector := vectors[chunk.id]
+		score, err := embedding.Cosine(queryVector, vector)
+		if err != nil {
+			return nil, err
+		}
+		if current, exists := scores[chunk.recordID]; !exists || score > current {
+			scores[chunk.recordID] = score
+		}
+	}
+	return scores, nil
+}
+
+func (backend *HybridBackend) PrepareIndex(
+	documents []personalmemory.IndexDocument,
+	report func(IndexProgress),
+) error {
+	if backend.state == nil {
+		return errors.New("hybrid retrieval state is unavailable")
+	}
+	if backend.embedder == nil {
+		return errors.New("semantic provider is not configured")
+	}
+	_, err := backend.prepareDocumentEmbeddings(semanticChunks(documents), report)
+	return err
+}
+
+func semanticChunks(documents []personalmemory.IndexDocument) []semanticChunk {
 	chunks := []semanticChunk{}
 	for _, document := range documents {
 		for index, text := range embeddingChunks(document.Text) {
@@ -243,6 +307,13 @@ func (backend *HybridBackend) semanticScores(query string, documents []personalm
 			})
 		}
 	}
+	return chunks
+}
+
+func (backend *HybridBackend) prepareDocumentEmbeddings(
+	chunks []semanticChunk,
+	report func(IndexProgress),
+) (map[string][]float64, error) {
 	vectors := make(map[string][]float64, len(chunks))
 	missing := []semanticChunk{}
 	modelID := backend.embedder.ModelID()
@@ -260,6 +331,10 @@ func (backend *HybridBackend) semanticScores(query string, documents []personalm
 		}
 		missing = append(missing, chunk)
 	}
+	completed := len(chunks) - len(missing)
+	if report != nil {
+		report(IndexProgress{Completed: completed, Target: len(chunks)})
+	}
 	for start := 0; start < len(missing); start += 32 {
 		end := start + 32
 		if end > len(missing) {
@@ -273,6 +348,9 @@ func (backend *HybridBackend) semanticScores(query string, documents []personalm
 		if err != nil {
 			return nil, err
 		}
+		if len(embedded) != len(inputs) {
+			return nil, errors.New("semantic provider returned an incomplete embedding batch")
+		}
 		for index, vector := range embedded {
 			chunk := missing[start+index]
 			vectors[chunk.id] = vector
@@ -282,23 +360,13 @@ func (backend *HybridBackend) semanticScores(query string, documents []personalm
 			}); err != nil {
 				return nil, err
 			}
+			completed++
+		}
+		if report != nil {
+			report(IndexProgress{Completed: completed, Target: len(chunks)})
 		}
 	}
-	queryVector, err := backend.embedQuery(truncateRunes(query, embeddingChunkRunes))
-	if err != nil {
-		return nil, err
-	}
-	for _, chunk := range chunks {
-		vector := vectors[chunk.id]
-		score, err := embedding.Cosine(queryVector, vector)
-		if err != nil {
-			return nil, err
-		}
-		if current, exists := scores[chunk.recordID]; !exists || score > current {
-			scores[chunk.recordID] = score
-		}
-	}
-	return scores, nil
+	return vectors, nil
 }
 
 func distinctEvidenceSemanticAuthorization(

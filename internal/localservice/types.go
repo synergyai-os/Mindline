@@ -32,6 +32,16 @@ type Status struct {
 	ServiceState  string                 `json:"service_state"`
 	Memory        personalmemory.Status  `json:"memory"`
 	State         PublicAgentStateStatus `json:"state"`
+	SemanticIndex SemanticIndexStatus    `json:"semantic_index"`
+}
+
+type SemanticIndexStatus struct {
+	State              string `json:"state"`
+	LibraryFingerprint string `json:"library_fingerprint"`
+	IndexedFingerprint string `json:"indexed_fingerprint,omitempty"`
+	Completed          int    `json:"completed"`
+	Target             int    `json:"target"`
+	Reason             string `json:"reason,omitempty"`
 }
 
 type PublicAgentStateStatus struct {
