@@ -41,6 +41,12 @@ func (store *Store) ApplyScopedJudgment(ctx context.Context, request ScopedJudgm
 		if !sameScopedJudgmentRequest(existing, request) {
 			return ScopedJudgment{}, errors.New("scoped judgment idempotency key conflicts with a different request")
 		}
+		// The database insert can outlive a failed sidecar refresh. Repair the
+		// recovery copy before acknowledging a retry so a later database recovery
+		// cannot lose feedback the caller was told was durable.
+		if err := store.writeRecoverySnapshot(ctx); err != nil {
+			return ScopedJudgment{}, err
+		}
 		existing.Replayed = true
 		return existing, nil
 	}

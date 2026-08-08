@@ -28,7 +28,7 @@ func TestRunScansTrackedSourceAndExplicitProofDirectory(t *testing.T) {
 		t.Fatalf("decode receipt: %v", err)
 	}
 	if got.SchemaVersion != contractVersion || got.State != "clean" || got.SelfTest != "passed" ||
-		got.TrackedFileCount != 1 || got.ProofFileCount != 1 || got.FindingCount != 0 {
+		got.TrackedFileCount != 1 || got.ProofFileCount != 2 || got.FindingCount != 0 {
 		t.Fatalf("receipt = %#v", got)
 	}
 }
@@ -67,7 +67,28 @@ func TestRunBlocksFindingInExplicitProofDirectory(t *testing.T) {
 		t.Fatalf("error = %v", err)
 	}
 	var got receipt
-	if json.Unmarshal(output.Bytes(), &got) != nil || got.ProofFileCount != 1 || got.FindingCount != 1 {
+	if json.Unmarshal(output.Bytes(), &got) != nil || got.ProofFileCount != 2 || got.FindingCount != 1 {
+		t.Fatalf("receipt = %#v", got)
+	}
+}
+
+func TestExactInvocationBlocksDefaultProofFindingWithoutLeakingIt(t *testing.T) {
+	root := newGitRepository(t)
+	secret := string(selfTestSentinel())
+	path := filepath.Join(root, defaultProofRoot, "generated.json")
+	writeFile(t, path, secret)
+
+	var output bytes.Buffer
+	err := run([]string{"--root", root, "--self-test"}, &output, detectCredential)
+	if !errors.Is(err, errBlocked) {
+		t.Fatalf("error = %v", err)
+	}
+	if strings.Contains(output.String(), secret) || strings.Contains(output.String(), path) ||
+		strings.Contains(output.String(), "generated.json") {
+		t.Fatalf("receipt leaked proof finding metadata: %q", output.String())
+	}
+	var got receipt
+	if json.Unmarshal(output.Bytes(), &got) != nil || got.ProofFileCount != 2 || got.FindingCount != 1 {
 		t.Fatalf("receipt = %#v", got)
 	}
 }
@@ -100,6 +121,7 @@ func newGitRepository(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	git(t, root, "init", "--quiet")
+	writeFile(t, filepath.Join(root, defaultProofRoot, "receipt.json"), `{"state":"generated"}`)
 	return root
 }
 

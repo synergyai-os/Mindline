@@ -342,9 +342,11 @@ func resumeRecoveryWithSnapshot(
 			return nil, "", err
 		}
 	}
-	if err := stage.projectLegacyState(context.Background()); err != nil {
-		_ = stage.Close()
-		return nil, "", errors.New("project legacy state during recovery")
+	if !scopedSnapshotPresent {
+		if err := stage.projectLegacyState(context.Background()); err != nil {
+			_ = stage.Close()
+			return nil, "", errors.New("project legacy state during recovery")
+		}
 	}
 	scopedSnapshot, err = stage.buildScopedRecoverySnapshot(context.Background())
 	if err != nil {

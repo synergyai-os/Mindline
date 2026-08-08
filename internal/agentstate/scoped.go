@@ -85,13 +85,16 @@ func (store *Store) initializeScoped(ctx context.Context) error {
 			return fmt.Errorf("initialize scoped agent state: %w", err)
 		}
 	}
-	if err := store.restoreScopedSidecarIfNeeded(ctx); err != nil {
+	hasScopedHistory, err := store.restoreScopedSidecarIfNeeded(ctx)
+	if err != nil {
 		return err
 	}
-	if err := store.projectLegacyState(ctx); err != nil {
-		return err
+	if !hasScopedHistory {
+		if err := store.projectLegacyState(ctx); err != nil {
+			return err
+		}
 	}
-	_, err := store.db.ExecContext(ctx, `INSERT INTO scoped_meta(key, value)
+	_, err = store.db.ExecContext(ctx, `INSERT INTO scoped_meta(key, value)
 		VALUES('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
 		ScopedSchemaVersion,
 	)
@@ -181,11 +184,13 @@ func (store *Store) projectLegacyState(ctx context.Context) error {
 	if _, err := tx.ExecContext(ctx, `INSERT INTO scoped_judgments(
 		judgment_id, idempotency_key, run_id, scope_id, lens_id, agent_id,
 		record_id, actor, disposition, reason, reverses_judgment_id, effect, created_at
-	) SELECT judgment_id, idempotency_key, run_id, ?, lens_id,
-		CASE WHEN actor='agent' THEN ? ELSE '' END,
-		record_id, CASE WHEN actor='agent' THEN 'agent' ELSE 'owner' END,
-		disposition, reason, reverses_judgment_id, effect, created_at
-	FROM judgments
+	) SELECT j.judgment_id, j.idempotency_key, j.run_id, ?, j.lens_id,
+		CASE WHEN COALESCE(original.actor, j.actor)='agent' THEN ? ELSE '' END,
+		j.record_id, CASE WHEN COALESCE(original.actor, j.actor)='agent'
+			THEN 'agent' ELSE 'owner' END,
+		j.disposition, j.reason, j.reverses_judgment_id, j.effect, j.created_at
+	FROM judgments j LEFT JOIN judgments original
+		ON original.judgment_id=j.reverses_judgment_id
 	WHERE 1=1
 	ON CONFLICT(judgment_id) DO NOTHING`, OwnerRootScopeID, LegacyAgentActorID); err != nil {
 		return errors.New("project legacy judgments")

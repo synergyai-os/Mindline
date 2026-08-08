@@ -8,9 +8,8 @@ import (
 	"path/filepath"
 )
 
-// DurableFingerprint identifies only non-derived agent state: user-created
-// lenses and append-only judgments. It is read-only and treats a missing
-// snapshot as the canonical empty durable state.
+// DurableFingerprint identifies all non-rebuildable legacy and scoped state.
+// It is read-only and treats missing snapshots as canonical empty state.
 func DurableFingerprint(databasePath string) (string, error) {
 	if !filepath.IsAbs(databasePath) {
 		return "", errors.New("agent state path must be absolute")
@@ -26,7 +25,21 @@ func DurableFingerprint(databasePath string) (string, error) {
 			Judgments:     []Judgment{},
 		}
 	}
-	data, err := json.Marshal(snapshot)
+	scoped, scopedPresent, err := readScopedRecoverySnapshot(filepath.Clean(databasePath))
+	if err != nil {
+		return "", err
+	}
+	if !scopedPresent {
+		scoped = scopedRecoverySnapshot{
+			SchemaVersion: scopedRecoverySchemaVersion,
+			Scopes:        []Scope{}, Lenses: []ScopedLens{}, Actors: []AgentActor{},
+			Runs: []ScopedRetrievalTrace{}, Judgments: []ScopedJudgment{},
+		}
+	}
+	data, err := json.Marshal(struct {
+		Legacy recoverySnapshot       `json:"legacy"`
+		Scoped scopedRecoverySnapshot `json:"scoped"`
+	}{Legacy: snapshot, Scoped: scoped})
 	if err != nil {
 		return "", errors.New("fingerprint durable agent state")
 	}

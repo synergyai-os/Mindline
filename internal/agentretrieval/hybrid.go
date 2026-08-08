@@ -144,20 +144,25 @@ func (backend *HybridBackend) Rank(request personalmemory.SearchRequest, documen
 		contextQuery = lens.Query
 	}
 	var authorizationSemanticScores map[string]float64
-	var semanticErr error
+	var authorizationSemanticErr error
 	if backend.forcedDegradedReason != "" {
 		authorizationSemanticScores = map[string]float64{}
-		semanticErr = errors.New(backend.forcedDegradedReason)
+		authorizationSemanticErr = errors.New(backend.forcedDegradedReason)
 	} else {
-		authorizationSemanticScores, semanticErr = backend.semanticScores(query, documents)
+		authorizationSemanticScores, authorizationSemanticErr = backend.semanticScores(query, documents)
 	}
 	rankingSemanticScores := authorizationSemanticScores
-	if semanticErr == nil && contextQuery != "" {
-		rankingSemanticScores, semanticErr = backend.semanticScores(
+	var contextSemanticErr error
+	if authorizationSemanticErr == nil && contextQuery != "" {
+		var contextualScores map[string]float64
+		contextualScores, contextSemanticErr = backend.semanticScores(
 			strings.TrimSpace(query+"\n"+contextQuery), documents,
 		)
+		if contextSemanticErr == nil {
+			rankingSemanticScores = contextualScores
+		}
 	}
-	backend.setMode(semanticErr)
+	backend.setContextMode(authorizationSemanticErr, contextSemanticErr)
 
 	relevance, err := backend.feedbackRelevanceForRequest(request, documents)
 	if err != nil {
@@ -198,7 +203,7 @@ func (backend *HybridBackend) Rank(request personalmemory.SearchRequest, documen
 		base := lexicalRRFWeight*lexicalRRF + semanticRRFWeight*semanticRRF
 		authorizationBase := lexicalRRFWeight*lexicalRRF +
 			semanticRRFWeight*authorizationSemanticRRF
-		if semanticErr != nil {
+		if authorizationSemanticErr != nil {
 			base = lexicalRRFWeight * lexicalRRF
 			authorizationBase = base
 		}
@@ -240,6 +245,13 @@ func (backend *HybridBackend) Rank(request personalmemory.SearchRequest, documen
 		})
 	}
 	if scoped {
+		authorized := candidates[:0]
+		for _, candidate := range candidates {
+			if candidate.components["authorization_base_raw"] > 0 {
+				authorized = append(authorized, candidate)
+			}
+		}
+		candidates = authorized
 		authorizedLimit := request.QueryAuthorizedLimit
 		if authorizedLimit <= 0 {
 			authorizedLimit = limit
@@ -259,10 +271,10 @@ func (backend *HybridBackend) Rank(request personalmemory.SearchRequest, documen
 	hits := make([]personalmemory.RankedHit, 0, len(candidates))
 	for _, candidate := range candidates {
 		base := lexicalRRFWeight * candidate.components["lexical_rrf"]
-		if semanticErr == nil {
+		if authorizationSemanticErr == nil {
 			base += semanticRRFWeight * candidate.components["semantic_rrf"]
 		}
-		if base == 0 {
+		if base == 0 && !scoped {
 			continue
 		}
 		if maximumBase > 0 {
@@ -683,6 +695,22 @@ func (backend *HybridBackend) setMode(semanticErr error) {
 	backend.method = "mindline_lexical_degraded/v0.2"
 	backend.retrievalState = "degraded"
 	backend.degradedReason = semanticErr.Error()
+}
+
+func (backend *HybridBackend) setContextMode(authorizationErr, contextErr error) {
+	if authorizationErr != nil {
+		backend.setMode(authorizationErr)
+		return
+	}
+	if contextErr == nil {
+		backend.setMode(nil)
+		return
+	}
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	backend.method = "mindline_hybrid_query_context_degraded/v0.1"
+	backend.retrievalState = "degraded"
+	backend.degradedReason = contextErr.Error()
 }
 
 func rankScores(scores map[string]float64, limit int) map[string]int {

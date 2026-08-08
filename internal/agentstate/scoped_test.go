@@ -81,24 +81,88 @@ func TestReupgradePreservesScopedStateAndQuarantinesLegacyAgentWrites(t *testing
 	assertScopedRelevance(t, reopened, ctx, ScopedContext{
 		ScopeID: "scope-a", LensID: "lens-one", AgentID: "agent-a",
 	}, 0.025)
-	if _, err := reopened.PutAgentActor(ctx, AgentActor{ID: "fresh-agent", Name: "Fresh agent"}); err != nil {
-		t.Fatal(err)
+	if _, err := reopened.GetScopedLens(ctx, OwnerRootScopeID, "legacy-lens"); err == nil {
+		t.Fatal("post-upgrade legacy lens entered scoped recall")
 	}
-	var ownerRows, legacyAgentRows int
-	if err := reopened.db.QueryRowContext(ctx, `SELECT
-		SUM(CASE WHEN actor='owner' AND agent_id='' THEN 1 ELSE 0 END),
-		SUM(CASE WHEN actor='agent' AND agent_id=? THEN 1 ELSE 0 END)
-		FROM scoped_judgments WHERE scope_id=? AND lens_id=?`,
-		LegacyAgentActorID, OwnerRootScopeID, "legacy-lens",
-	).Scan(&ownerRows, &legacyAgentRows); err != nil || ownerRows != 1 || legacyAgentRows != 1 {
-		t.Fatalf("legacy projection owner_rows=%d agent_rows=%d err=%v", ownerRows, legacyAgentRows, err)
+	var scopedRows, legacyRows int
+	if err := reopened.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM scoped_judgments WHERE run_id='legacy-run'`,
+	).Scan(&scopedRows); err != nil || scopedRows != 0 {
+		t.Fatalf("post-upgrade scoped judgments=%d err=%v", scopedRows, err)
 	}
-	assertScopedRecordRelevance(t, reopened, ctx, ScopedContext{
-		ScopeID: OwnerRootScopeID, LensID: "legacy-lens", AgentID: "fresh-agent",
-	}, "legacy-record", 0.1)
+	if err := reopened.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM judgments WHERE run_id='legacy-run'`,
+	).Scan(&legacyRows); err != nil || legacyRows != 2 {
+		t.Fatalf("quarantined legacy judgments=%d err=%v", legacyRows, err)
+	}
 	legacyActor, err := reopened.GetAgentActor(ctx, LegacyAgentActorID)
 	if err != nil || legacyActor.Status != StatusArchived {
 		t.Fatalf("legacy actor=%+v err=%v", legacyActor, err)
+	}
+}
+
+func TestLegacyOwnerReversalOfAgentFeedbackStaysQuarantined(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 8, 9, 30, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "state", "agent.sqlite")
+	if err := os.MkdirAll(filepath.Dir(path), privateio.DirMode); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`CREATE TABLE lenses(id TEXT PRIMARY KEY, name TEXT, query TEXT, created_at TEXT, updated_at TEXT)`,
+		`CREATE TABLE retrieval_runs(run_id TEXT PRIMARY KEY, query TEXT, lens_id TEXT, retrieval_method TEXT, library_fingerprint TEXT, created_at TEXT)`,
+		`CREATE TABLE retrieval_candidates(run_id TEXT, rank INTEGER, record_id TEXT, final_score REAL, components_json BLOB, PRIMARY KEY(run_id,record_id))`,
+		`CREATE TABLE judgments(judgment_id TEXT PRIMARY KEY, idempotency_key TEXT UNIQUE, run_id TEXT, lens_id TEXT, record_id TEXT, actor TEXT, disposition TEXT, reason TEXT, reverses_judgment_id TEXT, effect REAL, created_at TEXT)`,
+	} {
+		if _, err := legacy.Exec(statement); err != nil {
+			legacy.Close()
+			t.Fatal(err)
+		}
+	}
+	created := now.Format(time.RFC3339Nano)
+	originalID := stableID("judgment", "legacy-agent-original")
+	for _, statement := range []struct {
+		query string
+		args  []any
+	}{
+		{`INSERT INTO lenses VALUES(?,?,?,?,?)`, []any{"legacy-lens", "Legacy", "legacy", created, created}},
+		{`INSERT INTO retrieval_runs VALUES(?,?,?,?,?,?)`, []any{"legacy-run", "legacy", "legacy-lens", "test", "fingerprint", created}},
+		{`INSERT INTO retrieval_candidates VALUES(?,?,?,?,?)`, []any{"legacy-run", 1, "legacy-record", 1.0, []byte(`{"final":1}`)}},
+		{`INSERT INTO judgments VALUES(?,?,?,?,?,?,?,?,?,?,?)`, []any{originalID, "legacy-agent-original", "legacy-run", "legacy-lens", "legacy-record", "agent", "used", "", "", 0.25, created}},
+		{`INSERT INTO judgments VALUES(?,?,?,?,?,?,?,?,?,?,?)`, []any{stableID("judgment", "legacy-owner-reversal"), "legacy-owner-reversal", "legacy-run", "legacy-lens", "legacy-record", "user", "reversed", "", originalID, -0.25, created}},
+	} {
+		if _, err := legacy.Exec(statement.query, statement.args...); err != nil {
+			legacy.Close()
+			t.Fatal(err)
+		}
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, privateio.FileMode); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := Open(path, func() time.Time { return now.Add(time.Minute) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	ctx := context.Background()
+	if _, err := reopened.PutAgentActor(ctx, AgentActor{ID: "fresh-agent", Name: "Fresh"}); err != nil {
+		t.Fatal(err)
+	}
+	assertScopedRecordRelevance(t, reopened, ctx, ScopedContext{
+		ScopeID: OwnerRootScopeID, LensID: "legacy-lens", AgentID: "fresh-agent",
+	}, "legacy-record", 0)
+	var quarantined int
+	if err := reopened.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM scoped_judgments
+		WHERE run_id='legacy-run' AND actor='agent' AND agent_id=?`, LegacyAgentActorID).Scan(&quarantined); err != nil || quarantined != 2 {
+		t.Fatalf("quarantined judgments=%d err=%v", quarantined, err)
 	}
 }
 
@@ -247,6 +311,54 @@ func TestCorruptRecoveryRejectsInvalidScopedSidecar(t *testing.T) {
 	if matches, _ := filepath.Glob(path + ".corrupt-*"); len(matches) != 0 {
 		t.Fatal("database was quarantined before invalid scoped recovery sidecar failed closed")
 	}
+}
+
+func TestScopedFeedbackRetryRepairsFailedRecoverySnapshot(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "state", "agent.sqlite")
+	store, err := Open(path, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	seedScopedContexts(t, store, ctx, now)
+	sidecar := scopedRecoveryPath(path)
+	if err := os.Remove(sidecar); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(sidecar, privateio.DirMode); err != nil {
+		t.Fatal(err)
+	}
+	request := ScopedJudgmentRequest{
+		RetryToken: "repair-retry-token-123456", RunID: "run-scope-a-agent-a",
+		ScopeID: "scope-a", LensID: "lens-one", AgentID: "agent-a",
+		RecordID: "record-one", Actor: FeedbackAgent, Disposition: "used",
+	}
+	if _, err := store.ApplyScopedJudgment(ctx, request); err == nil {
+		t.Fatal("initial sidecar refresh failure was acknowledged")
+	}
+	if err := os.Remove(sidecar); err != nil {
+		t.Fatal(err)
+	}
+	replay, err := store.ApplyScopedJudgment(ctx, request)
+	if err != nil || !replay.Replayed {
+		t.Fatalf("repair retry=%+v err=%v", replay, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("not sqlite"), privateio.FileMode); err != nil {
+		t.Fatal(err)
+	}
+	recovered, _, err := OpenRecovering(path, func() time.Time { return now.Add(time.Second) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer recovered.Close()
+	assertScopedRelevance(t, recovered, ctx, ScopedContext{
+		ScopeID: "scope-a", LensID: "lens-one", AgentID: "agent-a",
+	}, 0.025)
 }
 
 func seedScopedContexts(t *testing.T, store *Store, ctx context.Context, now time.Time) {

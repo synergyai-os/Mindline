@@ -31,24 +31,24 @@ func scopedRecoveryPath(databasePath string) string {
 // restoreScopedSidecarIfNeeded is deliberately insert-only. It runs only when
 // the scoped schema marker is absent (first upgrade or re-upgrade after a prior
 // binary rebuilt the legacy database), and never replaces live scoped rows.
-func (store *Store) restoreScopedSidecarIfNeeded(ctx context.Context) error {
+func (store *Store) restoreScopedSidecarIfNeeded(ctx context.Context) (bool, error) {
 	var version string
 	err := store.db.QueryRowContext(ctx,
 		`SELECT value FROM scoped_meta WHERE key='schema_version'`).Scan(&version)
 	if err == nil {
 		if version != ScopedSchemaVersion {
-			return errors.New("unsupported scoped agent state schema")
+			return false, errors.New("unsupported scoped agent state schema")
 		}
-		return nil
+		return true, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
-		return errors.New("read scoped agent state schema")
+		return false, errors.New("read scoped agent state schema")
 	}
 	snapshot, present, err := readScopedRecoverySnapshot(store.path)
 	if err != nil || !present {
-		return err
+		return false, err
 	}
-	return store.restoreScopedRecoverySnapshot(ctx, snapshot)
+	return true, store.restoreScopedRecoverySnapshot(ctx, snapshot)
 }
 
 func readScopedRecoverySnapshot(databasePath string) (scopedRecoverySnapshot, bool, error) {

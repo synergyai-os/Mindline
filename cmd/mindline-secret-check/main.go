@@ -17,7 +17,10 @@ import (
 	"strings"
 )
 
-const contractVersion = "mindline-secret-check/v0.1"
+const (
+	contractVersion  = "mindline-secret-check/v0.1"
+	defaultProofRoot = ".productbrain/proof"
+)
 
 var (
 	errBlocked       = errors.New("credential-shaped content detected")
@@ -70,7 +73,7 @@ func run(args []string, stdout io.Writer, detect detector) error {
 	root := flags.String("root", "", "repository root")
 	selfTest := flags.Bool("self-test", false, "verify the detector before scanning")
 	var proofDirectories stringList
-	flags.Var(&proofDirectories, "proof-dir", "generated proof directory (repeatable)")
+	flags.Var(&proofDirectories, "proof-dir", "additional generated proof directory (repeatable)")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || strings.TrimSpace(*root) == "" || !*selfTest || detect == nil {
 		return errInvalidInput
 	}
@@ -86,8 +89,15 @@ func run(args []string, stdout io.Writer, detect detector) error {
 	if err != nil {
 		return errScannerFailed
 	}
-	proof, err := proofFiles(proofDirectories)
+	// The signed command has no optional arguments, so its authoritative proof
+	// set must be deterministic. Extra proof directories may be added, but the
+	// owner-private default is always required and scanned.
+	proofRoots := append(stringList{filepath.Join(repositoryRoot, defaultProofRoot)}, proofDirectories...)
+	proof, err := proofFiles(proofRoots)
 	if err != nil {
+		return errScannerFailed
+	}
+	if len(proof) == 0 {
 		return errScannerFailed
 	}
 

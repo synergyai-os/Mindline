@@ -18,6 +18,10 @@ type fakeEmbedder struct{}
 
 type scopedOrderingEmbedder struct{}
 
+type contextFailureEmbedder struct{}
+
+type contextEvictionEmbedder struct{}
+
 type projectionTestRepository struct {
 	library personalmemory.Library
 }
@@ -105,6 +109,53 @@ func scopedOrderingVector(input string) []float64 {
 	default:
 		return []float64{0, 0, 0, 1}
 	}
+}
+
+func (contextFailureEmbedder) ModelID() string { return "fake/context-failure-v1" }
+func (contextFailureEmbedder) Embed(context.Context, []string) ([][]float64, error) {
+	return nil, errors.New("generic embedding path should not be used")
+}
+func (contextFailureEmbedder) EmbedDocuments(_ context.Context, inputs []string) ([][]float64, error) {
+	result := make([][]float64, 0, len(inputs))
+	for _, input := range inputs {
+		switch {
+		case strings.Contains(input, "doc-b"):
+			result = append(result, []float64{1, 0})
+		case strings.Contains(input, "doc-a"):
+			result = append(result, []float64{-1, 0})
+		default:
+			result = append(result, []float64{0, 1})
+		}
+	}
+	return result, nil
+}
+func (contextFailureEmbedder) EmbedQuery(_ context.Context, input string) ([]float64, error) {
+	if strings.Contains(input, "context-fails") {
+		return nil, errors.New("context embedding failed")
+	}
+	return []float64{1, 0}, nil
+}
+
+func (contextEvictionEmbedder) ModelID() string { return "fake/context-eviction-v1" }
+func (contextEvictionEmbedder) Embed(context.Context, []string) ([][]float64, error) {
+	return nil, errors.New("generic embedding path should not be used")
+}
+func (contextEvictionEmbedder) EmbedDocuments(_ context.Context, inputs []string) ([][]float64, error) {
+	result := make([][]float64, 0, len(inputs))
+	for _, input := range inputs {
+		if strings.Contains(input, "target-document") {
+			result = append(result, []float64{1, 0})
+		} else {
+			result = append(result, []float64{0, 1})
+		}
+	}
+	return result, nil
+}
+func (contextEvictionEmbedder) EmbedQuery(_ context.Context, input string) ([]float64, error) {
+	if strings.Contains(input, "push-target-last") {
+		return []float64{-1, 0}, nil
+	}
+	return []float64{1, 0}, nil
 }
 
 type failingEmbedder struct{}
@@ -291,6 +342,76 @@ func TestScopedRankFreezesCallerBoundBeforeContextRerank(t *testing.T) {
 		scopeAlpha[0].DocumentID != "a" || scopeAlpha[1].DocumentID != "b" ||
 		scopeBeta[0].DocumentID != "b" || scopeBeta[1].DocumentID != "a" {
 		t.Fatalf("scope changed authorized membership or did not rerank: alpha=%+v beta=%+v", scopeAlpha, scopeBeta)
+	}
+}
+
+func TestScopedContextEmbeddingFailurePreservesQueryAuthorizedMembership(t *testing.T) {
+	state, request := seededScopedRequest(t, "context-fails")
+	defer state.Close()
+	documents := []personalmemory.IndexDocument{
+		{DocumentID: "a", Text: "term term term doc-a"},
+		{DocumentID: "b", Text: "term doc-b"},
+	}
+	for index := 0; index < 100; index++ {
+		documents = append(documents, personalmemory.IndexDocument{
+			DocumentID: "filler-" + strconv.Itoa(index), Text: "filler evidence",
+		})
+	}
+	request.Query = "term"
+	request.LexicalQuery = "term"
+	request.QueryAuthorizedLimit = 1
+	hits, err := NewHybridBackend(context.Background(), state, contextFailureEmbedder{}).Rank(request, documents)
+	if err != nil || len(hits) != 1 || hits[0].DocumentID != "b" {
+		t.Fatalf("context failure changed query-authorized membership: hits=%+v err=%v", hits, err)
+	}
+}
+
+func TestScopedContextRankCapCannotDropAuthorizedSemanticOnlyItem(t *testing.T) {
+	state, request := seededScopedRequest(t, "push-target-last")
+	defer state.Close()
+	documents := []personalmemory.IndexDocument{{
+		DocumentID: "target", Text: "target-document",
+	}}
+	for index := 0; index < 101; index++ {
+		documents = append(documents, personalmemory.IndexDocument{
+			DocumentID: "noise-" + strconv.Itoa(index), Text: "contextual noise",
+		})
+	}
+	request.Query = "semantic-only-query"
+	request.LexicalQuery = request.Query
+	request.QueryAuthorizedLimit = 1
+	hits, err := NewHybridBackend(context.Background(), state, contextEvictionEmbedder{}).Rank(request, documents)
+	if err != nil || len(hits) != 1 || hits[0].DocumentID != "target" {
+		t.Fatalf("context rank cap dropped authorized item: hits=%+v err=%v", hits, err)
+	}
+}
+
+func seededScopedRequest(t *testing.T, lensQuery string) (*agentstate.Store, personalmemory.SearchRequest) {
+	t.Helper()
+	state, err := agentstate.Open(filepath.Join(t.TempDir(), "state", "agent.sqlite"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := state.PutScope(ctx, agentstate.Scope{
+		ID: "project", Name: "Project", Purpose: "shared-purpose",
+	}); err != nil {
+		state.Close()
+		t.Fatal(err)
+	}
+	if _, err := state.PutScopedLens(ctx, agentstate.ScopedLens{
+		ScopeID: "project", ID: "lens", Name: "Lens", Query: lensQuery,
+	}); err != nil {
+		state.Close()
+		t.Fatal(err)
+	}
+	if _, err := state.PutAgentActor(ctx, agentstate.AgentActor{ID: "agent", Name: "Agent"}); err != nil {
+		state.Close()
+		t.Fatal(err)
+	}
+	return state, personalmemory.SearchRequest{
+		Limit: 100, ScopeID: "project", ScopePurpose: "shared-purpose",
+		LensID: "lens", LensQuery: lensQuery, AgentID: "agent",
 	}
 }
 
