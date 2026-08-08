@@ -386,16 +386,43 @@ func TestScopedContextRankCapCannotDropAuthorizedSemanticOnlyItem(t *testing.T) 
 	request.LexicalQuery = request.Query
 	request.Limit = 1
 	request.QueryAuthorizedLimit = 1
+	request.RunID = "context-rank-cap-run"
+	backend := NewHybridBackend(context.Background(), state, contextEvictionEmbedder{})
 	repository := &projectionTestRepository{library: personalmemory.Library{
 		SchemaVersion: personalmemory.LibrarySchemaVersion, Revision: 1,
 		Fingerprint: strings.Repeat("f", 64), Records: records,
 		Resources: []personalmemory.ResourceContext{},
 	}}
 	packet, err := personalmemory.NewRetriever(
-		repository, NewHybridBackend(context.Background(), state, contextEvictionEmbedder{}),
+		repository, backend,
 	).SearchCompact(request)
 	if err != nil || len(packet.Citations) != 1 || packet.Citations[0].RecordID != "target" {
 		t.Fatalf("compact output dropped authorized item: packet=%+v err=%v", packet, err)
+	}
+	beforeScore := packet.Citations[0].Score
+	if err := state.SaveScopedRetrieval(context.Background(), agentstate.ScopedRetrievalTrace{
+		RunID: request.RunID, Query: request.Query, ScopeID: request.ScopeID,
+		LensID: request.LensID, AgentID: request.AgentID,
+		RetrievalMethod: packet.RetrievalMethod, LibraryFingerprint: packet.LibraryFingerprint,
+		CreatedAt: "2026-08-08T12:00:00Z", Candidates: []agentstate.ScopedCandidateTrace{{
+			RecordID: "target", Rank: 1, FinalScore: beforeScore,
+			ComponentScore: packet.Citations[0].ComponentScores,
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.ApplyScopedJudgment(context.Background(), agentstate.ScopedJudgmentRequest{
+		RetryToken: "context-rank-dismiss-123456", RunID: request.RunID,
+		ScopeID: request.ScopeID, LensID: request.LensID, AgentID: request.AgentID,
+		RecordID: "target", Actor: agentstate.FeedbackAgent, Disposition: "dismissed",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	after, err := personalmemory.NewRetriever(repository, backend).SearchCompact(request)
+	if err != nil || len(after.Citations) != 1 || after.Citations[0].RecordID != "target" ||
+		after.Citations[0].Score >= beforeScore {
+		t.Fatalf("dismissal did not lower retained citation: before=%+v after=%+v err=%v",
+			packet.Citations, after.Citations, err)
 	}
 }
 

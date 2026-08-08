@@ -236,9 +236,11 @@ func (retriever ContextRetriever) SearchCompact(request SearchRequest) (CompactC
 	if calibrated, ok := retriever.backend.(CompactSemanticCalibrationPort); ok {
 		calibrationID = strings.TrimSpace(calibrated.CompactSemanticCalibrationID())
 	}
-	rawHits = usableCompactHits(rawHits, policy, calibrationID, projection)
 	freezeScopedMembership := strings.TrimSpace(request.ScopeID) != "" ||
 		strings.TrimSpace(request.AgentID) != ""
+	rawHits = usableCompactHits(
+		rawHits, policy, calibrationID, projection, freezeScopedMembership,
+	)
 	hits, selectedResources, err := expandCompactHits(
 		rawHits, projection, callerLimit, freezeScopedMembership,
 	)
@@ -1065,12 +1067,14 @@ func usableCompactHits(
 	policy CompactAbstentionPolicy,
 	calibrationID string,
 	projection compactRetrievalProjection,
+	preserveScopedMembership bool,
 ) []RankedHit {
 	valid := make([]RankedHit, 0, len(hits))
 	seen := map[string]bool{}
 	for _, hit := range hits {
 		if strings.TrimSpace(hit.DocumentID) == "" || seen[hit.DocumentID] ||
-			math.IsNaN(hit.Score) || math.IsInf(hit.Score, 0) || hit.Score <= 0 {
+			math.IsNaN(hit.Score) || math.IsInf(hit.Score, 0) ||
+			(!preserveScopedMembership && hit.Score <= 0) {
 			continue
 		}
 		seen[hit.DocumentID] = true
