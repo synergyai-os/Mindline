@@ -104,6 +104,18 @@ func (server *Server) Serve() error {
 	mux.HandleFunc("PUT /v1/lenses/{lensID}", server.handlePutLens)
 	mux.HandleFunc("DELETE /v1/lenses/{lensID}", server.handleDeleteLens)
 	mux.HandleFunc("POST /v1/judgments", server.handleJudgment)
+	mux.HandleFunc("GET /v1/scoped/scopes", server.handleListScopes)
+	mux.HandleFunc("PUT /v1/scoped/scopes/{scopeID}", server.handlePutScope)
+	mux.HandleFunc("POST /v1/scoped/scopes/{scopeID}/archive", server.handleArchiveScope)
+	mux.HandleFunc("GET /v1/scoped/scopes/{scopeID}/lenses", server.handleListScopedLenses)
+	mux.HandleFunc("GET /v1/scoped/lenses", server.handleListScopedLenses)
+	mux.HandleFunc("PUT /v1/scoped/scopes/{scopeID}/lenses/{lensID}", server.handlePutScopedLens)
+	mux.HandleFunc("POST /v1/scoped/scopes/{scopeID}/lenses/{lensID}/archive", server.handleArchiveScopedLens)
+	mux.HandleFunc("GET /v1/scoped/actors", server.handleListActors)
+	mux.HandleFunc("PUT /v1/scoped/actors/{actorID}", server.handlePutActor)
+	mux.HandleFunc("POST /v1/scoped/actors/{actorID}/archive", server.handleArchiveActor)
+	mux.HandleFunc("POST /v1/scoped/search/compact", server.handleSearchScoped)
+	mux.HandleFunc("POST /v1/scoped/judgments", server.handleScopedJudgment)
 	server.httpServer = &http.Server{
 		Handler: mux, ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout: 30 * time.Second, WriteTimeout: 2 * time.Minute,
@@ -154,6 +166,9 @@ func (server *Server) handleCapabilities(writer http.ResponseWriter, _ *http.Req
 		CompactAbstentionPolicy:  personalmemory.DefaultCompactAbstentionPolicy(),
 		ExplicitHydrationCommand: "agent get",
 		FeedbackRetryToken:       true,
+		Features:                 []string{ScopedRecallCapability},
+		ScopedSearchEndpoint:     "/v1/scoped/search/compact",
+		ScopedFeedbackEndpoint:   "/v1/scoped/judgments",
 	})
 }
 
@@ -500,6 +515,176 @@ func (server *Server) handleJudgment(writer http.ResponseWriter, request *http.R
 		return
 	}
 	judgment, err := server.state.ApplyJudgment(request.Context(), input)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, judgment)
+}
+
+func (server *Server) handleListScopes(writer http.ResponseWriter, request *http.Request) {
+	scopes, err := server.state.ListScopes(request.Context())
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, scopes)
+}
+
+func (server *Server) handlePutScope(writer http.ResponseWriter, request *http.Request) {
+	var scope agentstate.Scope
+	if err := decodeRequest(request, &scope); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	scope.ID = strings.TrimSpace(request.PathValue("scopeID"))
+	saved, err := server.state.PutScope(request.Context(), scope)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, saved)
+}
+
+func (server *Server) handleArchiveScope(writer http.ResponseWriter, request *http.Request) {
+	scope, err := server.state.ArchiveScope(request.Context(), request.PathValue("scopeID"))
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, scope)
+}
+
+func (server *Server) handleListScopedLenses(writer http.ResponseWriter, request *http.Request) {
+	lenses, err := server.state.ListScopedLenses(
+		request.Context(), strings.TrimSpace(request.PathValue("scopeID")),
+	)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, lenses)
+}
+
+func (server *Server) handlePutScopedLens(writer http.ResponseWriter, request *http.Request) {
+	var lens agentstate.ScopedLens
+	if err := decodeRequest(request, &lens); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	lens.ScopeID = strings.TrimSpace(request.PathValue("scopeID"))
+	lens.ID = strings.TrimSpace(request.PathValue("lensID"))
+	saved, err := server.state.PutScopedLens(request.Context(), lens)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, saved)
+}
+
+func (server *Server) handleArchiveScopedLens(writer http.ResponseWriter, request *http.Request) {
+	lens, err := server.state.ArchiveScopedLens(
+		request.Context(), request.PathValue("scopeID"), request.PathValue("lensID"),
+	)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, lens)
+}
+
+func (server *Server) handleListActors(writer http.ResponseWriter, request *http.Request) {
+	actors, err := server.state.ListAgentActors(request.Context())
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, actors)
+}
+
+func (server *Server) handlePutActor(writer http.ResponseWriter, request *http.Request) {
+	var actor agentstate.AgentActor
+	if err := decodeRequest(request, &actor); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	actor.ID = strings.TrimSpace(request.PathValue("actorID"))
+	saved, err := server.state.PutAgentActor(request.Context(), actor)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, saved)
+}
+
+func (server *Server) handleArchiveActor(writer http.ResponseWriter, request *http.Request) {
+	actor, err := server.state.ArchiveAgentActor(request.Context(), request.PathValue("actorID"))
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, actor)
+}
+
+func (server *Server) handleSearchScoped(writer http.ResponseWriter, request *http.Request) {
+	var input ScopedSearchInput
+	if err := decodeRequest(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	contextIDs := agentstate.ScopedContext{
+		ScopeID: input.ScopeID, LensID: input.LensID, AgentID: input.AgentID,
+	}
+	scope, lens, actor, err := server.state.ResolveScopedContext(request.Context(), contextIDs)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	runID, err := randomID("retrieval")
+	if err != nil {
+		writeError(writer, http.StatusInternalServerError, err)
+		return
+	}
+	backend := server.retrievalBackend(request.Context())
+	packet, err := personalmemory.NewRetriever(server.repository, backend).SearchCompact(
+		personalmemory.SearchRequest{
+			Query: input.Query, Limit: input.Limit, RunID: runID,
+			ScopeID: scope.ID, ScopePurpose: scope.Purpose,
+			LensID: lens.ID, LensQuery: lens.Query, AgentID: actor.ID,
+		},
+	)
+	if err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	trace := agentstate.ScopedRetrievalTrace{
+		RunID: runID, Query: packet.Query, ScopeID: packet.ScopeID,
+		LensID: packet.LensID, AgentID: packet.AgentID,
+		RetrievalMethod:    packet.RetrievalMethod,
+		LibraryFingerprint: packet.LibraryFingerprint,
+		CreatedAt:          server.now().UTC().Format(time.RFC3339Nano),
+		Candidates:         make([]agentstate.ScopedCandidateTrace, 0, len(packet.Citations)),
+	}
+	for rank, citation := range packet.Citations {
+		trace.Candidates = append(trace.Candidates, agentstate.ScopedCandidateTrace{
+			RecordID: citation.RecordID, Rank: rank + 1, FinalScore: citation.Score,
+			ComponentScore: citation.ComponentScores,
+		})
+	}
+	if err := server.state.SaveScopedRetrieval(request.Context(), trace); err != nil {
+		writeError(writer, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(writer, http.StatusOK, packet)
+}
+
+func (server *Server) handleScopedJudgment(writer http.ResponseWriter, request *http.Request) {
+	var input agentstate.ScopedJudgmentRequest
+	if err := decodeRequest(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	judgment, err := server.state.ApplyScopedJudgment(request.Context(), input)
 	if err != nil {
 		writeError(writer, http.StatusBadRequest, err)
 		return

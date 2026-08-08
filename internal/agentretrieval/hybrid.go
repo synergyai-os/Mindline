@@ -131,13 +131,17 @@ func (backend *HybridBackend) Rank(request personalmemory.SearchRequest, documen
 	if err != nil {
 		return nil, err
 	}
-	lensQuery := ""
-	if strings.TrimSpace(request.LensID) != "" {
+	contextQuery := strings.TrimSpace(strings.Join([]string{
+		request.ScopePurpose, request.LensQuery,
+	}, "\n"))
+	scoped := strings.TrimSpace(request.ScopeID) != "" ||
+		strings.TrimSpace(request.AgentID) != ""
+	if !scoped && strings.TrimSpace(request.LensID) != "" {
 		lens, err := backend.state.GetLens(backend.context, request.LensID)
 		if err != nil {
 			return nil, err
 		}
-		lensQuery = lens.Query
+		contextQuery = lens.Query
 	}
 	var authorizationSemanticScores map[string]float64
 	var semanticErr error
@@ -148,14 +152,14 @@ func (backend *HybridBackend) Rank(request personalmemory.SearchRequest, documen
 		authorizationSemanticScores, semanticErr = backend.semanticScores(query, documents)
 	}
 	rankingSemanticScores := authorizationSemanticScores
-	if semanticErr == nil && strings.TrimSpace(lensQuery) != "" {
+	if semanticErr == nil && contextQuery != "" {
 		rankingSemanticScores, semanticErr = backend.semanticScores(
-			strings.TrimSpace(query+"\n"+lensQuery), documents,
+			strings.TrimSpace(query+"\n"+contextQuery), documents,
 		)
 	}
 	backend.setMode(semanticErr)
 
-	relevance, err := backend.feedbackRelevance(request.LensID, documents)
+	relevance, err := backend.feedbackRelevanceForRequest(request, documents)
 	if err != nil {
 		return nil, err
 	}
@@ -184,15 +188,25 @@ func (backend *HybridBackend) Rank(request personalmemory.SearchRequest, documen
 	}
 	candidates := []scored{}
 	maximumBase := 0.0
+	maximumAuthorizationBase := 0.0
 	for _, document := range documents {
 		lexicalRRF := reciprocalRank(lexicalRanks[document.DocumentID])
 		semanticRRF := reciprocalRank(semanticRanks[document.DocumentID])
+		authorizationSemanticRRF := reciprocalRank(
+			authorizationSemanticRanks[document.DocumentID],
+		)
 		base := lexicalRRFWeight*lexicalRRF + semanticRRFWeight*semanticRRF
+		authorizationBase := lexicalRRFWeight*lexicalRRF +
+			semanticRRFWeight*authorizationSemanticRRF
 		if semanticErr != nil {
 			base = lexicalRRFWeight * lexicalRRF
+			authorizationBase = base
 		}
 		if base > maximumBase {
 			maximumBase = base
+		}
+		if authorizationBase > maximumAuthorizationBase {
+			maximumAuthorizationBase = authorizationBase
 		}
 		components := map[string]float64{
 			"lexical_raw":                    lexicalComponents[document.DocumentID]["lexical_raw"],
@@ -211,7 +225,9 @@ func (backend *HybridBackend) Rank(request personalmemory.SearchRequest, documen
 			"semantic_margin":                semanticMargin,
 			"semantic_ranking_cosine":        rankingSemanticScores[document.DocumentID],
 			"semantic_rrf":                   semanticRRF,
+			"semantic_authorization_rrf":     authorizationSemanticRRF,
 			"lens_feedback":                  relevance[document.DocumentID],
+			"authorization_base_raw":         authorizationBase,
 		}
 		if distinctEvidenceOK && document.DocumentID == distinctEvidence.winnerID {
 			components["semantic_distinct_evidence_valid"] = 1
@@ -222,6 +238,23 @@ func (backend *HybridBackend) Rank(request personalmemory.SearchRequest, documen
 		candidates = append(candidates, scored{
 			id: document.DocumentID, components: components,
 		})
+	}
+	if scoped {
+		authorizedLimit := request.QueryAuthorizedLimit
+		if authorizedLimit <= 0 {
+			authorizedLimit = limit
+		}
+		sort.Slice(candidates, func(i, j int) bool {
+			left := candidates[i].components["authorization_base_raw"]
+			right := candidates[j].components["authorization_base_raw"]
+			if left == right {
+				return candidates[i].id < candidates[j].id
+			}
+			return left > right
+		})
+		if len(candidates) > authorizedLimit {
+			candidates = candidates[:authorizedLimit]
+		}
 	}
 	hits := make([]personalmemory.RankedHit, 0, len(candidates))
 	for _, candidate := range candidates {
@@ -236,6 +269,10 @@ func (backend *HybridBackend) Rank(request personalmemory.SearchRequest, documen
 			base /= maximumBase
 		}
 		candidate.components["hybrid_base"] = base
+		if maximumAuthorizationBase > 0 {
+			candidate.components["authorization_base"] =
+				candidate.components["authorization_base_raw"] / maximumAuthorizationBase
+		}
 		candidate.score = base + candidate.components["lens_feedback"]
 		candidate.components["final"] = candidate.score
 		hits = append(hits, personalmemory.RankedHit{
@@ -249,7 +286,7 @@ func (backend *HybridBackend) Rank(request personalmemory.SearchRequest, documen
 		}
 		return hits[i].Score > hits[j].Score
 	})
-	if len(hits) > limit {
+	if !scoped && len(hits) > limit {
 		hits = hits[:limit]
 	}
 	return hits, nil
@@ -481,8 +518,17 @@ func (backend *HybridBackend) feedbackRelevance(
 	lensID string,
 	documents []personalmemory.IndexDocument,
 ) (map[string]float64, error) {
+	return backend.feedbackRelevanceForRequest(
+		personalmemory.SearchRequest{LensID: lensID}, documents,
+	)
+}
+
+func (backend *HybridBackend) feedbackRelevanceForRequest(
+	request personalmemory.SearchRequest,
+	documents []personalmemory.IndexDocument,
+) (map[string]float64, error) {
 	documentRelevance := make(map[string]float64, len(documents))
-	if strings.TrimSpace(lensID) == "" || len(documents) == 0 {
+	if strings.TrimSpace(request.LensID) == "" || len(documents) == 0 {
 		return documentRelevance, nil
 	}
 	aliasesByDocument := make(map[string][]string, len(documents))
@@ -505,9 +551,21 @@ func (backend *HybridBackend) feedbackRelevance(
 		if end > len(aliases) {
 			end = len(aliases)
 		}
-		values, err := backend.state.Relevance(
-			backend.context, lensID, aliases[start:end],
-		)
+		var values map[string]float64
+		var err error
+		if strings.TrimSpace(request.ScopeID) != "" || strings.TrimSpace(request.AgentID) != "" {
+			values, err = backend.state.ScopedRelevance(
+				backend.context,
+				agentstate.ScopedContext{
+					ScopeID: request.ScopeID, LensID: request.LensID, AgentID: request.AgentID,
+				},
+				aliases[start:end],
+			)
+		} else {
+			values, err = backend.state.Relevance(
+				backend.context, request.LensID, aliases[start:end],
+			)
+		}
 		if err != nil {
 			return nil, err
 		}

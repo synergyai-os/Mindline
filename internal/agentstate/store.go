@@ -172,9 +172,12 @@ func (store *Store) initialize() error {
 	}
 	if _, err := store.db.Exec(
 		`INSERT INTO state_meta(key, value) VALUES('schema_version', ?)
-		 ON CONFLICT(key) DO UPDATE SET value=excluded.value`, SchemaVersion,
+			 ON CONFLICT(key) DO UPDATE SET value=excluded.value`, SchemaVersion,
 	); err != nil {
 		return errors.New("initialize agent state schema")
+	}
+	if err := store.initializeScoped(context.Background()); err != nil {
+		return err
 	}
 	return store.secureFiles()
 }

@@ -35,12 +35,26 @@ func (r Runner) runAgent(args []string, stdout, stderr io.Writer) int {
 		return r.runAgentSearch(args[1:], stdout, stderr)
 	case "get":
 		return r.runAgentGet(args[1:], stdout, stderr)
+	case "scope-list":
+		return r.runAgentScopeList(args[1:], stdout, stderr)
+	case "scope-put":
+		return r.runAgentScopePut(args[1:], stdout, stderr)
+	case "scope-archive":
+		return r.runAgentScopeArchive(args[1:], stdout, stderr)
 	case "lens-list":
 		return r.runAgentLensList(args[1:], stdout, stderr)
 	case "lens-put":
 		return r.runAgentLensPut(args[1:], stdout, stderr)
+	case "lens-archive":
+		return r.runAgentLensArchive(args[1:], stdout, stderr)
 	case "lens-delete":
 		return r.runAgentLensDelete(args[1:], stdout, stderr)
+	case "actor-list":
+		return r.runAgentActorList(args[1:], stdout, stderr)
+	case "actor-put":
+		return r.runAgentActorPut(args[1:], stdout, stderr)
+	case "actor-archive":
+		return r.runAgentActorArchive(args[1:], stdout, stderr)
 	case "feedback":
 		return r.runAgentFeedback(args[1:], stdout, stderr, false)
 	case "feedback-reverse":
@@ -88,7 +102,7 @@ func (r Runner) runAgentCapabilities(args []string, stdout, stderr io.Writer) in
 func (r Runner) runAgentSearch(args []string, stdout, stderr io.Writer) int {
 	options, err := parseAgentOptions(args)
 	if err != nil || len(options.positionals) == 0 ||
-		!onlyAgentKeys(options.values, "lens", "limit", "format") {
+		!onlyAgentKeys(options.values, "scope", "lens", "agent", "limit", "format") {
 		return agentUsage(stderr)
 	}
 	limit := 10
@@ -99,6 +113,33 @@ func (r Runner) runAgentSearch(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	format := options.values["format"]
+	scoped := options.values["scope"] != "" || options.values["agent"] != "" ||
+		format == "compact-scoped-v0.4"
+	if scoped {
+		if format != "compact-scoped-v0.4" || options.values["scope"] == "" ||
+			options.values["lens"] == "" || options.values["agent"] == "" {
+			return agentUsage(stderr)
+		}
+		client, err := agentClient(options.configPath)
+		if err != nil {
+			return agentFailure(stderr, err)
+		}
+		capabilities, err := client.Capabilities(context.Background())
+		if err != nil {
+			return agentFailure(stderr, err)
+		}
+		if !supportsSearchFormat(capabilities.Features, localservice.ScopedRecallCapability) {
+			return agentFailure(stderr, errors.New("local agent service does not support scoped recall v0.4"))
+		}
+		packet, err := client.SearchScoped(context.Background(), localservice.ScopedSearchInput{
+			Query: strings.Join(options.positionals, " "), ScopeID: options.values["scope"],
+			LensID: options.values["lens"], AgentID: options.values["agent"], Limit: limit,
+		})
+		if err != nil {
+			return agentFailure(stderr, err)
+		}
+		return encodePersonalMemoryJSON(stdout, stderr, packet)
+	}
 	if format != "" && format != "legacy-v0.2" && format != "compact-v0.3" {
 		return agentUsage(stderr)
 	}
@@ -160,14 +201,14 @@ func (r Runner) runAgentGet(args []string, stdout, stderr io.Writer) int {
 
 func (r Runner) runAgentLensList(args []string, stdout, stderr io.Writer) int {
 	options, err := parseAgentOptions(args)
-	if err != nil || len(options.positionals) != 0 || len(options.values) != 0 {
+	if err != nil || len(options.positionals) != 0 || !onlyAgentKeys(options.values, "scope") {
 		return agentUsage(stderr)
 	}
 	client, err := agentClient(options.configPath)
 	if err != nil {
 		return agentFailure(stderr, err)
 	}
-	lenses, err := client.ListLenses(context.Background())
+	lenses, err := client.ListScopedLenses(context.Background(), options.values["scope"])
 	if err != nil {
 		return agentFailure(stderr, err)
 	}
@@ -177,16 +218,18 @@ func (r Runner) runAgentLensList(args []string, stdout, stderr io.Writer) int {
 func (r Runner) runAgentLensPut(args []string, stdout, stderr io.Writer) int {
 	options, err := parseAgentOptions(args)
 	if err != nil || len(options.positionals) != 1 ||
-		!onlyAgentKeys(options.values, "name", "query") ||
-		options.values["name"] == "" || options.values["query"] == "" {
+		!onlyAgentKeys(options.values, "scope", "name", "query") ||
+		options.values["scope"] == "" || options.values["name"] == "" ||
+		options.values["query"] == "" {
 		return agentUsage(stderr)
 	}
 	client, err := agentClient(options.configPath)
 	if err != nil {
 		return agentFailure(stderr, err)
 	}
-	lens, err := client.PutLens(context.Background(), agentstate.Lens{
-		ID: options.positionals[0], Name: options.values["name"], Query: options.values["query"],
+	lens, err := client.PutScopedLens(context.Background(), agentstate.ScopedLens{
+		ScopeID: options.values["scope"], ID: options.positionals[0],
+		Name: options.values["name"], Query: options.values["query"],
 	})
 	if err != nil {
 		return agentFailure(stderr, err)

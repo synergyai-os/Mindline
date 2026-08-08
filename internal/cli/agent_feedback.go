@@ -17,9 +17,9 @@ func (r Runner) runAgentFeedback(args []string, stdout, stderr io.Writer, revers
 	options, err := parseAgentOptions(args)
 	allowed := []string{"actor", "idempotency-key", "retry-token", "reason"}
 	if !reversal {
-		allowed = append(allowed, "run", "lens", "record", "disposition")
+		allowed = append(allowed, "run", "scope", "lens", "agent", "record", "disposition")
 	} else {
-		allowed = append(allowed, "judgment")
+		allowed = append(allowed, "judgment", "scope", "lens", "agent")
 	}
 	if err != nil || len(options.positionals) != 0 || !onlyAgentKeys(options.values, allowed...) ||
 		options.values["actor"] == "" {
@@ -27,11 +27,19 @@ func (r Runner) runAgentFeedback(args []string, stdout, stderr io.Writer, revers
 	}
 	explicitKey := options.values["idempotency-key"]
 	retryToken := options.values["retry-token"]
+	scoped := options.values["scope"] != "" || options.values["agent"] != "" ||
+		options.values["actor"] == agentstate.FeedbackOwner
+	if scoped {
+		return r.runAgentScopedFeedback(options, stdout, stderr, reversal)
+	}
 	if reversal {
 		if explicitKey == "" || retryToken != "" {
 			return agentUsage(stderr)
 		}
 	} else if (explicitKey == "") == (retryToken == "") {
+		return agentUsage(stderr)
+	}
+	if options.values["actor"] != "user" && options.values["actor"] != "agent" {
 		return agentUsage(stderr)
 	}
 	input := agentstate.JudgmentRequest{
@@ -57,6 +65,59 @@ func (r Runner) runAgentFeedback(args []string, stdout, stderr io.Writer, revers
 		return agentFailure(stderr, err)
 	}
 	judgment, err := client.ApplyJudgment(context.Background(), input)
+	if err != nil {
+		return agentFailure(stderr, err)
+	}
+	return encodePersonalMemoryJSON(stdout, stderr, judgment)
+}
+
+func (r Runner) runAgentScopedFeedback(
+	options agentOptions,
+	stdout, stderr io.Writer,
+	reversal bool,
+) int {
+	actor := options.values["actor"]
+	agentID := options.values["agent"]
+	if options.values["scope"] == "" || options.values["lens"] == "" ||
+		(actor != agentstate.FeedbackOwner && actor != agentstate.FeedbackAgent) ||
+		(actor == agentstate.FeedbackOwner && agentID != "") ||
+		(actor == agentstate.FeedbackAgent && agentID == "") {
+		return agentUsage(stderr)
+	}
+	input := agentstate.ScopedJudgmentRequest{
+		ScopeID: options.values["scope"], LensID: options.values["lens"],
+		AgentID: agentID, Actor: actor, Reason: options.values["reason"],
+	}
+	if reversal {
+		if options.values["idempotency-key"] == "" || options.values["retry-token"] != "" ||
+			options.values["judgment"] == "" {
+			return agentUsage(stderr)
+		}
+		input.IdempotencyKey = options.values["idempotency-key"]
+		input.ReversesID = options.values["judgment"]
+	} else {
+		if options.values["idempotency-key"] != "" || options.values["retry-token"] == "" ||
+			options.values["run"] == "" || options.values["record"] == "" ||
+			options.values["disposition"] == "" {
+			return agentUsage(stderr)
+		}
+		input.RetryToken = options.values["retry-token"]
+		input.RunID = options.values["run"]
+		input.RecordID = options.values["record"]
+		input.Disposition = options.values["disposition"]
+	}
+	client, err := agentClient(options.configPath)
+	if err != nil {
+		return agentFailure(stderr, err)
+	}
+	capabilities, err := client.Capabilities(context.Background())
+	if err != nil {
+		return agentFailure(stderr, err)
+	}
+	if !supportsSearchFormat(capabilities.Features, localservice.ScopedRecallCapability) {
+		return agentFailure(stderr, fmt.Errorf("local agent service does not support scoped recall v0.4"))
+	}
+	judgment, err := client.ApplyScopedJudgment(context.Background(), input)
 	if err != nil {
 		return agentFailure(stderr, err)
 	}

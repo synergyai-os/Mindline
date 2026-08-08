@@ -12,18 +12,19 @@ import (
 )
 
 const (
-	ContextPacketSchemaVersion   = "mindline-agent-context-packet/v0.2"
-	CompactPacketSchemaVersion   = "mindline-agent-context-packet/v0.3"
-	HydratedCaptureSchemaVersion = "mindline-hydrated-capture/v0.1"
-	MaximumLensRequestRunes      = 64 << 10
-	MaximumRetrievalContentBytes = 64 << 20
-	MaximumCitationEvidenceRefs  = 32
-	MaximumCompactResourceStates = 32
-	MaximumCompactSnippetRunes   = 500
-	MaximumCompactIndexDocuments = MaximumRecords + MaximumResources
-	MaximumCompactOwnerLinks     = 1_000_000
-	DefaultSearchLimit           = 10
-	MaximumSearchLimit           = 100
+	ContextPacketSchemaVersion       = "mindline-agent-context-packet/v0.2"
+	CompactPacketSchemaVersion       = "mindline-agent-context-packet/v0.3"
+	ScopedCompactPacketSchemaVersion = "mindline-agent-context-packet/v0.4"
+	HydratedCaptureSchemaVersion     = "mindline-hydrated-capture/v0.1"
+	MaximumLensRequestRunes          = 64 << 10
+	MaximumRetrievalContentBytes     = 64 << 20
+	MaximumCitationEvidenceRefs      = 32
+	MaximumCompactResourceStates     = 32
+	MaximumCompactSnippetRunes       = 500
+	MaximumCompactIndexDocuments     = MaximumRecords + MaximumResources
+	MaximumCompactOwnerLinks         = 1_000_000
+	DefaultSearchLimit               = 10
+	MaximumSearchLimit               = 100
 
 	CompactAbstentionPolicySchemaVersion      = "mindline-compact-abstention-policy/v0.7"
 	DefaultCompactMinimumSemanticCosine       = 0.60
@@ -216,6 +217,7 @@ func (retriever ContextRetriever) SearchCompact(request SearchRequest) (CompactC
 	}
 	rankingRequest := request
 	rankingRequest.LexicalQuery = strings.Join(queryTerms, " ")
+	rankingRequest.QueryAuthorizedLimit = callerLimit
 	rankingRequest.Limit = MaximumSearchLimit
 	rawHits, err := retriever.backend.Rank(rankingRequest, projection.indexDocuments)
 	if err != nil {
@@ -866,9 +868,14 @@ func assembleCompactContextPacket(
 	retrievalMethod string,
 	policy CompactAbstentionPolicy,
 ) CompactContextPacket {
+	schemaVersion := CompactPacketSchemaVersion
+	if request.ScopeID != "" || request.AgentID != "" {
+		schemaVersion = ScopedCompactPacketSchemaVersion
+	}
 	packet := CompactContextPacket{
-		SchemaVersion: CompactPacketSchemaVersion, RunID: request.RunID,
-		Query: strings.TrimSpace(request.Query), LensID: request.LensID,
+		SchemaVersion: schemaVersion, RunID: request.RunID,
+		Query: strings.TrimSpace(request.Query), ScopeID: request.ScopeID,
+		LensID: request.LensID, AgentID: request.AgentID,
 		RetrievalMethod: retrievalMethod, AuthorityClass: AuthorityClass,
 		AbstentionPolicyFingerprint: policy.Fingerprint,
 		LibraryRevision:             library.Revision, LibraryFingerprint: library.Fingerprint,

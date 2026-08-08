@@ -198,6 +198,13 @@ type SearchRequest struct {
 	Limit        int    `json:"limit"`
 	RunID        string `json:"run_id,omitempty"`
 	LensID       string `json:"lens_id,omitempty"`
+	ScopeID      string `json:"scope_id,omitempty"`
+	AgentID      string `json:"agent_id,omitempty"`
+	ScopePurpose string `json:"-"`
+	LensQuery    string `json:"-"`
+	// QueryAuthorizedLimit preserves the caller-visible bound while compact
+	// retrieval asks the ranking backend for its larger internal candidate pool.
+	QueryAuthorizedLimit int `json:"-"`
 }
 
 type Citation struct {
@@ -253,6 +260,8 @@ type CompactContextPacket struct {
 	RunID                       string            `json:"run_id,omitempty"`
 	Query                       string            `json:"query"`
 	LensID                      string            `json:"lens_id,omitempty"`
+	ScopeID                     string            `json:"scope_id,omitempty"`
+	AgentID                     string            `json:"agent_id,omitempty"`
 	RetrievalMethod             string            `json:"retrieval_method"`
 	RetrievalState              string            `json:"retrieval_state,omitempty"`
 	DegradedReason              string            `json:"degraded_reason,omitempty"`

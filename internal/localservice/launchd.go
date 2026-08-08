@@ -172,6 +172,11 @@ func stopLaunchAgent(_ string) error {
 	return nil
 }
 
+func launchAgentRunning(_ string) (bool, error) {
+	domain := "gui/" + strconv.Itoa(os.Getuid())
+	return launchAgentLoaded(domain + "/" + launchAgentLabel)
+}
+
 func launchAgentLoaded(serviceTarget string) (bool, error) {
 	command := exec.Command("launchctl", "print", serviceTarget)
 	output, err := command.CombinedOutput()

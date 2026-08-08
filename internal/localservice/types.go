@@ -16,7 +16,18 @@ type SearchInput struct {
 	Limit  int    `json:"limit,omitempty"`
 }
 
-const CapabilitiesSchemaVersion = "mindline-agent-capabilities/v0.1"
+type ScopedSearchInput struct {
+	Query   string `json:"query"`
+	ScopeID string `json:"scope_id"`
+	LensID  string `json:"lens_id"`
+	AgentID string `json:"agent_id"`
+	Limit   int    `json:"limit,omitempty"`
+}
+
+const (
+	CapabilitiesSchemaVersion = "mindline-agent-capabilities/v0.1"
+	ScopedRecallCapability    = "mindline.scoped-recall.v0.4"
+)
 
 type Capabilities struct {
 	SchemaVersion            string                                 `json:"schema_version"`
@@ -25,8 +36,10 @@ type Capabilities struct {
 	CompactAbstentionPolicy  personalmemory.CompactAbstentionPolicy `json:"compact_abstention_policy"`
 	ExplicitHydrationCommand string                                 `json:"explicit_hydration_command"`
 	FeedbackRetryToken       bool                                   `json:"feedback_retry_token"`
+	Features                 []string                               `json:"features,omitempty"`
+	ScopedSearchEndpoint     string                                 `json:"scoped_search_endpoint,omitempty"`
+	ScopedFeedbackEndpoint   string                                 `json:"scoped_feedback_endpoint,omitempty"`
 }
-
 type Status struct {
 	SchemaVersion string                 `json:"schema_version"`
 	ServiceState  string                 `json:"service_state"`

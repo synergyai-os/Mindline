@@ -16,6 +16,8 @@ import (
 
 type fakeEmbedder struct{}
 
+type scopedOrderingEmbedder struct{}
+
 type projectionTestRepository struct {
 	library personalmemory.Library
 }
@@ -55,6 +57,54 @@ func (fakeEmbedder) Embed(_ context.Context, inputs []string) ([][]float64, erro
 		}
 	}
 	return result, nil
+}
+
+func (scopedOrderingEmbedder) ModelID() string { return "fake/scoped-ordering-v1" }
+
+func (scopedOrderingEmbedder) Embed(_ context.Context, inputs []string) ([][]float64, error) {
+	result := make([][]float64, 0, len(inputs))
+	for _, input := range inputs {
+		result = append(result, scopedOrderingVector(input))
+	}
+	return result, nil
+}
+
+func (scopedOrderingEmbedder) EmbedDocuments(
+	_ context.Context,
+	inputs []string,
+) ([][]float64, error) {
+	result := make([][]float64, 0, len(inputs))
+	for _, input := range inputs {
+		result = append(result, scopedOrderingVector(input))
+	}
+	return result, nil
+}
+
+func (scopedOrderingEmbedder) EmbedQuery(
+	_ context.Context,
+	input string,
+) ([]float64, error) {
+	input = strings.ToLower(input)
+	if strings.Contains(input, "prefer-beta") {
+		return []float64{0, 1, 1, 1}, nil
+	}
+	if strings.Contains(input, "prefer-alpha") {
+		return []float64{1, 0, 0, 0}, nil
+	}
+	return []float64{1, 1, 0, 0}, nil
+}
+
+func scopedOrderingVector(input string) []float64 {
+	switch {
+	case strings.Contains(input, "alpha"):
+		return []float64{1, 0, 0, 0}
+	case strings.Contains(input, "beta"):
+		return []float64{0, 1, 0, 0}
+	case strings.Contains(input, "gamma"):
+		return []float64{0, 0, 1, 0}
+	default:
+		return []float64{0, 0, 0, 1}
+	}
 }
 
 type failingEmbedder struct{}
@@ -155,6 +205,92 @@ func TestHybridBackendUsesSemanticLensAndReversibleFeedback(t *testing.T) {
 	if err != nil || componentFor(hits, "relevant", "lens_feedback") != 0 ||
 		hits[0].DocumentID != "relevant" {
 		t.Fatalf("feedback not reversed: %+v err=%v", hits, err)
+	}
+}
+
+func TestScopedRankFreezesCallerBoundBeforeContextRerank(t *testing.T) {
+	state, err := agentstate.Open(filepath.Join(t.TempDir(), "state", "agent.sqlite"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	ctx := context.Background()
+	if _, err := state.PutScope(ctx, agentstate.Scope{
+		ID: "project", Name: "Project", Purpose: "shared purpose",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, lens := range []agentstate.ScopedLens{
+		{ScopeID: "project", ID: "alpha", Name: "Alpha", Query: "prefer-alpha"},
+		{ScopeID: "project", ID: "beta", Name: "Beta", Query: "prefer-beta"},
+	} {
+		if _, err := state.PutScopedLens(ctx, lens); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := state.PutAgentActor(ctx, agentstate.AgentActor{
+		ID: "agent-a", Name: "Agent A",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	documents := []personalmemory.IndexDocument{
+		{DocumentID: "a", Text: "shared evidence alpha"},
+		{DocumentID: "b", Text: "shared evidence beta"},
+		{DocumentID: "c", Text: "shared evidence gamma"},
+		{DocumentID: "d", Text: "shared evidence delta"},
+	}
+	backend := NewHybridBackend(ctx, state, scopedOrderingEmbedder{})
+	rank := func(lensID, lensQuery string) []personalmemory.RankedHit {
+		hits, err := backend.Rank(personalmemory.SearchRequest{
+			Query: "shared evidence", LexicalQuery: "shared evidence",
+			Limit: 100, QueryAuthorizedLimit: 2,
+			ScopeID: "project", ScopePurpose: "shared purpose",
+			LensID: lensID, LensQuery: lensQuery, AgentID: "agent-a",
+		}, documents)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return hits
+	}
+	alpha := rank("alpha", "prefer-alpha")
+	beta := rank("beta", "prefer-beta")
+	if len(alpha) != 2 || len(beta) != 2 ||
+		alpha[0].DocumentID != "a" || alpha[1].DocumentID != "b" ||
+		beta[0].DocumentID != "b" || beta[1].DocumentID != "a" {
+		t.Fatalf("context changed authorized membership or did not rerank: alpha=%+v beta=%+v", alpha, beta)
+	}
+
+	for _, scope := range []agentstate.Scope{
+		{ID: "scope-alpha", Name: "Scope alpha", Purpose: "prefer-alpha"},
+		{ID: "scope-beta", Name: "Scope beta", Purpose: "prefer-beta"},
+	} {
+		if _, err := state.PutScope(ctx, scope); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := state.PutScopedLens(ctx, agentstate.ScopedLens{
+			ScopeID: scope.ID, ID: "neutral", Name: "Neutral", Query: "shared purpose",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rankScope := func(scopeID, purpose string) []personalmemory.RankedHit {
+		hits, err := backend.Rank(personalmemory.SearchRequest{
+			Query: "shared evidence", LexicalQuery: "shared evidence",
+			Limit: 100, QueryAuthorizedLimit: 2,
+			ScopeID: scopeID, ScopePurpose: purpose,
+			LensID: "neutral", LensQuery: "shared purpose", AgentID: "agent-a",
+		}, documents)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return hits
+	}
+	scopeAlpha := rankScope("scope-alpha", "prefer-alpha")
+	scopeBeta := rankScope("scope-beta", "prefer-beta")
+	if len(scopeAlpha) != 2 || len(scopeBeta) != 2 ||
+		scopeAlpha[0].DocumentID != "a" || scopeAlpha[1].DocumentID != "b" ||
+		scopeBeta[0].DocumentID != "b" || scopeBeta[1].DocumentID != "a" {
+		t.Fatalf("scope changed authorized membership or did not rerank: alpha=%+v beta=%+v", scopeAlpha, scopeBeta)
 	}
 }
 

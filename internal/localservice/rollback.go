@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -31,6 +32,187 @@ type rollbackManifest struct {
 	BackedUpAt       string `json:"backed_up_at"`
 }
 
+type installArtifactSnapshot struct {
+	path       string
+	mode       fs.FileMode
+	maximum    int64
+	present    bool
+	sha256     string
+	backupPath string
+}
+
+type installTransaction struct {
+	artifacts       map[string]installArtifactSnapshot
+	mutationOrder   []string
+	backupRoot      string
+	launchPath      string
+	priorRunning    bool
+	serviceTouched  bool
+	restoreFailed   bool
+	removeOnFailure []string
+}
+
+func beginInstallTransaction(config Config, receipt InstallReceipt, priorRunning bool) (*installTransaction, error) {
+	if err := privateio.PrepareDir(config.RuntimeRoot); err != nil {
+		return nil, errors.New("prepare install transaction")
+	}
+	backupRoot, err := os.MkdirTemp(config.RuntimeRoot, ".install-transaction-")
+	if err != nil {
+		return nil, errors.New("prepare install transaction")
+	}
+	if err := os.Chmod(backupRoot, privateio.DirMode); err != nil {
+		_ = os.RemoveAll(backupRoot)
+		return nil, errors.New("secure install transaction")
+	}
+	transaction := &installTransaction{
+		artifacts:  make(map[string]installArtifactSnapshot),
+		backupRoot: backupRoot, launchPath: receipt.LaunchAgentPath, priorRunning: priorRunning,
+	}
+	for _, auxiliary := range []string{
+		config.SocketPath,
+		filepath.Join(config.RuntimeRoot, "service.stdout.log"),
+		filepath.Join(config.RuntimeRoot, "service.stderr.log"),
+	} {
+		if _, err := os.Lstat(auxiliary); os.IsNotExist(err) {
+			transaction.removeOnFailure = append(transaction.removeOnFailure, auxiliary)
+		} else if err != nil {
+			transaction.close()
+			return nil, errors.New("inventory prior install")
+		}
+	}
+	specs := []installArtifactSnapshot{
+		{path: receipt.ConfigPath, mode: privateio.FileMode, maximum: 64 << 10},
+		{path: filepath.Join(config.RuntimeRoot, "install.json"), mode: privateio.FileMode, maximum: 64 << 10},
+		{path: receipt.InstalledBinary, mode: 0o700, maximum: maximumBinaryBytes},
+		{path: receipt.SkillPath, mode: privateio.FileMode, maximum: maximumSkillBytes},
+		{path: receipt.LaunchAgentPath, mode: privateio.FileMode, maximum: 1 << 20},
+		{path: rollbackManifestPath(config), mode: privateio.FileMode, maximum: 64 << 10},
+		{path: rollbackBinaryPath(config), mode: privateio.FileMode, maximum: maximumBinaryBytes},
+		{path: rollbackSkillPath(config), mode: privateio.FileMode, maximum: maximumSkillBytes},
+	}
+	for index, spec := range specs {
+		if strings.TrimSpace(spec.path) == "" {
+			continue
+		}
+		data, present, readErr := readArtifact(spec.path, spec.mode, spec.maximum)
+		if readErr != nil {
+			transaction.close()
+			return nil, errors.New("inventory prior install")
+		}
+		spec.present = present
+		if present {
+			spec.sha256 = sha256Hex(data)
+			spec.backupPath = filepath.Join(backupRoot, fmt.Sprintf("artifact-%02d", index))
+			if err := privateio.WriteFile(spec.backupPath, data, true); err != nil {
+				transaction.close()
+				return nil, errors.New("back up prior install")
+			}
+			backedUp, err := privateio.ReadFileBounded(backupRoot, spec.backupPath, spec.maximum)
+			if err != nil || sha256Hex(backedUp) != spec.sha256 {
+				transaction.close()
+				return nil, errors.New("verify prior install backup")
+			}
+		}
+		transaction.artifacts[spec.path] = spec
+	}
+	return transaction, nil
+}
+
+func (transaction *installTransaction) mutate(stage, path string, operation func() error) error {
+	if _, exists := transaction.artifacts[path]; !exists {
+		return errors.New("install mutation is outside the transaction")
+	}
+	transaction.mutationOrder = append(transaction.mutationOrder, path)
+	if err := operation(); err != nil {
+		return err
+	}
+	if err := installFaultHook(stage); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (transaction *installTransaction) restore() error {
+	var first error
+	if transaction.serviceTouched && transaction.launchPath != "" {
+		if err := stopUserService(transaction.launchPath); err != nil {
+			first = errors.New("stop candidate local agent service")
+		}
+	}
+	for index := len(transaction.mutationOrder) - 1; index >= 0; index-- {
+		snapshot := transaction.artifacts[transaction.mutationOrder[index]]
+		if err := restoreInstallArtifact(snapshot); err != nil && first == nil {
+			first = err
+		}
+	}
+	for _, path := range transaction.removeOnFailure {
+		if err := removeFailedFirstInstallArtifact(path); err != nil && first == nil {
+			first = err
+		}
+	}
+	if transaction.serviceTouched && transaction.priorRunning && transaction.launchPath != "" {
+		if err := restartUserService(transaction.launchPath); err != nil && first == nil {
+			first = errors.New("restart prior local agent service")
+		}
+	}
+	transaction.restoreFailed = first != nil
+	return first
+}
+
+func removeFailedFirstInstallArtifact(path string) error {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil || info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("remove failed first install artifact")
+	}
+	if err := os.Remove(path); err != nil {
+		return errors.New("remove failed first install artifact")
+	}
+	return nil
+}
+
+func restoreInstallArtifact(snapshot installArtifactSnapshot) error {
+	if !snapshot.present {
+		info, err := os.Lstat(snapshot.path)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return errors.New("remove failed install artifact")
+		}
+		if err := os.Remove(snapshot.path); err != nil {
+			return errors.New("remove failed install artifact")
+		}
+		return nil
+	}
+	if snapshot.mode == 0o700 {
+		if err := copyExecutable(snapshot.backupPath, snapshot.path); err != nil {
+			return errors.New("restore prior install artifact")
+		}
+	} else {
+		backup, err := privateio.ReadFileBounded(filepath.Dir(snapshot.backupPath), snapshot.backupPath, snapshot.maximum)
+		if err != nil || sha256Hex(backup) != snapshot.sha256 {
+			return errors.New("read prior install artifact")
+		}
+		if err := privateio.WriteFile(snapshot.path, backup, false); err != nil {
+			return errors.New("restore prior install artifact")
+		}
+	}
+	data, present, err := readArtifact(snapshot.path, snapshot.mode, snapshot.maximum)
+	if err != nil || !present || sha256Hex(data) != snapshot.sha256 {
+		return errors.New("verify restored install artifact")
+	}
+	return nil
+}
+func (transaction *installTransaction) close() {
+	if transaction == nil || transaction.restoreFailed {
+		return
+	}
+	_ = os.RemoveAll(transaction.backupRoot)
+}
+
 func rollbackRoot(config Config) string {
 	return filepath.Join(config.RuntimeRoot, "rollback")
 }
@@ -47,28 +229,43 @@ func rollbackSkillPath(config Config) string {
 	return filepath.Join(rollbackRoot(config), "SKILL.previous.md")
 }
 
-func prepareRollbackBackup(config Config, binaryPath, skillPath string) error {
-	binary, binaryPresent, err := readArtifact(binaryPath, 0o700, maximumBinaryBytes)
-	if err != nil {
-		return errors.New("read prior installed binary")
+func prepareRollbackBackup(transaction *installTransaction, config Config, binaryPath, skillPath string) error {
+	binarySnapshot, binaryKnown := transaction.artifacts[binaryPath]
+	skillSnapshot, skillKnown := transaction.artifacts[skillPath]
+	if !binaryKnown || !skillKnown {
+		return errors.New("read prior local agent installation")
 	}
-	skill, skillPresent, err := readArtifact(skillPath, privateio.FileMode, maximumSkillBytes)
-	if err != nil {
-		return errors.New("read prior installed skill")
-	}
+	binaryPresent := binarySnapshot.present
+	skillPresent := skillSnapshot.present
 	if !binaryPresent && !skillPresent {
 		return nil
 	}
 	if !binaryPresent || !skillPresent {
 		return errors.New("prior local agent installation is incomplete")
 	}
+	binary, err := privateio.ReadFileBounded(
+		transaction.backupRoot, binarySnapshot.backupPath, binarySnapshot.maximum,
+	)
+	if err != nil || sha256Hex(binary) != binarySnapshot.sha256 {
+		return errors.New("read prior installed binary")
+	}
+	skill, err := privateio.ReadFileBounded(
+		transaction.backupRoot, skillSnapshot.backupPath, skillSnapshot.maximum,
+	)
+	if err != nil || sha256Hex(skill) != skillSnapshot.sha256 {
+		return errors.New("read prior installed skill")
+	}
 	if err := privateio.PrepareDir(rollbackRoot(config)); err != nil {
 		return errors.New("prepare local agent rollback")
 	}
-	if err := privateio.WriteFile(rollbackBinaryPath(config), binary, false); err != nil {
+	if err := transaction.mutate("rollback-binary", rollbackBinaryPath(config), func() error {
+		return privateio.WriteFile(rollbackBinaryPath(config), binary, false)
+	}); err != nil {
 		return errors.New("save prior installed binary")
 	}
-	if err := privateio.WriteFile(rollbackSkillPath(config), skill, false); err != nil {
+	if err := transaction.mutate("rollback-skill", rollbackSkillPath(config), func() error {
+		return privateio.WriteFile(rollbackSkillPath(config), skill, false)
+	}); err != nil {
 		return errors.New("save prior installed skill")
 	}
 	manifest := rollbackManifest{
@@ -77,7 +274,9 @@ func prepareRollbackBackup(config Config, binaryPath, skillPath string) error {
 		SkillBackupPath: rollbackSkillPath(config), SkillSHA256: sha256Hex(skill),
 		BackedUpAt: time.Now().UTC().Format(time.RFC3339Nano),
 	}
-	if err := privateio.WriteJSON(rollbackManifestPath(config), manifest); err != nil {
+	if err := transaction.mutate("rollback-manifest", rollbackManifestPath(config), func() error {
+		return privateio.WriteJSON(rollbackManifestPath(config), manifest)
+	}); err != nil {
 		return errors.New("write local agent rollback manifest")
 	}
 	return nil
