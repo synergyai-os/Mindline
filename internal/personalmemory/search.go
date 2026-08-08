@@ -237,7 +237,11 @@ func (retriever ContextRetriever) SearchCompact(request SearchRequest) (CompactC
 		calibrationID = strings.TrimSpace(calibrated.CompactSemanticCalibrationID())
 	}
 	rawHits = usableCompactHits(rawHits, policy, calibrationID, projection)
-	hits, selectedResources, err := expandCompactHits(rawHits, projection, callerLimit)
+	freezeScopedMembership := strings.TrimSpace(request.ScopeID) != "" ||
+		strings.TrimSpace(request.AgentID) != ""
+	hits, selectedResources, err := expandCompactHits(
+		rawHits, projection, callerLimit, freezeScopedMembership,
+	)
 	if err != nil {
 		return CompactContextPacket{}, err
 	}
@@ -514,10 +518,44 @@ func expandCompactHits(
 	rawHits []RankedHit,
 	projection compactRetrievalProjection,
 	limit int,
+	freezeScopedMembership bool,
 ) ([]RankedHit, map[string]string, error) {
-	hits := make([]RankedHit, 0, min(limit, len(rawHits)))
+	// Freeze the actual record/citation membership from query-only authorization
+	// before contextual order is applied. A resource document can expand to
+	// several Slack saves, so freezing only retrieval-document membership would
+	// still let lenses change which owner records survive the caller limit.
+	authorizationOrder := append([]RankedHit(nil), rawHits...)
+	if freezeScopedMembership {
+		sort.Slice(authorizationOrder, func(i, j int) bool {
+			left := authorizationOrder[i].Components["authorization_base_raw"]
+			right := authorizationOrder[j].Components["authorization_base_raw"]
+			if left == right {
+				return authorizationOrder[i].DocumentID < authorizationOrder[j].DocumentID
+			}
+			return left > right
+		})
+	}
+	authorizedSource := make(map[string]string, limit)
+	for _, rawHit := range authorizationOrder {
+		owners, exists := projection.ownersByDocumentID[rawHit.DocumentID]
+		if !exists {
+			continue
+		}
+		for _, recordID := range owners {
+			if _, exists := authorizedSource[recordID]; exists {
+				continue
+			}
+			authorizedSource[recordID] = rawHit.DocumentID
+			if len(authorizedSource) == limit {
+				break
+			}
+		}
+		if len(authorizedSource) == limit {
+			break
+		}
+	}
+	hits := make([]RankedHit, 0, len(authorizedSource))
 	selectedResources := map[string]string{}
-	seenRecords := map[string]bool{}
 	for _, rawHit := range rawHits {
 		owners, exists := projection.ownersByDocumentID[rawHit.DocumentID]
 		if !exists {
@@ -528,13 +566,12 @@ func expandCompactHits(
 			return nil, nil, errors.New("personal evidence resource hit has no current owner")
 		}
 		for _, recordID := range owners {
-			if seenRecords[recordID] {
+			if authorizedSource[recordID] != rawHit.DocumentID {
 				continue
 			}
 			if _, exists := projection.recordsByID[recordID]; !exists {
 				return nil, nil, errors.New("personal evidence resource owner is not a current record")
 			}
-			seenRecords[recordID] = true
 			hit := rawHit
 			hit.DocumentID = recordID
 			hit.MatchedTerms = append([]string(nil), rawHit.MatchedTerms...)
@@ -543,7 +580,7 @@ func expandCompactHits(
 			if resourceID != "" {
 				selectedResources[recordID] = resourceID
 			}
-			if len(hits) == limit {
+			if len(hits) == len(authorizedSource) {
 				return hits, selectedResources, nil
 			}
 		}

@@ -136,7 +136,9 @@ func (contextFailureEmbedder) EmbedQuery(_ context.Context, input string) ([]flo
 	return []float64{1, 0}, nil
 }
 
-func (contextEvictionEmbedder) ModelID() string { return "fake/context-eviction-v1" }
+func (contextEvictionEmbedder) ModelID() string {
+	return "ollama/embeddinggemma:latest/retrieval-input-v0.2"
+}
 func (contextEvictionEmbedder) Embed(context.Context, []string) ([][]float64, error) {
 	return nil, errors.New("generic embedding path should not be used")
 }
@@ -369,20 +371,31 @@ func TestScopedContextEmbeddingFailurePreservesQueryAuthorizedMembership(t *test
 func TestScopedContextRankCapCannotDropAuthorizedSemanticOnlyItem(t *testing.T) {
 	state, request := seededScopedRequest(t, "push-target-last")
 	defer state.Close()
-	documents := []personalmemory.IndexDocument{{
-		DocumentID: "target", Text: "target-document",
+	records := []personalmemory.CaptureRecord{{
+		RecordID: "target", SourceRef: "slack://proof/target", RawText: "target-document",
+		ContentHash: strings.Repeat("a", 64),
 	}}
 	for index := 0; index < 101; index++ {
-		documents = append(documents, personalmemory.IndexDocument{
-			DocumentID: "noise-" + strconv.Itoa(index), Text: "contextual noise",
+		records = append(records, personalmemory.CaptureRecord{
+			RecordID:  "noise-" + strconv.Itoa(index),
+			SourceRef: "slack://proof/noise-" + strconv.Itoa(index),
+			RawText:   "contextual noise", ContentHash: strings.Repeat("b", 64),
 		})
 	}
 	request.Query = "semantic-only-query"
 	request.LexicalQuery = request.Query
+	request.Limit = 1
 	request.QueryAuthorizedLimit = 1
-	hits, err := NewHybridBackend(context.Background(), state, contextEvictionEmbedder{}).Rank(request, documents)
-	if err != nil || len(hits) != 1 || hits[0].DocumentID != "target" {
-		t.Fatalf("context rank cap dropped authorized item: hits=%+v err=%v", hits, err)
+	repository := &projectionTestRepository{library: personalmemory.Library{
+		SchemaVersion: personalmemory.LibrarySchemaVersion, Revision: 1,
+		Fingerprint: strings.Repeat("f", 64), Records: records,
+		Resources: []personalmemory.ResourceContext{},
+	}}
+	packet, err := personalmemory.NewRetriever(
+		repository, NewHybridBackend(context.Background(), state, contextEvictionEmbedder{}),
+	).SearchCompact(request)
+	if err != nil || len(packet.Citations) != 1 || packet.Citations[0].RecordID != "target" {
+		t.Fatalf("compact output dropped authorized item: packet=%+v err=%v", packet, err)
 	}
 }
 

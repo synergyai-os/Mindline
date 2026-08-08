@@ -292,6 +292,22 @@ func (backend *HybridBackend) Rank(request personalmemory.SearchRequest, documen
 			MatchedTerms: matchedTerms[candidate.id], Components: candidate.components,
 		})
 	}
+	if scoped && len(hits) > 0 {
+		minimum := hits[0].Score
+		for _, hit := range hits[1:] {
+			if hit.Score < minimum {
+				minimum = hit.Score
+			}
+		}
+		if minimum <= 0 {
+			offset := -minimum + 1e-12
+			for index := range hits {
+				hits[index].Score += offset
+				hits[index].Components["scoped_membership_score_offset"] = offset
+				hits[index].Components["final"] = hits[index].Score
+			}
+		}
+	}
 	sort.Slice(hits, func(i, j int) bool {
 		if hits[i].Score == hits[j].Score {
 			return hits[i].DocumentID < hits[j].DocumentID
