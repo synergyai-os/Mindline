@@ -93,7 +93,7 @@ func TestScopedRecallV04RoutesFailClosedAndKeepLegacyCompactUnchanged(t *testing
 	}
 	packet, err := client.SearchScoped(context.Background(), ScopedSearchInput{
 		Query: "product brain citations", ScopeID: "project", LensID: "delivery",
-		AgentID: "agent-a", Limit: 3,
+		AgentID: "agent-a", Limit: 1,
 	})
 	if err != nil || packet.SchemaVersion != personalmemory.ScopedCompactPacketSchemaVersion ||
 		packet.ScopeID != "project" || packet.LensID != "delivery" || packet.AgentID != "agent-a" ||
