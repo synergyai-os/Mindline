@@ -77,6 +77,33 @@ func TestImportWithinBudgetRejectsBeforeCanonicalPersistence(t *testing.T) {
 	}
 }
 
+func TestStatusCacheInvalidatesAfterLibraryMutation(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "library")
+	repository, err := NewFileRepository(root, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := repository.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.RecordCount != 0 {
+		t.Fatalf("unexpected initial status: %+v", before)
+	}
+
+	receipt, err := repository.Import(captureBatchForTest(t, fixtureBatch()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := repository.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.RecordCount != receipt.TotalRecords || after.Fingerprint == before.Fingerprint || after.Revision <= before.Revision {
+		t.Fatalf("status cache survived a committed library mutation: before=%+v after=%+v receipt=%+v", before, after, receipt)
+	}
+}
+
 func TestEditedSlackCapturePreservesSearchableImmutableRevision(t *testing.T) {
 	repository := populatedRepository(t)
 	updated := fixtureBatch()

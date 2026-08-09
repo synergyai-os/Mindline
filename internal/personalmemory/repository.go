@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/synergyai-os/Mindline/internal/privateio"
@@ -39,6 +40,15 @@ type FileRepository struct {
 	lockPath    string
 	contentDir  string
 	now         func() time.Time
+	statusMu    sync.Mutex
+	statusCache *statusCache
+}
+
+type statusCache struct {
+	fileExists bool
+	fileSize   int64
+	modifiedAt time.Time
+	status     Status
 }
 
 func NewFileRepository(root string, now func() time.Time) (*FileRepository, error) {
@@ -564,11 +574,28 @@ func validContentArtifactFileName(name string) bool {
 }
 
 func (repository *FileRepository) Status() (Status, error) {
+	repository.statusMu.Lock()
+	defer repository.statusMu.Unlock()
+
+	info, statErr := os.Lstat(repository.libraryPath)
+	if statErr != nil && !errors.Is(statErr, fs.ErrNotExist) {
+		return Status{}, errors.New("personal evidence library unavailable")
+	}
+	fileExists := statErr == nil
+	if fileExists && (!info.Mode().IsRegular() || info.Mode().Perm() != privateio.FileMode) {
+		return Status{}, errors.New("personal evidence library unavailable")
+	}
+	if cached := repository.statusCache; cached != nil &&
+		cached.fileExists == fileExists &&
+		(!fileExists || (cached.fileSize == info.Size() && cached.modifiedAt.Equal(info.ModTime()))) {
+		return cached.status, nil
+	}
+
 	library, err := repository.Load()
 	if err != nil {
 		return Status{}, err
 	}
-	return Status{
+	status := Status{
 		SchemaVersion:           library.SchemaVersion,
 		Revision:                library.Revision,
 		Fingerprint:             library.Fingerprint,
@@ -579,7 +606,13 @@ func (repository *FileRepository) Status() (Status, error) {
 		ImportCount:             len(library.Imports),
 		EnrichmentImportCount:   len(library.EnrichmentImports),
 		AuthorityClass:          AuthorityClass,
-	}, nil
+	}
+	repository.statusCache = &statusCache{fileExists: fileExists, status: status}
+	if fileExists {
+		repository.statusCache.fileSize = info.Size()
+		repository.statusCache.modifiedAt = info.ModTime()
+	}
+	return status, nil
 }
 
 func validateCaptureBatch(batch CaptureBatch) error {
@@ -653,5 +686,8 @@ func (repository *FileRepository) persistLibraryWithinBudget(library Library, ma
 	if err := privateio.AtomicReplaceWithBackup(repository.root, repository.libraryPath, repository.backupPath, next, prior, MaximumLibraryBytes, validate, nil); err != nil {
 		return errors.New("personal evidence library unavailable")
 	}
+	repository.statusMu.Lock()
+	repository.statusCache = nil
+	repository.statusMu.Unlock()
 	return nil
 }
