@@ -14,6 +14,8 @@ import (
 )
 
 func (r Runner) runAgentFeedback(args []string, stdout, stderr io.Writer, reversal bool) int {
+	scopedIntent := hasAgentOption(args, "scope", "agent") ||
+		hasAgentOptionValue(args, "actor", agentstate.FeedbackOwner)
 	options, err := parseAgentOptions(args)
 	allowed := []string{"actor", "idempotency-key", "retry-token", "reason"}
 	if !reversal {
@@ -23,6 +25,13 @@ func (r Runner) runAgentFeedback(args []string, stdout, stderr io.Writer, revers
 	}
 	if err != nil || len(options.positionals) != 0 || !onlyAgentKeys(options.values, allowed...) ||
 		options.values["actor"] == "" {
+		if scopedIntent {
+			operation := "feedback"
+			if reversal {
+				operation = "feedback_reverse"
+			}
+			return writeAgentContractError(stderr, operation, "invalid_scoped_command", false, "use_discovery_template")
+		}
 		return agentUsage(stderr)
 	}
 	explicitKey := options.values["idempotency-key"]

@@ -191,9 +191,13 @@ func supportsSearchFormat(formats []string, expected string) bool {
 }
 
 func (r Runner) runAgentGet(args []string, stdout, stderr io.Writer) int {
+	scopedIntent := hasAgentOption(args, "run", "scope", "lens", "agent")
 	options, err := parseAgentOptions(args)
 	if err != nil || len(options.positionals) != 1 ||
 		!onlyAgentKeys(options.values, "run", "scope", "lens", "agent") {
+		if scopedIntent {
+			return writeAgentContractError(stderr, "scoped_get", "invalid_scoped_command", false, "use_discovery_template")
+		}
 		return agentUsage(stderr)
 	}
 	scoped := options.values["run"] != "" || options.values["scope"] != "" ||

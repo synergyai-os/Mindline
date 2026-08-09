@@ -22,20 +22,21 @@ func TestPrivateCommitmentIsKeyedAndReceiptRejectsPlainHashAndUnknownFields(t *t
 		t.Fatal("private commitment was an unkeyed deterministic hash")
 	}
 	receipt := validReceipt(t, key)
+	expected := expectedArtifacts(receipt)
 	data, err := json.Marshal(receipt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Decode(data); err != nil {
+	if _, err := Decode(data, expected); err != nil {
 		t.Fatal(err)
 	}
 	receipt.PrivateCommitments[0].Value = "sha256:" + hex.EncodeToString(plain[:])
 	data, _ = json.Marshal(receipt)
-	if _, err := Decode(data); err == nil {
+	if _, err := Decode(data, expected); err == nil {
 		t.Fatal("plain private hash was accepted")
 	}
 	data = append(data[:len(data)-1], []byte(`,"query":"private"}`)...)
-	if _, err := Decode(data); err == nil {
+	if _, err := Decode(data, expected); err == nil {
 		t.Fatal("unknown private field was accepted")
 	}
 }
@@ -60,17 +61,26 @@ func TestReceiptRejectsIncompleteVacuousAndOverCeilingProof(t *testing.T) {
 		}},
 		{name: "missing binding", mutate: func(value *Receipt) { value.PrivateCommitments = value.PrivateCommitments[1:] }},
 		{name: "wrong spec", mutate: func(value *Receipt) { value.SpecSHA256 = strings.Repeat("b", 64) }},
+		{name: "wrong reviewed tree", mutate: func(value *Receipt) { value.TreeSHA256 = strings.Repeat("b", 64) }},
+		{name: "wrong reviewed binary", mutate: func(value *Receipt) { value.BinarySHA256 = strings.Repeat("b", 64) }},
+		{name: "wrong reviewed manifest", mutate: func(value *Receipt) { value.LatencyManifestSHA256 = strings.Repeat("b", 64) }},
 	}
 	for _, item := range tests {
 		t.Run(item.name, func(t *testing.T) {
 			receipt := validReceipt(t, key)
+			expected := expectedArtifacts(receipt)
 			item.mutate(&receipt)
 			data, _ := json.Marshal(receipt)
-			if _, err := Decode(data); err == nil {
+			if _, err := Decode(data, expected); err == nil {
 				t.Fatal("invalid proof receipt was accepted")
 			}
 		})
 	}
+}
+
+func expectedArtifacts(receipt Receipt) ExpectedArtifacts {
+	return ExpectedArtifacts{TreeSHA256: receipt.TreeSHA256, BinarySHA256: receipt.BinarySHA256,
+		LatencyManifestSHA256: receipt.LatencyManifestSHA256}
 }
 
 func validReceipt(t *testing.T, key []byte) Receipt {

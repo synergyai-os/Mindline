@@ -45,6 +45,12 @@ type PrivateCommitment struct {
 	Value string `json:"value"`
 }
 
+type ExpectedArtifacts struct {
+	TreeSHA256            string
+	BinarySHA256          string
+	LatencyManifestSHA256 string
+}
+
 func CommitPrivate(key []byte, kind, value string) (PrivateCommitment, error) {
 	kind = strings.TrimSpace(kind)
 	if len(key) != 32 || kind == "" || strings.TrimSpace(value) == "" {
@@ -55,7 +61,7 @@ func CommitPrivate(key []byte, kind, value string) (PrivateCommitment, error) {
 	return PrivateCommitment{Kind: kind, Value: "hmac-sha256:" + hex.EncodeToString(mac.Sum(nil))}, nil
 }
 
-func Decode(data []byte) (Receipt, error) {
+func Decode(data []byte, expected ExpectedArtifacts) (Receipt, error) {
 	var receipt Receipt
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
@@ -66,16 +72,19 @@ func Decode(data []byte) (Receipt, error) {
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		return Receipt{}, errors.New("discovery proof receipt has trailing data")
 	}
-	if err := receipt.Validate(); err != nil {
+	if err := receipt.Validate(expected); err != nil {
 		return Receipt{}, err
 	}
 	return receipt, nil
 }
 
-func (receipt Receipt) Validate() error {
-	if receipt.SchemaVersion != SchemaVersion || !isSHA(receipt.TreeSHA256) ||
-		!isSHA(receipt.BinarySHA256) || receipt.SpecSHA256 != SignedSpecSHA256 ||
+func (receipt Receipt) Validate(expected ExpectedArtifacts) error {
+	if !isSHA(expected.TreeSHA256) || !isSHA(expected.BinarySHA256) ||
+		!isSHA(expected.LatencyManifestSHA256) ||
+		receipt.SchemaVersion != SchemaVersion || receipt.TreeSHA256 != expected.TreeSHA256 ||
+		receipt.BinarySHA256 != expected.BinarySHA256 || receipt.SpecSHA256 != SignedSpecSHA256 ||
 		receipt.PlanSHA256 != SignedPlanSHA256 || !isSHA(receipt.LatencyManifestSHA256) ||
+		receipt.LatencyManifestSHA256 != expected.LatencyManifestSHA256 ||
 		receipt.BaselineCommit != RequiredBaselineCommit ||
 		len(receipt.Cases) != len(requiredCases) ||
 		len(receipt.PrivateCommitments) != len(requiredCommitmentKinds) {
@@ -118,9 +127,12 @@ var requiredCases = map[string]int{
 	"abstention_diagnostics": 0, "closed_errors": 0, "compatibility": 0,
 	"install_rollback": 0, "secret_scan": 0, "blind_answerable": 0, "blind_absent": 0,
 	"latency_agent_help": 250, "latency_feedback_token": 250,
+	"latency_agent_status":    3000,
 	"latency_discovery_ready": 3000, "latency_discovery_invalid": 3000,
-	"latency_scoped_get": 5000, "latency_scoped_feedback": 5000,
-	"latency_scoped_search": 25000,
+	"latency_scoped_get": 5000, "latency_typed_scoped_get_error": 5000,
+	"latency_scoped_feedback": 5000, "latency_typed_feedback_error": 5000,
+	"latency_feedback_reverse": 5000,
+	"latency_scoped_search":    25000,
 }
 
 var requiredCommitmentKinds = map[string]bool{

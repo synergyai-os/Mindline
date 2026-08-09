@@ -8,10 +8,14 @@
   "cases": [
     {"id": "agent_help", "p95_ceiling_ms": 250, "requires_service": false},
     {"id": "feedback_token", "p95_ceiling_ms": 250, "requires_service": false},
+    {"id": "agent_status", "p95_ceiling_ms": 3000, "requires_service": true},
     {"id": "discover_ready", "p95_ceiling_ms": 3000, "requires_service": true},
     {"id": "discover_invalid_binding", "p95_ceiling_ms": 3000, "requires_service": true},
     {"id": "scoped_get", "p95_ceiling_ms": 5000, "requires_service": true},
+    {"id": "typed_scoped_get_error", "p95_ceiling_ms": 5000, "requires_service": true},
     {"id": "scoped_feedback", "p95_ceiling_ms": 5000, "requires_service": true},
+    {"id": "typed_feedback_error", "p95_ceiling_ms": 5000, "requires_service": true},
+    {"id": "feedback_reverse", "p95_ceiling_ms": 5000, "requires_service": true},
     {"id": "scoped_search", "p95_ceiling_ms": 25000, "requires_service": true}
   ],
   "private_binding_requirements": [
