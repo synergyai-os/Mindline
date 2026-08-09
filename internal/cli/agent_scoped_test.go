@@ -185,7 +185,11 @@ func TestAgentCLIRejectsPartialScopedTuplesBeforeConnecting(t *testing.T) {
 	}
 	for _, args := range tests {
 		var stdout, stderr bytes.Buffer
-		if code := NewRunner(NewMemoryFS()).Run(args, &stdout, &stderr); code != ExitUsage {
+		expected := ExitUsage
+		if len(args) > 1 && args[1] == "feedback" {
+			expected = ExitProcess
+		}
+		if code := NewRunner(NewMemoryFS()).Run(args, &stdout, &stderr); code != expected {
 			t.Fatalf("args=%v code=%d stderr=%s", args, code, stderr.String())
 		}
 	}

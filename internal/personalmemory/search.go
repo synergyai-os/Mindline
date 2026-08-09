@@ -209,6 +209,9 @@ func (retriever ContextRetriever) SearchCompact(request SearchRequest) (CompactC
 		packet := assembleCompactContextPacket(request, library, nil, nil, method, policy)
 		packet.AnswerState = "abstained"
 		packet.AbstentionReason = "query_has_no_meaningful_terms"
+		packet.AbstentionDiagnostics = &AbstentionDiagnostics{
+			Classification: "query_has_no_meaningful_terms",
+		}
 		return packet, nil
 	}
 	projection, err := retriever.prepareCompactProjection()
@@ -238,7 +241,8 @@ func (retriever ContextRetriever) SearchCompact(request SearchRequest) (CompactC
 	}
 	freezeScopedMembership := strings.TrimSpace(request.ScopeID) != "" ||
 		strings.TrimSpace(request.AgentID) != ""
-	rawHits = usableCompactHits(
+	var rankedCandidateCount int
+	rawHits, rankedCandidateCount = usableCompactHits(
 		rawHits, policy, calibrationID, projection, freezeScopedMembership,
 	)
 	hits, selectedResources, err := expandCompactHits(
@@ -256,6 +260,16 @@ func (retriever ContextRetriever) SearchCompact(request SearchRequest) (CompactC
 	packet := assembleCompactContextPacket(
 		request, projection.library, hits, documents, method, policy,
 	)
+	if packet.AnswerState == "abstained" {
+		classification := "no_ranked_hits"
+		if rankedCandidateCount > 0 {
+			classification = "below_evidence_threshold"
+		}
+		packet.AbstentionDiagnostics = &AbstentionDiagnostics{
+			Classification: classification, RankedCandidateCount: rankedCandidateCount,
+			AuthorizedCandidateCount: 0,
+		}
+	}
 	if diagnostics, ok := retriever.backend.(RetrievalDiagnosticsPort); ok {
 		packet.RetrievalState, packet.DegradedReason = diagnostics.RetrievalDiagnostics()
 	}
@@ -851,6 +865,7 @@ func assembleContextPacket(request SearchRequest, library Library, hits []Ranked
 		Query: strings.TrimSpace(request.Query), LensID: request.LensID,
 		RetrievalMethod: retrievalMethod, AuthorityClass: AuthorityClass,
 		LibraryRevision: library.Revision, LibraryFingerprint: library.Fingerprint,
+		RouteClass: "legacy_agent_unscoped", AgentRecallApproved: false,
 		Citations: []Citation{}, Records: []CaptureRecord{}, Resources: []ResourceContext{},
 		ResourceRevisions: []ResourceRevision{},
 	}
@@ -920,6 +935,12 @@ func assembleCompactContextPacket(
 		LibraryRevision:             library.Revision, LibraryFingerprint: library.Fingerprint,
 		AnswerState: "abstained", AbstentionReason: "no_retrieval_candidates",
 		Citations: []CompactCitation{},
+	}
+	if request.ScopeID != "" && request.AgentID != "" {
+		packet.RouteClass = "agent_scoped_governed"
+		packet.AgentRecallApproved = true
+	} else {
+		packet.RouteClass = "legacy_agent_unscoped"
 	}
 	for _, hit := range hits {
 		document, exists := documents[hit.DocumentID]
@@ -1068,7 +1089,7 @@ func usableCompactHits(
 	calibrationID string,
 	projection compactRetrievalProjection,
 	preserveScopedMembership bool,
-) []RankedHit {
+) ([]RankedHit, int) {
 	valid := make([]RankedHit, 0, len(hits))
 	seen := map[string]bool{}
 	for _, hit := range hits {
@@ -1084,9 +1105,9 @@ func usableCompactHits(
 		!compactCorroboratedResourceAuthorized(
 			valid, policy, calibrationID, projection,
 		) {
-		return nil
+		return nil, len(valid)
 	}
-	return valid
+	return valid, len(valid)
 }
 
 func compactCorroboratedResourceAuthorized(

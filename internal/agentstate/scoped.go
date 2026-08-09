@@ -563,3 +563,38 @@ func (store *Store) SaveScopedRetrieval(ctx context.Context, trace ScopedRetriev
 	}
 	return store.writeRecoverySnapshot(ctx)
 }
+
+// RequireScopedCandidate authorizes read-only hydration only when the record
+// was returned by the exact active scoped retrieval tuple.
+func (store *Store) RequireScopedCandidate(
+	ctx context.Context,
+	runID, scopeID, lensID, agentID, recordID string,
+) error {
+	store.mutationMu.Lock()
+	defer store.mutationMu.Unlock()
+	runID, scopeID, lensID = strings.TrimSpace(runID), strings.TrimSpace(scopeID), strings.TrimSpace(lensID)
+	agentID, recordID = strings.TrimSpace(agentID), strings.TrimSpace(recordID)
+	if !validBounded(runID, 256) || !validBounded(scopeID, 256) ||
+		!validBounded(lensID, 256) || !validBounded(agentID, 256) ||
+		!validBounded(recordID, 1024) {
+		return errors.New("invalid scoped hydration request")
+	}
+	if _, _, _, err := store.resolveScopedContext(ctx, ScopedContext{
+		ScopeID: scopeID, LensID: lensID, AgentID: agentID,
+	}); err != nil {
+		return err
+	}
+	var found int
+	err := store.db.QueryRowContext(ctx, `SELECT 1
+		FROM scoped_retrieval_runs r
+		JOIN scoped_retrieval_candidates c ON c.run_id=r.run_id
+		WHERE r.run_id=? AND r.scope_id=? AND r.lens_id=? AND r.agent_id=? AND c.record_id=?`,
+		runID, scopeID, lensID, agentID, recordID).Scan(&found)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errors.New("scoped hydration candidate not found")
+	}
+	if err != nil {
+		return errors.New("read scoped hydration candidate")
+	}
+	return nil
+}

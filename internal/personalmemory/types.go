@@ -239,39 +239,50 @@ type EvidenceReference struct {
 }
 
 type ContextPacket struct {
-	SchemaVersion      string             `json:"schema_version"`
-	RunID              string             `json:"run_id,omitempty"`
-	Query              string             `json:"query"`
-	LensID             string             `json:"lens_id,omitempty"`
-	RetrievalMethod    string             `json:"retrieval_method"`
-	RetrievalState     string             `json:"retrieval_state,omitempty"`
-	DegradedReason     string             `json:"degraded_reason,omitempty"`
-	AuthorityClass     string             `json:"authority_class"`
-	LibraryRevision    uint64             `json:"library_revision"`
-	LibraryFingerprint string             `json:"library_fingerprint"`
-	Citations          []Citation         `json:"citations"`
-	Records            []CaptureRecord    `json:"records"`
-	Resources          []ResourceContext  `json:"resources"`
-	ResourceRevisions  []ResourceRevision `json:"resource_revisions"`
+	SchemaVersion       string             `json:"schema_version"`
+	RunID               string             `json:"run_id,omitempty"`
+	Query               string             `json:"query"`
+	LensID              string             `json:"lens_id,omitempty"`
+	RetrievalMethod     string             `json:"retrieval_method"`
+	RetrievalState      string             `json:"retrieval_state,omitempty"`
+	DegradedReason      string             `json:"degraded_reason,omitempty"`
+	AuthorityClass      string             `json:"authority_class"`
+	LibraryRevision     uint64             `json:"library_revision"`
+	LibraryFingerprint  string             `json:"library_fingerprint"`
+	RouteClass          string             `json:"route_class"`
+	AgentRecallApproved bool               `json:"agent_recall_approved"`
+	Citations           []Citation         `json:"citations"`
+	Records             []CaptureRecord    `json:"records"`
+	Resources           []ResourceContext  `json:"resources"`
+	ResourceRevisions   []ResourceRevision `json:"resource_revisions"`
 }
 
 type CompactContextPacket struct {
-	SchemaVersion               string            `json:"schema_version"`
-	RunID                       string            `json:"run_id,omitempty"`
-	Query                       string            `json:"query"`
-	LensID                      string            `json:"lens_id,omitempty"`
-	ScopeID                     string            `json:"scope_id,omitempty"`
-	AgentID                     string            `json:"agent_id,omitempty"`
-	RetrievalMethod             string            `json:"retrieval_method"`
-	RetrievalState              string            `json:"retrieval_state,omitempty"`
-	DegradedReason              string            `json:"degraded_reason,omitempty"`
-	AbstentionPolicyFingerprint string            `json:"abstention_policy_fingerprint"`
-	AuthorityClass              string            `json:"authority_class"`
-	LibraryRevision             uint64            `json:"library_revision"`
-	LibraryFingerprint          string            `json:"library_fingerprint"`
-	AnswerState                 string            `json:"answer_state"`
-	AbstentionReason            string            `json:"abstention_reason,omitempty"`
-	Citations                   []CompactCitation `json:"citations"`
+	SchemaVersion               string                 `json:"schema_version"`
+	RunID                       string                 `json:"run_id,omitempty"`
+	Query                       string                 `json:"query"`
+	LensID                      string                 `json:"lens_id,omitempty"`
+	ScopeID                     string                 `json:"scope_id,omitempty"`
+	AgentID                     string                 `json:"agent_id,omitempty"`
+	RetrievalMethod             string                 `json:"retrieval_method"`
+	RetrievalState              string                 `json:"retrieval_state,omitempty"`
+	DegradedReason              string                 `json:"degraded_reason,omitempty"`
+	AbstentionPolicyFingerprint string                 `json:"abstention_policy_fingerprint"`
+	AuthorityClass              string                 `json:"authority_class"`
+	LibraryRevision             uint64                 `json:"library_revision"`
+	LibraryFingerprint          string                 `json:"library_fingerprint"`
+	RouteClass                  string                 `json:"route_class"`
+	AgentRecallApproved         bool                   `json:"agent_recall_approved"`
+	AnswerState                 string                 `json:"answer_state"`
+	AbstentionReason            string                 `json:"abstention_reason,omitempty"`
+	AbstentionDiagnostics       *AbstentionDiagnostics `json:"abstention_diagnostics,omitempty"`
+	Citations                   []CompactCitation      `json:"citations"`
+}
+
+type AbstentionDiagnostics struct {
+	Classification           string `json:"classification"`
+	RankedCandidateCount     int    `json:"ranked_candidate_count"`
+	AuthorizedCandidateCount int    `json:"authorized_candidate_count"`
 }
 
 type CompactAbstentionPolicy struct {
@@ -335,13 +346,19 @@ type ResourceStateSummary struct {
 }
 
 type HydratedCapture struct {
-	SchemaVersion     string                     `json:"schema_version"`
-	RecordID          string                     `json:"record_id"`
-	VersionState      string                     `json:"version_state"`
-	Record            CaptureRecord              `json:"record"`
-	Resources         []ResourceContext          `json:"resources"`
-	ResourceRevisions []ResourceRevision         `json:"resource_revisions"`
-	Contents          []ExtractedContentArtifact `json:"contents"`
+	SchemaVersion       string                     `json:"schema_version"`
+	RecordID            string                     `json:"record_id"`
+	VersionState        string                     `json:"version_state"`
+	Record              CaptureRecord              `json:"record"`
+	Resources           []ResourceContext          `json:"resources"`
+	ResourceRevisions   []ResourceRevision         `json:"resource_revisions"`
+	Contents            []ExtractedContentArtifact `json:"contents"`
+	RunID               string                     `json:"run_id,omitempty"`
+	ScopeID             string                     `json:"scope_id,omitempty"`
+	LensID              string                     `json:"lens_id,omitempty"`
+	AgentID             string                     `json:"agent_id,omitempty"`
+	RouteClass          string                     `json:"route_class"`
+	AgentRecallApproved bool                       `json:"agent_recall_approved"`
 }
 
 type Lens struct {

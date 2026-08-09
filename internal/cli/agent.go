@@ -11,6 +11,7 @@ import (
 
 	"github.com/synergyai-os/Mindline/internal/agentstate"
 	"github.com/synergyai-os/Mindline/internal/localservice"
+	"github.com/synergyai-os/Mindline/internal/personalmemory"
 )
 
 func (r Runner) runAgent(args []string, stdout, stderr io.Writer) int {
@@ -19,6 +20,12 @@ func (r Runner) runAgent(args []string, stdout, stderr io.Writer) int {
 		return ExitUsage
 	}
 	switch args[0] {
+	case "help", "--help":
+		return writeAgentHelp(stdout)
+	case "discover":
+		return r.runAgentDiscover(args[1:], stdout, stderr)
+	case "feedback-token":
+		return r.runAgentFeedbackToken(args[1:], stdout, stderr)
 	case "install":
 		return r.runAgentInstall(args[1:], stdout, stderr)
 	case "restart":
@@ -185,15 +192,39 @@ func supportsSearchFormat(formats []string, expected string) bool {
 
 func (r Runner) runAgentGet(args []string, stdout, stderr io.Writer) int {
 	options, err := parseAgentOptions(args)
-	if err != nil || len(options.positionals) != 1 || len(options.values) != 0 {
+	if err != nil || len(options.positionals) != 1 ||
+		!onlyAgentKeys(options.values, "run", "scope", "lens", "agent") {
 		return agentUsage(stderr)
+	}
+	scoped := options.values["run"] != "" || options.values["scope"] != "" ||
+		options.values["lens"] != "" || options.values["agent"] != ""
+	if scoped && (options.values["run"] == "" || options.values["scope"] == "" ||
+		options.values["lens"] == "" || options.values["agent"] == "") {
+		return writeAgentContractError(stderr, "scoped_get", "incomplete_binding", false, "request_owner_binding")
 	}
 	client, err := agentClient(options.configPath)
 	if err != nil {
+		if scoped {
+			return writeAgentContractError(stderr, "scoped_get", "service_unavailable", true, "retry_service")
+		}
 		return agentFailure(stderr, err)
 	}
-	capture, err := client.Get(context.Background(), options.positionals[0])
+	var capture personalmemory.HydratedCapture
+	if scoped {
+		capture, err = client.GetScoped(context.Background(), localservice.ScopedGetInput{
+			RunID: options.values["run"], ScopeID: options.values["scope"],
+			LensID: options.values["lens"], AgentID: options.values["agent"],
+			RecordID: options.positionals[0],
+		})
+	} else {
+		capture, err = client.Get(context.Background(), options.positionals[0])
+		capture.RouteClass = localservice.OwnerDebugRouteClass
+		capture.AgentRecallApproved = false
+	}
 	if err != nil {
+		if scoped {
+			return writeAgentContractError(stderr, "scoped_get", "scoped_hydration_rejected", false, "rerun_scoped_search")
+		}
 		return agentFailure(stderr, err)
 	}
 	return encodePersonalMemoryJSON(stdout, stderr, capture)

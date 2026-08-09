@@ -276,7 +276,9 @@ func TestCompactSearchAbstainsForStopwordOnlyAndNoiseResults(t *testing.T) {
 	}
 	if packet.AnswerState != "abstained" ||
 		packet.AbstentionReason != "query_has_no_meaningful_terms" ||
-		len(packet.Citations) != 0 {
+		len(packet.Citations) != 0 || packet.AbstentionDiagnostics == nil ||
+		packet.AbstentionDiagnostics.Classification != "query_has_no_meaningful_terms" ||
+		packet.AbstentionDiagnostics.RankedCandidateCount != 0 {
 		t.Fatalf("stopword query did not abstain: %+v", packet)
 	}
 }
@@ -321,9 +323,28 @@ func TestCompactSearchDiscardsUnsubstantiatedRankerNoise(t *testing.T) {
 		}
 		if packet.AnswerState != "abstained" ||
 			packet.AbstentionReason != "no_retrieval_candidates" ||
-			len(packet.Citations) != 0 {
+			len(packet.Citations) != 0 || packet.AbstentionDiagnostics == nil ||
+			packet.AbstentionDiagnostics.Classification != "below_evidence_threshold" ||
+			packet.AbstentionDiagnostics.RankedCandidateCount != 1 ||
+			packet.AbstentionDiagnostics.AuthorizedCandidateCount != 0 {
 			t.Fatalf("unsubstantiated ranker noise was returned: %+v", packet)
 		}
+	}
+}
+
+func TestCompactSearchDistinguishesNoRankedHits(t *testing.T) {
+	repository := &compactRepository{library: EmptyLibrary()}
+	packet, err := NewRetriever(repository, compactHitsBackend{}).SearchCompact(
+		SearchRequest{Query: "quantum orchards", Limit: 3, ScopeID: "scope", AgentID: "agent"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if packet.AbstentionDiagnostics == nil ||
+		packet.AbstentionDiagnostics.Classification != "no_ranked_hits" ||
+		packet.AbstentionDiagnostics.RankedCandidateCount != 0 ||
+		!packet.AgentRecallApproved || packet.RouteClass != "agent_scoped_governed" {
+		t.Fatalf("packet=%+v", packet)
 	}
 }
 

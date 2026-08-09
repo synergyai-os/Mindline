@@ -115,6 +115,7 @@ func (server *Server) Serve() error {
 	mux.HandleFunc("PUT /v1/scoped/actors/{actorID}", server.handlePutActor)
 	mux.HandleFunc("POST /v1/scoped/actors/{actorID}/archive", server.handleArchiveActor)
 	mux.HandleFunc("POST /v1/scoped/search/compact", server.handleSearchScoped)
+	mux.HandleFunc("POST /v1/scoped/get", server.handleGetScoped)
 	mux.HandleFunc("POST /v1/scoped/judgments", server.handleScopedJudgment)
 	server.httpServer = &http.Server{
 		Handler: mux, ReadHeaderTimeout: 5 * time.Second,
@@ -160,15 +161,22 @@ func (server *Server) Close(ctx context.Context) error {
 
 func (server *Server) handleCapabilities(writer http.ResponseWriter, _ *http.Request) {
 	writeJSON(writer, http.StatusOK, Capabilities{
-		SchemaVersion:            CapabilitiesSchemaVersion,
-		SearchFormats:            []string{"mindline-agent-context-packet/v0.2", "mindline-agent-context-packet/v0.3"},
-		CompactSearchEndpoint:    "/v1/search/compact",
-		CompactAbstentionPolicy:  personalmemory.DefaultCompactAbstentionPolicy(),
-		ExplicitHydrationCommand: "agent get",
-		FeedbackRetryToken:       true,
-		Features:                 []string{ScopedRecallCapability},
-		ScopedSearchEndpoint:     "/v1/scoped/search/compact",
-		ScopedFeedbackEndpoint:   "/v1/scoped/judgments",
+		SchemaVersion:                CapabilitiesSchemaVersion,
+		SearchFormats:                []string{"mindline-agent-context-packet/v0.2", "mindline-agent-context-packet/v0.3"},
+		CompactSearchEndpoint:        "/v1/search/compact",
+		CompactAbstentionPolicy:      personalmemory.DefaultCompactAbstentionPolicy(),
+		ExplicitHydrationCommand:     "agent get",
+		FeedbackRetryToken:           true,
+		Features:                     []string{ScopedRecallCapability, DiscoveryCapability},
+		ScopedSearchEndpoint:         "/v1/scoped/search/compact",
+		ScopedFeedbackEndpoint:       "/v1/scoped/judgments",
+		ScopedHydrationEndpoint:      ScopedHydrationEndpoint,
+		RecommendedAgentRoute:        RecommendedAgentRoute,
+		OwnerDebugRouteClass:         OwnerDebugRouteClass,
+		IdentityAssurance:            "declared_local_actor",
+		HostileProcessAuthentication: false,
+		OwnerMutationEnforcement:     "cooperative",
+		FeedbackTokenCommand:         "agent feedback-token",
 	})
 }
 
@@ -472,6 +480,8 @@ func (server *Server) handleGet(writer http.ResponseWriter, request *http.Reques
 		writeError(writer, http.StatusNotFound, err)
 		return
 	}
+	capture.RouteClass = "legacy_agent_unscoped"
+	capture.AgentRecallApproved = false
 	writeJSON(writer, http.StatusOK, capture)
 }
 

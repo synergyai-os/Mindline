@@ -13,6 +13,7 @@ import (
 	slackadapter "github.com/synergyai-os/Mindline/internal/adapters/slack"
 	"github.com/synergyai-os/Mindline/internal/founderreview"
 	"github.com/synergyai-os/Mindline/internal/ingestioncontroller"
+	"github.com/synergyai-os/Mindline/internal/localservice"
 	"github.com/synergyai-os/Mindline/internal/personalmemory"
 	"github.com/synergyai-os/Mindline/internal/privateio"
 )
@@ -311,6 +312,8 @@ func (r Runner) runPersonalMemorySearch(args []string, stdout, stderr io.Writer)
 		fmt.Fprintf(stderr, "search personal evidence: %v\n", err)
 		return ExitProcess
 	}
+	packet.RouteClass = localservice.OwnerDebugRouteClass
+	packet.AgentRecallApproved = false
 	return encodePersonalMemoryJSON(stdout, stderr, packet)
 }
 
@@ -369,6 +372,8 @@ func (r Runner) runPersonalMemoryGet(args []string, stdout, stderr io.Writer) in
 		fmt.Fprintf(stderr, "get personal evidence: %v\n", err)
 		return ExitProcess
 	}
+	record.RouteClass = localservice.OwnerDebugRouteClass
+	record.AgentRecallApproved = false
 	return encodePersonalMemoryJSON(stdout, stderr, record)
 }
 

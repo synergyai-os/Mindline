@@ -82,7 +82,7 @@ func (r Runner) runAgentScopedFeedback(
 		(actor != agentstate.FeedbackOwner && actor != agentstate.FeedbackAgent) ||
 		(actor == agentstate.FeedbackOwner && agentID != "") ||
 		(actor == agentstate.FeedbackAgent && agentID == "") {
-		return agentUsage(stderr)
+		return writeAgentContractError(stderr, "feedback", "incomplete_binding", false, "request_owner_binding")
 	}
 	input := agentstate.ScopedJudgmentRequest{
 		ScopeID: options.values["scope"], LensID: options.values["lens"],
@@ -91,7 +91,7 @@ func (r Runner) runAgentScopedFeedback(
 	if reversal {
 		if options.values["idempotency-key"] == "" || options.values["retry-token"] != "" ||
 			options.values["judgment"] == "" {
-			return agentUsage(stderr)
+			return writeAgentContractError(stderr, "feedback_reverse", "invalid_feedback_event", false, "create_new_event_key")
 		}
 		input.IdempotencyKey = options.values["idempotency-key"]
 		input.ReversesID = options.values["judgment"]
@@ -99,7 +99,7 @@ func (r Runner) runAgentScopedFeedback(
 		if options.values["idempotency-key"] != "" || options.values["retry-token"] == "" ||
 			options.values["run"] == "" || options.values["record"] == "" ||
 			options.values["disposition"] == "" {
-			return agentUsage(stderr)
+			return writeAgentContractError(stderr, "feedback", "invalid_feedback_event", false, "create_feedback_token")
 		}
 		input.RetryToken = options.values["retry-token"]
 		input.RunID = options.values["run"]
@@ -108,18 +108,18 @@ func (r Runner) runAgentScopedFeedback(
 	}
 	client, err := agentClient(options.configPath)
 	if err != nil {
-		return agentFailure(stderr, err)
+		return writeAgentContractError(stderr, "feedback", "service_unavailable", true, "retry_service")
 	}
 	capabilities, err := client.Capabilities(context.Background())
 	if err != nil {
-		return agentFailure(stderr, err)
+		return writeAgentContractError(stderr, "feedback", "service_unavailable", true, "retry_service")
 	}
 	if !supportsSearchFormat(capabilities.Features, localservice.ScopedRecallCapability) {
-		return agentFailure(stderr, fmt.Errorf("local agent service does not support scoped recall v0.4"))
+		return writeAgentContractError(stderr, "feedback", "capability_unavailable", false, "upgrade_mindline")
 	}
 	judgment, err := client.ApplyScopedJudgment(context.Background(), input)
 	if err != nil {
-		return agentFailure(stderr, err)
+		return writeAgentContractError(stderr, "feedback", "feedback_rejected", false, "check_event_binding")
 	}
 	return encodePersonalMemoryJSON(stdout, stderr, judgment)
 }

@@ -24,21 +24,40 @@ type ScopedSearchInput struct {
 	Limit   int    `json:"limit,omitempty"`
 }
 
+type ScopedGetInput struct {
+	RunID    string `json:"run_id"`
+	ScopeID  string `json:"scope_id"`
+	LensID   string `json:"lens_id"`
+	AgentID  string `json:"agent_id"`
+	RecordID string `json:"record_id"`
+}
+
 const (
 	CapabilitiesSchemaVersion = "mindline-agent-capabilities/v0.1"
 	ScopedRecallCapability    = "mindline.scoped-recall.v0.4"
+	DiscoveryCapability       = "mindline.agent-discovery.v0.1"
+	RecommendedAgentRoute     = "scoped_v0.4"
+	OwnerDebugRouteClass      = "owner_debug_ungated"
+	ScopedHydrationEndpoint   = "/v1/scoped/get"
 )
 
 type Capabilities struct {
-	SchemaVersion            string                                 `json:"schema_version"`
-	SearchFormats            []string                               `json:"search_formats"`
-	CompactSearchEndpoint    string                                 `json:"compact_search_endpoint"`
-	CompactAbstentionPolicy  personalmemory.CompactAbstentionPolicy `json:"compact_abstention_policy"`
-	ExplicitHydrationCommand string                                 `json:"explicit_hydration_command"`
-	FeedbackRetryToken       bool                                   `json:"feedback_retry_token"`
-	Features                 []string                               `json:"features,omitempty"`
-	ScopedSearchEndpoint     string                                 `json:"scoped_search_endpoint,omitempty"`
-	ScopedFeedbackEndpoint   string                                 `json:"scoped_feedback_endpoint,omitempty"`
+	SchemaVersion                string                                 `json:"schema_version"`
+	SearchFormats                []string                               `json:"search_formats"`
+	CompactSearchEndpoint        string                                 `json:"compact_search_endpoint"`
+	CompactAbstentionPolicy      personalmemory.CompactAbstentionPolicy `json:"compact_abstention_policy"`
+	ExplicitHydrationCommand     string                                 `json:"explicit_hydration_command"`
+	FeedbackRetryToken           bool                                   `json:"feedback_retry_token"`
+	Features                     []string                               `json:"features,omitempty"`
+	ScopedSearchEndpoint         string                                 `json:"scoped_search_endpoint,omitempty"`
+	ScopedFeedbackEndpoint       string                                 `json:"scoped_feedback_endpoint,omitempty"`
+	ScopedHydrationEndpoint      string                                 `json:"scoped_hydration_endpoint,omitempty"`
+	RecommendedAgentRoute        string                                 `json:"recommended_agent_route"`
+	OwnerDebugRouteClass         string                                 `json:"owner_debug_route_class"`
+	IdentityAssurance            string                                 `json:"identity_assurance"`
+	HostileProcessAuthentication bool                                   `json:"hostile_process_authentication"`
+	OwnerMutationEnforcement     string                                 `json:"owner_mutation_enforcement"`
+	FeedbackTokenCommand         string                                 `json:"feedback_token_command"`
 }
 type Status struct {
 	SchemaVersion string                 `json:"schema_version"`

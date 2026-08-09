@@ -66,6 +66,12 @@ func (client *Client) SearchScoped(ctx context.Context, input ScopedSearchInput)
 	return packet, err
 }
 
+func (client *Client) GetScoped(ctx context.Context, input ScopedGetInput) (personalmemory.HydratedCapture, error) {
+	var capture personalmemory.HydratedCapture
+	err := client.do(ctx, http.MethodPost, ScopedHydrationEndpoint, input, &capture)
+	return capture, err
+}
+
 func (client *Client) PutScope(ctx context.Context, scope agentstate.Scope) (agentstate.Scope, error) {
 	var saved agentstate.Scope
 	err := client.do(ctx, http.MethodPut, "/v1/scoped/scopes/"+url.PathEscape(scope.ID), scope, &saved)
