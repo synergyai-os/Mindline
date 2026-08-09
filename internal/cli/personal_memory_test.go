@@ -48,7 +48,8 @@ func TestPersonalMemoryCLIImportsSearchesAndSurvivesNewRunner(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &packet); err != nil {
 		t.Fatal(err)
 	}
-	if len(packet.Citations) != 1 || packet.Citations[0].AuthorityClass != personalmemory.AuthorityClass {
+	if len(packet.Citations) != 1 || packet.Citations[0].AuthorityClass != personalmemory.AuthorityClass ||
+		packet.RouteClass != "owner_debug_ungated" || packet.AgentRecallApproved {
 		t.Fatalf("unexpected agent context packet: %+v", packet)
 	}
 	if !strings.Contains(packet.Records[0].RawText, "company-brain") {
@@ -109,6 +110,7 @@ func TestPersonalMemoryCLIImportsSearchesAndSurvivesNewRunner(t *testing.T) {
 	var hydrated personalmemory.HydratedCapture
 	if err := json.Unmarshal(stdout.Bytes(), &hydrated); err != nil ||
 		len(hydrated.Contents) != 1 ||
+		hydrated.RouteClass != "owner_debug_ungated" || hydrated.AgentRecallApproved ||
 		!strings.Contains(hydrated.Contents[0].Text, "complete retained context") {
 		t.Fatalf("hydrated capture did not return durable full content: %+v err=%v", hydrated, err)
 	}

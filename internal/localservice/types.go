@@ -1,6 +1,7 @@
 package localservice
 
 import (
+	"github.com/synergyai-os/Mindline/internal/agentcontract"
 	"github.com/synergyai-os/Mindline/internal/personalmemory"
 )
 
@@ -35,10 +36,10 @@ type ScopedGetInput struct {
 const (
 	CapabilitiesSchemaVersion = "mindline-agent-capabilities/v0.1"
 	ScopedRecallCapability    = "mindline.scoped-recall.v0.4"
-	DiscoveryCapability       = "mindline.agent-discovery.v0.1"
-	RecommendedAgentRoute     = "scoped_v0.4"
-	OwnerDebugRouteClass      = "owner_debug_ungated"
-	ScopedHydrationEndpoint   = "/v1/scoped/get"
+	DiscoveryCapability       = agentcontract.DiscoveryCapability
+	RecommendedAgentRoute     = agentcontract.RecommendedRoute
+	OwnerDebugRouteClass      = agentcontract.OwnerDebugRouteClass
+	ScopedHydrationEndpoint   = agentcontract.ScopedHydrationEndpoint
 )
 
 type Capabilities struct {

@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/synergyai-os/Mindline/internal/agentcontract"
 	"github.com/synergyai-os/Mindline/internal/agentretrieval"
 	"github.com/synergyai-os/Mindline/internal/agentstate"
 	"github.com/synergyai-os/Mindline/internal/embedding"
@@ -165,7 +166,7 @@ func (server *Server) handleCapabilities(writer http.ResponseWriter, _ *http.Req
 		SearchFormats:                []string{"mindline-agent-context-packet/v0.2", "mindline-agent-context-packet/v0.3"},
 		CompactSearchEndpoint:        "/v1/search/compact",
 		CompactAbstentionPolicy:      personalmemory.DefaultCompactAbstentionPolicy(),
-		ExplicitHydrationCommand:     "agent get",
+		ExplicitHydrationCommand:     agentcontract.NewWorkflow("mindline", "").Get,
 		FeedbackRetryToken:           true,
 		Features:                     []string{ScopedRecallCapability, DiscoveryCapability},
 		ScopedSearchEndpoint:         "/v1/scoped/search/compact",
@@ -173,10 +174,10 @@ func (server *Server) handleCapabilities(writer http.ResponseWriter, _ *http.Req
 		ScopedHydrationEndpoint:      ScopedHydrationEndpoint,
 		RecommendedAgentRoute:        RecommendedAgentRoute,
 		OwnerDebugRouteClass:         OwnerDebugRouteClass,
-		IdentityAssurance:            "declared_local_actor",
+		IdentityAssurance:            agentcontract.IdentityAssurance,
 		HostileProcessAuthentication: false,
-		OwnerMutationEnforcement:     "cooperative",
-		FeedbackTokenCommand:         "agent feedback-token",
+		OwnerMutationEnforcement:     agentcontract.MutationEnforcement,
+		FeedbackTokenCommand:         agentcontract.FeedbackTokenCommand,
 	})
 }
 
@@ -480,7 +481,7 @@ func (server *Server) handleGet(writer http.ResponseWriter, request *http.Reques
 		writeError(writer, http.StatusNotFound, err)
 		return
 	}
-	capture.RouteClass = "legacy_agent_unscoped"
+	capture.RouteClass = agentcontract.LegacyRouteClass
 	capture.AgentRecallApproved = false
 	writeJSON(writer, http.StatusOK, capture)
 }

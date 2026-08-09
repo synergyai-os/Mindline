@@ -79,6 +79,7 @@ var cliAuthorityIDs = []string{
 
 type Runner struct {
 	fs                         FileSystem
+	agentExecutable            string
 	nativeInput                io.Reader
 	operatorInput              *os.File
 	protectedRoots             []string
@@ -187,7 +188,11 @@ func NewRunner(fileSystem FileSystem) Runner {
 }
 
 func NewRunnerWithProtectedRoots(fileSystem FileSystem, protectedRoots []string) Runner {
-	return Runner{fs: fileSystem, nativeInput: os.Stdin, operatorInput: os.Stdin, protectedRoots: append([]string(nil), protectedRoots...)}
+	executable, err := os.Executable()
+	if err != nil || strings.TrimSpace(executable) == "" {
+		executable = "mindline"
+	}
+	return Runner{fs: fileSystem, agentExecutable: executable, nativeInput: os.Stdin, operatorInput: os.Stdin, protectedRoots: append([]string(nil), protectedRoots...)}
 }
 
 func NewRunnerWithInput(fileSystem FileSystem, input io.Reader) Runner {

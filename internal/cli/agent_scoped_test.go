@@ -205,6 +205,17 @@ func startScopedAgentCLITestServer(t *testing.T, mux *http.ServeMux) (string, fu
 	if err != nil {
 		t.Fatal(err)
 	}
+	configPath, closeServer := startScopedAgentCLITestServerWithConfig(t, mux, config)
+	return configPath, func() {
+		closeServer()
+		_ = os.RemoveAll(root)
+	}
+}
+
+func startScopedAgentCLITestServerWithConfig(
+	t *testing.T, mux *http.ServeMux, config localservice.Config,
+) (string, func()) {
+	t.Helper()
 	configPath := filepath.Join(config.RuntimeRoot, "config.json")
 	if err := localservice.SaveConfig(configPath, config); err != nil {
 		t.Fatal(err)
@@ -228,7 +239,6 @@ func startScopedAgentCLITestServer(t *testing.T, mux *http.ServeMux) (string, fu
 		if err := <-result; err != nil && err != http.ErrServerClosed {
 			t.Fatal(err)
 		}
-		_ = os.RemoveAll(root)
 	}
 }
 

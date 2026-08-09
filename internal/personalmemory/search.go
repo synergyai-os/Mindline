@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/synergyai-os/Mindline/internal/agentcontract"
 )
 
 const (
@@ -865,7 +867,7 @@ func assembleContextPacket(request SearchRequest, library Library, hits []Ranked
 		Query: strings.TrimSpace(request.Query), LensID: request.LensID,
 		RetrievalMethod: retrievalMethod, AuthorityClass: AuthorityClass,
 		LibraryRevision: library.Revision, LibraryFingerprint: library.Fingerprint,
-		RouteClass: "legacy_agent_unscoped", AgentRecallApproved: false,
+		RouteClass: agentcontract.LegacyRouteClass, AgentRecallApproved: false,
 		Citations: []Citation{}, Records: []CaptureRecord{}, Resources: []ResourceContext{},
 		ResourceRevisions: []ResourceRevision{},
 	}
@@ -937,10 +939,10 @@ func assembleCompactContextPacket(
 		Citations: []CompactCitation{},
 	}
 	if request.ScopeID != "" && request.AgentID != "" {
-		packet.RouteClass = "agent_scoped_governed"
+		packet.RouteClass = agentcontract.GovernedRouteClass
 		packet.AgentRecallApproved = true
 	} else {
-		packet.RouteClass = "legacy_agent_unscoped"
+		packet.RouteClass = agentcontract.LegacyRouteClass
 	}
 	for _, hit := range hits {
 		document, exists := documents[hit.DocumentID]

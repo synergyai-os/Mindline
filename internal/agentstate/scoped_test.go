@@ -234,6 +234,62 @@ func TestScopedFeedbackIsDirectionalAndPartitioned(t *testing.T) {
 	}
 }
 
+func TestScopedAgentReversalPersistsAndRejectsSecondOrCrossContextUse(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 8, 10, 30, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "state", "agent.sqlite")
+	store, err := Open(path, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	seedScopedContexts(t, store, ctx, now)
+	original, err := store.ApplyScopedJudgment(ctx, ScopedJudgmentRequest{
+		RetryToken: "reversal-original-retry-123456", RunID: "run-scope-a-agent-a",
+		ScopeID: "scope-a", LensID: "lens-one", AgentID: "agent-a",
+		RecordID: "record-one", Actor: FeedbackAgent, Disposition: "used",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reversalRequest := ScopedJudgmentRequest{
+		IdempotencyKey: "reversal-event-key-123456", ScopeID: "scope-a",
+		LensID: "lens-one", AgentID: "agent-a", Actor: FeedbackAgent,
+		ReversesID: original.JudgmentID,
+	}
+	reversal, err := store.ApplyScopedJudgment(ctx, reversalRequest)
+	if err != nil || reversal.Effect != -0.25 || reversal.ReversesID != original.JudgmentID {
+		t.Fatalf("reversal=%+v err=%v", reversal, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := Open(path, func() time.Time { return now.Add(time.Minute) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	replay, err := reopened.ApplyScopedJudgment(ctx, reversalRequest)
+	if err != nil || !replay.Replayed || replay.JudgmentID != reversal.JudgmentID {
+		t.Fatalf("reversal replay=%+v err=%v", replay, err)
+	}
+	second := reversalRequest
+	second.IdempotencyKey = "second-reversal-event-key-123456"
+	if _, err := reopened.ApplyScopedJudgment(ctx, second); err == nil {
+		t.Fatal("second reversal was accepted")
+	}
+	crossContext := reversalRequest
+	crossContext.IdempotencyKey = "cross-context-reversal-key-123456"
+	crossContext.AgentID = "agent-b"
+	if _, err := reopened.ApplyScopedJudgment(ctx, crossContext); err == nil {
+		t.Fatal("cross-context reversal was accepted")
+	}
+	assertScopedRelevance(t, reopened, ctx, ScopedContext{
+		ScopeID: "scope-a", LensID: "lens-one", AgentID: "agent-a",
+	}, 0)
+}
+
 func TestCorruptRecoveryRestoresScopedState(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 8, 11, 0, 0, 0, time.UTC)

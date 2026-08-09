@@ -21,7 +21,7 @@ func (r Runner) runAgent(args []string, stdout, stderr io.Writer) int {
 	}
 	switch args[0] {
 	case "help", "--help":
-		return writeAgentHelp(stdout)
+		return r.writeAgentHelp(stdout)
 	case "discover":
 		return r.runAgentDiscover(args[1:], stdout, stderr)
 	case "feedback-token":

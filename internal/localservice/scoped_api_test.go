@@ -22,6 +22,7 @@ func TestScopedRecallV04RoutesFailClosedAndKeepLegacyCompactUnchanged(t *testing
 		t.Fatal(err)
 	}
 	seedSemanticIndexMemory(t, config.MemoryRoot)
+	seedUnrelatedExistingRecord(t, config.MemoryRoot)
 	server, err := NewServer(config, nil, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -62,7 +63,27 @@ func TestScopedRecallV04RoutesFailClosedAndKeepLegacyCompactUnchanged(t *testing
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if lenses, err := client.ListScopedLenses(context.Background(), ""); err != nil || len(lenses) != 1 {
+	if _, err := client.PutScope(context.Background(), agentstate.Scope{
+		ID: "project-b", Name: "Project B", Purpose: "separate context",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.PutScopedLens(context.Background(), agentstate.ScopedLens{
+		ScopeID: "project-b", ID: "delivery", Name: "Delivery B", Query: "citations",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.PutScopedLens(context.Background(), agentstate.ScopedLens{
+		ScopeID: "project", ID: "delivery-b", Name: "Delivery alternate", Query: "citations",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.PutActor(context.Background(), agentstate.AgentActor{
+		ID: "agent-b", Name: "Agent B",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if lenses, err := client.ListScopedLenses(context.Background(), ""); err != nil || len(lenses) != 3 {
 		t.Fatalf("all scoped lenses=%+v err=%v", lenses, err)
 	}
 	if _, err := client.SearchScoped(context.Background(), ScopedSearchInput{
@@ -92,16 +113,44 @@ func TestScopedRecallV04RoutesFailClosedAndKeepLegacyCompactUnchanged(t *testing
 		capture.RunID != packet.RunID || capture.RecordID != citation.RecordID {
 		t.Fatalf("scoped capture=%+v err=%v", capture, err)
 	}
+	library, err := server.repository.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cited := map[string]bool{}
+	for _, item := range packet.Citations {
+		cited[item.RecordID] = true
+	}
+	uncitedRecord := ""
+	for _, item := range library.Records {
+		if !cited[item.RecordID] {
+			uncitedRecord = item.RecordID
+			break
+		}
+	}
+	if uncitedRecord == "" {
+		t.Fatal("fixture has no existing uncited record")
+	}
+	negativeHydration := []struct {
+		name  string
+		input ScopedGetInput
+	}{
+		{name: "wrong run", input: ScopedGetInput{RunID: "wrong-run", ScopeID: "project", LensID: "delivery", AgentID: "agent-a", RecordID: citation.RecordID}},
+		{name: "missing record", input: ScopedGetInput{RunID: packet.RunID, ScopeID: "project", LensID: "delivery", AgentID: "agent-a", RecordID: "missing-record"}},
+		{name: "existing uncited record", input: ScopedGetInput{RunID: packet.RunID, ScopeID: "project", LensID: "delivery", AgentID: "agent-a", RecordID: uncitedRecord}},
+		{name: "wrong scope", input: ScopedGetInput{RunID: packet.RunID, ScopeID: "project-b", LensID: "delivery", AgentID: "agent-a", RecordID: citation.RecordID}},
+		{name: "wrong lens", input: ScopedGetInput{RunID: packet.RunID, ScopeID: "project", LensID: "delivery-b", AgentID: "agent-a", RecordID: citation.RecordID}},
+		{name: "wrong agent", input: ScopedGetInput{RunID: packet.RunID, ScopeID: "project", LensID: "delivery", AgentID: "agent-b", RecordID: citation.RecordID}},
+	}
+	for _, item := range negativeHydration {
+		if _, err := client.GetScoped(context.Background(), item.input); err == nil {
+			t.Fatalf("%s hydrated a scoped capture", item.name)
+		}
+	}
 	afterGet, err := client.Status(context.Background())
 	if err != nil || beforeGet.State.RetrievalRunCount != afterGet.State.RetrievalRunCount ||
 		beforeGet.State.JudgmentCount != afterGet.State.JudgmentCount {
-		t.Fatalf("scoped get mutated state before=%+v after=%+v err=%v", beforeGet.State, afterGet.State, err)
-	}
-	if _, err := client.GetScoped(context.Background(), ScopedGetInput{
-		RunID: "wrong-run", ScopeID: "project", LensID: "delivery", AgentID: "agent-a",
-		RecordID: citation.RecordID,
-	}); err == nil {
-		t.Fatal("wrong run hydrated a scoped capture")
+		t.Fatalf("scoped get matrix mutated state before=%+v after=%+v err=%v", beforeGet.State, afterGet.State, err)
 	}
 	legacyCapture, err := client.Get(context.Background(), citation.RecordID)
 	if err != nil || legacyCapture.AgentRecallApproved || legacyCapture.RouteClass != "legacy_agent_unscoped" {
@@ -129,6 +178,32 @@ func TestScopedRecallV04RoutesFailClosedAndKeepLegacyCompactUnchanged(t *testing
 		t.Fatal(err)
 	}
 	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func seedUnrelatedExistingRecord(t *testing.T, root string) {
+	t.Helper()
+	repository, err := personalmemory.NewFileRepository(root, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := personalmemory.NewCaptureRecord(personalmemory.CaptureRecordInput{
+		SourceAdapter: "slack", SourceScopeID: "self", SourceContainerID: "dm",
+		ExternalID: "2", OccurredAt: "2026-08-08T08:01:00Z",
+		SourceRef: "slack://self/dm/2", RawText: "orchards tides and ceramic glazing",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch, err := personalmemory.NewCaptureBatch(personalmemory.CaptureBatchInput{
+		SourceIdentity: "slack-self", LowerInclusive: "2", UpperInclusive: "2",
+		Watermark: "2", DeclaredRecords: 1, Records: []personalmemory.CaptureRecord{record},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.Import(batch); err != nil {
 		t.Fatal(err)
 	}
 }

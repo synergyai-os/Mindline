@@ -11,22 +11,30 @@ import (
 	"strings"
 )
 
-const SchemaVersion = "mindline-agent-discovery-proof/v0.1"
+const (
+	SchemaVersion          = "mindline-agent-discovery-proof/v0.1"
+	SignedSpecSHA256       = "009c98ca9dd975bd0472fe7127ff79fb8533493601ea593b601b527631726d0d"
+	SignedPlanSHA256       = "7b7b481ede61596929a78e9ac16170aef6365ccbcd0ed50992d0eb1b7bde147a"
+	RequiredBaselineCommit = "723b7b319627a4fd4f508e0745bfd002fa2d0398"
+)
 
 type Receipt struct {
-	SchemaVersion      string              `json:"schema_version"`
-	TreeSHA256         string              `json:"tree_sha256"`
-	BinarySHA256       string              `json:"binary_sha256"`
-	SpecSHA256         string              `json:"spec_sha256"`
-	PlanSHA256         string              `json:"plan_sha256"`
-	Cases              []Case              `json:"cases"`
-	PrivateCommitments []PrivateCommitment `json:"private_commitments"`
+	SchemaVersion         string              `json:"schema_version"`
+	TreeSHA256            string              `json:"tree_sha256"`
+	BinarySHA256          string              `json:"binary_sha256"`
+	SpecSHA256            string              `json:"spec_sha256"`
+	PlanSHA256            string              `json:"plan_sha256"`
+	LatencyManifestSHA256 string              `json:"latency_manifest_sha256"`
+	BaselineCommit        string              `json:"baseline_commit"`
+	Cases                 []Case              `json:"cases"`
+	PrivateCommitments    []PrivateCommitment `json:"private_commitments"`
 }
 
 type Case struct {
 	ID        string `json:"id"`
 	State     string `json:"state"`
 	Count     int    `json:"count"`
+	ColdMS    int    `json:"cold_ms"`
 	P50MS     int    `json:"p50_ms"`
 	P95MS     int    `json:"p95_ms"`
 	MaximumMS int    `json:"maximum_ms"`
@@ -66,18 +74,28 @@ func Decode(data []byte) (Receipt, error) {
 
 func (receipt Receipt) Validate() error {
 	if receipt.SchemaVersion != SchemaVersion || !isSHA(receipt.TreeSHA256) ||
-		!isSHA(receipt.BinarySHA256) || !isSHA(receipt.SpecSHA256) || !isSHA(receipt.PlanSHA256) ||
-		len(receipt.Cases) == 0 || len(receipt.PrivateCommitments) == 0 {
+		!isSHA(receipt.BinarySHA256) || receipt.SpecSHA256 != SignedSpecSHA256 ||
+		receipt.PlanSHA256 != SignedPlanSHA256 || !isSHA(receipt.LatencyManifestSHA256) ||
+		receipt.BaselineCommit != RequiredBaselineCommit ||
+		len(receipt.Cases) != len(requiredCases) ||
+		len(receipt.PrivateCommitments) != len(requiredCommitmentKinds) {
 		return errors.New("invalid discovery proof receipt")
 	}
 	seenCases := map[string]bool{}
 	for _, item := range receipt.Cases {
-		if !allowedCase(item.ID) || item.State != "pass" || seenCases[item.ID] ||
-			item.Count < 0 || item.P50MS < 0 || item.P95MS < item.P50MS ||
+		ceiling, required := requiredCases[item.ID]
+		if !required || item.State != "pass" || seenCases[item.ID] || item.Count <= 0 ||
+			item.ColdMS < 0 || item.P50MS < 0 || item.P95MS < item.P50MS ||
 			item.MaximumMS < item.P95MS {
 			return errors.New("invalid discovery proof case")
 		}
+		if ceiling > 0 && (item.Count != 21 || item.P95MS > ceiling) {
+			return errors.New("invalid discovery proof latency case")
+		}
 		seenCases[item.ID] = true
+	}
+	if len(seenCases) != len(requiredCases) {
+		return errors.New("incomplete discovery proof cases")
 	}
 	seenCommitments := map[string]bool{}
 	for _, commitment := range receipt.PrivateCommitments {
@@ -88,26 +106,31 @@ func (receipt Receipt) Validate() error {
 		}
 		seenCommitments[commitment.Kind] = true
 	}
+	if len(seenCommitments) != len(requiredCommitmentKinds) {
+		return errors.New("incomplete private proof commitments")
+	}
 	return nil
 }
 
-func allowedCase(value string) bool {
-	switch value {
-	case "help", "discovery", "scoped_get", "feedback", "blind_answerable",
-		"blind_absent", "rollback", "secret_scan", "latency":
-		return true
-	default:
-		return false
-	}
+var requiredCases = map[string]int{
+	"help": 0, "discovery": 0, "config_separation": 0,
+	"scoped_get": 0, "hydration_negatives": 0, "feedback_lifecycle": 0,
+	"abstention_diagnostics": 0, "closed_errors": 0, "compatibility": 0,
+	"install_rollback": 0, "secret_scan": 0, "blind_answerable": 0, "blind_absent": 0,
+	"latency_agent_help": 250, "latency_feedback_token": 250,
+	"latency_discovery_ready": 3000, "latency_discovery_invalid": 3000,
+	"latency_scoped_get": 5000, "latency_scoped_feedback": 5000,
+	"latency_scoped_search": 25000,
+}
+
+var requiredCommitmentKinds = map[string]bool{
+	"answerable_question": true, "absent_question": true, "scope": true,
+	"lens": true, "agent": true, "private_transcript": true,
+	"config": true, "library": true, "machine": true,
 }
 
 func allowedCommitmentKind(value string) bool {
-	switch value {
-	case "answerable_question", "absent_question", "scope", "lens", "agent", "private_transcript":
-		return true
-	default:
-		return false
-	}
+	return requiredCommitmentKinds[value]
 }
 
 func isSHA(value string) bool {
