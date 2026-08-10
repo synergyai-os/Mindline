@@ -85,6 +85,10 @@ func TestOSDirectExecutorIgnoresAmbientPathAndRejectsUnknownTools(t *testing.T) 
 	if result.ExitCode != 0 || result.ToolFingerprint == "" || strings.Contains(string(result.Stdout), "attacker-path-tool") {
 		t.Fatalf("ambient PATH selected proof tool: %+v", result)
 	}
+	goResult := (OSDirectExecutor{}).Run(context.Background(), filepath.Clean(filepath.Join("..", "..")), "go", []string{"version"})
+	if goResult.ExitCode != 0 || goResult.ToolFingerprint == "" || strings.Contains(string(goResult.Stdout), "attacker-path-tool") {
+		t.Fatalf("approved Go tool was unavailable: exit=%d stdout=%q stderr=%q fingerprint=%q", goResult.ExitCode, goResult.Stdout, goResult.Stderr, goResult.ToolFingerprint)
+	}
 	if result := (OSDirectExecutor{}).Run(context.Background(), ".", "sh", []string{"-c", "true"}); result.ExitCode != -1 {
 		t.Fatalf("unknown proof tool accepted: %+v", result)
 	}
