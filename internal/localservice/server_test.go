@@ -109,7 +109,7 @@ func TestSearchStaysUsefulWhileSemanticIndexBuildsInBackground(t *testing.T) {
 		Query: "product brain citations", Limit: 3,
 	})
 	if err != nil || packet.RetrievalState != "hybrid" ||
-		packet.RetrievalMethod != "mindline_hybrid_local/v0.10" {
+		packet.RetrievalMethod != "mindline_hybrid_local/v0.17" {
 		t.Fatalf("hybrid packet=%+v err=%v", packet, err)
 	}
 
@@ -244,8 +244,19 @@ func TestServerIsSingleWriterAndPersistsLensesAcrossRestart(t *testing.T) {
 			http.NotFound(writer, request)
 			return
 		}
+		var input struct {
+			Inputs []string `json:"input"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&input); err != nil {
+			t.Errorf("decode embedding request: %v", err)
+			return
+		}
+		vectors := make([][]float64, len(input.Inputs))
+		for index := range vectors {
+			vectors[index] = []float64{1, 0}
+		}
 		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`{"embeddings":[[1,0]]}`))
+		_ = json.NewEncoder(writer).Encode(map[string]any{"embeddings": vectors})
 	}))
 	defer ollama.Close()
 	root, err := os.MkdirTemp("/tmp", "mindline-svc-")

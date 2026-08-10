@@ -347,7 +347,7 @@ func TestScopedRankFreezesCallerBoundBeforeContextRerank(t *testing.T) {
 	}
 }
 
-func TestScopedContextEmbeddingFailurePreservesQueryAuthorizedMembership(t *testing.T) {
+func TestScopedCombinedEmbeddingFailureFallsBackToQueryLexicalMembership(t *testing.T) {
 	state, request := seededScopedRequest(t, "context-fails")
 	defer state.Close()
 	documents := []personalmemory.IndexDocument{
@@ -362,9 +362,11 @@ func TestScopedContextEmbeddingFailurePreservesQueryAuthorizedMembership(t *test
 	request.Query = "term"
 	request.LexicalQuery = "term"
 	request.QueryAuthorizedLimit = 1
-	hits, err := NewHybridBackend(context.Background(), state, contextFailureEmbedder{}).Rank(request, documents)
-	if err != nil || len(hits) != 1 || hits[0].DocumentID != "b" {
-		t.Fatalf("context failure changed query-authorized membership: hits=%+v err=%v", hits, err)
+	backend := NewHybridBackend(context.Background(), state, contextFailureEmbedder{})
+	hits, err := backend.Rank(request, documents)
+	if err != nil || len(hits) != 1 || hits[0].DocumentID != "a" ||
+		backend.MethodID() != "mindline_lexical_degraded/v0.2" {
+		t.Fatalf("combined embedding failure did not fail closed to lexical membership: hits=%+v err=%v", hits, err)
 	}
 }
 
@@ -626,7 +628,7 @@ func TestHybridBackendUsesAsymmetricChunkEmbeddingsForLateEvidence(t *testing.T)
 		t.Fatalf("asymmetric inputs not used: docs=%d queries=%v",
 			len(embedder.documentInputs), embedder.queryInputs)
 	}
-	if backend.MethodID() != "mindline_hybrid_local/v0.10" {
+	if backend.MethodID() != "mindline_hybrid_local/v0.17" {
 		t.Fatalf("semantic authorization policy change kept stale method identity: %s",
 			backend.MethodID())
 	}
@@ -835,7 +837,7 @@ func TestHybridCompactSearchWiresCorroboratedResourceRecoveryEndToEnd(t *testing
 		components["semantic_distinct_evidence_margin"] < personalmemory.DefaultCompactMinimumSemanticMargin ||
 		components["lexical_idf_coverage"] < personalmemory.DefaultCompactMinimumSemanticLexicalCover ||
 		components["semantic_distinct_evidence_valid"] != 1 ||
-		backend.MethodID() != "mindline_hybrid_local/v0.10" {
+		backend.MethodID() != "mindline_hybrid_local/v0.17" {
 		t.Fatalf("hybrid recovery evidence was not wired conservatively: %+v method=%s",
 			components, backend.MethodID())
 	}

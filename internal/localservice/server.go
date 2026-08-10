@@ -395,6 +395,25 @@ func (server *Server) prepareSemanticIndex(
 			"semantic index provider is unavailable; lexical retrieval is available")
 		return
 	}
+	// A fully cached document index does not otherwise contact the local model.
+	// Warm and verify the query path before advertising semantic readiness so
+	// the first real agent request does not silently fall back to lexical-only.
+	var warmErr error
+	if retrievalEmbedder, ok := server.embedder.(embedding.RetrievalPort); ok {
+		_, warmErr = retrievalEmbedder.EmbedQuery(ctx, "mindline semantic readiness")
+	} else {
+		_, warmErr = server.embedder.Embed(ctx, []string{"mindline semantic readiness"})
+	}
+	if warmErr != nil {
+		if ctx.Err() != nil {
+			server.finishSemanticIndex(generation, "stale", expectedFingerprint,
+				"semantic indexing was interrupted; lexical retrieval is available")
+			return
+		}
+		server.finishSemanticIndex(generation, "unavailable", expectedFingerprint,
+			"semantic query provider is unavailable; lexical retrieval is available")
+		return
+	}
 	current, err := server.repository.Status()
 	if err != nil || current.Fingerprint != expectedFingerprint {
 		server.finishSemanticIndex(generation, "stale", expectedFingerprint,

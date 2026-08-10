@@ -11,6 +11,19 @@ Product Brain and Tolaria matter, but they are not the product:
 - Tolaria is Randy's current local PKM destination and adapter test surface.
 - Other possible destinations include Notion, Obsidian, Linear, local folders, APIs, custom apps, or future Product Brain workspaces.
 
+## Founder Communication Standard
+
+When communicating directly with Randy:
+
+- Lead with the answer, outcome, or decision.
+- Default to short, plain-English, visually scannable output. Prefer one compact table, a simple flow, or at most five bullets when structure helps.
+- Avoid technical jargon. If a technical term is unavoidable, define it in one short sentence.
+- Separate what works now, the remaining gap, the recommendation, and confidence when those distinctions matter.
+- State clearly what is proven versus inferred or proposed.
+- Keep detailed engineering language in code, tests, logs, Product Brain, and review artifacts unless Randy asks for it or needs it to make a decision.
+
+This standard applies to user-facing commentary and final answers. It does not limit technical depth in implementation or internal artifacts.
+
 ## Non-Negotiable Paths
 
 - Product Brain CLI working directory: `/Users/randyhereman/Coding/PKM System`

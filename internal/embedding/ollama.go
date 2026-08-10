@@ -110,15 +110,23 @@ func (ollama *Ollama) Embed(ctx context.Context, inputs []string) ([][]float64, 
 }
 
 func (ollama *Ollama) EmbedQuery(ctx context.Context, input string) ([]float64, error) {
-	input = strings.TrimSpace(input)
-	if ollama.usesEmbeddingGemmaPrompts() {
-		input = "task: search result | query: " + input
-	}
-	vectors, err := ollama.Embed(ctx, []string{input})
+	vectors, err := ollama.EmbedQueries(ctx, []string{input})
 	if err != nil {
 		return nil, err
 	}
 	return vectors[0], nil
+}
+
+func (ollama *Ollama) EmbedQueries(ctx context.Context, inputs []string) ([][]float64, error) {
+	prepared := make([]string, 0, len(inputs))
+	for _, input := range inputs {
+		input = strings.TrimSpace(input)
+		if ollama.usesEmbeddingGemmaPrompts() {
+			input = "task: search result | query: " + input
+		}
+		prepared = append(prepared, input)
+	}
+	return ollama.Embed(ctx, prepared)
 }
 
 func (ollama *Ollama) EmbedDocuments(ctx context.Context, inputs []string) ([][]float64, error) {

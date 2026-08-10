@@ -297,6 +297,12 @@ type CompactAbstentionPolicy struct {
 	MinimumLexicalWinnerMargin     float64 `json:"minimum_lexical_winner_margin"`
 	MinimumLexicalMatchedTerms     int     `json:"minimum_lexical_matched_terms"`
 	MinimumOrderedPhraseTerms      int     `json:"minimum_ordered_phrase_terms"`
+	MinimumFullCoverageTerms       int     `json:"minimum_full_coverage_terms"`
+	MinimumBroadQueryTerms         int     `json:"minimum_broad_query_terms"`
+	MinimumBroadQueryMatches       int     `json:"minimum_broad_query_matches"`
+	MinimumBroadQueryIDFCoverage   float64 `json:"minimum_broad_query_idf_coverage"`
+	MaximumBroadQueryRank          int     `json:"maximum_broad_query_rank"`
+	MinimumBroadSemanticCosine     float64 `json:"minimum_broad_semantic_cosine"`
 	LexicalEvidenceRule            string  `json:"lexical_evidence_rule"`
 	StopwordPolicy                 string  `json:"stopword_policy"`
 	SemanticCalibrationIdentity    string  `json:"semantic_calibration_identity"`

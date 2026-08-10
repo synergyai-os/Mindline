@@ -28,24 +28,30 @@ const (
 	DefaultSearchLimit               = 10
 	MaximumSearchLimit               = 100
 
-	CompactAbstentionPolicySchemaVersion      = "mindline-compact-abstention-policy/v0.7"
-	DefaultCompactMinimumSemanticCosine       = 0.60
-	DefaultCompactMinimumSemanticMargin       = 0.03
-	DefaultCompactMinimumSemanticOnlyCosine   = 0.64
-	DefaultCompactMinimumSemanticOnlyMargin   = 0.04
-	DefaultCompactMinimumSemanticLexicalCover = 0.35
-	DefaultCompactMinimumLexicalIDFCoverage   = 0.80
-	DefaultCompactMaximumLexicalDocumentRatio = 0.01
-	DefaultCompactMinimumLexicalWinnerMargin  = 0.15
-	DefaultCompactMinimumLexicalMatchedTerms  = 3
-	DefaultCompactMinimumOrderedPhraseTerms   = 3
-	CompactSemanticCalibrationIdentity        = "ollama/embeddinggemma:latest/retrieval-input-v0.2|query-prompt=search-result-v0.1|document-prompt=title-none-v0.1|document-projection=record-source+unique-current-resource+authorization-evidence-alias-v0.10|distinct-resource-evidence-margin=v0.1|chunk-runes=2000|chunk-overlap=200|max-chunks=8"
-	compactLexicalEvidenceRule                = "rank1_ordered_phrase_or_rare_idf_coverage"
-	compactStopwordPolicy                     = "mindline-english-stopwords/v0.2"
-	compactRankingIdentity                    = "bm25-original-query|authorization-meaningful-query|candidate-pool=100|documents=record-source+unique-current-resource+authorization-evidence-alias-v0.10|raw-hit-identity=fail-closed-v0.1|authorization=existing-v0.7-then-calibrated-corroborated-resource-v0.1|owner-expansion=post-authorization-v0.1|feedback-alias=observed-owner-mean-v0.1|relevance-lookup-chunk=100000|rrf-k=60|lexical-weight=2|semantic-weight=1|lens-rerank-only"
-	compactChunkingIdentity                   = "document-projection=record-source+unique-current-resource+authorization-evidence-alias-v0.10|chunk-runes=2000|chunk-overlap=200|max-chunks=8"
-	compactResourceDocumentPrefix             = "compact-resource:"
-	maximumCompactDocumentIDRunes             = 128
+	CompactAbstentionPolicySchemaVersion       = "mindline-compact-abstention-policy/v0.13"
+	DefaultCompactMinimumSemanticCosine        = 0.60
+	DefaultCompactMinimumSemanticMargin        = 0.03
+	DefaultCompactMinimumSemanticOnlyCosine    = 0.64
+	DefaultCompactMinimumSemanticOnlyMargin    = 0.04
+	DefaultCompactMinimumSemanticLexicalCover  = 0.35
+	DefaultCompactMinimumLexicalIDFCoverage    = 0.80
+	DefaultCompactMaximumLexicalDocumentRatio  = 0.025
+	DefaultCompactMinimumLexicalWinnerMargin   = 0.12
+	DefaultCompactMinimumLexicalMatchedTerms   = 3
+	DefaultCompactMinimumOrderedPhraseTerms    = 3
+	DefaultCompactMinimumFullCoverageTerms     = 4
+	DefaultCompactMinimumBroadQueryTerms       = 6
+	DefaultCompactMinimumBroadQueryMatches     = 5
+	DefaultCompactMinimumBroadQueryIDFCoverage = 0.40
+	DefaultCompactMaximumBroadQueryRank        = 5
+	DefaultCompactMinimumBroadSemanticCosine   = 0.40
+	CompactSemanticCalibrationIdentity         = "ollama/embeddinggemma:latest/retrieval-input-v0.2|query-prompt=search-result-v0.1|query-batch=original+context-v0.2|document-prompt=title-none-v0.1|document-projection=record-source+unique-current-resource+authorization-evidence-alias-v0.10|distinct-resource-evidence-margin=v0.1|chunk-runes=2000|chunk-overlap=200|max-chunks=8"
+	compactLexicalEvidenceRule                 = "rank1_full_coverage_or_ordered_phrase_or_rare_idf_coverage_or_broad_query_overlap"
+	compactStopwordPolicy                      = "mindline-english-stopwords/v0.2"
+	compactRankingIdentity                     = "bm25-original-query|authorization-meaningful-query|candidate-pool=100|query-batch=original+context/v0.2|documents=record-source+unique-current-resource+authorization-evidence-alias/v0.10|raw-hit-identity=fail-closed/v0.1|authorization=existing/v0.13+calibrated-broad-query-overlap-top5/v0.3+calibrated-corroborated-resource/v0.1|owner-expansion=post-authorization/v0.1|feedback-alias=observed-owner-mean/v0.1|relevance-lookup-chunk=100000|rrf-k=60|lexical-weight=2|semantic-weight=1|lens-rerank-only"
+	compactChunkingIdentity                    = "document-projection=record-source+unique-current-resource+authorization-evidence-alias-v0.10|chunk-runes=2000|chunk-overlap=200|max-chunks=8"
+	compactResourceDocumentPrefix              = "compact-resource:"
+	maximumCompactDocumentIDRunes              = 128
 
 	IndexEvidenceKindRecordSource   = "record_source"
 	IndexEvidenceKindUniqueResource = "unique_resource"
@@ -1057,6 +1063,24 @@ func DefaultCompactAbstentionPolicy() CompactAbstentionPolicy {
 		"minimum_ordered_phrase_terms=" + strconv.Itoa(
 			DefaultCompactMinimumOrderedPhraseTerms,
 		),
+		"minimum_full_coverage_terms=" + strconv.Itoa(
+			DefaultCompactMinimumFullCoverageTerms,
+		),
+		"minimum_broad_query_terms=" + strconv.Itoa(
+			DefaultCompactMinimumBroadQueryTerms,
+		),
+		"minimum_broad_query_matches=" + strconv.Itoa(
+			DefaultCompactMinimumBroadQueryMatches,
+		),
+		"minimum_broad_query_idf_coverage=" + strconv.FormatFloat(
+			DefaultCompactMinimumBroadQueryIDFCoverage, 'f', 6, 64,
+		),
+		"maximum_broad_query_rank=" + strconv.Itoa(
+			DefaultCompactMaximumBroadQueryRank,
+		),
+		"minimum_broad_semantic_cosine=" + strconv.FormatFloat(
+			DefaultCompactMinimumBroadSemanticCosine, 'f', 6, 64,
+		),
 		"lexical_evidence_rule=" + compactLexicalEvidenceRule,
 		"stopword_policy=" + compactStopwordPolicy,
 		"semantic_calibration_identity=" + CompactSemanticCalibrationIdentity,
@@ -1076,6 +1100,12 @@ func DefaultCompactAbstentionPolicy() CompactAbstentionPolicy {
 		MinimumLexicalWinnerMargin:     DefaultCompactMinimumLexicalWinnerMargin,
 		MinimumLexicalMatchedTerms:     DefaultCompactMinimumLexicalMatchedTerms,
 		MinimumOrderedPhraseTerms:      DefaultCompactMinimumOrderedPhraseTerms,
+		MinimumFullCoverageTerms:       DefaultCompactMinimumFullCoverageTerms,
+		MinimumBroadQueryTerms:         DefaultCompactMinimumBroadQueryTerms,
+		MinimumBroadQueryMatches:       DefaultCompactMinimumBroadQueryMatches,
+		MinimumBroadQueryIDFCoverage:   DefaultCompactMinimumBroadQueryIDFCoverage,
+		MaximumBroadQueryRank:          DefaultCompactMaximumBroadQueryRank,
+		MinimumBroadSemanticCosine:     DefaultCompactMinimumBroadSemanticCosine,
 		LexicalEvidenceRule:            compactLexicalEvidenceRule,
 		StopwordPolicy:                 compactStopwordPolicy,
 		SemanticCalibrationIdentity:    CompactSemanticCalibrationIdentity,
@@ -1182,6 +1212,23 @@ func compactQueryAuthorized(
 	policy CompactAbstentionPolicy,
 	calibrationID string,
 ) bool {
+	if calibrationID == policy.SemanticCalibrationIdentity {
+		for _, hit := range hits {
+			rank, rankOK := finiteComponent(hit, "lexical_rank")
+			queryTerms, queryOK := finiteComponent(hit, "lexical_query_terms")
+			matchedTerms, matchedOK := finiteComponent(hit, "lexical_matched_terms")
+			idfCoverage, coverageOK := finiteComponent(hit, "lexical_idf_coverage")
+			semanticCosine, semanticOK := finiteComponent(hit, "semantic_cosine")
+			if rankOK && queryOK && matchedOK && coverageOK && semanticOK && rank >= 1 &&
+				rank <= float64(policy.MaximumBroadQueryRank) &&
+				queryTerms >= float64(policy.MinimumBroadQueryTerms) &&
+				matchedTerms >= float64(policy.MinimumBroadQueryMatches) &&
+				idfCoverage >= policy.MinimumBroadQueryIDFCoverage &&
+				semanticCosine >= policy.MinimumBroadSemanticCosine {
+				return true
+			}
+		}
+	}
 	for _, hit := range hits {
 		rank, rankOK := finiteComponent(hit, "lexical_rank")
 		if !rankOK || rank != 1 {
@@ -1200,6 +1247,10 @@ func compactQueryAuthorized(
 		if exactPhrase >= 1 &&
 			(queryTerms >= float64(policy.MinimumOrderedPhraseTerms) ||
 				(queryTerms >= 2 && rarestRatio <= policy.MaximumLexicalDocumentRatio)) {
+			return true
+		}
+		if queryTerms >= float64(policy.MinimumFullCoverageTerms) &&
+			matchedTerms == queryTerms && idfCoverage >= 1 {
 			return true
 		}
 		if matchedTerms >= float64(policy.MinimumLexicalMatchedTerms) &&

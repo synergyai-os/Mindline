@@ -61,7 +61,7 @@ func NewHybridBackend(ctx context.Context, state *agentstate.Store, embedder emb
 	}
 	return &HybridBackend{
 		context: ctx, state: state, embedder: embedder,
-		method: "mindline_hybrid_local/v0.10", retrievalState: "hybrid",
+		method: "mindline_hybrid_local/v0.17", retrievalState: "hybrid",
 	}
 }
 
@@ -145,24 +145,34 @@ func (backend *HybridBackend) Rank(request personalmemory.SearchRequest, documen
 	}
 	var authorizationSemanticScores map[string]float64
 	var authorizationSemanticErr error
+	rankingSemanticScores := map[string]float64{}
 	if backend.forcedDegradedReason != "" {
 		authorizationSemanticScores = map[string]float64{}
 		authorizationSemanticErr = errors.New(backend.forcedDegradedReason)
 	} else {
-		authorizationSemanticScores, authorizationSemanticErr = backend.semanticScores(query, documents)
-	}
-	rankingSemanticScores := authorizationSemanticScores
-	var contextSemanticErr error
-	if authorizationSemanticErr == nil && contextQuery != "" {
-		var contextualScores map[string]float64
-		contextualScores, contextSemanticErr = backend.semanticScores(
-			strings.TrimSpace(query+"\n"+contextQuery), documents,
+		authorizationQueries := []string{query}
+		semanticQueries := append([]string(nil), authorizationQueries...)
+		contextScoreIndex := -1
+		if contextQuery != "" {
+			contextScoreIndex = len(semanticQueries)
+			semanticQueries = append(semanticQueries, strings.TrimSpace(query+"\n"+contextQuery))
+		}
+		var allSemanticScoreSets []map[string]float64
+		allSemanticScoreSets, authorizationSemanticErr = backend.semanticScoreSets(
+			semanticQueries, documents,
 		)
-		if contextSemanticErr == nil {
-			rankingSemanticScores = contextualScores
+		if authorizationSemanticErr == nil {
+			authorizationSemanticScores = allSemanticScoreSets[0]
+			rankingSemanticScores = authorizationSemanticScores
+			if contextScoreIndex >= 0 {
+				rankingSemanticScores = allSemanticScoreSets[contextScoreIndex]
+			}
 		}
 	}
-	backend.setContextMode(authorizationSemanticErr, contextSemanticErr)
+	if authorizationSemanticErr != nil {
+		rankingSemanticScores = authorizationSemanticScores
+	}
+	backend.setMode(authorizationSemanticErr)
 
 	relevance, err := backend.feedbackRelevanceForRequest(request, documents)
 	if err != nil {
@@ -305,30 +315,56 @@ func (backend *HybridBackend) Rank(request personalmemory.SearchRequest, documen
 }
 
 func (backend *HybridBackend) semanticScores(query string, documents []personalmemory.IndexDocument) (map[string]float64, error) {
+	sets, err := backend.semanticScoreSets([]string{query}, documents)
+	if err != nil {
+		return nil, err
+	}
+	return sets[0], nil
+}
+
+func (backend *HybridBackend) semanticScoreSets(queries []string, documents []personalmemory.IndexDocument) ([]map[string]float64, error) {
 	if backend.embedder == nil {
 		return nil, errors.New("semantic provider is not configured")
 	}
-	scores := make(map[string]float64, len(documents))
+	if len(queries) == 0 {
+		return nil, errors.New("semantic queries are empty")
+	}
 	chunks := semanticChunks(documents)
 	vectors, err := backend.prepareDocumentEmbeddings(chunks, nil)
 	if err != nil {
 		return nil, err
 	}
-	queryVector, err := backend.embedQuery(truncateRunes(query, embeddingChunkRunes))
+	preparedQueries := make([]string, 0, len(queries))
+	for _, query := range queries {
+		query = truncateRunes(strings.TrimSpace(query), embeddingChunkRunes)
+		if query == "" {
+			return nil, errors.New("semantic query is empty")
+		}
+		preparedQueries = append(preparedQueries, query)
+	}
+	queryVectors, err := backend.embedQueries(preparedQueries)
 	if err != nil {
 		return nil, err
 	}
-	for _, chunk := range chunks {
-		vector := vectors[chunk.id]
-		score, err := embedding.Cosine(queryVector, vector)
-		if err != nil {
-			return nil, err
-		}
-		if current, exists := scores[chunk.recordID]; !exists || score > current {
-			scores[chunk.recordID] = score
-		}
+	if len(queryVectors) != len(preparedQueries) {
+		return nil, errors.New("semantic provider returned an incomplete query embedding batch")
 	}
-	return scores, nil
+	sets := make([]map[string]float64, 0, len(queryVectors))
+	for _, queryVector := range queryVectors {
+		scores := make(map[string]float64, len(documents))
+		for _, chunk := range chunks {
+			vector := vectors[chunk.id]
+			score, err := embedding.Cosine(queryVector, vector)
+			if err != nil {
+				return nil, err
+			}
+			if current, exists := scores[chunk.recordID]; !exists || score > current {
+				scores[chunk.recordID] = score
+			}
+		}
+		sets = append(sets, scores)
+	}
+	return sets, nil
 }
 
 func (backend *HybridBackend) PrepareIndex(
@@ -486,8 +522,8 @@ func distinctEvidenceSemanticAuthorization(
 		if documentID == winnerID {
 			continue
 		}
-		document := documentsByID[documentID]
 		aliases := aliasesByID[documentID]
+		document := documentsByID[documentID]
 		if document.AuthorizationEvidenceKind == personalmemory.IndexEvidenceKindRecordSource &&
 			len(aliases) == 1 && aliases[0] == winnerAlias {
 			continue
@@ -643,6 +679,21 @@ func (backend *HybridBackend) embedQuery(input string) ([]float64, error) {
 	return vectors[0], nil
 }
 
+func (backend *HybridBackend) embedQueries(inputs []string) ([][]float64, error) {
+	if batch, ok := backend.embedder.(embedding.QueryBatchPort); ok {
+		return batch.EmbedQueries(backend.context, inputs)
+	}
+	vectors := make([][]float64, 0, len(inputs))
+	for _, input := range inputs {
+		vector, err := backend.embedQuery(input)
+		if err != nil {
+			return nil, err
+		}
+		vectors = append(vectors, vector)
+	}
+	return vectors, nil
+}
+
 func embeddingChunks(value string) []string {
 	runes := []rune(strings.TrimSpace(value))
 	if len(runes) == 0 {
@@ -687,7 +738,7 @@ func (backend *HybridBackend) setMode(semanticErr error) {
 	backend.mu.Lock()
 	defer backend.mu.Unlock()
 	if semanticErr == nil {
-		backend.method = "mindline_hybrid_local/v0.10"
+		backend.method = "mindline_hybrid_local/v0.17"
 		backend.retrievalState = "hybrid"
 		backend.degradedReason = ""
 		return
@@ -695,22 +746,6 @@ func (backend *HybridBackend) setMode(semanticErr error) {
 	backend.method = "mindline_lexical_degraded/v0.2"
 	backend.retrievalState = "degraded"
 	backend.degradedReason = semanticErr.Error()
-}
-
-func (backend *HybridBackend) setContextMode(authorizationErr, contextErr error) {
-	if authorizationErr != nil {
-		backend.setMode(authorizationErr)
-		return
-	}
-	if contextErr == nil {
-		backend.setMode(nil)
-		return
-	}
-	backend.mu.Lock()
-	defer backend.mu.Unlock()
-	backend.method = "mindline_hybrid_query_context_degraded/v0.1"
-	backend.retrievalState = "degraded"
-	backend.degradedReason = contextErr.Error()
 }
 
 func rankScores(scores map[string]float64, limit int) map[string]int {

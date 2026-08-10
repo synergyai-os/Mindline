@@ -358,10 +358,11 @@ func TestCompactLexicalAuthorizationBoundaries(t *testing.T) {
 		}},
 	}}
 	for _, test := range []struct {
-		name       string
-		query      string
-		components map[string]float64
-		expected   string
+		name        string
+		query       string
+		components  map[string]float64
+		calibration string
+		expected    string
 	}{
 		{
 			name: "ordered three term phrase", query: "portable quantum orchards",
@@ -370,12 +371,12 @@ func TestCompactLexicalAuthorizationBoundaries(t *testing.T) {
 		},
 		{
 			name: "rare ordered two term phrase", query: "portable quantum",
-			components: lexicalAuthorizationComponents(2, 2, 1, 1, 0.01, 0),
+			components: lexicalAuthorizationComponents(2, 2, 1, 1, DefaultCompactMaximumLexicalDocumentRatio, 0),
 			expected:   "answered",
 		},
 		{
 			name: "common ordered two term phrase", query: "portable quantum",
-			components: lexicalAuthorizationComponents(2, 2, 1, 1, 0.010001, 0),
+			components: lexicalAuthorizationComponents(2, 2, 1, 1, DefaultCompactMaximumLexicalDocumentRatio+0.000001, 0),
 			expected:   "abstained",
 		},
 		{
@@ -390,19 +391,46 @@ func TestCompactLexicalAuthorizationBoundaries(t *testing.T) {
 		},
 		{
 			name: "coverage and margin boundary", query: "portable quantum orchard systems",
-			components: lexicalAuthorizationComponents(4, 3, 0.80, 0, 0.01, 0.15),
+			components: lexicalAuthorizationComponents(4, 3, 0.80, 0, DefaultCompactMaximumLexicalDocumentRatio, DefaultCompactMinimumLexicalWinnerMargin),
 			expected:   "answered",
 		},
 		{
 			name: "below margin", query: "portable quantum orchard systems",
-			components: lexicalAuthorizationComponents(4, 3, 0.80, 0, 0.01, 0.149999),
+			components: lexicalAuthorizationComponents(4, 3, 0.80, 0, DefaultCompactMaximumLexicalDocumentRatio, DefaultCompactMinimumLexicalWinnerMargin-0.000001),
 			expected:   "abstained",
+		},
+		{
+			name: "broad natural language overlap", query: "portable quantum orchard systems improve autonomous planning",
+			components:  lexicalAuthorizationAtRank(DefaultCompactMaximumBroadQueryRank, DefaultCompactMinimumBroadQueryTerms, DefaultCompactMinimumBroadQueryMatches, DefaultCompactMinimumBroadQueryIDFCoverage),
+			calibration: CompactSemanticCalibrationIdentity,
+			expected:    "answered",
+		},
+		{
+			name: "broad overlap outside top candidates", query: "portable quantum orchard systems improve autonomous planning",
+			components:  lexicalAuthorizationAtRank(DefaultCompactMaximumBroadQueryRank+1, DefaultCompactMinimumBroadQueryTerms, DefaultCompactMinimumBroadQueryMatches, 1),
+			calibration: CompactSemanticCalibrationIdentity,
+			expected:    "abstained",
+		},
+		{
+			name: "broad overlap below coverage", query: "portable quantum orchard systems improve autonomous planning",
+			components:  lexicalAuthorizationComponents(DefaultCompactMinimumBroadQueryTerms, DefaultCompactMinimumBroadQueryMatches, DefaultCompactMinimumBroadQueryIDFCoverage-0.000001, 0, 0.5, 0),
+			calibration: CompactSemanticCalibrationIdentity,
+			expected:    "abstained",
+		},
+		{
+			name: "broad overlap below exact term count", query: "portable quantum orchard systems improve autonomous planning",
+			components:  lexicalAuthorizationComponents(DefaultCompactMinimumBroadQueryTerms, DefaultCompactMinimumBroadQueryMatches-1, 1, 0, 0.5, 0),
+			calibration: CompactSemanticCalibrationIdentity,
+			expected:    "abstained",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			packet, err := NewRetriever(repository, compactNoiseBackend{hit: RankedHit{
-				DocumentID: "record-lexical", Score: 1, Components: test.components,
-			}}).SearchCompact(SearchRequest{Query: test.query, Limit: 3})
+			packet, err := NewRetriever(repository, compactHitsBackend{
+				calibrationID: test.calibration,
+				hits: []RankedHit{{
+					DocumentID: "record-lexical", Score: 1, Components: test.components,
+				}},
+			}).SearchCompact(SearchRequest{Query: test.query, Limit: 3})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -424,6 +452,15 @@ func lexicalAuthorizationComponents(
 		"lexical_rarest_document_ratio":  rarestRatio,
 		"lexical_winner_relative_margin": winnerMargin,
 	}
+}
+
+func lexicalAuthorizationAtRank(rank, queryTerms, matchedTerms int, idfCoverage float64) map[string]float64 {
+	components := lexicalAuthorizationComponents(
+		queryTerms, matchedTerms, idfCoverage, 0, 0.5, 0,
+	)
+	components["lexical_rank"] = float64(rank)
+	components["semantic_cosine"] = DefaultCompactMinimumBroadSemanticCosine
+	return components
 }
 
 func TestLexicalBM25ScoresOriginalQueryAndCarriesFilteredAuthorization(t *testing.T) {
@@ -464,7 +501,13 @@ func TestCompactSemanticAbstentionThresholdIsFrozenAndBoundToPacket(t *testing.T
 		policy.MinimumSemanticOnlyCosine != DefaultCompactMinimumSemanticOnlyCosine ||
 		policy.MinimumSemanticOnlyMargin != DefaultCompactMinimumSemanticOnlyMargin ||
 		policy.MinimumSemanticLexicalCoverage != DefaultCompactMinimumSemanticLexicalCover ||
-		policy.Fingerprint != "b9766ff76024ab3080e70c4128d7a4165c9c7f34c65819aa863b96389028a7a4" {
+		policy.MinimumFullCoverageTerms != DefaultCompactMinimumFullCoverageTerms ||
+		policy.MinimumBroadQueryTerms != DefaultCompactMinimumBroadQueryTerms ||
+		policy.MinimumBroadQueryMatches != DefaultCompactMinimumBroadQueryMatches ||
+		policy.MinimumBroadQueryIDFCoverage != DefaultCompactMinimumBroadQueryIDFCoverage ||
+		policy.MaximumBroadQueryRank != DefaultCompactMaximumBroadQueryRank ||
+		policy.MinimumBroadSemanticCosine != DefaultCompactMinimumBroadSemanticCosine ||
+		policy.Fingerprint != "dfd4db736ebb030dea5972c9e917a4e757c165cd36db42f8308f592d5553cb92" {
 		t.Fatalf("compact abstention policy is not deterministic: %+v", policy)
 	}
 	repository := &compactRepository{library: Library{
@@ -500,6 +543,47 @@ func TestCompactSemanticAbstentionThresholdIsFrozenAndBoundToPacket(t *testing.T
 			if packet.AnswerState != test.expected ||
 				packet.AbstentionPolicyFingerprint != policy.Fingerprint {
 				t.Fatalf("threshold result=%+v policy=%+v", packet, policy)
+			}
+		})
+	}
+}
+
+func TestCompactFullCoverageAuthorizesDuplicateBoundWinnerWithoutWeakeningShortQueries(t *testing.T) {
+	repository := &compactRepository{library: Library{
+		SchemaVersion: LibrarySchemaVersion, Revision: 1,
+		Fingerprint: strings.Repeat("4", 64),
+		Records: []CaptureRecord{{
+			RecordID: "record-full", SourceRef: "slack://fixture/full",
+			RawText: "retained context", ContentHash: strings.Repeat("5", 64),
+		}},
+	}}
+	for _, test := range []struct {
+		name       string
+		queryTerms float64
+		matched    float64
+		coverage   float64
+		expected   string
+	}{
+		{name: "four term full coverage", queryTerms: 4, matched: 4, coverage: 1, expected: "answered"},
+		{name: "three term full coverage remains guarded", queryTerms: 3, matched: 3, coverage: 1, expected: "abstained"},
+		{name: "partial broad query remains guarded without semantic corroboration", queryTerms: 6, matched: 5, coverage: 0.95, expected: "abstained"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			packet, err := NewRetriever(repository, compactHitsBackend{hits: []RankedHit{{
+				DocumentID: "record-full", Score: 1,
+				Components: map[string]float64{
+					"lexical_rank": 1, "lexical_query_terms": test.queryTerms,
+					"lexical_matched_terms": test.matched, "lexical_idf_coverage": test.coverage,
+					"lexical_rarest_document_ratio":  0.05,
+					"lexical_winner_relative_margin": 0.002,
+					"lexical_exact_ordered_phrase":   0,
+				},
+			}}}).SearchCompact(SearchRequest{Query: "company brain permissions ownership", Limit: 3})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if packet.AnswerState != test.expected {
+				t.Fatalf("packet=%+v", packet)
 			}
 		})
 	}

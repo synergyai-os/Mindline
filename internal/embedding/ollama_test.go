@@ -37,9 +37,17 @@ func TestEmbeddingGemmaRetrievalInputsUseAsymmetricPrompts(t *testing.T) {
 	if _, err := adapter.EmbedQuery(context.Background(), "what did I learn?"); err != nil {
 		t.Fatal(err)
 	}
-	if len(observed) != 2 ||
+	if _, err := adapter.EmbedQueries(context.Background(), []string{
+		"what did I learn?", "saved lesson",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(observed) != 3 ||
 		observed[0][0] != "title: none | text: saved lesson" ||
 		observed[1][0] != "task: search result | query: what did I learn?" ||
+		len(observed[2]) != 2 ||
+		observed[2][0] != "task: search result | query: what did I learn?" ||
+		observed[2][1] != "task: search result | query: saved lesson" ||
 		!strings.HasSuffix(adapter.ModelID(), "/retrieval-input-v0.2") {
 		t.Fatalf("retrieval prompt/profile mismatch: observed=%v model=%s", observed, adapter.ModelID())
 	}
