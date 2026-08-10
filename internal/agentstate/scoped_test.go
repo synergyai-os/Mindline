@@ -951,6 +951,38 @@ func TestRegisterAgentActorIsExactReplayOnly(t *testing.T) {
 	}
 }
 
+func TestRegisterAgentActorPreflightsRecoveryCapacityBeforeInsert(t *testing.T) {
+	now := time.Date(2026, 8, 10, 10, 15, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "state", "agent.sqlite")
+	store, err := Open(path, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	before, err := os.ReadFile(scopedRecoveryPath(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	requested := AgentActor{ID: "agent-capacity", Name: strings.Repeat("a", 512)}
+	store.scopedRecoveryByteLimit = int64(len(before) + 1)
+	if _, _, err := store.RegisterAgentActor(ctx, requested); err == nil {
+		t.Fatal("oversized registration recovery projection was committed")
+	}
+	var count int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_actors WHERE id=?`, requested.ID).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("rejected registration reached database: count=%d err=%v", count, err)
+	}
+	after, err := os.ReadFile(scopedRecoveryPath(path))
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("rejected registration changed recovery snapshot: err=%v", err)
+	}
+	store.scopedRecoveryByteLimit = 0
+	if _, created, err := store.RegisterAgentActor(ctx, requested); err != nil || !created {
+		t.Fatalf("exact retry failed after preflight rejection: created=%v err=%v", created, err)
+	}
+}
+
 func TestRegisteredActorsKeepFeedbackIsolated(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 10, 10, 30, 0, 0, time.UTC)

@@ -228,11 +228,20 @@ func (r Runner) runAgentRegister(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return writeAgentContractError(stderr, "register", "service_unavailable", true, "retry_service")
 	}
-	capabilities, err := client.Capabilities(context.Background())
-	if err != nil || !supportsSearchFormat(capabilities.Features, localservice.AgentRegistrationCapability) {
+	timeout := r.agentRegistrationTimeout
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	capabilities, err := client.Capabilities(ctx)
+	if err != nil {
+		return writeAgentContractError(stderr, "register", "service_unavailable", true, "retry_same_registration")
+	}
+	if !supportsSearchFormat(capabilities.Features, localservice.AgentRegistrationCapability) {
 		return writeAgentContractError(stderr, "register", "capability_unavailable", false, "upgrade_mindline")
 	}
-	actor, err := client.RegisterActor(context.Background(), localservice.AgentRegistrationInput{
+	actor, err := client.RegisterActor(ctx, localservice.AgentRegistrationInput{
 		AgentID: agentID, Name: strings.TrimSpace(options.values["name"]),
 	})
 	if err != nil {

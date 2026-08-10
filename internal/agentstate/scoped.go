@@ -436,7 +436,31 @@ func (store *Store) RegisterAgentActor(ctx context.Context, actor AgentActor) (A
 		containsSecretLikeAny(actor.ID, actor.Name) {
 		return AgentActor{}, false, ErrInvalidAgentActorRegistration
 	}
+	var existing AgentActor
+	err := store.db.QueryRowContext(ctx, `SELECT id, name, status, created_at, updated_at
+		FROM agent_actors WHERE id=?`, actor.ID).Scan(&existing.ID, &existing.Name,
+		&existing.Status, &existing.CreatedAt, &existing.UpdatedAt)
+	if err == nil {
+		if existing.Name != actor.Name || existing.Status != StatusActive {
+			return AgentActor{}, false, ErrAgentActorRegistrationConflict
+		}
+		if _, err := store.preflightAgentActorRecovery(ctx, existing); err != nil {
+			return AgentActor{}, false, err
+		}
+		if err := store.writeRecoverySnapshot(ctx); err != nil {
+			return AgentActor{}, false, err
+		}
+		return existing, false, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return AgentActor{}, false, errors.New("read agent actor registration")
+	}
 	now := store.now().UTC().Format(time.RFC3339Nano)
+	if _, err := store.preflightAgentActorRecovery(ctx, AgentActor{
+		ID: actor.ID, Name: actor.Name, UpdatedAt: now,
+	}); err != nil {
+		return AgentActor{}, false, err
+	}
 	result, err := store.db.ExecContext(ctx, `INSERT INTO agent_actors(id, name, status, created_at, updated_at)
 		VALUES(?, ?, 'active', ?, ?) ON CONFLICT(id) DO NOTHING`, actor.ID, actor.Name, now, now)
 	if err != nil {

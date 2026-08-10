@@ -88,6 +88,7 @@ type Runner struct {
 	productBrainTransport      http.RoundTripper
 	productBrainSecretProvider productbrain.SecretProvider
 	agentDiscoveryTimeout      time.Duration
+	agentRegistrationTimeout   time.Duration
 }
 
 type FileSystem interface {
@@ -194,7 +195,7 @@ func NewRunnerWithProtectedRoots(fileSystem FileSystem, protectedRoots []string)
 	if err != nil || strings.TrimSpace(executable) == "" {
 		executable = "mindline"
 	}
-	return Runner{fs: fileSystem, agentExecutable: executable, nativeInput: os.Stdin, operatorInput: os.Stdin, protectedRoots: append([]string(nil), protectedRoots...), agentDiscoveryTimeout: 2 * time.Second}
+	return Runner{fs: fileSystem, agentExecutable: executable, nativeInput: os.Stdin, operatorInput: os.Stdin, protectedRoots: append([]string(nil), protectedRoots...), agentDiscoveryTimeout: 2 * time.Second, agentRegistrationTimeout: 10 * time.Second}
 }
 
 func NewRunnerWithInput(fileSystem FileSystem, input io.Reader) Runner {

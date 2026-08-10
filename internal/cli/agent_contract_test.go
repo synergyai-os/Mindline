@@ -96,6 +96,59 @@ func TestAgentRegistrationFailurePreservesRetryIdentityUnlessConflictIsConfirmed
 	}
 }
 
+func TestAgentRegistrationUsesOneBoundedDeadline(t *testing.T) {
+	token := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{4}, 24))
+	for _, hangAt := range []string{"capabilities", "registration"} {
+		t.Run(hangAt, func(t *testing.T) {
+			waitPastDeadline := func(request *http.Request) {
+				timer := time.NewTimer(250 * time.Millisecond)
+				defer timer.Stop()
+				select {
+				case <-request.Context().Done():
+				case <-timer.C:
+				}
+			}
+			mux := http.NewServeMux()
+			mux.HandleFunc("GET /v1/capabilities", func(writer http.ResponseWriter, request *http.Request) {
+				if hangAt == "capabilities" {
+					waitPastDeadline(request)
+					return
+				}
+				writeLegacyAgentEnvelope(t, writer, localservice.Capabilities{
+					SchemaVersion: localservice.CapabilitiesSchemaVersion,
+					Features:      []string{localservice.AgentRegistrationCapability},
+				})
+			})
+			mux.HandleFunc("POST /v1/scoped/actors/register", func(_ http.ResponseWriter, request *http.Request) {
+				waitPastDeadline(request)
+			})
+			configPath, closeServer := startScopedAgentCLITestServer(t, mux)
+			defer closeServer()
+			runner := NewRunner(NewOSFileSystem())
+			runner.agentRegistrationTimeout = 75 * time.Millisecond
+			var stdout, stderr bytes.Buffer
+			started := time.Now()
+			code := runner.Run([]string{"agent", "register", "--name", "Fresh agent",
+				"--retry-token", token, "--config", configPath}, &stdout, &stderr)
+			if elapsed := time.Since(started); elapsed > time.Second {
+				t.Fatalf("registration exceeded bounded deadline: %s", elapsed)
+			}
+			var failure agentContractError
+			expectedCode := "registration_outcome_unknown"
+			if hangAt == "capabilities" {
+				expectedCode = "service_unavailable"
+			}
+			if code != ExitProcess || stdout.Len() != 0 ||
+				json.Unmarshal(stderr.Bytes(), &failure) != nil ||
+				failure.ErrorCode != expectedCode || !failure.Retryable ||
+				failure.RepairAction != "retry_same_registration" ||
+				strings.Contains(stderr.String(), token) {
+				t.Fatalf("code=%d stdout=%s failure=%+v stderr=%s", code, stdout.String(), failure, stderr.String())
+			}
+		})
+	}
+}
+
 func TestAgentRegistrationCreatesOpaqueIdentityWithoutSendingOrReturningToken(t *testing.T) {
 	runner := NewRunner(NewOSFileSystem())
 	runner.agentExecutable = "/opt/mindline"
