@@ -57,7 +57,10 @@ func TestInstallCreatesPrivateBinaryConfigSkillAndPreservesEvidenceOnUninstall(t
 		strings.Contains(string(skill), "agent scope-list") ||
 		strings.Contains(string(skill), "agent lens-list") ||
 		strings.Contains(string(skill), "agent actor-list") ||
-		!strings.Contains(string(skill), "owner must supply the complete scope, lens, and actor tuple") ||
+		!strings.Contains(string(skill), "owner must supply the complete scope and lens") ||
+		!strings.Contains(string(skill), "agent registration-token") ||
+		!strings.Contains(string(skill), "agent register --name <agent-name> --retry-token <token>") ||
+		!strings.Contains(string(skill), "Never borrow an") ||
 		!strings.Contains(string(skill), "--format compact-scoped-v0.4") ||
 		!strings.Contains(string(skill), "--scope <scope> --lens <lens> --agent <actor>") ||
 		!strings.Contains(string(skill), "agent get <record>") ||

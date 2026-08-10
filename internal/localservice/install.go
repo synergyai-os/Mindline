@@ -611,9 +611,14 @@ all storage and credentials.
 Binary: %s
 Config: %s
 
-1. The owner must supply the complete scope, lens, and actor tuple before work
-   starts. If any value is missing, stop and request it. Never list, choose,
-   infer, create, update, archive, or invent contexts or actors.
+1. The owner must supply the complete scope and lens before work starts. Use an
+   owner-assigned actor ID when one exists. Otherwise create a caller-owned
+   registration token and register a new actor:
+   %s
+   %s
+   Persist the returned actor ID for this agent integration. Never borrow an
+   existing actor ID or list, choose, infer, update, archive, or invent owner
+   contexts.
 2. Validate that exact owner-selected binding and read the machine workflow:
    %s
 3. Request compact cited results with the same complete tuple:
@@ -651,6 +656,6 @@ used lexical fallback. Actor labels are a cooperative local audit convention,
 not authentication between hostile processes; always identify agent feedback
 as --actor agent.
 `, agentcontract.ShellQuote(binaryPath), agentcontract.ShellQuote(configPath),
-		workflow.Discover, workflow.Search, workflow.Get, workflow.FeedbackToken,
+		workflow.RegistrationToken, workflow.Register, workflow.Discover, workflow.Search, workflow.Get, workflow.FeedbackToken,
 		workflow.Feedback, workflow.FeedbackReverse)
 }

@@ -28,6 +28,10 @@ func (r Runner) runAgent(args []string, stdout, stderr io.Writer) int {
 		return r.runAgentFeedbackToken(args[1:], stdout, stderr)
 	case "build-binding":
 		return r.runAgentBuildBinding(args[1:], stdout, stderr)
+	case "registration-token":
+		return r.runAgentRegistrationToken(args[1:], stdout, stderr)
+	case "register":
+		return r.runAgentRegister(args[1:], stdout, stderr)
 	case "install":
 		return r.runAgentInstall(args[1:], stdout, stderr)
 	case "restart":

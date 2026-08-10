@@ -889,6 +889,89 @@ func seedScopedContexts(t *testing.T, store *Store, ctx context.Context, now tim
 	}
 }
 
+func TestRegisterAgentActorIsExactReplayOnly(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC)
+	store, err := Open(filepath.Join(t.TempDir(), "state", "agent.sqlite"), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	requested := AgentActor{ID: "agent-generated", Name: "Fresh outside agent"}
+	first, created, err := store.RegisterAgentActor(ctx, requested)
+	if err != nil || !created || first.ID != requested.ID || first.Name != requested.Name || first.Status != StatusActive {
+		t.Fatalf("first=%+v created=%v err=%v", first, created, err)
+	}
+	replay, created, err := store.RegisterAgentActor(ctx, requested)
+	if err != nil || created || replay != first {
+		t.Fatalf("replay=%+v created=%v err=%v", replay, created, err)
+	}
+	if _, _, err := store.RegisterAgentActor(ctx, AgentActor{
+		ID: requested.ID, Name: "Conflicting name",
+	}); err == nil {
+		t.Fatal("conflicting registration renamed an existing actor")
+	}
+	unchanged, err := store.GetAgentActor(ctx, requested.ID)
+	if err != nil || unchanged.Name != requested.Name {
+		t.Fatalf("conflict mutated actor=%+v err=%v", unchanged, err)
+	}
+	if _, err := store.ArchiveAgentActor(ctx, requested.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.RegisterAgentActor(ctx, requested); err == nil {
+		t.Fatal("registration reactivated an archived actor")
+	}
+}
+
+func TestRegisteredActorsKeepFeedbackIsolated(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 10, 10, 30, 0, 0, time.UTC)
+	store, err := Open(filepath.Join(t.TempDir(), "state", "agent.sqlite"), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	if _, err := store.PutScope(ctx, Scope{ID: "project", Name: "Project", Purpose: "product"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PutScopedLens(ctx, ScopedLens{
+		ScopeID: "project", ID: "product", Name: "Product", Query: "evidence",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, actor := range []AgentActor{{ID: "registered-a", Name: "Agent A"}, {ID: "registered-b", Name: "Agent B"}} {
+		if _, _, err := store.RegisterAgentActor(ctx, actor); err != nil {
+			t.Fatal(err)
+		}
+		runID := "run-" + actor.ID
+		if err := store.SaveScopedRetrieval(ctx, ScopedRetrievalTrace{
+			RunID: runID, ScopeID: "project", LensID: "product", AgentID: actor.ID,
+			Query: "same question", RetrievalMethod: "test", LibraryFingerprint: "fingerprint",
+			CreatedAt: now.Format(time.RFC3339Nano), Candidates: []ScopedCandidateTrace{{
+				RecordID: "record-one", Rank: 1, FinalScore: 1,
+				ComponentScore: map[string]float64{"final": 1},
+			}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.ApplyScopedJudgment(ctx, ScopedJudgmentRequest{
+		RetryToken: "registered-agent-feedback-retry", RunID: "run-registered-a",
+		ScopeID: "project", LensID: "product", AgentID: "registered-a",
+		RecordID: "record-one", Actor: FeedbackAgent, Disposition: "used",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	assertScopedRelevance(t, store, ctx, ScopedContext{
+		ScopeID: "project", LensID: "product", AgentID: "registered-a",
+	}, 0.025)
+	assertScopedRelevance(t, store, ctx, ScopedContext{
+		ScopeID: "project", LensID: "product", AgentID: "registered-b",
+	}, 0)
+}
+
 func assertScopedRelevance(
 	t *testing.T,
 	store *Store,

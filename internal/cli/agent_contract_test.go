@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/synergyai-os/Mindline/internal/agentcontract"
 	"github.com/synergyai-os/Mindline/internal/agentstate"
 	"github.com/synergyai-os/Mindline/internal/localservice"
 )
@@ -25,10 +27,88 @@ func TestAgentHelpIsBoundedAndSuccessful(t *testing.T) {
 		}
 		text := stdout.String()
 		if !strings.Contains(text, "agent discover") || !strings.Contains(text, "feedback-token") ||
+			!strings.Contains(text, "registration-token") || !strings.Contains(text, "agent register") ||
 			!strings.Contains(text, "owner/debug") || strings.Contains(text, "actor-put") ||
 			strings.Count(text, "\n") > 30 || stderr.Len() != 0 {
 			t.Fatalf("unbounded or incomplete help stdout=%q stderr=%q", text, stderr.String())
 		}
+	}
+}
+
+func TestAgentRegistrationCreatesOpaqueIdentityWithoutSendingOrReturningToken(t *testing.T) {
+	runner := NewRunner(NewOSFileSystem())
+	runner.agentExecutable = "/opt/mindline"
+	var tokenOutput, tokenError bytes.Buffer
+	if code := runner.Run([]string{"agent", "registration-token"}, &tokenOutput, &tokenError); code != ExitOK {
+		t.Fatalf("token code=%d stderr=%s", code, tokenError.String())
+	}
+	var token map[string]string
+	if err := json.Unmarshal(tokenOutput.Bytes(), &token); err != nil {
+		t.Fatal(err)
+	}
+	seenBody := ""
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/capabilities", func(writer http.ResponseWriter, _ *http.Request) {
+		writeLegacyAgentEnvelope(t, writer, localservice.Capabilities{
+			SchemaVersion: localservice.CapabilitiesSchemaVersion,
+			Features:      []string{localservice.AgentRegistrationCapability},
+		})
+	})
+	mux.HandleFunc("POST /v1/scoped/actors/register", func(writer http.ResponseWriter, request *http.Request) {
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		seenBody = string(body)
+		var input localservice.AgentRegistrationInput
+		if err := json.Unmarshal(body, &input); err != nil ||
+			!strings.HasPrefix(input.AgentID, "agent-") || input.Name != "Fresh Cursor agent" {
+			t.Fatalf("registration input=%+v err=%v", input, err)
+		}
+		writeLegacyAgentEnvelope(t, writer, agentstate.AgentActor{
+			ID: input.AgentID, Name: input.Name, Status: agentstate.StatusActive,
+		})
+	})
+	configPath, closeServer := startScopedAgentCLITestServer(t, mux)
+	defer closeServer()
+	var stdout, stderr bytes.Buffer
+	code := runner.Run([]string{"agent", "register", "--name", "Fresh Cursor agent",
+		"--retry-token", token["retry_token"], "--config", configPath}, &stdout, &stderr)
+	if code != ExitOK || stderr.Len() != 0 {
+		t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var receipt agentRegistrationReceipt
+	if err := json.Unmarshal(stdout.Bytes(), &receipt); err != nil {
+		t.Fatal(err)
+	}
+	if receipt.RegistrationState != "ready" || receipt.AgentID == "" ||
+		receipt.AgentName != "Fresh Cursor agent" || receipt.AgentStatus != agentstate.StatusActive ||
+		receipt.RetryTokenPersisted || !receipt.ExactReplayOnly ||
+		!strings.Contains(receipt.NextDiscoveryCommand, agentcontract.ShellQuote(receipt.AgentID)) ||
+		!strings.Contains(receipt.NextDiscoveryCommand, "<same-as-registration>") ||
+		strings.Contains(stdout.String(), token["retry_token"]) ||
+		strings.Contains(seenBody, token["retry_token"]) || strings.Contains(stdout.String(), configPath) {
+		t.Fatalf("receipt=%+v body=%s output=%s", receipt, seenBody, stdout.String())
+	}
+}
+
+func TestRegisteredAgentIDIsDeterministicAndRequiresRandomToken(t *testing.T) {
+	one := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{1}, 24))
+	two := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{2}, 24))
+	first, err := registeredAgentID(one)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, err := registeredAgentID(one)
+	if err != nil || replay != first {
+		t.Fatalf("replay=%q first=%q err=%v", replay, first, err)
+	}
+	other, err := registeredAgentID(two)
+	if err != nil || other == first {
+		t.Fatalf("other=%q first=%q err=%v", other, first, err)
+	}
+	if _, err := registeredAgentID("short"); err == nil {
+		t.Fatal("short registration token was accepted")
 	}
 }
 

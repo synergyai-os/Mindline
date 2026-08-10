@@ -35,8 +35,10 @@ func TestScopedRecallV04RoutesFailClosedAndKeepLegacyCompactUnchanged(t *testing
 	capabilities, err := client.Capabilities(context.Background())
 	if err != nil || !hasCapability(capabilities.Features, ScopedRecallCapability) ||
 		!hasCapability(capabilities.Features, DiscoveryCapability) ||
+		!hasCapability(capabilities.Features, AgentRegistrationCapability) ||
 		capabilities.ScopedSearchEndpoint != "/v1/scoped/search/compact" ||
 		capabilities.ScopedHydrationEndpoint != ScopedHydrationEndpoint ||
+		capabilities.AgentRegistrationEndpoint != "/v1/scoped/actors/register" ||
 		capabilities.RecommendedAgentRoute != RecommendedAgentRoute {
 		t.Fatalf("scoped capabilities=%+v err=%v", capabilities, err)
 	}
@@ -62,6 +64,23 @@ func TestScopedRecallV04RoutesFailClosedAndKeepLegacyCompactUnchanged(t *testing
 		ID: "agent-a", Name: "Agent A",
 	}); err != nil {
 		t.Fatal(err)
+	}
+	registered, err := client.RegisterActor(context.Background(), AgentRegistrationInput{
+		AgentID: "agent-registered", Name: "Registered agent",
+	})
+	if err != nil || registered.ID != "agent-registered" || registered.Status != agentstate.StatusActive {
+		t.Fatalf("registered=%+v err=%v", registered, err)
+	}
+	replay, err := client.RegisterActor(context.Background(), AgentRegistrationInput{
+		AgentID: "agent-registered", Name: "Registered agent",
+	})
+	if err != nil || replay != registered {
+		t.Fatalf("registration replay=%+v err=%v", replay, err)
+	}
+	if _, err := client.RegisterActor(context.Background(), AgentRegistrationInput{
+		AgentID: "agent-registered", Name: "Conflicting agent",
+	}); err == nil {
+		t.Fatal("conflicting registration changed an existing actor")
 	}
 	if _, err := client.PutScope(context.Background(), agentstate.Scope{
 		ID: "project-b", Name: "Project B", Purpose: "separate context",

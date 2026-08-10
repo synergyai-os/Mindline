@@ -420,6 +420,42 @@ func (store *Store) PutAgentActor(ctx context.Context, actor AgentActor) (AgentA
 	return saved, err
 }
 
+// RegisterAgentActor creates a caller-declared actor once and accepts only an
+// exact active replay. Owner-managed PutAgentActor remains the separate rename
+// and recovery path.
+func (store *Store) RegisterAgentActor(ctx context.Context, actor AgentActor) (AgentActor, bool, error) {
+	store.mutationMu.Lock()
+	defer store.mutationMu.Unlock()
+	actor.ID, actor.Name = strings.TrimSpace(actor.ID), strings.TrimSpace(actor.Name)
+	if !validBounded(actor.ID, 256) || !validBounded(actor.Name, 1024) || actor.ID == LegacyAgentActorID {
+		return AgentActor{}, false, errors.New("invalid agent actor registration")
+	}
+	now := store.now().UTC().Format(time.RFC3339Nano)
+	result, err := store.db.ExecContext(ctx, `INSERT INTO agent_actors(id, name, status, created_at, updated_at)
+		VALUES(?, ?, 'active', ?, ?) ON CONFLICT(id) DO NOTHING`, actor.ID, actor.Name, now, now)
+	if err != nil {
+		return AgentActor{}, false, errors.New("register agent actor")
+	}
+	createdCount, err := result.RowsAffected()
+	if err != nil {
+		return AgentActor{}, false, errors.New("read agent actor registration result")
+	}
+	saved, err := store.getAgentActor(ctx, actor.ID)
+	if err != nil {
+		return AgentActor{}, false, err
+	}
+	created := createdCount == 1
+	if !created && (saved.Name != actor.Name || saved.Status != StatusActive) {
+		return AgentActor{}, false, errors.New("agent actor registration conflicts with existing identity")
+	}
+	if created {
+		if err := store.writeRecoverySnapshot(ctx); err != nil {
+			return AgentActor{}, false, err
+		}
+	}
+	return saved, created, nil
+}
+
 func (store *Store) GetAgentActor(ctx context.Context, id string) (AgentActor, error) {
 	return store.getAgentActor(ctx, strings.TrimSpace(id))
 }
