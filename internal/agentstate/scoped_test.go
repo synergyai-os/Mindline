@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -397,6 +398,56 @@ func TestOversizedScopedRecoveryDoesNotReplaceReadableSnapshot(t *testing.T) {
 	after, err := os.ReadFile(sidecar)
 	if err != nil || !bytes.Equal(before, after) {
 		t.Fatalf("oversized write changed readable snapshot: err=%v", err)
+	}
+}
+
+func TestScopedRetrievalPreflightsRecoveryCapacityBeforeCommit(t *testing.T) {
+	now := time.Date(2026, 8, 8, 11, 50, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "state", "agent.sqlite")
+	store, err := Open(path, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	if _, err := store.PutScope(ctx, Scope{ID: "capacity-scope", Name: "Capacity scope", Purpose: "capacity proof"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PutScopedLens(ctx, ScopedLens{ScopeID: "capacity-scope", ID: "capacity-lens", Name: "Capacity lens", Query: "capacity"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PutAgentActor(ctx, AgentActor{ID: "capacity-agent", Name: "Capacity agent"}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(scopedRecoveryPath(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.scopedRecoveryByteLimit = int64(len(before) + 8)
+	trace := ScopedRetrievalTrace{
+		RunID: "capacity-run", Query: strings.Repeat("q", 512),
+		ScopeID: "capacity-scope", LensID: "capacity-lens", AgentID: "capacity-agent",
+		RetrievalMethod: "test", LibraryFingerprint: "fingerprint",
+		CreatedAt: now.Format(time.RFC3339Nano),
+		Candidates: []ScopedCandidateTrace{{
+			RecordID: "capacity-record", Rank: 1, FinalScore: 1,
+			ComponentScore: map[string]float64{"final": 1},
+		}},
+	}
+	if err := store.SaveScopedRetrieval(ctx, trace); err == nil {
+		t.Fatal("oversized scoped retrieval recovery projection was committed")
+	}
+	var count int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM scoped_retrieval_runs WHERE run_id=?`, trace.RunID).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("rejected retrieval reached database: count=%d err=%v", count, err)
+	}
+	after, err := os.ReadFile(scopedRecoveryPath(path))
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("rejected retrieval changed recovery snapshot: err=%v", err)
+	}
+	store.scopedRecoveryByteLimit = 0
+	if err := store.SaveScopedRetrieval(ctx, trace); err != nil {
+		t.Fatalf("exact retry collided after preflight rejection: %v", err)
 	}
 }
 

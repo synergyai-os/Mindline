@@ -4,14 +4,47 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/synergyai-os/Mindline/internal/agentstate"
 	"github.com/synergyai-os/Mindline/internal/privateio"
 )
+
+func TestRollbackReadinessBoundsUnresponsiveStatusRequest(t *testing.T) {
+	root, err := os.MkdirTemp("/tmp", "mindline-ready-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	socketPath := filepath.Join(root, "hung.sock")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	release := make(chan struct{})
+	defer close(release)
+	go func() {
+		connection, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			return
+		}
+		defer connection.Close()
+		<-release
+	}()
+	started := time.Now()
+	if err := waitForRollbackReadinessWithin(Config{SocketPath: socketPath}, 100*time.Millisecond); err == nil {
+		t.Fatal("unresponsive rollback status was accepted")
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("rollback readiness exceeded its request deadline: %v", elapsed)
+	}
+}
 
 func TestUpgradeBacksUpAndRollbackRestoresOnlyBinaryAndSkill(t *testing.T) {
 	if runtime.GOOS != "darwin" {

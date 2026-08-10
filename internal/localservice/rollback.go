@@ -383,14 +383,22 @@ func Rollback(configPath string) (returnReceipt InstallReceipt, returnErr error)
 }
 
 func waitForRollbackReadiness(config Config) error {
+	return waitForRollbackReadinessWithin(config, 5*time.Second)
+}
+
+func waitForRollbackReadinessWithin(config Config, window time.Duration) error {
 	client := NewClient(config.SocketPath)
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(window)
 	for time.Now().Before(deadline) {
-		status, err := client.Status(context.Background())
+		requestContext, cancel := context.WithDeadline(context.Background(), deadline)
+		status, err := client.Status(requestContext)
+		cancel()
 		if err == nil && status.ServiceState == "ready" {
 			return nil
 		}
-		time.Sleep(50 * time.Millisecond)
+		if remaining := time.Until(deadline); remaining > 0 {
+			time.Sleep(min(50*time.Millisecond, remaining))
+		}
 	}
 	return errors.New("local agent service readiness timed out")
 }

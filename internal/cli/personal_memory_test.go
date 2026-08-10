@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -149,6 +150,55 @@ func TestPersonalMemoryCLIImportsSearchesAndSurvivesNewRunner(t *testing.T) {
 	var status personalmemory.Status
 	if err := json.Unmarshal(stdout.Bytes(), &status); err != nil || status.RecordCount != 2 {
 		t.Fatalf("unexpected durable status: %+v err=%v", status, err)
+	}
+}
+
+func TestSiblingMemoryRootsKeepIndependentIngestionLedgers(t *testing.T) {
+	parent := t.TempDir()
+	rootA, rootB := filepath.Join(parent, "memory-a"), filepath.Join(parent, "memory-b")
+	ledgerRootA := personalMemoryRuntimeRoot(rootA, "ingestion-ledgers")
+	ledgerRootB := personalMemoryRuntimeRoot(rootB, "ingestion-ledgers")
+	if ledgerRootA == ledgerRootB {
+		t.Fatal("sibling memory roots share an ingestion ledger")
+	}
+	for index, fixture := range []struct {
+		root  string
+		count int
+	}{{ledgerRootA, 1}, {ledgerRootB, 2}} {
+		store, err := ingestioncontroller.NewLedgerStore(fixture.root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ledger := ingestioncontroller.Ledger{
+			SchemaVersion: ingestioncontroller.LedgerSchemaVersion,
+			RunID:         fmt.Sprintf("run-%d", index), State: "complete",
+			SourceAdapter: "slack", SourceScope: "slack:T:D",
+			ConfigurationFingerprint: strings.Repeat("c", 64),
+			DeliveredCount:           fixture.count, CanonicalDeclaredCount: fixture.count,
+			OwnedCount: fixture.count, RetainedCount: fixture.count,
+			AggregateCommitment:        strings.Repeat("a", 64),
+			CanonicalBeforeFingerprint: strings.Repeat("b", 64),
+			CanonicalAfterFingerprint:  strings.Repeat("d", 64),
+			CanonicalAfterCount:        fixture.count,
+		}
+		if err := store.Save(ledger); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, fixture := range []struct {
+		root string
+		want int
+	}{{rootA, 1}, {rootB, 2}} {
+		var stdout, stderr bytes.Buffer
+		if code := NewRunner(NewOSFileSystem()).Run(
+			[]string{"memory", "ingest-slack-run-status", "--root", fixture.root}, &stdout, &stderr,
+		); code != ExitOK {
+			t.Fatalf("root status exit=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+		}
+		var proof ingestionProof
+		if err := json.Unmarshal(stdout.Bytes(), &proof); err != nil || proof.UniqueNativeCount != fixture.want {
+			t.Fatalf("root status count=%d want=%d err=%v", proof.UniqueNativeCount, fixture.want, err)
+		}
 	}
 }
 

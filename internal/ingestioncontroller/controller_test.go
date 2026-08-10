@@ -113,6 +113,12 @@ func TestApplyRejectsOverlappingDispositionConflictBeforeImport(t *testing.T) {
 	if status.RecordCount != 0 {
 		t.Fatalf("conflict reached canonical repository: %+v", status)
 	}
+	ledger, err := ledgerStore.Load()
+	if err != nil || ledger.State != "incomplete" || !validLedger(ledger) ||
+		ledger.OwnedCount != ledger.RetainedCount+ledger.WithheldCount+ledger.StructuralExcludedCount ||
+		ledger.DeliveredCount != ledger.CanonicalDeclaredCount+ledger.StructuralExcludedCount {
+		t.Fatalf("conflict did not persist a truthful incomplete ledger: %+v err=%v", ledger, err)
+	}
 }
 
 func TestApplyRejectsConcurrentRunBeforeCanonicalMutation(t *testing.T) {

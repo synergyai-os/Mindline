@@ -96,7 +96,7 @@ func (r Runner) runFounderReview(args []string, stdout, stderr io.Writer) int {
 		return ExitUsage
 	}
 	repository, err := founderreview.NewRepository(
-		filepath.Join(filepath.Dir(root), "founder-review-runtime"),
+		personalMemoryRuntimeRoot(root, "founder-review-runtimes"),
 		founderreview.Options{},
 	)
 	if err != nil {
@@ -145,7 +145,7 @@ func (r Runner) runIngestionStatus(args []string, stdout, stderr io.Writer, proo
 		fmt.Fprintln(stderr, "open ingestion ledger: unavailable")
 		return ExitProcess
 	}
-	store, err := ingestioncontroller.NewLedgerStore(filepath.Join(filepath.Dir(root), "ingestion-ledger"))
+	store, err := ingestioncontroller.NewLedgerStore(personalMemoryRuntimeRoot(root, "ingestion-ledgers"))
 	if err != nil {
 		fmt.Fprintln(stderr, "open ingestion ledger: unavailable")
 		return ExitProcess
@@ -180,7 +180,7 @@ func (r Runner) runIngestionApply(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "open personal evidence library: unavailable")
 		return ExitProcess
 	}
-	ledger, err := ingestioncontroller.NewLedgerStore(filepath.Join(filepath.Dir(root), "ingestion-ledger"))
+	ledger, err := ingestioncontroller.NewLedgerStore(personalMemoryRuntimeRoot(root, "ingestion-ledgers"))
 	if err != nil {
 		fmt.Fprintln(stderr, "open ingestion ledger: unavailable")
 		return ExitProcess

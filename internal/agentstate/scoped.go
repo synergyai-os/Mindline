@@ -524,6 +524,21 @@ func (store *Store) SaveScopedRetrieval(ctx context.Context, trace ScopedRetriev
 	}); err != nil {
 		return err
 	}
+	seenRecords := map[string]bool{}
+	seenRanks := map[int]bool{}
+	for index := range trace.Candidates {
+		trace.Candidates[index].RecordID = strings.TrimSpace(trace.Candidates[index].RecordID)
+		candidate := trace.Candidates[index]
+		if !validBounded(candidate.RecordID, 1024) || candidate.Rank < 1 ||
+			seenRecords[candidate.RecordID] || seenRanks[candidate.Rank] {
+			return errors.New("invalid scoped retrieval candidate")
+		}
+		seenRecords[candidate.RecordID] = true
+		seenRanks[candidate.Rank] = true
+	}
+	if err := store.preflightScopedRetrievalRecovery(ctx, trace); err != nil {
+		return err
+	}
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
 		return errors.New("start scoped retrieval trace")
@@ -537,16 +552,7 @@ func (store *Store) SaveScopedRetrieval(ctx context.Context, trace ScopedRetriev
 		trace.CreatedAt); err != nil {
 		return errors.New("save scoped retrieval trace")
 	}
-	seenRecords := map[string]bool{}
-	seenRanks := map[int]bool{}
 	for _, candidate := range trace.Candidates {
-		candidate.RecordID = strings.TrimSpace(candidate.RecordID)
-		if !validBounded(candidate.RecordID, 1024) || candidate.Rank < 1 ||
-			seenRecords[candidate.RecordID] || seenRanks[candidate.Rank] {
-			return errors.New("invalid scoped retrieval candidate")
-		}
-		seenRecords[candidate.RecordID] = true
-		seenRanks[candidate.Rank] = true
 		components, err := json.Marshal(candidate.ComponentScore)
 		if err != nil {
 			return errors.New("encode scoped retrieval trace")

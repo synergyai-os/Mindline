@@ -151,9 +151,13 @@ func (r Runner) runResourceCommand(args []string, stdout, stderr io.Writer, comm
 }
 
 func resourceQueueRoot(memoryRoot string) string {
+	return personalMemoryRuntimeRoot(memoryRoot, "resource-queues")
+}
+
+func personalMemoryRuntimeRoot(memoryRoot, namespace string) string {
 	canonical := filepath.Clean(memoryRoot)
 	digest := sha256.Sum256([]byte(canonical))
-	return filepath.Join(filepath.Dir(canonical), "resource-queues", hex.EncodeToString(digest[:]))
+	return filepath.Join(filepath.Dir(canonical), namespace, hex.EncodeToString(digest[:]))
 }
 
 func resourceQueueTerminal(queue resourcequeue.Queue) bool {

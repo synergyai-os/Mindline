@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"sort"
 	"strings"
@@ -279,7 +280,21 @@ func (controller Controller) Apply(envelope Envelope) (Ledger, error) {
 
 func (controller Controller) fail(ledger Ledger) (Ledger, error) {
 	ledger.State = "incomplete"
-	_ = controller.Ledger.Save(ledger)
+	// A failure can occur midway through reconciliation, before the normal
+	// aggregate equations are finalized. Persist a truthful, structurally valid
+	// partial receipt instead of silently leaving the earlier recovering marker.
+	ledger.DeliveredCount = ledger.CanonicalDeclaredCount + ledger.StructuralExcludedCount
+	ledger.OwnedCount = ledger.RetainedCount + ledger.WithheldCount + ledger.StructuralExcludedCount
+	if len(ledger.AggregateCommitment) != 64 {
+		ledger.AggregateCommitment = commitment(nil)
+	}
+	if len(ledger.CanonicalAfterFingerprint) != 64 {
+		ledger.CanonicalAfterFingerprint = ledger.CanonicalBeforeFingerprint
+		ledger.CanonicalAfterCount = ledger.CanonicalBeforeCount
+	}
+	if err := controller.Ledger.Save(ledger); err != nil {
+		return Ledger{}, fmt.Errorf("ingestion reconciliation failed: persist incomplete ledger: %w", err)
+	}
 	return Ledger{}, errors.New("ingestion reconciliation failed")
 }
 

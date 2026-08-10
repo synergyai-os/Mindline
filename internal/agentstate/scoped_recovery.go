@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/synergyai-os/Mindline/internal/privateio"
 )
@@ -74,22 +75,68 @@ func (store *Store) writeScopedRecoverySnapshot(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := writeScopedRecoverySnapshotFile(scopedRecoveryPath(store.path), snapshot, maximumScopedRecoveryBytes); err != nil {
+	if err := writeScopedRecoverySnapshotFile(scopedRecoveryPath(store.path), snapshot, store.scopedRecoveryLimit()); err != nil {
 		return errors.New("write scoped agent recovery snapshot")
 	}
 	return nil
 }
 
-func writeScopedRecoverySnapshotFile(path string, snapshot scopedRecoverySnapshot, maximum int64) error {
-	data, err := json.MarshalIndent(snapshot, "", "  ")
+func (store *Store) scopedRecoveryLimit() int64 {
+	if store.scopedRecoveryByteLimit > 0 {
+		return store.scopedRecoveryByteLimit
+	}
+	return maximumScopedRecoveryBytes
+}
+
+// preflightScopedRetrievalRecovery proves that the exact post-commit scoped
+// recovery projection still fits before the database mutation begins. The
+// mutation mutex held by the caller keeps this projection stable until commit.
+func (store *Store) preflightScopedRetrievalRecovery(ctx context.Context, trace ScopedRetrievalTrace) error {
+	snapshot, err := store.buildScopedRecoverySnapshot(ctx)
 	if err != nil {
 		return err
 	}
-	data = append(data, '\n')
-	if maximum < 1 || int64(len(data)) > maximum {
-		return errors.New("scoped agent recovery snapshot exceeds limit")
+	trace.Candidates = append([]ScopedCandidateTrace(nil), trace.Candidates...)
+	sort.Slice(trace.Candidates, func(i, j int) bool {
+		if trace.Candidates[i].Rank == trace.Candidates[j].Rank {
+			return trace.Candidates[i].RecordID < trace.Candidates[j].RecordID
+		}
+		return trace.Candidates[i].Rank < trace.Candidates[j].Rank
+	})
+	snapshot.Runs = append(snapshot.Runs, trace)
+	sort.Slice(snapshot.Runs, func(i, j int) bool {
+		if snapshot.Runs[i].CreatedAt == snapshot.Runs[j].CreatedAt {
+			return snapshot.Runs[i].RunID < snapshot.Runs[j].RunID
+		}
+		return snapshot.Runs[i].CreatedAt < snapshot.Runs[j].CreatedAt
+	})
+	if err := validateScopedRecoverySnapshot(snapshot); err != nil {
+		return errors.New("preflight scoped agent recovery snapshot")
+	}
+	if _, err := encodeScopedRecoverySnapshot(snapshot, store.scopedRecoveryLimit()); err != nil {
+		return errors.New("preflight scoped agent recovery snapshot")
+	}
+	return nil
+}
+
+func writeScopedRecoverySnapshotFile(path string, snapshot scopedRecoverySnapshot, maximum int64) error {
+	data, err := encodeScopedRecoverySnapshot(snapshot, maximum)
+	if err != nil {
+		return err
 	}
 	return privateio.WriteFile(path, data, false)
+}
+
+func encodeScopedRecoverySnapshot(snapshot scopedRecoverySnapshot, maximum int64) ([]byte, error) {
+	data, err := json.MarshalIndent(snapshot, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	data = append(data, '\n')
+	if maximum < 1 || int64(len(data)) > maximum {
+		return nil, errors.New("scoped agent recovery snapshot exceeds limit")
+	}
+	return data, nil
 }
 
 func (store *Store) buildScopedRecoverySnapshot(ctx context.Context) (scopedRecoverySnapshot, error) {
