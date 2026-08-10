@@ -222,6 +222,54 @@ func TestAgentDiscoverValidatesExactBindingAndPropagatesExplicitConfig(t *testin
 	}
 }
 
+func TestAgentDiscoverDoesNotRestartAnUnavailableService(t *testing.T) {
+	root, err := os.MkdirTemp("/tmp", "mindline-discover-readonly-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	config, err := localservice.ConfigFromRoots(filepath.Join(root, "runtime"), filepath.Join(root, "memory"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(config.RuntimeRoot, "config.json")
+	if err := localservice.SaveConfig(configPath, config); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeInfo, err := os.Stat(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewOSFileSystem()).Run([]string{"agent", "discover",
+		"--scope", "project", "--lens", "product", "--agent", "outside-agent",
+		"--config", configPath}, &stdout, &stderr)
+	if code != ExitProcess || stdout.Len() != 0 {
+		t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var failure agentContractError
+	if err := json.Unmarshal(stderr.Bytes(), &failure); err != nil ||
+		failure.ErrorCode != "service_unavailable" || !failure.Retryable ||
+		failure.RepairAction != "retry_service" {
+		t.Fatalf("failure=%+v err=%v", failure, err)
+	}
+	after, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterInfo, err := os.Stat(configPath)
+	if err != nil || !bytes.Equal(before, after) || !beforeInfo.ModTime().Equal(afterInfo.ModTime()) {
+		t.Fatalf("read-only discovery mutated runtime configuration: err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(config.RuntimeRoot, "install.json")); !os.IsNotExist(err) {
+		t.Fatalf("read-only discovery created an install receipt: %v", err)
+	}
+}
+
 func TestAgentDiscoverExplicitConfigNeverFallsBackToSecondDefaultRuntime(t *testing.T) {
 	home := ""
 	for _, suffix := range []string{"h", "i", "j", "k", "l"} {

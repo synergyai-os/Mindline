@@ -61,7 +61,7 @@ func (r Runner) runAgentDiscover(args []string, stdout, stderr io.Writer) int {
 		options.values["agent"] == "" {
 		return writeAgentContractError(stderr, "discover", "incomplete_binding", false, "request_owner_binding")
 	}
-	client, err := agentClient(options.configPath)
+	client, err := readOnlyAgentClient(options.configPath)
 	if err != nil {
 		return writeAgentContractError(stderr, "discover", "service_unavailable", true, "retry_service")
 	}
