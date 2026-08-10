@@ -3,8 +3,11 @@ package cli
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 
@@ -39,6 +42,20 @@ type discoveryBinding struct {
 	ScopeName string `json:"scope_name"`
 	LensName  string `json:"lens_name"`
 	AgentName string `json:"agent_name"`
+}
+
+type agentRegistrationReceipt struct {
+	SchemaVersion                string `json:"schema_version"`
+	RegistrationState            string `json:"registration_state"`
+	AgentID                      string `json:"agent_id"`
+	AgentName                    string `json:"agent_name"`
+	AgentStatus                  string `json:"agent_status"`
+	IdentityAssurance            string `json:"identity_assurance"`
+	HostileProcessAuthentication bool   `json:"hostile_process_authentication"`
+	RetryTokenOwner              string `json:"retry_token_owner"`
+	RetryTokenPersisted          bool   `json:"retry_token_persisted"`
+	ExactReplayOnly              bool   `json:"exact_replay_only"`
+	NextDiscoveryCommand         string `json:"next_discovery_command"`
 }
 
 type discoveryContract struct {
@@ -161,18 +178,79 @@ func findActor(items []agentstate.AgentActor, id string) (agentstate.AgentActor,
 }
 
 func (r Runner) runAgentFeedbackToken(args []string, stdout, stderr io.Writer) int {
+	return r.runAgentRetryToken(args, stdout, stderr, "feedback_token", "mindline-feedback-token/v0.1")
+}
+
+func (r Runner) runAgentRegistrationToken(args []string, stdout, stderr io.Writer) int {
+	return r.runAgentRetryToken(args, stdout, stderr, "registration_token", "mindline-agent-registration-token/v0.1")
+}
+
+func (Runner) runAgentRetryToken(
+	args []string, stdout, stderr io.Writer, operation, schemaVersion string,
+) int {
 	if len(args) != 0 {
 		return agentUsage(stderr)
 	}
 	value := make([]byte, 24)
 	if _, err := rand.Read(value); err != nil {
-		return writeAgentContractError(stderr, "feedback_token", "token_generation_failed", true, "retry")
+		return writeAgentContractError(stderr, operation, "token_generation_failed", true, "retry")
 	}
 	return encodePersonalMemoryJSON(stdout, stderr, map[string]string{
-		"schema_version": "mindline-feedback-token/v0.1",
+		"schema_version": schemaVersion,
 		"retry_token":    base64.RawURLEncoding.EncodeToString(value),
 		"owner":          "caller", "reuse": "identical_retry_only",
 	})
+}
+
+func (r Runner) runAgentRegister(args []string, stdout, stderr io.Writer) int {
+	options, err := parseAgentOptions(args)
+	if err != nil || len(options.positionals) != 0 ||
+		!onlyAgentKeys(options.values, "name", "retry-token") ||
+		options.values["name"] == "" || options.values["retry-token"] == "" {
+		return writeAgentContractError(stderr, "register", "invalid_registration", false, "create_registration_token")
+	}
+	agentID, err := registeredAgentID(options.values["retry-token"])
+	if err != nil {
+		return writeAgentContractError(stderr, "register", "invalid_registration_token", false, "create_registration_token")
+	}
+	client, err := agentClient(options.configPath)
+	if err != nil {
+		return writeAgentContractError(stderr, "register", "service_unavailable", true, "retry_service")
+	}
+	capabilities, err := client.Capabilities(context.Background())
+	if err != nil || !supportsSearchFormat(capabilities.Features, localservice.AgentRegistrationCapability) {
+		return writeAgentContractError(stderr, "register", "capability_unavailable", false, "upgrade_mindline")
+	}
+	actor, err := client.RegisterActor(context.Background(), localservice.AgentRegistrationInput{
+		AgentID: agentID, Name: strings.TrimSpace(options.values["name"]),
+	})
+	if err != nil {
+		return writeAgentContractError(stderr, "register", "registration_rejected", false, "create_registration_token")
+	}
+	configPath := ""
+	if strings.TrimSpace(options.configPath) != "" {
+		configPath = "<same-as-registration>"
+	}
+	next := agentcontract.NewWorkflow(r.agentExecutable, configPath).Discover
+	next = strings.Replace(next, "<actor>", agentcontract.ShellQuote(actor.ID), 1)
+	return encodePersonalMemoryJSON(stdout, stderr, agentRegistrationReceipt{
+		SchemaVersion: "mindline-agent-registration/v0.1", RegistrationState: "ready",
+		AgentID: actor.ID, AgentName: actor.Name, AgentStatus: actor.Status,
+		IdentityAssurance:            agentcontract.IdentityAssurance,
+		HostileProcessAuthentication: false, RetryTokenOwner: "caller",
+		RetryTokenPersisted: false, ExactReplayOnly: true,
+		NextDiscoveryCommand: next,
+	})
+}
+
+func registeredAgentID(token string) (string, error) {
+	token = strings.TrimSpace(token)
+	decoded, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil || len(decoded) < 16 || len(decoded) > 128 {
+		return "", errors.New("invalid registration token")
+	}
+	sum := sha256.Sum256([]byte("mindline-agent-registration/v0.1\n" + token))
+	return "agent-" + hex.EncodeToString(sum[:16]), nil
 }
 
 func (r Runner) writeAgentHelp(stdout io.Writer) int {

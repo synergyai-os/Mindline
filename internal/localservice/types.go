@@ -33,13 +33,19 @@ type ScopedGetInput struct {
 	RecordID string `json:"record_id"`
 }
 
+type AgentRegistrationInput struct {
+	AgentID string `json:"agent_id"`
+	Name    string `json:"name"`
+}
+
 const (
-	CapabilitiesSchemaVersion = "mindline-agent-capabilities/v0.1"
-	ScopedRecallCapability    = "mindline.scoped-recall.v0.4"
-	DiscoveryCapability       = agentcontract.DiscoveryCapability
-	RecommendedAgentRoute     = agentcontract.RecommendedRoute
-	OwnerDebugRouteClass      = agentcontract.OwnerDebugRouteClass
-	ScopedHydrationEndpoint   = agentcontract.ScopedHydrationEndpoint
+	CapabilitiesSchemaVersion   = "mindline-agent-capabilities/v0.1"
+	ScopedRecallCapability      = "mindline.scoped-recall.v0.4"
+	DiscoveryCapability         = agentcontract.DiscoveryCapability
+	AgentRegistrationCapability = agentcontract.AgentRegistrationCapability
+	RecommendedAgentRoute       = agentcontract.RecommendedRoute
+	OwnerDebugRouteClass        = agentcontract.OwnerDebugRouteClass
+	ScopedHydrationEndpoint     = agentcontract.ScopedHydrationEndpoint
 )
 
 type Capabilities struct {
@@ -53,12 +59,14 @@ type Capabilities struct {
 	ScopedSearchEndpoint         string                                 `json:"scoped_search_endpoint,omitempty"`
 	ScopedFeedbackEndpoint       string                                 `json:"scoped_feedback_endpoint,omitempty"`
 	ScopedHydrationEndpoint      string                                 `json:"scoped_hydration_endpoint,omitempty"`
+	AgentRegistrationEndpoint    string                                 `json:"agent_registration_endpoint,omitempty"`
 	RecommendedAgentRoute        string                                 `json:"recommended_agent_route"`
 	OwnerDebugRouteClass         string                                 `json:"owner_debug_route_class"`
 	IdentityAssurance            string                                 `json:"identity_assurance"`
 	HostileProcessAuthentication bool                                   `json:"hostile_process_authentication"`
 	OwnerMutationEnforcement     string                                 `json:"owner_mutation_enforcement"`
 	FeedbackTokenCommand         string                                 `json:"feedback_token_command"`
+	RegistrationTokenCommand     string                                 `json:"registration_token_command,omitempty"`
 }
 type Status struct {
 	SchemaVersion string                 `json:"schema_version"`

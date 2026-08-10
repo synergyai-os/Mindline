@@ -7,7 +7,7 @@ import (
 
 func TestSharedWorkflowUsesOneExecutableScopedRouteAndNoContextSelection(t *testing.T) {
 	workflow := NewWorkflow("/Applications/Mindline Agent/mindline", "/private/config path/config.json")
-	commands := []string{workflow.Discover, workflow.Search, workflow.Get,
+	commands := []string{workflow.RegistrationToken, workflow.Register, workflow.Discover, workflow.Search, workflow.Get,
 		workflow.FeedbackToken, workflow.Feedback, workflow.FeedbackReverse}
 	for _, command := range commands {
 		if !strings.HasPrefix(command, "'/Applications/Mindline Agent/mindline' agent ") {
@@ -19,6 +19,10 @@ func TestSharedWorkflowUsesOneExecutableScopedRouteAndNoContextSelection(t *test
 			!strings.Contains(command, "--config '/private/config path/config.json'") {
 			t.Fatalf("workflow lost binding or config propagation: %q", command)
 		}
+	}
+	if !strings.Contains(workflow.Register, "--name <agent-name> --retry-token <token>") ||
+		!strings.Contains(workflow.Register, "--config '/private/config path/config.json'") {
+		t.Fatalf("registration lost retry or config contract: %q", workflow.Register)
 	}
 	if strings.Contains(strings.Join(commands, "\n"), "scope-list") ||
 		strings.Contains(strings.Join(commands, "\n"), "actor-list") {

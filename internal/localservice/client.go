@@ -120,6 +120,12 @@ func (client *Client) PutActor(ctx context.Context, actor agentstate.AgentActor)
 	return saved, err
 }
 
+func (client *Client) RegisterActor(ctx context.Context, input AgentRegistrationInput) (agentstate.AgentActor, error) {
+	var actor agentstate.AgentActor
+	err := client.do(ctx, http.MethodPost, "/v1/scoped/actors/register", input, &actor)
+	return actor, err
+}
+
 func (client *Client) ListActors(ctx context.Context) ([]agentstate.AgentActor, error) {
 	var actors []agentstate.AgentActor
 	err := client.do(ctx, http.MethodGet, "/v1/scoped/actors", nil, &actors)
