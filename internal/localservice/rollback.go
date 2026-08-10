@@ -286,22 +286,11 @@ func prepareRollbackBackup(transaction *installTransaction, config Config, binar
 }
 
 func Rollback(configPath string) (returnReceipt InstallReceipt, returnErr error) {
-	if strings.TrimSpace(configPath) == "" {
-		var err error
-		configPath, err = DefaultConfigPath()
-		if err != nil {
-			return InstallReceipt{}, err
-		}
-	}
-	lifecycleLock, err := acquireLifecycleLock(filepath.Dir(filepath.Clean(configPath)))
+	configPath, config, lifecycleLock, err := loadConfigForLifecycle(configPath)
 	if err != nil {
 		return InstallReceipt{}, err
 	}
 	defer lifecycleLock.Close()
-	config, err := LoadConfig(configPath)
-	if err != nil {
-		return InstallReceipt{}, err
-	}
 	receipt, err := readValidatedInstallReceipt(config, configPath)
 	if err != nil {
 		return InstallReceipt{}, err

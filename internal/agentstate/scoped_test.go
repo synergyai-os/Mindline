@@ -481,6 +481,133 @@ func TestScopedRetrievalRejectsCredentialShapedQueryBeforePersistence(t *testing
 	}
 }
 
+func TestScopedStateRejectsCredentialShapedIdentifiersBeforePersistence(t *testing.T) {
+	now := time.Date(2026, 8, 10, 12, 5, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "state", "agent.sqlite")
+	store, err := Open(path, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	seedScopedContexts(t, store, ctx, now)
+	credentialID := "pb_sk_synthetic-private-value"
+	checks := []struct {
+		name string
+		run  func() error
+	}{
+		{name: "scope", run: func() error {
+			_, err := store.PutScope(ctx, Scope{ID: credentialID, Name: "Name", Purpose: "purpose"})
+			return err
+		}},
+		{name: "lens", run: func() error {
+			_, err := store.PutScopedLens(ctx, ScopedLens{ScopeID: "scope-a", ID: credentialID, Name: "Name", Query: "query"})
+			return err
+		}},
+		{name: "actor", run: func() error {
+			_, err := store.PutAgentActor(ctx, AgentActor{ID: credentialID, Name: "Name"})
+			return err
+		}},
+		{name: "retrieval", run: func() error {
+			return store.SaveScopedRetrieval(ctx, ScopedRetrievalTrace{
+				RunID: credentialID, Query: "query", ScopeID: "scope-a", LensID: "lens-one", AgentID: "agent-a",
+				RetrievalMethod: "test", LibraryFingerprint: "fingerprint", CreatedAt: now.Format(time.RFC3339Nano),
+			})
+		}},
+		{name: "feedback idempotency", run: func() error {
+			_, err := store.ApplyScopedJudgment(ctx, ScopedJudgmentRequest{
+				IdempotencyKey: credentialID, RunID: "run-scope-a-agent-a", ScopeID: "scope-a",
+				LensID: "lens-one", AgentID: "agent-a", RecordID: "record-one",
+				Actor: FeedbackAgent, Disposition: "used",
+			})
+			return err
+		}},
+	}
+	for _, check := range checks {
+		if err := check.run(); err == nil {
+			t.Fatalf("credential-shaped %s identifier was accepted", check.name)
+		}
+	}
+	var persisted int
+	for _, query := range []string{
+		`SELECT COUNT(*) FROM scopes WHERE id=?`,
+		`SELECT COUNT(*) FROM scoped_lenses WHERE id=?`,
+		`SELECT COUNT(*) FROM agent_actors WHERE id=?`,
+		`SELECT COUNT(*) FROM scoped_retrieval_runs WHERE run_id=?`,
+		`SELECT COUNT(*) FROM scoped_judgments WHERE idempotency_key=?`,
+	} {
+		if err := store.db.QueryRowContext(ctx, query, credentialID).Scan(&persisted); err != nil || persisted != 0 {
+			t.Fatalf("credential-shaped identifier reached database: count=%d err=%v", persisted, err)
+		}
+	}
+	sidecar, err := os.ReadFile(scopedRecoveryPath(path))
+	if err != nil || bytes.Contains(sidecar, []byte(credentialID)) {
+		t.Fatalf("credential-shaped identifier reached recovery sidecar: %v", err)
+	}
+}
+
+func TestLegacyProjectionFailsClosedOnCredentialShapedState(t *testing.T) {
+	now := time.Date(2026, 8, 10, 12, 10, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "state", "agent.sqlite")
+	if err := os.MkdirAll(filepath.Dir(path), privateio.DirMode); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacy.Exec(`CREATE TABLE lenses(id TEXT PRIMARY KEY, name TEXT, query TEXT, created_at TEXT, updated_at TEXT)`); err != nil {
+		legacy.Close()
+		t.Fatal(err)
+	}
+	credentialID := "pb_sk_synthetic-private-value"
+	created := now.Format(time.RFC3339Nano)
+	if _, err := legacy.Exec(`INSERT INTO lenses VALUES(?,?,?,?,?)`, credentialID, "Legacy", "query", created, created); err != nil {
+		legacy.Close()
+		t.Fatal(err)
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, privateio.FileMode); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(path, func() time.Time { return now.Add(time.Minute) }); err == nil {
+		t.Fatal("credential-shaped legacy state was projected")
+	}
+	inspector, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inspector.Close()
+	var projected int
+	if err := inspector.QueryRow(`SELECT COUNT(*) FROM scoped_lenses WHERE id=?`, credentialID).Scan(&projected); err != nil || projected != 0 {
+		t.Fatalf("credential-shaped legacy state reached scoped tables: count=%d err=%v", projected, err)
+	}
+	if data, err := os.ReadFile(scopedRecoveryPath(path)); err == nil && bytes.Contains(data, []byte(credentialID)) {
+		t.Fatal("credential-shaped legacy state reached scoped recovery sidecar")
+	}
+}
+
+func TestRecoveryValidatorsRejectCredentialShapedState(t *testing.T) {
+	created := time.Date(2026, 8, 10, 12, 15, 0, 0, time.UTC).Format(time.RFC3339Nano)
+	credential := "pb_sk_synthetic-private-value"
+	legacy := recoverySnapshot{
+		SchemaVersion: recoverySchemaVersion,
+		Lenses:        []Lens{{ID: "lens", Name: credential, Query: "query", CreatedAt: created, UpdatedAt: created}},
+	}
+	if err := validateRecoverySnapshot(legacy); err == nil {
+		t.Fatal("credential-shaped legacy recovery snapshot was accepted")
+	}
+	scoped := scopedRecoverySnapshot{
+		SchemaVersion: scopedRecoverySchemaVersion,
+		Scopes:        []Scope{{ID: "scope", Name: credential, Purpose: "purpose", Status: StatusActive, CreatedAt: created, UpdatedAt: created}},
+	}
+	if err := validateScopedRecoverySnapshot(scoped); err == nil {
+		t.Fatal("credential-shaped scoped recovery snapshot was accepted")
+	}
+}
+
 func TestScopedFeedbackRetryRepairsFailedRecoverySnapshot(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)

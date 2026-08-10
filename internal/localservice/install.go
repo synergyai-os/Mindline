@@ -199,22 +199,11 @@ func Install(options InstallOptions) (receipt InstallReceipt, returnErr error) {
 }
 
 func Uninstall(configPath string) (InstallReceipt, error) {
-	if strings.TrimSpace(configPath) == "" {
-		var err error
-		configPath, err = DefaultConfigPath()
-		if err != nil {
-			return InstallReceipt{}, err
-		}
-	}
-	lifecycleLock, err := acquireLifecycleLock(filepath.Dir(filepath.Clean(configPath)))
+	configPath, config, lifecycleLock, err := loadConfigForLifecycle(configPath)
 	if err != nil {
 		return InstallReceipt{}, err
 	}
 	defer lifecycleLock.Close()
-	config, err := LoadConfig(configPath)
-	if err != nil {
-		return InstallReceipt{}, err
-	}
 	receiptPath := filepath.Join(config.RuntimeRoot, "install.json")
 	var receipt InstallReceipt
 	if err := privateio.ReadJSONStrictBounded(config.RuntimeRoot, receiptPath, 64<<10, &receipt); err != nil ||
@@ -397,22 +386,11 @@ func agentSkillRoot() (string, error) {
 }
 
 func Restart(configPath string) (InstallReceipt, error) {
-	if strings.TrimSpace(configPath) == "" {
-		var err error
-		configPath, err = DefaultConfigPath()
-		if err != nil {
-			return InstallReceipt{}, err
-		}
-	}
-	lifecycleLock, err := acquireLifecycleLock(filepath.Dir(filepath.Clean(configPath)))
+	configPath, config, lifecycleLock, err := loadConfigForLifecycle(configPath)
 	if err != nil {
 		return InstallReceipt{}, err
 	}
 	defer lifecycleLock.Close()
-	config, err := LoadConfig(configPath)
-	if err != nil {
-		return InstallReceipt{}, err
-	}
 	var receipt InstallReceipt
 	if err := privateio.ReadJSONStrictBounded(
 		config.RuntimeRoot, filepath.Join(config.RuntimeRoot, "install.json"), 64<<10, &receipt,
@@ -456,6 +434,34 @@ func acquireLifecycleLock(runtimeRoot string) (*privateio.AdvisoryLock, error) {
 		return nil, errors.New("local agent lifecycle lock unavailable")
 	}
 	return lock, nil
+}
+
+// loadConfigForLifecycle validates the caller-selected file before the lock
+// helper can create or chmod anything. The second read binds the operation to
+// the same validated configuration after the runtime lock is held.
+func loadConfigForLifecycle(configPath string) (string, Config, *privateio.AdvisoryLock, error) {
+	if strings.TrimSpace(configPath) == "" {
+		var err error
+		configPath, err = DefaultConfigPath()
+		if err != nil {
+			return "", Config{}, nil, err
+		}
+	}
+	configPath = filepath.Clean(configPath)
+	config, err := LoadConfig(configPath)
+	if err != nil {
+		return "", Config{}, nil, err
+	}
+	lifecycleLock, err := acquireLifecycleLock(config.RuntimeRoot)
+	if err != nil {
+		return "", Config{}, nil, err
+	}
+	refreshed, err := LoadConfig(configPath)
+	if err != nil || refreshed != config {
+		_ = lifecycleLock.Close()
+		return "", Config{}, nil, errors.New("local agent config changed while acquiring lifecycle lock")
+	}
+	return configPath, refreshed, lifecycleLock, nil
 }
 
 func copyExecutable(source, destination string) error {

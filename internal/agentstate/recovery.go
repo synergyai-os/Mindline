@@ -76,6 +76,7 @@ func validateRecoverySnapshot(snapshot recoverySnapshot) error {
 		if !validBounded(lens.ID, 256) || !validBounded(lens.Name, 1024) ||
 			!validBounded(lens.Query, maximumTextRunes) ||
 			!validBounded(lens.CreatedAt, 256) || !validBounded(lens.UpdatedAt, 256) ||
+			containsSecretLikeAny(lens.ID, lens.Name, lens.Query, lens.CreatedAt, lens.UpdatedAt) ||
 			lensIDs[lens.ID] {
 			return errors.New("invalid agent recovery snapshot")
 		}

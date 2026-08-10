@@ -133,6 +133,42 @@ func TestLifecycleOperationsRefuseConcurrentRuntimeMutation(t *testing.T) {
 	}
 }
 
+func TestLifecycleOperationsDoNotMutateInvalidConfigParent(t *testing.T) {
+	root := t.TempDir()
+	parent := filepath.Join(root, "unrelated")
+	if err := os.Mkdir(parent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(parent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(parent, "missing-config.json")
+	operations := []struct {
+		name string
+		run  func() error
+	}{
+		{name: "uninstall", run: func() error { _, err := Uninstall(configPath); return err }},
+		{name: "restart", run: func() error { _, err := Restart(configPath); return err }},
+		{name: "rollback", run: func() error { _, err := Rollback(configPath); return err }},
+	}
+	for _, operation := range operations {
+		if err := operation.run(); err == nil {
+			t.Fatalf("%s accepted an invalid config path", operation.name)
+		}
+		info, err := os.Stat(parent)
+		if err != nil {
+			t.Fatalf("%s removed invalid config parent: %v", operation.name, err)
+		}
+		if info.Mode().Perm() != 0o755 {
+			t.Fatalf("%s changed parent mode to %v", operation.name, info.Mode().Perm())
+		}
+		entries, err := os.ReadDir(parent)
+		if err != nil || len(entries) != 0 {
+			t.Fatalf("%s created files under invalid config parent: entries=%v err=%v", operation.name, entries, err)
+		}
+	}
+}
+
 func TestDefaultRestartAndUninstallResolveTheCanonicalConfigPath(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("launchd proof is Darwin-specific")

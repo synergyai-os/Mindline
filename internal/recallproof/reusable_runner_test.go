@@ -61,6 +61,14 @@ func TestReusableProofRunnerRejectsUnverifiedBindingCommitments(t *testing.T) {
 	}
 }
 
+func TestReusableProofRunnerRejectsTreeDriftDuringProof(t *testing.T) {
+	root, binding, executor := reusableRunnerFixture(t)
+	drift := &driftingDirectExecutor{base: executor}
+	if _, err := (ReusableProofRunner{Executor: drift}).RunPreLive(context.Background(), root, binding); err == nil {
+		t.Fatal("tree drift during proof produced a pass artifact")
+	}
+}
+
 type fakeDirectExecutor struct{ results map[string]CommandResult }
 
 func (executor *fakeDirectExecutor) Run(_ context.Context, _ string, tool string, argv []string) CommandResult {
@@ -68,6 +76,22 @@ func (executor *fakeDirectExecutor) Run(_ context.Context, _ string, tool string
 		return result
 	}
 	return CommandResult{}
+}
+
+type driftingDirectExecutor struct {
+	base     *fakeDirectExecutor
+	groupRan bool
+}
+
+func (executor *driftingDirectExecutor) Run(ctx context.Context, root, tool string, argv []string) CommandResult {
+	if executor.groupRan && tool == "git" && strings.Join(argv, "\x00") == "status\x00--porcelain=v1\x00--untracked-files=all" {
+		return CommandResult{Stdout: []byte(" M internal/recallproof/reusable_runner.go\n")}
+	}
+	result := executor.base.Run(ctx, root, tool, argv)
+	if tool != "git" || (len(argv) > 0 && argv[0] != "rev-parse" && argv[0] != "status" && argv[0] != "ls-tree") {
+		executor.groupRan = true
+	}
+	return result
 }
 
 func reusableRunnerFixture(t *testing.T) (string, TreeConfigBinding, *fakeDirectExecutor) {

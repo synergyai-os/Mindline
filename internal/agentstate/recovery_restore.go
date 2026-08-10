@@ -66,6 +66,9 @@ func validateRecoveredOriginal(judgment Judgment) error {
 		!validBounded(judgment.RecordID, 1024) ||
 		!validBounded(judgment.CreatedAt, 256) ||
 		!validOptional(judgment.Reason, 4096) ||
+		containsSecretLikeAny(judgment.JudgmentID, judgment.IdempotencyKey,
+			judgment.RunID, judgment.LensID, judgment.RecordID, judgment.Reason,
+			judgment.ReversesID, judgment.CreatedAt) ||
 		judgment.ReversesID != "" {
 		return errors.New("restore agent recovery snapshot")
 	}
@@ -84,6 +87,9 @@ func validateRecoveredReversal(judgment, original Judgment) error {
 		!validBounded(judgment.RecordID, 1024) ||
 		!validBounded(judgment.CreatedAt, 256) ||
 		!validOptional(judgment.Reason, 4096) ||
+		containsSecretLikeAny(judgment.JudgmentID, judgment.IdempotencyKey,
+			judgment.RunID, judgment.LensID, judgment.RecordID, judgment.Reason,
+			judgment.ReversesID, judgment.CreatedAt) ||
 		(judgment.Actor != "user" && judgment.Actor != "agent") ||
 		judgment.Disposition != "reversed" ||
 		judgment.RunID != original.RunID ||

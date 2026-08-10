@@ -107,6 +107,9 @@ func (store *Store) initializeScoped(ctx context.Context) error {
 }
 
 func (store *Store) projectLegacyState(ctx context.Context) error {
+	if err := store.validateLegacyProjectionPrivacy(ctx); err != nil {
+		return err
+	}
 	now := store.now().UTC().Format(time.RFC3339Nano)
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -208,7 +211,7 @@ func (store *Store) PutScope(ctx context.Context, scope Scope) (Scope, error) {
 	scope.Purpose = strings.TrimSpace(scope.Purpose)
 	if !validBounded(scope.ID, 256) || !validBounded(scope.Name, 1024) ||
 		!validBounded(scope.Purpose, maximumTextRunes) || scope.ID == OwnerRootScopeID ||
-		contentguard.ContainsSecretLike(scope.Name) || contentguard.ContainsSecretLike(scope.Purpose) {
+		containsSecretLikeAny(scope.ID, scope.Name, scope.Purpose) {
 		return Scope{}, errors.New("invalid scope")
 	}
 	now := store.now().UTC().Format(time.RFC3339Nano)
@@ -276,7 +279,7 @@ func (store *Store) PutScopedLens(ctx context.Context, lens ScopedLens) (ScopedL
 	lens.Query = strings.TrimSpace(lens.Query)
 	if !validBounded(lens.ScopeID, 256) || !validBounded(lens.ID, 256) ||
 		!validBounded(lens.Name, 1024) || !validBounded(lens.Query, maximumTextRunes) ||
-		contentguard.ContainsSecretLike(lens.Name) || contentguard.ContainsSecretLike(lens.Query) {
+		containsSecretLikeAny(lens.ScopeID, lens.ID, lens.Name, lens.Query) {
 		return ScopedLens{}, errors.New("invalid scoped lens")
 	}
 	scope, err := store.getScope(ctx, lens.ScopeID)
@@ -373,7 +376,7 @@ func (store *Store) PutAgentActor(ctx context.Context, actor AgentActor) (AgentA
 	defer store.mutationMu.Unlock()
 	actor.ID, actor.Name = strings.TrimSpace(actor.ID), strings.TrimSpace(actor.Name)
 	if !validBounded(actor.ID, 256) || !validBounded(actor.Name, 1024) || actor.ID == LegacyAgentActorID ||
-		contentguard.ContainsSecretLike(actor.Name) {
+		containsSecretLikeAny(actor.ID, actor.Name) {
 		return AgentActor{}, errors.New("invalid agent actor")
 	}
 	now := store.now().UTC().Format(time.RFC3339Nano)
@@ -522,7 +525,8 @@ func (store *Store) SaveScopedRetrieval(ctx context.Context, trace ScopedRetriev
 	if !validBounded(trace.RunID, 256) || !validBounded(trace.Query, maximumTextRunes) ||
 		!validBounded(trace.RetrievalMethod, 1024) || !validBounded(trace.LibraryFingerprint, 256) ||
 		!validBounded(trace.CreatedAt, 256) || len(trace.Candidates) > 100 ||
-		contentguard.ContainsSecretLike(trace.Query) {
+		containsSecretLikeAny(trace.RunID, trace.Query, trace.ScopeID, trace.LensID, trace.AgentID,
+			trace.RetrievalMethod, trace.LibraryFingerprint, trace.CreatedAt) {
 		return errors.New("invalid scoped retrieval trace")
 	}
 	if _, _, _, err := store.resolveScopedContext(ctx, ScopedContext{
@@ -536,8 +540,14 @@ func (store *Store) SaveScopedRetrieval(ctx context.Context, trace ScopedRetriev
 		trace.Candidates[index].RecordID = strings.TrimSpace(trace.Candidates[index].RecordID)
 		candidate := trace.Candidates[index]
 		if !validBounded(candidate.RecordID, 1024) || candidate.Rank < 1 ||
+			contentguard.ContainsSecretLike(candidate.RecordID) ||
 			seenRecords[candidate.RecordID] || seenRanks[candidate.Rank] {
 			return errors.New("invalid scoped retrieval candidate")
+		}
+		for component := range candidate.ComponentScore {
+			if !validBounded(component, 256) || contentguard.ContainsSecretLike(component) {
+				return errors.New("invalid scoped retrieval candidate")
+			}
 		}
 		seenRecords[candidate.RecordID] = true
 		seenRanks[candidate.Rank] = true

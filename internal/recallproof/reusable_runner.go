@@ -90,6 +90,9 @@ func (runner ReusableProofRunner) RunPreLive(ctx context.Context, repositoryRoot
 	if count == 0 {
 		return StructuralArtifact{}, errors.New("embedded WP-48 manifest has no pre-live groups")
 	}
+	if err := runner.verifyRepository(ctx, repositoryRoot, binding); err != nil {
+		return StructuralArtifact{}, err
+	}
 	return StructuralArtifact{SchemaVersion: "mindline-reusable-proof/v0.1", Build: "wp48", State: "pass", Counts: map[string]int{"executed_pre_live_groups": count}, Fingerprints: fingerprints, Tests: tests}, nil
 }
 

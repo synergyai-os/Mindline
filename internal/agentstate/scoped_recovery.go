@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/synergyai-os/Mindline/internal/contentguard"
 	"github.com/synergyai-os/Mindline/internal/privateio"
 )
 
@@ -310,7 +311,9 @@ func validateScopedRecoverySnapshot(snapshot scopedRecoverySnapshot) error {
 	for _, scope := range snapshot.Scopes {
 		if !validBounded(scope.ID, 256) || !validBounded(scope.Name, 1024) ||
 			!validBounded(scope.Purpose, maximumTextRunes) || !validScopedStatus(scope.Status) ||
-			!validBounded(scope.CreatedAt, 256) || !validBounded(scope.UpdatedAt, 256) || scopes[scope.ID] {
+			!validBounded(scope.CreatedAt, 256) || !validBounded(scope.UpdatedAt, 256) ||
+			containsSecretLikeAny(scope.ID, scope.Name, scope.Purpose, scope.Status,
+				scope.CreatedAt, scope.UpdatedAt) || scopes[scope.ID] {
 			return errors.New("invalid scoped agent recovery snapshot scope")
 		}
 		scopes[scope.ID] = true
@@ -321,7 +324,9 @@ func validateScopedRecoverySnapshot(snapshot scopedRecoverySnapshot) error {
 		if !scopes[lens.ScopeID] || !validBounded(lens.ID, 256) ||
 			!validBounded(lens.Name, 1024) || !validBounded(lens.Query, maximumTextRunes) ||
 			!validScopedStatus(lens.Status) || !validBounded(lens.CreatedAt, 256) ||
-			!validBounded(lens.UpdatedAt, 256) || lenses[key] {
+			!validBounded(lens.UpdatedAt, 256) ||
+			containsSecretLikeAny(lens.ScopeID, lens.ID, lens.Name, lens.Query,
+				lens.Status, lens.CreatedAt, lens.UpdatedAt) || lenses[key] {
 			return errors.New("invalid scoped agent recovery snapshot lens")
 		}
 		lenses[key] = true
@@ -330,7 +335,9 @@ func validateScopedRecoverySnapshot(snapshot scopedRecoverySnapshot) error {
 	for _, actor := range snapshot.Actors {
 		if !validBounded(actor.ID, 256) || !validBounded(actor.Name, 1024) ||
 			!validScopedStatus(actor.Status) || !validBounded(actor.CreatedAt, 256) ||
-			!validBounded(actor.UpdatedAt, 256) || actors[actor.ID] {
+			!validBounded(actor.UpdatedAt, 256) ||
+			containsSecretLikeAny(actor.ID, actor.Name, actor.Status, actor.CreatedAt, actor.UpdatedAt) ||
+			actors[actor.ID] {
 			return errors.New("invalid scoped agent recovery snapshot actor")
 		}
 		actors[actor.ID] = true
@@ -343,6 +350,8 @@ func validateScopedRecoverySnapshot(snapshot scopedRecoverySnapshot) error {
 			!lenses[run.ScopeID+"\x00"+run.LensID] || !actors[run.AgentID] ||
 			!validBounded(run.RetrievalMethod, 1024) ||
 			!validBounded(run.LibraryFingerprint, 256) || !validBounded(run.CreatedAt, 256) ||
+			containsSecretLikeAny(run.RunID, run.Query, run.ScopeID, run.LensID,
+				run.AgentID, run.RetrievalMethod, run.LibraryFingerprint, run.CreatedAt) ||
 			len(run.Candidates) > 100 {
 			return errors.New("invalid scoped agent recovery snapshot run")
 		}
@@ -353,12 +362,13 @@ func validateScopedRecoverySnapshot(snapshot scopedRecoverySnapshot) error {
 		seenRecords, seenRanks := map[string]bool{}, map[int]bool{}
 		for _, candidate := range run.Candidates {
 			if !validBounded(candidate.RecordID, 1024) || candidate.Rank < 1 ||
+				containsSecretLikeAny(candidate.RecordID) ||
 				seenRecords[candidate.RecordID] || seenRanks[candidate.Rank] ||
 				!finite(candidate.FinalScore) || len(candidate.ComponentScore) > 1000 {
 				return errors.New("invalid scoped agent recovery snapshot candidate")
 			}
 			for name, score := range candidate.ComponentScore {
-				if !validBounded(name, 256) || !finite(score) {
+				if !validBounded(name, 256) || contentguard.ContainsSecretLike(name) || !finite(score) {
 					return errors.New("invalid scoped agent recovery snapshot candidate component")
 				}
 			}
@@ -376,6 +386,10 @@ func validateScopedRecoverySnapshot(snapshot scopedRecoverySnapshot) error {
 		switch {
 		case !validBounded(judgment.JudgmentID, 256), !validBounded(judgment.IdempotencyKey, 1024):
 			return errors.New("invalid scoped agent recovery snapshot judgment identity")
+		case containsSecretLikeAny(judgment.JudgmentID, judgment.IdempotencyKey,
+			judgment.RunID, judgment.ScopeID, judgment.LensID, judgment.AgentID,
+			judgment.RecordID, judgment.Reason, judgment.ReversesID, judgment.CreatedAt):
+			return errors.New("invalid scoped agent recovery snapshot judgment privacy")
 		case judgmentIDs[judgment.JudgmentID], idempotencyKeys[judgment.IdempotencyKey]:
 			return errors.New("invalid scoped agent recovery snapshot duplicate judgment")
 		case !runExists:
