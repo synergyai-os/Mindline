@@ -302,6 +302,89 @@ func TestUninstallStopFailurePreservesArtifactsForRetry(t *testing.T) {
 	}
 }
 
+func TestUninstallPreflightsEverythingAndRestoresAStagingFailure(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("launchd proof is Darwin-specific")
+	}
+	t.Setenv("HOME", t.TempDir())
+	root, err := os.MkdirTemp("/tmp", "mindline-uninstall-transaction-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	config, err := ConfigFromRoots(filepath.Join(root, "runtime"), filepath.Join(root, "memory"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := Install(InstallOptions{
+		Config: config, ConfigPath: filepath.Join(config.RuntimeRoot, "config.json"),
+		SourceBinary: executable, Start: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt.ServiceState = "started"
+	if err := privateio.WriteJSON(filepath.Join(config.RuntimeRoot, "install.json"), receipt); err != nil {
+		t.Fatal(err)
+	}
+	unsafeLatePath := filepath.Join(config.RuntimeRoot, "service.stderr.log")
+	if err := os.Remove(unsafeLatePath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(unsafeLatePath, privateio.DirMode); err != nil {
+		t.Fatal(err)
+	}
+	originalStop, originalRestart := stopUserService, restartUserService
+	originalRename := uninstallRename
+	stops, restarts := 0, 0
+	stopUserService = func(string) error { stops++; return nil }
+	restartUserService = func(string) error { restarts++; return nil }
+	t.Cleanup(func() {
+		stopUserService, restartUserService = originalStop, originalRestart
+		uninstallRename = originalRename
+	})
+	if _, err := Uninstall(receipt.ConfigPath); err == nil {
+		t.Fatal("unsafe late uninstall path was accepted")
+	}
+	if stops != 0 {
+		t.Fatalf("service stopped before complete uninstall preflight: %d", stops)
+	}
+	for _, path := range []string{receipt.ConfigPath, filepath.Join(config.RuntimeRoot, "install.json"), receipt.InstalledBinary, receipt.SkillPath, receipt.LaunchAgentPath} {
+		if _, err := os.Lstat(path); err != nil {
+			t.Fatalf("preflight failure removed %s: %v", path, err)
+		}
+	}
+	if err := os.Remove(unsafeLatePath); err != nil {
+		t.Fatal(err)
+	}
+	renameCalls := 0
+	uninstallRename = func(oldPath, newPath string) error {
+		renameCalls++
+		if renameCalls == 2 {
+			return errors.New("injected stage failure")
+		}
+		return os.Rename(oldPath, newPath)
+	}
+	if _, err := Uninstall(receipt.ConfigPath); err == nil {
+		t.Fatal("injected uninstall staging failure was accepted")
+	}
+	if stops != 1 || restarts != 1 {
+		t.Fatalf("staging failure did not restore service state: stops=%d restarts=%d", stops, restarts)
+	}
+	for _, path := range []string{receipt.ConfigPath, filepath.Join(config.RuntimeRoot, "install.json"), receipt.InstalledBinary, receipt.SkillPath, receipt.LaunchAgentPath} {
+		if _, err := os.Lstat(path); err != nil {
+			t.Fatalf("staging failure did not restore %s: %v", path, err)
+		}
+	}
+	if transactions, _ := filepath.Glob(filepath.Join(config.RuntimeRoot, ".uninstall-transaction-*")); len(transactions) != 0 {
+		t.Fatalf("failed uninstall transaction was not cleaned: %v", transactions)
+	}
+}
+
 func TestUpgradeSmokeFailureRestoresFullPriorInstallAndRollbackBundle(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("launchd proof is Darwin-specific")

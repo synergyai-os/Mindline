@@ -397,7 +397,9 @@ func (repository *invalidFetchedContentRepository) Load() (personalmemory.Librar
 func (repository *invalidFetchedContentRepository) MergeEnrichment(batch personalmemory.EnrichmentBatch) (personalmemory.EnrichmentReceipt, error) {
 	repository.mergeAttempts++
 	if len(batch.Contents) != 0 {
-		return personalmemory.EnrichmentReceipt{}, errors.New("untrusted fetched content rejected")
+		return personalmemory.EnrichmentReceipt{}, errors.Join(
+			personalmemory.ErrInvalidEnrichment, errors.New("untrusted fetched content rejected"),
+		)
 	}
 	if len(batch.Resources) == 1 {
 		repository.fallbackState = batch.Resources[0].State
@@ -1178,15 +1180,20 @@ func TestRejectedFetchedPayloadBecomesManualTerminalAndDrainContinues(t *testing
 }
 
 type unavailableRepository struct {
-	library personalmemory.Library
+	library       personalmemory.Library
+	mergeAttempts int
 }
 
 func (repository *unavailableRepository) Load() (personalmemory.Library, error) {
 	return repository.library, nil
 }
 
-func (*unavailableRepository) MergeEnrichment(personalmemory.EnrichmentBatch) (personalmemory.EnrichmentReceipt, error) {
-	return personalmemory.EnrichmentReceipt{}, errors.New("storage unavailable")
+func (repository *unavailableRepository) MergeEnrichment(personalmemory.EnrichmentBatch) (personalmemory.EnrichmentReceipt, error) {
+	repository.mergeAttempts++
+	if repository.mergeAttempts == 1 {
+		return personalmemory.EnrichmentReceipt{}, errors.New("storage temporarily unavailable")
+	}
+	return personalmemory.EnrichmentReceipt{}, nil
 }
 
 func TestFetchedPayloadFallbackDoesNotHideRepositoryFailure(t *testing.T) {
@@ -1211,8 +1218,8 @@ func TestFetchedPayloadFallbackDoesNotHideRepositoryFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(queue.Items) != 1 || queue.Items[0].State != StateProcessing {
-		t.Fatalf("failed infrastructure item was incorrectly terminalized: %+v", queue)
+	if repository.mergeAttempts != 1 || len(queue.Items) != 1 || queue.Items[0].State != StateProcessing {
+		t.Fatalf("failed infrastructure item was incorrectly retried or terminalized: attempts=%d queue=%+v", repository.mergeAttempts, queue)
 	}
 }
 

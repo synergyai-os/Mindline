@@ -232,9 +232,14 @@ func derivedQueueState(resource personalmemory.ResourceContext) (state, reason s
 }
 
 func (pipeline *Pipeline) Recover(ctx context.Context) error {
-	if pipeline == nil {
+	if pipeline == nil || pipeline.Store == nil {
 		return errors.New("resource pipeline is incomplete")
 	}
+	lock, err := pipeline.Store.AcquireOperationLock()
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	return pipeline.runner().Recover()
 }
 
@@ -242,6 +247,11 @@ func (pipeline *Pipeline) Run(ctx context.Context) error {
 	if pipeline == nil || pipeline.Store == nil || pipeline.Repository == nil {
 		return errors.New("resource pipeline is incomplete")
 	}
+	lock, err := pipeline.Store.AcquireOperationLock()
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	queue, err := pipeline.Store.Load()
 	if err != nil {
 		return err
@@ -264,6 +274,11 @@ func (pipeline *Pipeline) Continue(ctx context.Context) error {
 	if pipeline == nil || pipeline.Store == nil || pipeline.Repository == nil {
 		return errors.New("resource pipeline is incomplete")
 	}
+	lock, err := pipeline.Store.AcquireOperationLock()
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	queue, err := pipeline.Store.Load()
 	if err != nil {
 		return err
@@ -303,6 +318,11 @@ func (pipeline *Pipeline) Retry(ctx context.Context, reason string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	lock, err := pipeline.Store.AcquireOperationLock()
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	runner := pipeline.runner()
 	if err := runner.Recover(); err != nil {
 		return err
@@ -506,6 +526,11 @@ func (pipeline *Pipeline) DeleteAndRebuild(read func() (CanonicalReadback, error
 	if read == nil {
 		return CanonicalReadbackPair{}, errors.New("canonical readback is required")
 	}
+	lock, err := pipeline.Store.AcquireOperationLock()
+	if err != nil {
+		return CanonicalReadbackPair{}, err
+	}
+	defer lock.Close()
 	before, err := read()
 	if err != nil {
 		return CanonicalReadbackPair{}, err

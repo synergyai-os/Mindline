@@ -327,6 +327,9 @@ func blockedHasPayload(result FetchResult) bool {
 // so infrastructure failures continue to fail closed.
 func (runner Runner) mergeFetchedOrBlock(target Target, item Item, result FetchResult) error {
 	if err := runner.mergeCanonical(target, item, result); err != nil {
+		if !errors.Is(err, personalmemory.ErrInvalidEnrichment) {
+			return err
+		}
 		item.State, item.Reason = StateBlocked, "manual_processing_required"
 		return runner.mergeAndFinish(target, item, FetchResult{})
 	}

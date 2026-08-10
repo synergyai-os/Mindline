@@ -448,6 +448,35 @@ func TestScopedFeedbackRetryRepairsFailedRecoverySnapshot(t *testing.T) {
 	}, 0.025)
 }
 
+func TestScopedFeedbackRejectsCredentialShapedReasonBeforePersistence(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "state", "agent.sqlite")
+	store, err := Open(path, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	seedScopedContexts(t, store, ctx, now)
+	request := ScopedJudgmentRequest{
+		RetryToken: "secret-reason-retry-token-123456", RunID: "run-scope-a-agent-a",
+		ScopeID: "scope-a", LensID: "lens-one", AgentID: "agent-a",
+		RecordID: "record-one", Actor: FeedbackAgent, Disposition: "used",
+		Reason: "debug api_key=synthetic-private-credential",
+	}
+	if _, err := store.ApplyScopedJudgment(ctx, request); err == nil {
+		t.Fatal("credential-shaped feedback reason was accepted")
+	}
+	var count int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM scoped_judgments`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("rejected credential reason reached durable judgments: count=%d err=%v", count, err)
+	}
+	if snapshot, present, err := readScopedRecoverySnapshot(path); err != nil || !present || len(snapshot.Judgments) != 0 {
+		t.Fatalf("rejected credential reason reached recovery snapshot: present=%v judgments=%d err=%v", present, len(snapshot.Judgments), err)
+	}
+}
+
 func seedScopedContexts(t *testing.T, store *Store, ctx context.Context, now time.Time) {
 	t.Helper()
 	for _, scope := range []Scope{

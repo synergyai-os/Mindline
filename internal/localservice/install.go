@@ -29,6 +29,7 @@ var (
 	inspectUserService = launchAgentRunning
 	installFaultHook   = func(string) error { return nil }
 	installSmokeRunner = runInstallSmokeCommand
+	uninstallRename    = os.Rename
 )
 
 type InstallOptions struct {
@@ -213,45 +214,142 @@ func Uninstall(configPath string) (InstallReceipt, error) {
 	if err := validateInstallReceipt(config, configPath, receipt); err != nil {
 		return InstallReceipt{}, err
 	}
+	removable, rollbackDirectoryPresent, err := preflightUninstall(config, receipt, receiptPath)
+	if err != nil {
+		return InstallReceipt{}, err
+	}
 	if runtime.GOOS == "darwin" && receipt.LaunchAgentPath != "" {
 		if err := stopUserService(receipt.LaunchAgentPath); err != nil {
 			return InstallReceipt{}, err
 		}
 	}
-	for _, removable := range []string{
+	stage, err := stageUninstall(config, removable, rollbackDirectoryPresent)
+	if err != nil {
+		if (receipt.ServiceState == "started" || receipt.ServiceState == "restarted") &&
+			runtime.GOOS == "darwin" && receipt.LaunchAgentPath != "" {
+			if restartErr := restartUserService(receipt.LaunchAgentPath); restartErr != nil {
+				return InstallReceipt{}, errors.New("stage uninstall failed and service restart failed")
+			}
+		}
+		return InstallReceipt{}, err
+	}
+	receipt.ServiceState = "uninstalled_state_preserved"
+	if err := os.RemoveAll(stage); err != nil {
+		return receipt, errors.New("active installation removed but uninstall staging cleanup failed")
+	}
+	return receipt, nil
+}
+
+type stagedUninstallArtifact struct {
+	original string
+	staged   string
+}
+
+func uninstallPaths(config Config, receipt InstallReceipt, receiptPath string) []string {
+	return []string{
 		config.SocketPath, receipt.InstalledBinary, receipt.SkillPath,
 		receipt.LaunchAgentPath,
 		filepath.Join(config.RuntimeRoot, "service.stdout.log"),
 		filepath.Join(config.RuntimeRoot, "service.stderr.log"),
 		rollbackManifestPath(config), rollbackBinaryPath(config), rollbackSkillPath(config),
-		configPath, receiptPath,
-	} {
-		if strings.TrimSpace(removable) == "" {
+		receipt.ConfigPath, receiptPath,
+	}
+}
+
+func preflightUninstall(config Config, receipt InstallReceipt, receiptPath string) ([]string, bool, error) {
+	removable := make([]string, 0, 12)
+	for _, path := range uninstallPaths(config, receipt, receiptPath) {
+		if strings.TrimSpace(path) == "" {
 			continue
 		}
-		info, err := os.Lstat(removable)
-		if os.IsNotExist(err) {
-			continue
+		present, err := validUninstallArtifact(path, config.SocketPath)
+		if err != nil {
+			return nil, false, err
 		}
-		if err != nil || info.Mode()&os.ModeSymlink != 0 || info.IsDir() {
-			return InstallReceipt{}, errors.New("refuse unsafe uninstall path")
-		}
-		if err := os.Remove(removable); err != nil {
-			return InstallReceipt{}, errors.New("remove installed artifact")
+		if present {
+			removable = append(removable, path)
 		}
 	}
+	rollbackPresent := false
 	if info, err := os.Lstat(rollbackRoot(config)); err == nil {
 		if !info.IsDir() || info.Mode().Perm() != privateio.DirMode {
-			return InstallReceipt{}, errors.New("refuse unsafe rollback directory")
+			return nil, false, errors.New("refuse unsafe rollback directory")
 		}
-		if err := os.Remove(rollbackRoot(config)); err != nil {
-			return InstallReceipt{}, errors.New("remove rollback directory")
+		entries, readErr := os.ReadDir(rollbackRoot(config))
+		if readErr != nil {
+			return nil, false, errors.New("inspect rollback directory")
 		}
+		allowed := map[string]bool{
+			filepath.Base(rollbackManifestPath(config)): true,
+			filepath.Base(rollbackBinaryPath(config)):   true,
+			filepath.Base(rollbackSkillPath(config)):    true,
+		}
+		for _, entry := range entries {
+			if !allowed[entry.Name()] {
+				return nil, false, errors.New("refuse unknown rollback artifact")
+			}
+		}
+		rollbackPresent = true
 	} else if !os.IsNotExist(err) {
-		return InstallReceipt{}, errors.New("inspect rollback directory")
+		return nil, false, errors.New("inspect rollback directory")
 	}
-	receipt.ServiceState = "uninstalled_state_preserved"
-	return receipt, nil
+	return removable, rollbackPresent, nil
+}
+
+func validUninstallArtifact(path, socketPath string) (bool, error) {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || info.IsDir() {
+		return false, errors.New("refuse unsafe uninstall path")
+	}
+	if path == socketPath {
+		if !info.Mode().IsRegular() && info.Mode()&os.ModeSocket == 0 {
+			return false, errors.New("refuse unsafe uninstall socket")
+		}
+	} else if !info.Mode().IsRegular() {
+		return false, errors.New("refuse unsafe uninstall path")
+	}
+	return true, nil
+}
+
+func stageUninstall(config Config, removable []string, rollbackDirectoryPresent bool) (string, error) {
+	stage, err := os.MkdirTemp(config.RuntimeRoot, ".uninstall-transaction-")
+	if err != nil {
+		return "", errors.New("prepare uninstall transaction")
+	}
+	if err := os.Chmod(stage, privateio.DirMode); err != nil {
+		_ = os.RemoveAll(stage)
+		return "", errors.New("secure uninstall transaction")
+	}
+	moved := make([]stagedUninstallArtifact, 0, len(removable))
+	rollback := func(cause error) (string, error) {
+		for index := len(moved) - 1; index >= 0; index-- {
+			if err := uninstallRename(moved[index].staged, moved[index].original); err != nil {
+				return stage, errors.New("uninstall transaction failed and restoration was incomplete")
+			}
+		}
+		_ = os.RemoveAll(stage)
+		return "", cause
+	}
+	for index, path := range removable {
+		present, err := validUninstallArtifact(path, config.SocketPath)
+		if err != nil || !present {
+			return rollback(errors.New("uninstall artifact changed after preflight"))
+		}
+		destination := filepath.Join(stage, fmt.Sprintf("artifact-%02d", index))
+		if err := uninstallRename(path, destination); err != nil {
+			return rollback(errors.New("stage installed artifact for removal"))
+		}
+		moved = append(moved, stagedUninstallArtifact{original: path, staged: destination})
+	}
+	if rollbackDirectoryPresent {
+		if err := os.Remove(rollbackRoot(config)); err != nil {
+			return rollback(errors.New("remove rollback directory"))
+		}
+	}
+	return stage, nil
 }
 
 func validateInstallReceipt(config Config, configPath string, receipt InstallReceipt) error {

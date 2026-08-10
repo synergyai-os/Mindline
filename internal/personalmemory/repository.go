@@ -26,6 +26,15 @@ const (
 	MaximumCaptureLibraryBytes = 48 << 20
 )
 
+var ErrInvalidEnrichment = errors.New("invalid personal evidence enrichment")
+
+func invalidEnrichment(err error) error {
+	if err == nil {
+		return ErrInvalidEnrichment
+	}
+	return errors.Join(ErrInvalidEnrichment, err)
+}
+
 type RepositoryPort interface {
 	Load() (Library, error)
 	Import(CaptureBatch) (ImportReceipt, error)
@@ -310,10 +319,10 @@ func (repository *FileRepository) applyCaptureBatch(
 
 func (repository *FileRepository) MergeEnrichment(batch EnrichmentBatch) (EnrichmentReceipt, error) {
 	if batch.SchemaVersion != EnrichmentBatchSchemaVersion || len(batch.Resources)+len(batch.Contents) == 0 {
-		return EnrichmentReceipt{}, errors.New("personal evidence enrichment is empty")
+		return EnrichmentReceipt{}, invalidEnrichment(errors.New("personal evidence enrichment is empty"))
 	}
 	if len(batch.Resources)+len(batch.Contents) > MaximumResources {
-		return EnrichmentReceipt{}, errors.New("personal evidence enrichment exceeds resource limit")
+		return EnrichmentReceipt{}, invalidEnrichment(errors.New("personal evidence enrichment exceeds resource limit"))
 	}
 	contentByURL := map[string]*ContentArtifactRef{}
 	contentPayloads := map[string][]byte{}
@@ -323,10 +332,10 @@ func (repository *FileRepository) MergeEnrichment(batch EnrichmentBatch) (Enrich
 	for _, content := range batch.Contents {
 		canonicalURL, reference, payload, contentMissingness, contentAccess, secretLike, err := prepareExtractedContent(content)
 		if err != nil {
-			return EnrichmentReceipt{}, err
+			return EnrichmentReceipt{}, invalidEnrichment(err)
 		}
 		if _, duplicate := contentByURL[canonicalURL]; duplicate || secretContentURLs[canonicalURL] {
-			return EnrichmentReceipt{}, errors.New("personal evidence enrichment contains duplicate content")
+			return EnrichmentReceipt{}, invalidEnrichment(errors.New("personal evidence enrichment contains duplicate content"))
 		}
 		if secretLike {
 			secretContentURLs[canonicalURL] = true
@@ -348,10 +357,10 @@ func (repository *FileRepository) MergeEnrichment(batch EnrichmentBatch) (Enrich
 			resource, err = resourceFromImportedEvidence(input, contentByURL[input.CanonicalURL], contentMissingnessByURL[input.CanonicalURL], contentAccessByURL[input.CanonicalURL])
 		}
 		if err != nil {
-			return EnrichmentReceipt{}, err
+			return EnrichmentReceipt{}, invalidEnrichment(err)
 		}
 		if seenInputs[resource.ResourceID] {
-			return EnrichmentReceipt{}, errors.New("personal evidence enrichment contains duplicate resources")
+			return EnrichmentReceipt{}, invalidEnrichment(errors.New("personal evidence enrichment contains duplicate resources"))
 		}
 		seenInputs[resource.ResourceID] = true
 		resources = append(resources, resource)
@@ -439,7 +448,7 @@ func (repository *FileRepository) MergeEnrichment(batch EnrichmentBatch) (Enrich
 	for _, resource := range resources {
 		if !allowed[resource.ResourceID] &&
 			!(existingResourceIDs[resource.ResourceID] && referenceOnlyTerminalization(resource)) {
-			return EnrichmentReceipt{}, errors.New("personal evidence enrichment is not reachable from a retained capture")
+			return EnrichmentReceipt{}, invalidEnrichment(errors.New("personal evidence enrichment is not reachable from a retained capture"))
 		}
 	}
 	byID := make(map[string]int, len(library.Resources))

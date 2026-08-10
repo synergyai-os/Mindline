@@ -12,19 +12,20 @@ import (
 )
 
 const (
-	queueFileName  = "resource-queue.json"
-	backupFileName = "resource-queue.backup.json"
-	queueLockName  = "resource-queue.lock"
-	maxQueueBytes  = 4 << 20
+	queueFileName     = "resource-queue.json"
+	backupFileName    = "resource-queue.backup.json"
+	queueLockName     = "resource-queue.lock"
+	operationLockName = "resource-queue-operation.lock"
+	maxQueueBytes     = 4 << 20
 )
 
 // Store serializes all queue transitions under an owner-only advisory lock.
 // Its root is separate from canonical evidence, so it can be deleted and
 // rebuilt without changing the canonical fingerprint.
 type Store struct {
-	root, path, backup, lock string
-	profile                  BudgetProfile
-	faultInjector            privateio.FaultInjector
+	root, path, backup, lock, operationLock string
+	profile                                 BudgetProfile
+	faultInjector                           privateio.FaultInjector
 }
 
 func NewStore(root string, profile BudgetProfile) (*Store, error) {
@@ -35,11 +36,28 @@ func NewStore(root string, profile BudgetProfile) (*Store, error) {
 	if err := privateio.PrepareDir(root); err != nil {
 		return nil, errors.New("resource queue storage unavailable")
 	}
-	store := &Store{root: root, path: filepath.Join(root, queueFileName), backup: filepath.Join(root, backupFileName), lock: filepath.Join(root, queueLockName), profile: profile}
-	if err := privateio.ValidateContained(root, store.path, store.backup, store.lock); err != nil {
+	store := &Store{
+		root: root, path: filepath.Join(root, queueFileName), backup: filepath.Join(root, backupFileName),
+		lock: filepath.Join(root, queueLockName), operationLock: filepath.Join(root, operationLockName), profile: profile,
+	}
+	if err := privateio.ValidateContained(root, store.path, store.backup, store.lock, store.operationLock); err != nil {
 		return nil, errors.New("resource queue storage unavailable")
 	}
 	return store, nil
+}
+
+func (store *Store) AcquireOperationLock() (*privateio.AdvisoryLock, error) {
+	if store == nil {
+		return nil, errors.New("resource queue operation lock unavailable")
+	}
+	lock, err := privateio.AcquireAdvisoryLock(store.root, store.operationLock)
+	if err != nil {
+		if errors.Is(err, privateio.ErrLockBusy) {
+			return nil, errors.New("resource queue operation busy")
+		}
+		return nil, errors.New("resource queue operation lock unavailable")
+	}
+	return lock, nil
 }
 
 func (store *Store) Load() (Queue, error) {
@@ -637,7 +655,7 @@ func (store *Store) Finish(resourceID, state, reason string) error {
 // Delete removes only derived queue state. Canonical evidence is intentionally
 // untouched; callers use this to prove queue rebuild readback invariance.
 func (store *Store) Delete() error {
-	if err := privateio.ValidateContained(store.root, store.path, store.backup, store.lock); err != nil {
+	if err := privateio.ValidateContained(store.root, store.path, store.backup, store.lock, store.operationLock); err != nil {
 		return errors.New("resource queue unavailable")
 	}
 	lock, err := privateio.AcquireAdvisoryLock(store.root, store.lock)

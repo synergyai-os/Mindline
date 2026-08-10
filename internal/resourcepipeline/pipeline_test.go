@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"strings"
 	"testing"
 	"time"
 
@@ -112,6 +113,48 @@ func TestPipelineRejectsPolicyFingerprintMismatch(t *testing.T) {
 		RuntimeStorageBytes: profile.MaxRuntimeStorageBytes, WallSeconds: profile.MaxRunWallSeconds,
 	}}); err == nil {
 		t.Fatal("mismatched fetch policy fingerprint was accepted")
+	}
+}
+
+func TestPipelineRejectsOverlappingOperationsBeforeRecoveryOrFetch(t *testing.T) {
+	root := t.TempDir()
+	repository, err := personalmemory.NewFileRepository(root+"/library", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := &fakeFetchPort{}
+	pipeline, err := New(root+"/queue", repository, resourcequeue.FixtureProfile(), port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock, err := pipeline.Store.AcquireOperationLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	operations := []struct {
+		name string
+		run  func() error
+	}{
+		{name: "run", run: func() error { return pipeline.Run(context.Background()) }},
+		{name: "continue", run: func() error { return pipeline.Continue(context.Background()) }},
+		{name: "retry", run: func() error { return pipeline.Retry(context.Background(), "rate_limited") }},
+		{name: "recover", run: func() error { return pipeline.Recover(context.Background()) }},
+	}
+	for _, operation := range operations {
+		if err := operation.run(); err == nil || !strings.Contains(err.Error(), "operation busy") {
+			t.Fatalf("overlapping %s was accepted: %v", operation.name, err)
+		}
+	}
+	readCalls := 0
+	if _, err := pipeline.DeleteAndRebuild(func() (CanonicalReadback, error) {
+		readCalls++
+		return CanonicalReadback{}, nil
+	}); err == nil || !strings.Contains(err.Error(), "operation busy") || readCalls != 0 {
+		t.Fatalf("overlapping rebuild was accepted or read canonical state: calls=%d err=%v", readCalls, err)
+	}
+	if port.calls != 0 {
+		t.Fatalf("overlapping operation reached fetch: calls=%d", port.calls)
 	}
 }
 

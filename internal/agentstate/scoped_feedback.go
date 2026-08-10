@@ -9,6 +9,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"github.com/synergyai-os/Mindline/internal/contentguard"
 )
 
 func (store *Store) ApplyScopedJudgment(ctx context.Context, request ScopedJudgmentRequest) (ScopedJudgment, error) {
@@ -129,7 +131,7 @@ func validateScopedJudgmentRequest(request ScopedJudgmentRequest) error {
 		(request.Actor != FeedbackOwner && request.Actor != FeedbackAgent) ||
 		(request.Actor == FeedbackOwner && request.AgentID != "") ||
 		(request.Actor == FeedbackAgent && !validBounded(request.AgentID, 256)) ||
-		!validOptional(request.Reason, 4096) {
+		!validOptional(request.Reason, 4096) || contentguard.ContainsSecretLike(request.Reason) {
 		return errors.New("invalid scoped judgment")
 	}
 	if request.ReversesID != "" {
