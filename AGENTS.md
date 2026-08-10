@@ -24,6 +24,18 @@ When communicating directly with Randy:
 
 This standard applies to user-facing commentary and final answers. It does not limit technical depth in implementation or internal artifacts.
 
+## Default Fresh-Agent Feedback Loop
+
+Product Brain `STD-29` is authoritative for this loop.
+
+- End every Mindline slice that changes an agent-facing user outcome with one quick test by a fresh non-Codex agent before advancing.
+- Give the agent one short prompt and the installed Mindline entry point. Do not provide a Mindline skill or allow repository, database, fixture, prior-review, or implementation access.
+- Observe whether the agent can discover the supported path, retrieve useful evidence, hydrate citations through that path, and explain the result without hidden help.
+- Record what worked, what failed, and the resulting keep-adjust-switch decision in Product Brain.
+- Rotate the query, topic, scope, lens, or use case when repeating the same case would optimize only the known example. Repeat an old case only when naming it as a regression check.
+- Treat one outside-agent result as product discovery evidence, not as generalization, production readiness, or an autonomy claim. Existing eval, privacy, isolation, citation, and held-out proof gates still apply.
+- Close each slice report with the exact short prompt Randy can give the fresh agent for the next feedback test.
+
 ## Non-Negotiable Paths
 
 - Product Brain CLI working directory: `/Users/randyhereman/Coding/PKM System`
