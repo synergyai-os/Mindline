@@ -262,6 +262,16 @@ Before opening, updating, or merging a PR that changes Mindline product behavior
 - Capture durable learnings or corrections in PB.
 - Use LOOP reviewer sign-off when the change affects product direction, agent instructions, evaluation, trust, privacy, destination readiness, or autonomy claims.
 
+### Bounded Review Convergence
+
+Authoritative anchor: `DEC-442`.
+
+- Merge after the latest exact head passes its required proof and one clean current-head review.
+- Do not merge with an unresolved critical defect or an in-scope defect affecting user data, privacy, correctness, recovery, audit, or the named claim.
+- Fix smaller findings only when the PR caused them and they are inside its signed scope. Route broader or unrelated improvements to a named follow-up.
+- After three correction rounds, force convergence: split the PR, reduce the claim, or defer non-critical findings.
+- Reconcile contradictory reviewer suggestions against Chain authority and regression evidence; do not adopt them automatically.
+
 ## Chain-Bounded Autonomous Delivery
 
 Authoritative anchors: `DEC-414`, `DEC-437`, `STD-22`, `STD-28`, and `SETUP-RULE-MINDLINE_CHAIN_BOUNDED_DELIVERY`. This section is a repository projection; update Product Brain first when the operating contract changes.

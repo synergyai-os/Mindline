@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/synergyai-os/Mindline/internal/localservice"
 	"github.com/synergyai-os/Mindline/internal/privateio"
@@ -68,6 +69,12 @@ func run(args []string, stdin io.Reader, stdout io.Writer) error {
 		port := recalleval.LocalServicePort{
 			Client: localservice.NewClient(args[2]), Mode: mode,
 		}
+		statusContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := verifyServiceBinding(statusContext, port.Client, binding); err != nil {
+			cancel()
+			return err
+		}
+		cancel()
 		result, err := recalleval.Run(context.Background(), manifest, binding, port, port)
 		if err != nil {
 			return err
@@ -96,6 +103,24 @@ func run(args []string, stdin io.Reader, stdout io.Writer) error {
 		return encode(stdout, result)
 	}
 	return errors.New("usage: seal <socket> <owner-manifest> | run legacy|compact <socket> <owner-manifest> <binding> <owner-result> | compare <owner-manifest> <baseline-result> <candidate-result>")
+}
+
+type statusPort interface {
+	Status(context.Context) (localservice.Status, error)
+}
+
+func verifyServiceBinding(ctx context.Context, client statusPort, binding recalleval.RunBinding) error {
+	if client == nil {
+		return errors.New("evaluation service binding unavailable")
+	}
+	status, err := client.Status(ctx)
+	if err != nil || status.RuntimeBinding.State != "ready" ||
+		status.RuntimeBinding.BuildFingerprint != binding.BuildFingerprint ||
+		status.RuntimeBinding.TreeFingerprint != binding.TreeFingerprint ||
+		status.RuntimeBinding.ConfigurationFingerprint != binding.ConfigurationFingerprint {
+		return errors.New("evaluation service does not match the run binding")
+	}
+	return nil
 }
 
 func readStrict(path string, target any) error {

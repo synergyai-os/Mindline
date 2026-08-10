@@ -142,11 +142,20 @@ func (r Runner) runAgentService(args []string, stdout, stderr io.Writer) int {
 	if err != nil || len(options.positionals) != 0 || len(options.values) != 0 {
 		return agentUsage(stderr)
 	}
-	config, err := localservice.LoadConfig(options.configPath)
+	configPath := options.configPath
+	if configPath == "" {
+		configPath, err = localservice.DefaultConfigPath()
+		if err != nil {
+			return agentFailure(stderr, err)
+		}
+	}
+	config, err := localservice.LoadConfig(configPath)
 	if err != nil {
 		return agentFailure(stderr, err)
 	}
-	server, err := localservice.NewServer(config, nil, nil)
+	server, err := localservice.NewServerWithRuntimeBinding(
+		config, configPath, r.agentExecutable, nil, nil,
+	)
 	if err != nil {
 		return agentFailure(stderr, err)
 	}

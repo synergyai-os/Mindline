@@ -430,6 +430,60 @@ func TestRetryDelayCannotCrossRunWallBudget(t *testing.T) {
 	}
 }
 
+type countingBlockedFetcher struct{ calls int }
+
+func (fetcher *countingBlockedFetcher) Fetch(context.Context, Target) (FetchResult, error) {
+	fetcher.calls++
+	return FetchResult{BlockedReason: "access_denied"}, nil
+}
+
+func TestCompleteDrainOverheadCannotCrossRunWallBudget(t *testing.T) {
+	profile := FixtureProfile()
+	profile.Name = "fixture-complete-drain-wall"
+	profile.MaxRunWallSeconds = 1
+	profile = SealProfile(profile)
+	store, err := NewStore(t.TempDir()+"/queue", profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resourceIDs := []string{"resource-overhead-a", "resource-overhead-b"}
+	if _, err := store.Enqueue(resourceIDs); err != nil {
+		t.Fatal(err)
+	}
+	repository := &retryRepository{library: personalmemory.Library{Resources: []personalmemory.ResourceContext{
+		{ResourceID: resourceIDs[0], CanonicalURL: "https://example.com/a"},
+		{ResourceID: resourceIDs[1], CanonicalURL: "https://example.com/b"},
+	}}}
+	started := time.Unix(0, 0)
+	nowCalls := 0
+	fetcher := &countingBlockedFetcher{}
+	runner := Runner{
+		Store: store, Repository: repository, Fetcher: fetcher,
+		Now: func() time.Time {
+			nowCalls++
+			if nowCalls == 1 {
+				return started
+			}
+			return started.Add(2 * time.Second)
+		},
+	}
+	if err := runner.Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	queue, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fetcher.calls != 0 || queue.Counters.WallSeconds != profile.MaxRunWallSeconds {
+		t.Fatalf("complete-drain overhead escaped the wall budget: calls=%d queue=%+v", fetcher.calls, queue)
+	}
+	for _, item := range queue.Items {
+		if item.State != StateBlocked || item.Reason != ReasonRunBudgetDeferred {
+			t.Fatalf("wall-budget remainder was not terminalized: %+v", queue.Items)
+		}
+	}
+}
+
 type blockedFetcher struct{}
 
 func (blockedFetcher) Fetch(context.Context, Target) (FetchResult, error) {

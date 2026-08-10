@@ -15,16 +15,17 @@ import (
 )
 
 type NativeMessage struct {
-	NativeMessageID  string `json:"native_message_id"`
-	Timestamp        string `json:"timestamp"`
-	AuthorID         string `json:"author_id,omitempty"`
-	AuthorName       string `json:"author_name,omitempty"`
-	Permalink        string `json:"permalink,omitempty"`
-	ThreadParentID   string `json:"thread_parent_id,omitempty"`
-	Text             string `json:"text"`
-	EditDeleteState  string `json:"edit_delete_state,omitempty"`
-	AttachmentCount  int    `json:"attachment_count"`
-	PrivateFileCount int    `json:"private_file_count"`
+	NativeMessageID   string `json:"native_message_id"`
+	Timestamp         string `json:"timestamp"`
+	AuthorID          string `json:"author_id,omitempty"`
+	AuthorName        string `json:"author_name,omitempty"`
+	Permalink         string `json:"permalink,omitempty"`
+	ThreadParentID    string `json:"thread_parent_id,omitempty"`
+	Text              string `json:"text"`
+	EditDeleteState   string `json:"edit_delete_state,omitempty"`
+	RevisionTimestamp string `json:"revision_timestamp,omitempty"`
+	AttachmentCount   int    `json:"attachment_count"`
+	PrivateFileCount  int    `json:"private_file_count"`
 }
 
 type BuildInput struct {

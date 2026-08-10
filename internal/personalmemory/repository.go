@@ -198,6 +198,15 @@ func (repository *FileRepository) ImportManyWithinBudget(batches []CaptureBatch,
 		if exists && prior.ContentHash != final.ContentHash && historicalContent[key][final.ContentHash] {
 			return nil, errors.New("personal evidence envelope final state is a stale historical revision")
 		}
+		if exists && prior.ContentHash != final.ContentHash &&
+			prior.EditDeleteState == "edited" && final.EditDeleteState == "edited" &&
+			!newerRevision(final.RevisionAt, prior.RevisionAt) {
+			return nil, errors.New("personal evidence conflicting edit has no newer chronology")
+		}
+		if exists && prior.ContentHash != final.ContentHash &&
+			prior.EditDeleteState == "edited" && final.EditDeleteState == "original" {
+			return nil, errors.New("personal evidence edited state cannot revert to original")
+		}
 		if exists && isDeletedCapture(prior) && !isDeletedCapture(final) && prior.ContentHash != final.ContentHash {
 			return nil, errors.New("personal evidence deleted state cannot be resurrected without chronology")
 		}
@@ -222,6 +231,12 @@ func (repository *FileRepository) ImportManyWithinBudget(batches []CaptureBatch,
 
 func isDeletedCapture(record CaptureRecord) bool {
 	return record.EditDeleteState == "deleted" || record.EditDeleteState == "tombstone"
+}
+
+func newerRevision(candidate, current string) bool {
+	candidateTime, candidateErr := time.Parse(time.RFC3339Nano, strings.TrimSpace(candidate))
+	currentTime, currentErr := time.Parse(time.RFC3339Nano, strings.TrimSpace(current))
+	return candidateErr == nil && currentErr == nil && candidateTime.After(currentTime)
 }
 
 func (repository *FileRepository) applyCaptureBatch(
@@ -434,26 +449,31 @@ func (repository *FileRepository) MergeEnrichment(batch EnrichmentBatch) (Enrich
 	resourceGraph := make([]ResourceContext, 0, len(library.Resources)+len(resources))
 	resourceGraph = append(resourceGraph, library.Resources...)
 	resourceGraph = append(resourceGraph, resources...)
+	relatedByResourceID := make(map[string][]string, len(resourceGraph))
+	for _, resource := range resourceGraph {
+		for _, related := range resource.RelatedURLs {
+			if FollowableRelatedResource(related) {
+				relatedByResourceID[resource.ResourceID] = append(
+					relatedByResourceID[resource.ResourceID], stableResourceID(related.URL),
+				)
+			}
+		}
+	}
 	existingResourceIDs := make(map[string]bool, len(library.Resources))
 	for _, resource := range library.Resources {
 		existingResourceIDs[resource.ResourceID] = true
 	}
-	for changed := true; changed; {
-		changed = false
-		for _, resource := range resourceGraph {
-			if !allowed[resource.ResourceID] {
+	queue := make([]string, 0, len(allowed))
+	for resourceID := range allowed {
+		queue = append(queue, resourceID)
+	}
+	for index := 0; index < len(queue); index++ {
+		for _, relatedID := range relatedByResourceID[queue[index]] {
+			if allowed[relatedID] {
 				continue
 			}
-			for _, related := range resource.RelatedURLs {
-				if !FollowableRelatedResource(related) {
-					continue
-				}
-				relatedID := stableResourceID(related.URL)
-				if !allowed[relatedID] {
-					allowed[relatedID] = true
-					changed = true
-				}
-			}
+			allowed[relatedID] = true
+			queue = append(queue, relatedID)
 		}
 	}
 	for _, resource := range resources {

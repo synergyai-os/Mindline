@@ -65,30 +65,112 @@ func (runner Runner) Recover() error {
 
 // Drain processes deterministic queued work until no item is immediately
 // runnable. Retryable work remains queued for a later explicitly bounded run.
-func (runner Runner) Drain(ctx context.Context) error {
+func (runner Runner) Drain(ctx context.Context) (returnErr error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if runner.Store == nil {
+		return errors.New("resource queue store is required")
+	}
+	startedAt := runner.wallNow()
 	if err := runner.Recover(); err != nil {
 		return err
 	}
-	for {
-		if err := ctx.Err(); err != nil {
+	queue, err := runner.Store.Load()
+	if err != nil {
+		return err
+	}
+	remainingWall := queue.Profile.MaxRunWallSeconds - queue.Counters.WallSeconds
+	if remainingWall <= 0 {
+		return runner.settleAllBudgetRemainder()
+	}
+	startingWall := queue.Counters.WallSeconds
+	chargeElapsed := func() (bool, error) {
+		elapsed := runner.wallNow().Sub(startedAt)
+		if elapsed < 0 {
+			return false, errors.New("resource queue wall clock moved backwards")
+		}
+		elapsedSeconds := int64(elapsed / time.Second)
+		return runner.Store.ChargeRunWallFloor(startingWall + elapsedSeconds)
+	}
+	defer func() {
+		_, err := chargeElapsed()
+		if returnErr == nil && err != nil {
+			returnErr = err
+		}
+	}()
+	elapsedBeforeWork := runner.wallNow().Sub(startedAt)
+	if elapsedBeforeWork < 0 {
+		return errors.New("resource queue wall clock moved backwards")
+	}
+	runWindow := time.Duration(remainingWall)*time.Second - elapsedBeforeWork
+	if runWindow <= 0 {
+		if _, err := chargeElapsed(); err != nil {
 			return err
+		}
+		return runner.settleAllBudgetRemainder()
+	}
+	runContext, cancel := context.WithTimeout(ctx, runWindow)
+	defer cancel()
+	for {
+		if err := runContext.Err(); err != nil {
+			if _, chargeErr := chargeElapsed(); chargeErr != nil {
+				return chargeErr
+			}
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return runner.settleAllBudgetRemainder()
 		}
 		settled, err := runner.settleBudgetRemainder()
 		if err != nil {
 			return err
 		}
-		if settled {
-			continue
-		}
-		processed, err := runner.ProcessNext(ctx)
+		exhausted, err := chargeElapsed()
 		if err != nil {
 			return err
 		}
+		if exhausted {
+			return runner.settleAllBudgetRemainder()
+		}
+		if settled {
+			continue
+		}
+		processed, err := runner.ProcessNext(runContext)
+		exhausted, chargeErr := chargeElapsed()
+		if chargeErr != nil {
+			return chargeErr
+		}
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if errors.Is(err, context.DeadlineExceeded) && runContext.Err() != nil {
+				return runner.settleAllBudgetRemainder()
+			}
+			return err
+		}
+		if exhausted {
+			return runner.settleAllBudgetRemainder()
+		}
 		if !processed {
 			return nil
+		}
+	}
+}
+
+func (runner Runner) wallNow() time.Time {
+	if runner.Now != nil {
+		return runner.Now()
+	}
+	return time.Now()
+}
+
+func (runner Runner) settleAllBudgetRemainder() error {
+	for {
+		settled, err := runner.settleBudgetRemainder()
+		if err != nil || !settled {
+			return err
 		}
 	}
 }

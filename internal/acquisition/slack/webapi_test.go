@@ -157,8 +157,13 @@ func TestWebAPIDrainRejectsDuplicatePagesOmittedRepliesAndAccountsEditsDeletesFi
 	if _, err := (WebAPIDrain{Client: client}).DrainSynthetic(context.Background(), WebAPIIdentity{WorkspaceID: "T-proof", ChannelID: "C-proof"}, "100.000001", "199.000001"); err == nil {
 		t.Fatal("omitted declared reply was accepted")
 	}
-	client.history = map[string]WebAPIPage{"": {Messages: []WebAPIMessage{{Timestamp: "120.000001", Subtype: "message_deleted", FileCount: 1, PrivateFileCount: 1}}}}
+	client.history = map[string]WebAPIPage{"": {Messages: []WebAPIMessage{{Timestamp: "120.000001", RevisionTimestamp: "121.000001"}}}}
 	manifest, err := (WebAPIDrain{Client: client}).DrainSynthetic(context.Background(), WebAPIIdentity{WorkspaceID: "T-proof", ChannelID: "C-proof"}, "100.000001", "199.000001")
+	if err != nil || manifest.SourceRecords[0].EditDeleteState != "edited" {
+		t.Fatalf("provider edit chronology was not classified as edited: %+v err=%v", manifest.SourceRecords, err)
+	}
+	client.history = map[string]WebAPIPage{"": {Messages: []WebAPIMessage{{Timestamp: "120.000001", Subtype: "message_deleted", FileCount: 1, PrivateFileCount: 1}}}}
+	manifest, err = (WebAPIDrain{Client: client}).DrainSynthetic(context.Background(), WebAPIIdentity{WorkspaceID: "T-proof", ChannelID: "C-proof"}, "100.000001", "199.000001")
 	if err != nil || manifest.SourceRecords[0].EditDeleteState != "deleted" || manifest.SourceRecords[0].AttachmentCount != 1 || manifest.SourceRecords[0].PrivateFileCount != 1 {
 		t.Fatalf("edit/delete/file accounting drifted: %+v err=%v", manifest.SourceRecords, err)
 	}

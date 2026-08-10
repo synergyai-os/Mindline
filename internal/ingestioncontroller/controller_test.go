@@ -314,11 +314,14 @@ func TestApplyRejectsImportedFinalEditWhenNewerCurrentEditExists(t *testing.T) {
 	controller := Controller{Repository: repository, Ledger: ledgerStore}
 	editB := message("1.000001", "edit B")
 	editB.EditDeleteState = "edited"
+	editB.RevisionTimestamp = "1.000002"
 	if _, err := controller.Apply(testEnvelope([]UnitFrame{unit(0, "000", []acquisitionslack.NativeMessage{editB}, map[string]string{"1.000001": "user"})})); err != nil {
-		t.Fatal(err)
+		ledger, _ := ledgerStore.Load()
+		t.Fatalf("initial edited capture failed: %v ledger=%+v", err, ledger)
 	}
 	editC := message("1.000001", "newer edit C")
 	editC.EditDeleteState = "edited"
+	editC.RevisionTimestamp = "1.000003"
 	if _, err := controller.Apply(testEnvelope([]UnitFrame{unit(0, "000", []acquisitionslack.NativeMessage{editC}, map[string]string{"1.000001": "user"})})); err != nil {
 		t.Fatal(err)
 	}

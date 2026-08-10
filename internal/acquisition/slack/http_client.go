@@ -206,7 +206,10 @@ func (client *SlackHTTPClient) messagePage(ctx context.Context, method string, v
 	var response struct {
 		slackEnvelope
 		Messages []struct {
-			Timestamp       string `json:"ts"`
+			Timestamp string `json:"ts"`
+			Edited    *struct {
+				Timestamp string `json:"ts"`
+			} `json:"edited"`
 			ThreadTimestamp string `json:"thread_ts"`
 			Text            string `json:"text"`
 			ReplyCount      int    `json:"reply_count"`
@@ -228,6 +231,9 @@ func (client *SlackHTTPClient) messagePage(ctx context.Context, method string, v
 	page := WebAPIPage{NextCursor: strings.TrimSpace(response.ResponseMetadata.NextCursor)}
 	for _, message := range response.Messages {
 		converted := WebAPIMessage{Timestamp: message.Timestamp, ThreadTimestamp: message.ThreadTimestamp, Text: message.Text, ReplyCount: message.ReplyCount, Subtype: message.Subtype, FileCount: len(message.Files)}
+		if message.Edited != nil {
+			converted.RevisionTimestamp = strings.TrimSpace(message.Edited.Timestamp)
+		}
 		for _, file := range message.Files {
 			if file.URLPrivate != "" || file.Mode != "external" {
 				converted.PrivateFileCount++

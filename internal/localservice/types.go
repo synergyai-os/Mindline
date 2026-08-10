@@ -61,11 +61,12 @@ type Capabilities struct {
 	FeedbackTokenCommand         string                                 `json:"feedback_token_command"`
 }
 type Status struct {
-	SchemaVersion string                 `json:"schema_version"`
-	ServiceState  string                 `json:"service_state"`
-	Memory        personalmemory.Status  `json:"memory"`
-	State         PublicAgentStateStatus `json:"state"`
-	SemanticIndex SemanticIndexStatus    `json:"semantic_index"`
+	SchemaVersion  string                 `json:"schema_version"`
+	ServiceState   string                 `json:"service_state"`
+	Memory         personalmemory.Status  `json:"memory"`
+	State          PublicAgentStateStatus `json:"state"`
+	SemanticIndex  SemanticIndexStatus    `json:"semantic_index"`
+	RuntimeBinding RuntimeBinding         `json:"runtime_binding"`
 }
 
 type SemanticIndexStatus struct {

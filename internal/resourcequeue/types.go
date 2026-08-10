@@ -33,6 +33,7 @@ const (
 	// MaximumQueueItems matches the canonical personal-memory resource
 	// denominator. MaxResources remains a per-generation processing budget.
 	MaximumQueueItems       = 250_000
+	MaximumRunWallSeconds   = 24 * 60 * 60
 	maximumResourceIDBytes  = 64
 	maximumProfileNameBytes = 64
 )
@@ -147,6 +148,7 @@ func ValidateProfile(profile BudgetProfile) error {
 		profile.MaxResources < 1 || profile.MaxRequests < 1 ||
 		profile.MaxDownloadedBytes < 1 || profile.MaxDecodedBytes < 1 || profile.MaxExtractedBytes < 1 || profile.MaxRuntimeStorageBytes < 1 ||
 		profile.MaxAttemptsPerResource < 1 || profile.MaxRunWallSeconds < 1 ||
+		profile.MaxRunWallSeconds > MaximumRunWallSeconds ||
 		profile.GlobalConcurrency < 1 || profile.PerHostConcurrency < 1 ||
 		profile.PerHostConcurrency > profile.GlobalConcurrency ||
 		profile.FetchPolicy.RequestTimeoutSeconds < 1 || profile.FetchPolicy.MaxRedirects < 0 ||

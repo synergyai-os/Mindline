@@ -84,10 +84,11 @@ func TestUpgradeBacksUpAndRollbackRestoresOnlyBinaryAndSkill(t *testing.T) {
 	if err := os.WriteFile(successor, []byte("successor-binary"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Install(InstallOptions{
+	successorReceipt, err := Install(InstallOptions{
 		Config: config, ConfigPath: filepath.Join(config.RuntimeRoot, "config.json"),
 		SourceBinary: successor, Start: false,
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 	evidenceMarker := filepath.Join(config.MemoryRoot, "evidence-marker")
@@ -138,6 +139,13 @@ func TestUpgradeBacksUpAndRollbackRestoresOnlyBinaryAndSkill(t *testing.T) {
 	}
 	if readinessChecks != 1 {
 		t.Fatalf("rollback committed without one readiness check: %d", readinessChecks)
+	}
+	persisted, err := readValidatedInstallReceipt(config, first.ConfigPath)
+	if err != nil || persisted != receipt || persisted.ServiceState != "rolled_back" {
+		t.Fatalf("rollback receipt was not durably committed: persisted=%+v returned=%+v err=%v", persisted, receipt, err)
+	}
+	if persisted == successorReceipt {
+		t.Fatal("rollback left the successor install receipt unchanged")
 	}
 	if restored, err := os.ReadFile(first.InstalledBinary); err != nil ||
 		!bytes.Equal(restored, priorBinary) {

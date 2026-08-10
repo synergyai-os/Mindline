@@ -28,6 +28,7 @@ type CaptureRecordInput struct {
 	AttachmentCount   int
 	PrivateFileCount  int
 	EditDeleteState   string
+	RevisionAt        string
 	Missingness       []string
 }
 
@@ -52,6 +53,14 @@ func NewCaptureRecord(input CaptureRecordInput) (CaptureRecord, error) {
 	}
 	if _, err := time.Parse(time.RFC3339, input.OccurredAt); err != nil {
 		return CaptureRecord{}, errors.New("invalid personal evidence timestamp")
+	}
+	input.RevisionAt = strings.TrimSpace(input.RevisionAt)
+	if input.RevisionAt != "" {
+		revisionAt, err := time.Parse(time.RFC3339, input.RevisionAt)
+		occurredAt, occurredErr := time.Parse(time.RFC3339, input.OccurredAt)
+		if err != nil || occurredErr != nil || !revisionAt.After(occurredAt) {
+			return CaptureRecord{}, errors.New("invalid personal evidence revision timestamp")
+		}
 	}
 	missingness := append([]string(nil), input.Missingness...)
 	sourceRef := strings.TrimSpace(input.SourceRef)
@@ -133,6 +142,7 @@ func NewCaptureRecord(input CaptureRecordInput) (CaptureRecord, error) {
 		SourceRef: sourceRef, RawText: rawText, URLs: urls, ResourceIDs: resourceIDs,
 		ThreadParentID: threadParentID, AttachmentCount: input.AttachmentCount,
 		PrivateFileCount: input.PrivateFileCount, EditDeleteState: editDeleteState,
+		RevisionAt:   input.RevisionAt,
 		ContextState: contextState, Missingness: uniqueSorted(missingness),
 		AuthorityClass: AuthorityClass, SourceContentFingerprint: hex.EncodeToString(sourceDigest[:]),
 	}

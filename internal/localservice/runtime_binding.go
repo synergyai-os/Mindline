@@ -1,0 +1,74 @@
+package localservice
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+
+	"github.com/synergyai-os/Mindline/internal/privateio"
+)
+
+var runtimeFingerprintPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
+
+// sourceTreeFingerprint is set only by the audited candidate/baseline build.
+// Ordinary builds remain usable, but cannot claim an evaluation binding.
+var sourceTreeFingerprint string
+
+type RuntimeBinding struct {
+	State                    string `json:"state"`
+	BuildFingerprint         string `json:"build_fingerprint,omitempty"`
+	TreeFingerprint          string `json:"tree_fingerprint,omitempty"`
+	ConfigurationFingerprint string `json:"configuration_fingerprint,omitempty"`
+}
+
+func runtimeBindingFor(executable, configPath string, config Config) RuntimeBinding {
+	binding := RuntimeBinding{State: "unavailable"}
+	executable = filepath.Clean(strings.TrimSpace(executable))
+	configPath = filepath.Clean(strings.TrimSpace(configPath))
+	if !filepath.IsAbs(executable) || !filepath.IsAbs(configPath) ||
+		configPath != filepath.Join(config.RuntimeRoot, "config.json") {
+		return binding
+	}
+	buildFingerprint, err := regularFileFingerprint(executable, maximumBinaryBytes)
+	if err != nil {
+		return binding
+	}
+	configBytes, err := privateio.ReadFileBounded(config.RuntimeRoot, configPath, 64<<10)
+	if err != nil {
+		return binding
+	}
+	configurationDigest := sha256.Sum256(configBytes)
+	binding.BuildFingerprint = buildFingerprint
+	binding.ConfigurationFingerprint = "sha256:" + hex.EncodeToString(configurationDigest[:])
+	binding.TreeFingerprint = strings.TrimSpace(sourceTreeFingerprint)
+	if runtimeFingerprintPattern.MatchString(binding.BuildFingerprint) &&
+		runtimeFingerprintPattern.MatchString(binding.TreeFingerprint) &&
+		runtimeFingerprintPattern.MatchString(binding.ConfigurationFingerprint) {
+		binding.State = "ready"
+	}
+	return binding
+}
+
+func regularFileFingerprint(path string, maximum int64) (string, error) {
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 ||
+		info.Size() < 1 || info.Size() > maximum {
+		return "", errors.New("runtime executable unavailable")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return "", errors.New("runtime executable unavailable")
+	}
+	defer file.Close()
+	digest := sha256.New()
+	written, err := io.Copy(digest, io.LimitReader(file, maximum+1))
+	if err != nil || written != info.Size() || written > maximum {
+		return "", errors.New("runtime executable unavailable")
+	}
+	return "sha256:" + hex.EncodeToString(digest.Sum(nil)), nil
+}

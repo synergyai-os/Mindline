@@ -1,6 +1,7 @@
 package personalmemory
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -515,6 +516,7 @@ func TestChangedBatchFingerprintCannotRollBackCurrentCaptureToHistoricalEdit(t *
 	editBNative := fixtureBatch()
 	editBNative.Messages[0].Text = "edit B https://example.com/b"
 	editBNative.Messages[0].EditDeleteState = "edited"
+	editBNative.Messages[0].RevisionTimestamp = "1785000001.000001"
 	editB := captureBatchForTest(t, editBNative)
 	if _, err := repository.Import(editB); err != nil {
 		t.Fatal(err)
@@ -522,6 +524,7 @@ func TestChangedBatchFingerprintCannotRollBackCurrentCaptureToHistoricalEdit(t *
 	editCNative := fixtureBatch()
 	editCNative.Messages[0].Text = "newer edit C https://example.com/c"
 	editCNative.Messages[0].EditDeleteState = "edited"
+	editCNative.Messages[0].RevisionTimestamp = "1785000002.000001"
 	if _, err := repository.Import(captureBatchForTest(t, editCNative)); err != nil {
 		t.Fatal(err)
 	}
@@ -539,6 +542,36 @@ func TestChangedBatchFingerprintCannotRollBackCurrentCaptureToHistoricalEdit(t *
 	library, loadErr := repository.Load()
 	if err != nil || loadErr != nil || before != after ||
 		!strings.Contains(library.Records[0].RawText, "newer edit C") {
+		t.Fatalf("stale edit changed canonical evidence: before=%+v after=%+v record=%+v err=%v load=%v", before, after, library.Records[0], err, loadErr)
+	}
+}
+
+func TestUnseenOlderEditCannotReplaceNewerCurrentEdit(t *testing.T) {
+	repository := populatedRepository(t)
+	newer := fixtureBatch()
+	newer.Messages[0].Text = "newest observed edit https://example.com/newest"
+	newer.Messages[0].EditDeleteState = "edited"
+	newer.Messages[0].RevisionTimestamp = "1785000003.000001"
+	if _, err := repository.Import(captureBatchForTest(t, newer)); err != nil {
+		t.Fatal(err)
+	}
+	before, err := repository.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := fixtureBatch()
+	stale.Messages[0].Text = "previously unseen older edit https://example.com/older"
+	stale.Messages[0].EditDeleteState = "edited"
+	stale.Messages[0].RevisionTimestamp = "1785000002.000001"
+	stale.UpperInclusive = "1785050000.000777"
+	stale.Watermark = stale.UpperInclusive
+	if _, err := repository.Import(captureBatchForTest(t, stale)); err == nil {
+		t.Fatal("unseen stale edit replaced newer current evidence")
+	}
+	after, err := repository.Status()
+	library, loadErr := repository.Load()
+	if err != nil || loadErr != nil || before != after ||
+		!strings.Contains(library.Records[0].RawText, "newest observed edit") {
 		t.Fatalf("stale edit changed canonical evidence: before=%+v after=%+v record=%+v err=%v load=%v", before, after, library.Records[0], err, loadErr)
 	}
 }
@@ -587,7 +620,11 @@ func TestNewCoverageWindowPersistsEvenWhenAllRecordsAreUnchanged(t *testing.T) {
 		t.Fatalf("unchanged expanded coverage failed: %+v err=%v", receipt, err)
 	}
 	library, err := repository.Load()
-	if err != nil || len(library.Imports) != 2 || library.Imports[1].Watermark != expanded.Watermark {
+	foundExpanded := false
+	for _, imported := range library.Imports {
+		foundExpanded = foundExpanded || imported.Watermark == expanded.Watermark
+	}
+	if err != nil || len(library.Imports) != 2 || !foundExpanded {
 		t.Fatalf("new coverage evidence was not persisted: %+v err=%v", library.Imports, err)
 	}
 }
@@ -613,6 +650,50 @@ func TestUnreachableIncomingRelatedCycleCannotAuthorizeItself(t *testing.T) {
 	}
 	if _, err := repository.MergeEnrichment(batch); err == nil {
 		t.Fatal("unreachable incoming related-resource cycle authorized itself")
+	}
+}
+
+func TestReachableIncomingRelatedChainIsOrderIndependent(t *testing.T) {
+	repository := populatedRepository(t)
+	library, err := repository.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const chainLength = 1024
+	urls := make([]string, chainLength)
+	for index := range urls {
+		urls[index] = fmt.Sprintf("https://related.example/item-%04d", index)
+	}
+	resources := make([]acquisition.ImportedEvidence, 0, chainLength+1)
+	for index := chainLength - 1; index >= 0; index-- {
+		resource := acquisition.ImportedEvidence{
+			CanonicalItemID: fmt.Sprintf("chain-%04d", index), CanonicalURL: urls[index],
+			State: "partial", AccessClass: "public",
+			Excerpts: []acquisition.ImportedExcerpt{{ExcerptID: "chain-edge", Text: "retained chain evidence", Locator: "page"}},
+		}
+		if index+1 < chainLength {
+			resource.RelatedURLs = []acquisition.ImportedRelated{{
+				URL: urls[index+1], Relation: "source_links_to",
+				DiscoveryEvidenceRef: "chain-edge", SemanticallyRelevant: true,
+			}}
+		}
+		resources = append(resources, resource)
+	}
+	root := acquisition.ImportedEvidence{
+		CanonicalItemID: "retained-root", CanonicalURL: library.Resources[0].CanonicalURL,
+		State: "partial", AccessClass: "public",
+		Excerpts: []acquisition.ImportedExcerpt{{ExcerptID: "chain-root", Text: "root chain evidence", Locator: "page"}},
+		RelatedURLs: []acquisition.ImportedRelated{{
+			URL: urls[0], Relation: "source_links_to",
+			DiscoveryEvidenceRef: "chain-root", SemanticallyRelevant: true,
+		}},
+	}
+	resources = append(resources, root)
+	receipt, err := repository.MergeEnrichment(EnrichmentBatch{
+		SchemaVersion: EnrichmentBatchSchemaVersion, Resources: resources,
+	})
+	if err != nil || receipt.DeclaredResources != chainLength+1 {
+		t.Fatalf("reverse-ordered reachable chain failed: receipt=%+v err=%v", receipt, err)
 	}
 }
 
@@ -956,6 +1037,13 @@ func captureBatchForTest(t *testing.T, batch acquisitionslack.NativeBatch) Captu
 		if err != nil {
 			t.Fatal(err)
 		}
+		revisionAt := ""
+		if message.RevisionTimestamp != "" {
+			revisionAt, err = acquisition.NativeTimestampToRFC3339(message.RevisionTimestamp)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
 		sourceRef := "slack://" + batch.WorkspaceID + "/" + batch.ChannelID + "/" + message.NativeMessageID
 		missingness := []string{"permalink_unavailable"}
 		if message.Permalink != "" {
@@ -968,7 +1056,7 @@ func captureBatchForTest(t *testing.T, batch acquisitionslack.NativeBatch) Captu
 			OccurredAt: occurredAt, AuthorID: message.AuthorID, AuthorName: message.AuthorName,
 			SourceRef: sourceRef, RawText: message.Text, ThreadParentID: message.ThreadParentID,
 			AttachmentCount: message.AttachmentCount, PrivateFileCount: message.PrivateFileCount,
-			EditDeleteState: message.EditDeleteState, Missingness: missingness,
+			EditDeleteState: message.EditDeleteState, RevisionAt: revisionAt, Missingness: missingness,
 		})
 		if err != nil {
 			t.Fatal(err)

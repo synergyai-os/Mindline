@@ -77,6 +77,26 @@ func (store *Store) Load() (Queue, error) {
 	return queue, nil
 }
 
+// ChargeRunWallFloor records the minimum total wall usage observed by the
+// complete drain, including canonical reads, queue persistence, enrichment,
+// and readback outside the fetch adapter. Existing adapter and retry charges
+// remain authoritative when they are already larger.
+func (store *Store) ChargeRunWallFloor(floor int64) (bool, error) {
+	if floor < 0 {
+		return false, errors.New("resource queue wall usage is invalid")
+	}
+	queue, err := store.update(func(queue *Queue) error {
+		if floor <= queue.Counters.WallSeconds {
+			return nil
+		}
+		queue.Counters.WallSeconds = minimumInt64(
+			queue.Profile.MaxRunWallSeconds, floor,
+		)
+		return nil
+	})
+	return queue.Counters.WallSeconds >= queue.Profile.MaxRunWallSeconds, err
+}
+
 func (store *Store) update(change func(*Queue) error) (Queue, error) {
 	lock, err := privateio.AcquireAdvisoryLock(store.root, store.lock)
 	if err != nil {

@@ -21,6 +21,13 @@ func CaptureBatchFromNative(batch acquisitionslack.NativeBatch) (personalmemory.
 		if err != nil {
 			return personalmemory.CaptureBatch{}, errors.New("invalid personal evidence timestamp")
 		}
+		revisionAt := ""
+		if message.RevisionTimestamp != "" {
+			revisionAt, err = acquisition.NativeTimestampToRFC3339(message.RevisionTimestamp)
+			if err != nil {
+				return personalmemory.CaptureBatch{}, errors.New("invalid personal evidence revision timestamp")
+			}
+		}
 		sourceRef := "slack://" + batch.WorkspaceID + "/" + batch.ChannelID + "/" + message.NativeMessageID
 		missingness := []string{}
 		permalink := message.Permalink
@@ -42,7 +49,7 @@ func CaptureBatchFromNative(batch acquisitionslack.NativeBatch) (personalmemory.
 			OccurredAt: occurredAt, AuthorID: message.AuthorID, AuthorName: message.AuthorName,
 			SourceRef: permalink, RawText: message.Text, ThreadParentID: message.ThreadParentID,
 			AttachmentCount: message.AttachmentCount, PrivateFileCount: message.PrivateFileCount,
-			EditDeleteState: message.EditDeleteState, Missingness: missingness,
+			EditDeleteState: message.EditDeleteState, RevisionAt: revisionAt, Missingness: missingness,
 		})
 		if err != nil {
 			return personalmemory.CaptureBatch{}, err

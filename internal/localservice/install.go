@@ -371,7 +371,8 @@ func validateInstallReceipt(config Config, configPath string, receipt InstallRec
 			receipt.ServiceState != "installed_not_started" &&
 			receipt.ServiceState != "start_pending" &&
 			receipt.ServiceState != "started" &&
-			receipt.ServiceState != "restarted") {
+			receipt.ServiceState != "restarted" &&
+			receipt.ServiceState != "rolled_back") {
 		return errors.New("install receipt paths do not match the canonical installation")
 	}
 	return nil

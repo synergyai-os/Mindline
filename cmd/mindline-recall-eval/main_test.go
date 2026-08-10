@@ -2,10 +2,51 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/synergyai-os/Mindline/internal/localservice"
+	"github.com/synergyai-os/Mindline/internal/recalleval"
 )
+
+type fixedStatusPort struct {
+	status localservice.Status
+	err    error
+}
+
+func (port fixedStatusPort) Status(context.Context) (localservice.Status, error) {
+	return port.status, port.err
+}
+
+func TestVerifyServiceBindingRequiresExactLiveRuntime(t *testing.T) {
+	binding := recalleval.RunBinding{
+		BuildFingerprint:         "sha256:" + string(bytes.Repeat([]byte("a"), 64)),
+		TreeFingerprint:          "sha256:" + string(bytes.Repeat([]byte("b"), 64)),
+		ConfigurationFingerprint: "sha256:" + string(bytes.Repeat([]byte("c"), 64)),
+	}
+	matching := localservice.Status{RuntimeBinding: localservice.RuntimeBinding{
+		State: "ready", BuildFingerprint: binding.BuildFingerprint,
+		TreeFingerprint:          binding.TreeFingerprint,
+		ConfigurationFingerprint: binding.ConfigurationFingerprint,
+	}}
+	if err := verifyServiceBinding(context.Background(), fixedStatusPort{status: matching}, binding); err != nil {
+		t.Fatalf("matching live runtime rejected: %v", err)
+	}
+	matching.RuntimeBinding.TreeFingerprint = "sha256:" + string(bytes.Repeat([]byte("d"), 64))
+	if err := verifyServiceBinding(context.Background(), fixedStatusPort{status: matching}, binding); err == nil {
+		t.Fatal("mismatched live runtime accepted")
+	}
+	matching.RuntimeBinding.State = "unavailable"
+	if err := verifyServiceBinding(context.Background(), fixedStatusPort{status: matching}, binding); err == nil {
+		t.Fatal("unattested live runtime accepted")
+	}
+	if err := verifyServiceBinding(context.Background(), fixedStatusPort{err: errors.New("offline")}, binding); err == nil {
+		t.Fatal("unavailable live service accepted")
+	}
+}
 
 func TestRejectsUnknownOrUnboundedInvocation(t *testing.T) {
 	var output bytes.Buffer

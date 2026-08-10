@@ -348,7 +348,7 @@ func ValidateImportedEvidence(evidence []ImportedEvidence, snapshot InventorySna
 func NativeTimestampToRFC3339(value string) (string, error) {
 	trimmed := strings.TrimSpace(value)
 	if parsed, err := time.Parse(time.RFC3339, trimmed); err == nil {
-		return parsed.UTC().Format(time.RFC3339), nil
+		return parsed.UTC().Format(time.RFC3339Nano), nil
 	}
 	parts := strings.SplitN(trimmed, ".", 2)
 	seconds, err := strconv.ParseInt(parts[0], 10, 64)
@@ -367,7 +367,7 @@ func NativeTimestampToRFC3339(value string) (string, error) {
 			return "", errors.New("invalid native timestamp")
 		}
 	}
-	return time.Unix(seconds, nanos).UTC().Format(time.RFC3339), nil
+	return time.Unix(seconds, nanos).UTC().Format(time.RFC3339Nano), nil
 }
 
 func Fingerprint(value any) string {

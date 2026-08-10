@@ -372,6 +372,16 @@ func Rollback(configPath string) (returnReceipt InstallReceipt, returnErr error)
 		return InstallReceipt{}, err
 	}
 	receipt.ServiceState = "rolled_back"
+	receiptPath := filepath.Join(config.RuntimeRoot, "install.json")
+	if err := transaction.mutate("rollback-install-receipt", receiptPath, func() error {
+		return privateio.WriteJSON(receiptPath, receipt)
+	}); err != nil {
+		return InstallReceipt{}, errors.New("persist rollback receipt")
+	}
+	persisted, err := readValidatedInstallReceipt(config, configPath)
+	if err != nil || persisted != receipt {
+		return InstallReceipt{}, errors.New("verify rollback receipt")
+	}
 	committed = true
 	return receipt, nil
 }

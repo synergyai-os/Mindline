@@ -63,7 +63,7 @@ func TestSlackHTTPClientPinsOriginMethodsScopesAndFilePolicy(t *testing.T) {
 		case "/api/auth.test":
 			return slackResponse(200, `{"ok":true,"team_id":"T-proof","extra":"ignored"}`, scopes, ""), nil
 		case "/api/conversations.history":
-			return slackResponse(200, `{"ok":true,"messages":[{"ts":"120.000001","text":"https://example.com","reply_count":0,"files":[{"id":"F1","mode":"hosted","url_private":"https://files.slack.com/private"}]}],"response_metadata":{"next_cursor":""}}`, scopes, ""), nil
+			return slackResponse(200, `{"ok":true,"messages":[{"ts":"120.000001","edited":{"ts":"121.000001"},"text":"https://example.com","reply_count":0,"files":[{"id":"F1","mode":"hosted","url_private":"https://files.slack.com/private"}]}],"response_metadata":{"next_cursor":""}}`, scopes, ""), nil
 		default:
 			t.Fatalf("unexpected method path %s", request.URL.Path)
 			return nil, nil
@@ -75,7 +75,7 @@ func TestSlackHTTPClientPinsOriginMethodsScopesAndFilePolicy(t *testing.T) {
 		t.Fatalf("probe failed: %s %v", workspace, err)
 	}
 	page, err := client.History(context.Background(), "C-proof", "100.000001", "199.000001", "", 200)
-	if err != nil || len(page.Messages) != 1 || page.Messages[0].FileCount != 1 || page.Messages[0].PrivateFileCount != 1 || requests != 2 {
+	if err != nil || len(page.Messages) != 1 || page.Messages[0].RevisionTimestamp != "121.000001" || page.Messages[0].FileCount != 1 || page.Messages[0].PrivateFileCount != 1 || requests != 2 {
 		t.Fatalf("history/file accounting failed: %+v err=%v requests=%d", page, err, requests)
 	}
 }

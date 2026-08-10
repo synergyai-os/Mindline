@@ -69,6 +69,7 @@ type CaptureRecord struct {
 	AttachmentCount          int      `json:"attachment_count"`
 	PrivateFileCount         int      `json:"private_file_count"`
 	EditDeleteState          string   `json:"edit_delete_state"`
+	RevisionAt               string   `json:"revision_at,omitempty"`
 	ContextState             string   `json:"context_state"`
 	Missingness              []string `json:"missingness"`
 	AuthorityClass           string   `json:"authority_class"`
@@ -540,7 +541,7 @@ func validateRecord(record CaptureRecord) error {
 		record.IdempotencyKey, record.SourceAdapter, record.SourceScopeID,
 		record.SourceContainerID, record.ExternalID, record.AuthorID,
 		record.AuthorName, record.SourceRef, record.RawText, record.ThreadParentID,
-		record.EditDeleteState,
+		record.EditDeleteState, record.RevisionAt,
 		strings.Join(record.Missingness, " "),
 	}
 	if importedEvidenceContainsSecret(recordText...) ||
@@ -568,6 +569,13 @@ func validateRecord(record CaptureRecord) error {
 	case "original", "edited", "deleted", "tombstone":
 	default:
 		return errors.New("invalid personal evidence edit/delete state")
+	}
+	if record.RevisionAt != "" {
+		revisionAt, err := time.Parse(time.RFC3339Nano, record.RevisionAt)
+		occurredAt, occurredErr := time.Parse(time.RFC3339Nano, record.OccurredAt)
+		if err != nil || occurredErr != nil || !revisionAt.After(occurredAt) {
+			return errors.New("invalid personal evidence revision chronology")
+		}
 	}
 	if record.AttachmentCount < 0 || record.PrivateFileCount < 0 || record.PrivateFileCount > record.AttachmentCount {
 		return errors.New("invalid personal evidence attachment accounting")

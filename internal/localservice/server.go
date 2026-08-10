@@ -26,15 +26,16 @@ import (
 const maximumRequestBytes = 1 << 20
 
 type Server struct {
-	config     Config
-	repository *personalmemory.FileRepository
-	state      *agentstate.Store
-	embedder   embedding.Port
-	lock       *privateio.AdvisoryLock
-	httpServer *http.Server
-	listener   net.Listener
-	now        func() time.Time
-	recovery   string
+	config         Config
+	repository     *personalmemory.FileRepository
+	state          *agentstate.Store
+	embedder       embedding.Port
+	lock           *privateio.AdvisoryLock
+	httpServer     *http.Server
+	listener       net.Listener
+	now            func() time.Time
+	recovery       string
+	runtimeBinding RuntimeBinding
 
 	semanticMu         sync.Mutex
 	semanticIndex      SemanticIndexStatus
@@ -45,6 +46,16 @@ type Server struct {
 }
 
 func NewServer(config Config, now func() time.Time, httpClient *http.Client) (*Server, error) {
+	return newServer(config, now, httpClient, RuntimeBinding{State: "unavailable"})
+}
+
+func NewServerWithRuntimeBinding(
+	config Config, configPath, executable string, now func() time.Time, httpClient *http.Client,
+) (*Server, error) {
+	return newServer(config, now, httpClient, runtimeBindingFor(executable, configPath, config))
+}
+
+func newServer(config Config, now func() time.Time, httpClient *http.Client, runtimeBinding RuntimeBinding) (*Server, error) {
 	if err := config.Prepare(); err != nil {
 		return nil, err
 	}
@@ -78,7 +89,8 @@ func NewServer(config Config, now func() time.Time, httpClient *http.Client) (*S
 	return &Server{
 		config: config, repository: repository, state: state,
 		embedder: embedder, lock: lock, now: now, recovery: recovery,
-		semanticIndex: SemanticIndexStatus{State: "stale"},
+		runtimeBinding: runtimeBinding,
+		semanticIndex:  SemanticIndexStatus{State: "stale"},
 	}, nil
 }
 
@@ -198,7 +210,8 @@ func (server *Server) handleStatus(writer http.ResponseWriter, _ *http.Request) 
 	writeJSON(writer, http.StatusOK, Status{
 		SchemaVersion: APISchemaVersion, ServiceState: "ready",
 		Memory: memory, State: projectAgentStateStatus(state),
-		SemanticIndex: server.semanticIndexStatus(memory.Fingerprint, state.IndexedFingerprint),
+		SemanticIndex:  server.semanticIndexStatus(memory.Fingerprint, state.IndexedFingerprint),
+		RuntimeBinding: server.runtimeBinding,
 	})
 }
 

@@ -106,11 +106,18 @@ func CaptureBatchForAdoption(frame RunFrame) (personalmemory.CaptureBatch, map[s
 		if err != nil {
 			return personalmemory.CaptureBatch{}, nil, errors.New("invalid personal evidence timestamp")
 		}
+		revisionAt := ""
+		if message.RevisionTimestamp != "" {
+			revisionAt, err = acquisition.NativeTimestampToRFC3339(message.RevisionTimestamp)
+			if err != nil {
+				return personalmemory.CaptureBatch{}, nil, errors.New("invalid personal evidence revision timestamp")
+			}
+		}
 		record, err := personalmemory.NewCaptureRecord(personalmemory.CaptureRecordInput{
 			SourceAdapter: "slack", SourceScopeID: frame.Batch.WorkspaceID, SourceContainerID: frame.Batch.ChannelID,
 			ExternalID: message.NativeMessageID, OccurredAt: occurredAt, AuthorID: message.AuthorID, AuthorName: message.AuthorName,
 			SourceRef: sourceRef, RawText: message.Text, ThreadParentID: message.ThreadParentID, AttachmentCount: message.AttachmentCount,
-			PrivateFileCount: message.PrivateFileCount, EditDeleteState: message.EditDeleteState, Missingness: missingness,
+			PrivateFileCount: message.PrivateFileCount, EditDeleteState: message.EditDeleteState, RevisionAt: revisionAt, Missingness: missingness,
 		})
 		if err != nil {
 			return personalmemory.CaptureBatch{}, nil, err
