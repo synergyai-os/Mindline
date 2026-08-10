@@ -15,12 +15,14 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
 
 	"github.com/synergyai-os/Mindline/internal/localservice"
+	"github.com/synergyai-os/Mindline/internal/recallproof"
 )
 
 const (
@@ -89,12 +91,22 @@ func run(args []string, stdout io.Writer) error {
 		return errors.New("secure audited build stage")
 	}
 	defer os.RemoveAll(stage)
+	sourceSnapshot := filepath.Join(stage, "source")
+	if err := os.Mkdir(sourceSnapshot, 0o700); err != nil {
+		return errors.New("prepare audited source snapshot")
+	}
+	if err := snapshotTrackedTree(root, sourceSnapshot); err != nil {
+		return err
+	}
 	temporaryPath := filepath.Join(stage, "mindline")
 
-	goPath := filepath.Join(runtime.GOROOT(), "bin", "go")
-	goInfo, err := os.Lstat(goPath)
-	if err != nil || !goInfo.Mode().IsRegular() || goInfo.Mode()&0o111 == 0 {
+	goPath, goFingerprint, err := recallproof.ApprovedProofExecutable("go")
+	if err != nil {
 		return errors.New("audited Go toolchain unavailable")
+	}
+	currentUser, err := user.Current()
+	if err != nil || !filepath.IsAbs(currentUser.HomeDir) {
+		return errors.New("approved user identity unavailable")
 	}
 	buildContext, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
 	defer cancel()
@@ -102,12 +114,16 @@ func run(args []string, stdout io.Writer) error {
 		"build", "-trimpath", "-ldflags="+linkerFlag,
 		"-o", temporaryPath, "./cmd/mindline",
 	)
-	command.Dir = root
-	command.Env = auditedBuildEnvironment(goPath)
+	command.Dir = sourceSnapshot
+	command.Env = auditedBuildEnvironment(goPath, filepath.Clean(currentUser.HomeDir))
 	outputBuffer := &boundedBuffer{maximum: maximumBuildOutputBytes}
 	command.Stdout, command.Stderr = outputBuffer, outputBuffer
 	if err := command.Run(); err != nil || outputBuffer.exceeded || buildContext.Err() != nil {
 		return errors.New("audited Mindline service build failed")
+	}
+	goPathAfter, goFingerprintAfter, err := recallproof.ApprovedProofExecutable("go")
+	if err != nil || goPathAfter != goPath || goFingerprintAfter != goFingerprint {
+		return errors.New("audited Go toolchain identity changed")
 	}
 	rootAfter, headAfter, treeAfter, err := repositoryBinding()
 	if err != nil || rootAfter != root || headAfter != head || treeAfter != treeFingerprint {
@@ -185,13 +201,30 @@ func gitOutput(root string, args ...string) ([]byte, error) {
 	return output.Bytes(), nil
 }
 
-func auditedBuildEnvironment(goPath string) []string {
-	home, _ := os.UserHomeDir()
+func snapshotTrackedTree(root, destination string) error {
+	entries, err := gitOutput(root, "ls-files", "-s", "-z")
+	if err != nil {
+		return errors.New("audited source index unavailable")
+	}
+	for _, entry := range bytes.Split(entries, []byte{0}) {
+		if bytes.HasPrefix(entry, []byte("120000 ")) || bytes.HasPrefix(entry, []byte("160000 ")) {
+			return errors.New("audited source index contains unsupported links")
+		}
+	}
+	prefix := filepath.Clean(destination) + string(filepath.Separator)
+	if _, err := gitOutput(root, "checkout-index", "--all", "--prefix="+prefix); err != nil {
+		return errors.New("prepare audited source snapshot")
+	}
+	return nil
+}
+
+func auditedBuildEnvironment(goPath, home string) []string {
 	temporary := os.TempDir()
+	goRoot := filepath.Dir(filepath.Dir(goPath))
 	return []string{
 		"HOME=" + home, "TMPDIR=" + temporary,
 		"PATH=" + filepath.Dir(goPath) + ":/usr/bin:/bin:/usr/sbin:/sbin",
-		"GOROOT=" + runtime.GOROOT(), "GOTOOLCHAIN=local", "GOENV=off",
+		"GOROOT=" + goRoot, "GOTOOLCHAIN=local", "GOENV=off",
 		"GOFLAGS=", "GOWORK=off", "GOPROXY=off", "LANG=C", "LC_ALL=C",
 	}
 }

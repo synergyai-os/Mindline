@@ -37,7 +37,7 @@ type CommandResult struct {
 type OSDirectExecutor struct{}
 
 func (OSDirectExecutor) Run(ctx context.Context, directory, tool string, argv []string) CommandResult {
-	executable, identity, err := approvedProofExecutable(tool)
+	executable, identity, err := ApprovedProofExecutable(tool)
 	if err != nil {
 		return CommandResult{ExitCode: -1, FailureCode: "tool_identity_unavailable"}
 	}
@@ -79,7 +79,9 @@ func (OSDirectExecutor) Run(ctx context.Context, directory, tool string, argv []
 	return result
 }
 
-func approvedProofExecutable(tool string) (string, string, error) {
+// ApprovedProofExecutable resolves and fingerprints a proof tool without
+// trusting PATH, GOROOT, or another caller-controlled tool location.
+func ApprovedProofExecutable(tool string) (string, string, error) {
 	var path string
 	switch tool {
 	case "go":
