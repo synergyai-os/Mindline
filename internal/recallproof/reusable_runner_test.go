@@ -71,7 +71,8 @@ func TestReusableProofRunnerRejectsTreeDriftDuringProof(t *testing.T) {
 }
 
 func TestOSDirectExecutorIgnoresAmbientPathAndRejectsUnknownTools(t *testing.T) {
-	bin := filepath.Join(t.TempDir(), "bin")
+	hostileRoot := t.TempDir()
+	bin := filepath.Join(hostileRoot, "bin")
 	if err := os.MkdirAll(bin, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -81,6 +82,7 @@ func TestOSDirectExecutorIgnoresAmbientPathAndRejectsUnknownTools(t *testing.T) 
 		}
 	}
 	t.Setenv("PATH", bin)
+	t.Setenv("GOROOT", hostileRoot)
 	result := (OSDirectExecutor{}).Run(context.Background(), filepath.Clean(filepath.Join("..", "..")), "git", []string{"--version"})
 	if result.ExitCode != 0 || result.ToolFingerprint == "" || strings.Contains(string(result.Stdout), "attacker-path-tool") {
 		t.Fatalf("ambient PATH selected proof tool: %+v", result)

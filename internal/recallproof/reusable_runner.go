@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"debug/buildinfo"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -43,7 +44,7 @@ func (OSDirectExecutor) Run(ctx context.Context, directory, tool string, argv []
 	defer cancel()
 	command := exec.CommandContext(commandContext, executable, argv...)
 	command.Dir = directory
-	command.Env = proofEnvironment(directory)
+	command.Env = proofEnvironment(directory, tool, executable)
 	assurance.ConfigureBoundedProcess(command)
 	stdout, stderr := &proofOutputBuffer{}, &proofOutputBuffer{}
 	command.Stdout, command.Stderr = stdout, stderr
@@ -81,7 +82,11 @@ func approvedProofExecutable(tool string) (string, string, error) {
 	var path string
 	switch tool {
 	case "go":
-		path = filepath.Join(runtime.GOROOT(), "bin", "go")
+		var err error
+		path, err = approvedGoExecutable()
+		if err != nil {
+			return "", "", err
+		}
 	case "git":
 		if runtime.GOOS == "darwin" {
 			path = "/usr/bin/git"
@@ -105,6 +110,41 @@ func approvedProofExecutable(tool string) (string, string, error) {
 	return resolved, identity, err
 }
 
+func approvedGoExecutable() (string, error) {
+	version := strings.TrimPrefix(runtime.Version(), "go")
+	home, _ := os.UserHomeDir()
+	roots := []string{
+		runtime.GOROOT(), os.Getenv("GOROOT"),
+		filepath.Join(home, "go", "pkg", "mod", "golang.org", "toolchain@v0.0.1-go"+version+"."+runtime.GOOS+"-"+runtime.GOARCH),
+		filepath.Join(home, ".proto", "tools", "go", version),
+		"/usr/local/go", "/opt/homebrew/opt/go/libexec", "/usr/local/opt/go/libexec",
+	}
+	seen := map[string]struct{}{}
+	for _, root := range roots {
+		if root == "" || !filepath.IsAbs(root) {
+			continue
+		}
+		candidate, err := filepath.EvalSymlinks(filepath.Join(filepath.Clean(root), "bin", "go"))
+		if err != nil || !filepath.IsAbs(candidate) {
+			continue
+		}
+		if _, duplicate := seen[candidate]; duplicate {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		info, err := os.Stat(candidate)
+		if err != nil || !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
+			continue
+		}
+		build, err := buildinfo.ReadFile(candidate)
+		if err != nil || build.GoVersion != runtime.Version() {
+			continue
+		}
+		return candidate, nil
+	}
+	return "", errors.New("approved Go toolchain is unavailable")
+}
+
 func executableFingerprint(path string) (string, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -118,19 +158,28 @@ func executableFingerprint(path string) (string, error) {
 	return "sha256:" + hex.EncodeToString(digest.Sum(nil)), nil
 }
 
-func proofEnvironment(directory string) []string {
+func proofEnvironment(directory, tool, executable string) []string {
 	home, _ := os.UserHomeDir()
 	digest := sha256.Sum256([]byte(filepath.Clean(directory)))
 	cache := filepath.Join(os.TempDir(), "mindline-wp48-proof-"+hex.EncodeToString(digest[:8]))
 	_ = os.MkdirAll(cache, 0o700)
-	path := strings.Join([]string{filepath.Join(runtime.GOROOT(), "bin"), "/usr/bin", "/bin", "/usr/sbin", "/sbin"}, string(os.PathListSeparator))
-	return []string{
-		"HOME=" + home, "TMPDIR=" + os.TempDir(), "PATH=" + path,
-		"GOROOT=" + runtime.GOROOT(), "GOCACHE=" + cache,
+	pathParts := []string{"/usr/bin", "/bin", "/usr/sbin", "/sbin"}
+	goRoot := ""
+	if tool == "go" {
+		goRoot = filepath.Dir(filepath.Dir(executable))
+		pathParts = append([]string{filepath.Join(goRoot, "bin")}, pathParts...)
+	}
+	environment := []string{
+		"HOME=" + home, "TMPDIR=" + os.TempDir(), "PATH=" + strings.Join(pathParts, string(os.PathListSeparator)),
+		"GOCACHE=" + cache,
 		"GOTOOLCHAIN=local", "GOENV=off", "GOFLAGS=", "GOWORK=off", "GOPROXY=off",
 		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
 		"LANG=C", "LC_ALL=C", "NO_PROXY=127.0.0.1,localhost",
 	}
+	if goRoot != "" {
+		environment = append(environment, "GOROOT="+goRoot)
+	}
+	return environment
 }
 
 type proofOutputBuffer struct {
