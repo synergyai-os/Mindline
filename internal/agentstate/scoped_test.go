@@ -898,6 +898,22 @@ func TestRegisterAgentActorIsExactReplayOnly(t *testing.T) {
 	}
 	defer store.Close()
 	ctx := context.Background()
+	credential := "pb_sk_synthetic-private-value"
+	for _, invalid := range []AgentActor{
+		{ID: credential, Name: "Fresh outside agent"},
+		{ID: "agent-with-secret-name", Name: credential},
+	} {
+		if _, _, err := store.RegisterAgentActor(ctx, invalid); err == nil {
+			t.Fatalf("credential-shaped registration was accepted: %+v", invalid)
+		}
+	}
+	var leaked int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_actors WHERE id IN (?, ?)`, credential, "agent-with-secret-name").Scan(&leaked); err != nil || leaked != 0 {
+		t.Fatalf("credential-shaped registration reached database: count=%d err=%v", leaked, err)
+	}
+	if sidecar, err := os.ReadFile(scopedRecoveryPath(store.path)); err != nil || bytes.Contains(sidecar, []byte(credential)) {
+		t.Fatalf("credential-shaped registration reached recovery sidecar: %v", err)
+	}
 	requested := AgentActor{ID: "agent-generated", Name: "Fresh outside agent"}
 	first, created, err := store.RegisterAgentActor(ctx, requested)
 	if err != nil || !created || first.ID != requested.ID || first.Name != requested.Name || first.Status != StatusActive {

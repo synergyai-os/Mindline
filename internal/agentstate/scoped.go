@@ -432,7 +432,8 @@ func (store *Store) RegisterAgentActor(ctx context.Context, actor AgentActor) (A
 	store.mutationMu.Lock()
 	defer store.mutationMu.Unlock()
 	actor.ID, actor.Name = strings.TrimSpace(actor.ID), strings.TrimSpace(actor.Name)
-	if !validBounded(actor.ID, 256) || !validBounded(actor.Name, 1024) || actor.ID == LegacyAgentActorID {
+	if !validBounded(actor.ID, 256) || !validBounded(actor.Name, 1024) || actor.ID == LegacyAgentActorID ||
+		containsSecretLikeAny(actor.ID, actor.Name) {
 		return AgentActor{}, false, ErrInvalidAgentActorRegistration
 	}
 	now := store.now().UTC().Format(time.RFC3339Nano)
