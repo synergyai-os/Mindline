@@ -66,20 +66,21 @@ func TestScopedRecallV04RoutesFailClosedAndKeepLegacyCompactUnchanged(t *testing
 	}); err != nil {
 		t.Fatal(err)
 	}
+	registeredID := "agent-55555555555555555555555555555555"
 	registered, err := client.RegisterActor(context.Background(), AgentRegistrationInput{
-		AgentID: "agent-registered", Name: "Registered agent",
+		AgentID: registeredID, Name: "Registered agent",
 	})
-	if err != nil || registered.ID != "agent-registered" || registered.Status != agentstate.StatusActive {
+	if err != nil || registered.ID != registeredID || registered.Status != agentstate.StatusActive {
 		t.Fatalf("registered=%+v err=%v", registered, err)
 	}
 	replay, err := client.RegisterActor(context.Background(), AgentRegistrationInput{
-		AgentID: "agent-registered", Name: "Registered agent",
+		AgentID: registeredID, Name: "Registered agent",
 	})
 	if err != nil || replay != registered {
 		t.Fatalf("registration replay=%+v err=%v", replay, err)
 	}
 	if _, err := client.RegisterActor(context.Background(), AgentRegistrationInput{
-		AgentID: "agent-registered", Name: "Conflicting agent",
+		AgentID: registeredID, Name: "Conflicting agent",
 	}); err == nil {
 		t.Fatal("conflicting registration changed an existing actor")
 	} else if status, known := APIStatusCode(err); !known || status != http.StatusConflict {
@@ -91,6 +92,13 @@ func TestScopedRecallV04RoutesFailClosedAndKeepLegacyCompactUnchanged(t *testing
 		t.Fatal("invalid registration was accepted")
 	} else if status, known := APIStatusCode(err); !known || status != http.StatusBadRequest {
 		t.Fatalf("invalid registration status=%d known=%v err=%v", status, known, err)
+	}
+	if _, err := client.RegisterActor(context.Background(), AgentRegistrationInput{
+		AgentID: "owner-randy", Name: "Owner identity",
+	}); err == nil {
+		t.Fatal("owner-style identity was accepted through agent registration")
+	} else if status, known := APIStatusCode(err); !known || status != http.StatusBadRequest {
+		t.Fatalf("owner-style registration status=%d known=%v err=%v", status, known, err)
 	}
 	if _, err := client.PutScope(context.Background(), agentstate.Scope{
 		ID: "project-b", Name: "Project B", Purpose: "separate context",

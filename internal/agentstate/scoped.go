@@ -17,6 +17,8 @@ var (
 	ErrAgentActorRegistrationConflict = errors.New("agent actor registration conflicts with existing identity")
 )
 
+const registeredAgentIDPrefix = "agent-"
+
 func (store *Store) initializeScoped(ctx context.Context) error {
 	statements := []string{
 		`CREATE TABLE IF NOT EXISTS scoped_meta (
@@ -432,7 +434,7 @@ func (store *Store) RegisterAgentActor(ctx context.Context, actor AgentActor) (A
 	store.mutationMu.Lock()
 	defer store.mutationMu.Unlock()
 	actor.ID, actor.Name = strings.TrimSpace(actor.ID), strings.TrimSpace(actor.Name)
-	if !validBounded(actor.ID, 256) || !validBounded(actor.Name, 1024) || actor.ID == LegacyAgentActorID ||
+	if !validRegisteredAgentID(actor.ID) || !validBounded(actor.Name, 1024) || actor.ID == LegacyAgentActorID ||
 		containsSecretLikeAny(actor.ID, actor.Name) {
 		return AgentActor{}, false, ErrInvalidAgentActorRegistration
 	}
@@ -482,6 +484,19 @@ func (store *Store) RegisterAgentActor(ctx context.Context, actor AgentActor) (A
 		return AgentActor{}, false, err
 	}
 	return saved, created, nil
+}
+
+func validRegisteredAgentID(value string) bool {
+	const digestLength = 32
+	if len(value) != len(registeredAgentIDPrefix)+digestLength || !strings.HasPrefix(value, registeredAgentIDPrefix) {
+		return false
+	}
+	for _, character := range value[len(registeredAgentIDPrefix):] {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func (store *Store) GetAgentActor(ctx context.Context, id string) (AgentActor, error) {

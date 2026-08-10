@@ -902,6 +902,8 @@ func TestRegisterAgentActorIsExactReplayOnly(t *testing.T) {
 	for _, invalid := range []AgentActor{
 		{ID: credential, Name: "Fresh outside agent"},
 		{ID: "agent-with-secret-name", Name: credential},
+		{ID: "owner-randy", Name: "Owner identity"},
+		{ID: "agent-not-an-opaque-id", Name: "Predictable agent identity"},
 	} {
 		if _, _, err := store.RegisterAgentActor(ctx, invalid); err == nil {
 			t.Fatalf("credential-shaped registration was accepted: %+v", invalid)
@@ -914,7 +916,7 @@ func TestRegisterAgentActorIsExactReplayOnly(t *testing.T) {
 	if sidecar, err := os.ReadFile(scopedRecoveryPath(store.path)); err != nil || bytes.Contains(sidecar, []byte(credential)) {
 		t.Fatalf("credential-shaped registration reached recovery sidecar: %v", err)
 	}
-	requested := AgentActor{ID: "agent-generated", Name: "Fresh outside agent"}
+	requested := AgentActor{ID: "agent-11111111111111111111111111111111", Name: "Fresh outside agent"}
 	first, created, err := store.RegisterAgentActor(ctx, requested)
 	if err != nil || !created || first.ID != requested.ID || first.Name != requested.Name || first.Status != StatusActive {
 		t.Fatalf("first=%+v created=%v err=%v", first, created, err)
@@ -964,7 +966,7 @@ func TestRegisterAgentActorPreflightsRecoveryCapacityBeforeInsert(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	requested := AgentActor{ID: "agent-capacity", Name: strings.Repeat("a", 512)}
+	requested := AgentActor{ID: "agent-22222222222222222222222222222222", Name: strings.Repeat("a", 512)}
 	store.scopedRecoveryByteLimit = int64(len(before) + 1)
 	if _, _, err := store.RegisterAgentActor(ctx, requested); err == nil {
 		t.Fatal("oversized registration recovery projection was committed")
@@ -1000,7 +1002,9 @@ func TestRegisteredActorsKeepFeedbackIsolated(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	for _, actor := range []AgentActor{{ID: "registered-a", Name: "Agent A"}, {ID: "registered-b", Name: "Agent B"}} {
+	agentA := "agent-33333333333333333333333333333333"
+	agentB := "agent-44444444444444444444444444444444"
+	for _, actor := range []AgentActor{{ID: agentA, Name: "Agent A"}, {ID: agentB, Name: "Agent B"}} {
 		if _, _, err := store.RegisterAgentActor(ctx, actor); err != nil {
 			t.Fatal(err)
 		}
@@ -1017,17 +1021,17 @@ func TestRegisteredActorsKeepFeedbackIsolated(t *testing.T) {
 		}
 	}
 	if _, err := store.ApplyScopedJudgment(ctx, ScopedJudgmentRequest{
-		RetryToken: "registered-agent-feedback-retry", RunID: "run-registered-a",
-		ScopeID: "project", LensID: "product", AgentID: "registered-a",
+		RetryToken: "registered-agent-feedback-retry", RunID: "run-" + agentA,
+		ScopeID: "project", LensID: "product", AgentID: agentA,
 		RecordID: "record-one", Actor: FeedbackAgent, Disposition: "used",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	assertScopedRelevance(t, store, ctx, ScopedContext{
-		ScopeID: "project", LensID: "product", AgentID: "registered-a",
+		ScopeID: "project", LensID: "product", AgentID: agentA,
 	}, 0.025)
 	assertScopedRelevance(t, store, ctx, ScopedContext{
-		ScopeID: "project", LensID: "product", AgentID: "registered-b",
+		ScopeID: "project", LensID: "product", AgentID: agentB,
 	}, 0)
 }
 
