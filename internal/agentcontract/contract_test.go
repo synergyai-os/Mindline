@@ -29,6 +29,10 @@ func TestSharedWorkflowUsesOneExecutableScopedRouteAndNoContextSelection(t *test
 		t.Fatal("shared agent workflow invites context selection")
 	}
 	help := HelpText("/Applications/Mindline Agent/mindline")
+	if !strings.Contains(help, "owner must supply the complete scope and lens") ||
+		!strings.Contains(help, "Never list, choose, infer") {
+		t.Fatalf("help lost owner-supplied binding rule: %q", help)
+	}
 	for _, command := range commands {
 		if !strings.Contains(help, strings.TrimSuffix(command, " --config '/private/config path/config.json'")) &&
 			(command == workflow.Discover || command == workflow.Search || command == workflow.Get) {

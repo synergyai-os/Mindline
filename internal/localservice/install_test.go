@@ -214,6 +214,26 @@ func TestDefaultRestartAndUninstallResolveTheCanonicalConfigPath(t *testing.T) {
 	}
 }
 
+func TestInstalledCandidateRequiresRegistrationCapability(t *testing.T) {
+	originalSmoke := installSmokeRunner
+	installSmokeRunner = func(_ string, args ...string) ([]byte, int, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "capabilities"):
+			return []byte(`{"features":["mindline.scoped-recall.v0.4"]}`), 0, nil
+		case strings.Contains(joined, "status"):
+			return []byte(`{"service_state":"ready"}`), 0, nil
+		default:
+			return []byte(`{"error":"scope not found"}`), 2, nil
+		}
+	}
+	t.Cleanup(func() { installSmokeRunner = originalSmoke })
+	if err := smokeInstalledCandidate("/unused/mindline", "/unused/config.json"); err == nil ||
+		!strings.Contains(err.Error(), "required agent capabilities") {
+		t.Fatalf("candidate without registration capability was accepted: %v", err)
+	}
+}
+
 func TestUninstallRejectsDamagedReceiptPaths(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("launchd proof is Darwin-specific")
@@ -536,7 +556,7 @@ func TestUpgradeSmokeFailureRestoresFullPriorInstallAndRollbackBundle(t *testing
 		joined := strings.Join(args, " ")
 		switch {
 		case strings.Contains(joined, "capabilities"):
-			return []byte(`{"schema_version":"test","features":["mindline.scoped-recall.v0.4"]}`), 0, nil
+			return []byte(`{"schema_version":"test","features":["mindline.scoped-recall.v0.4","mindline.agent-registration.v0.1"]}`), 0, nil
 		case strings.Contains(joined, "status"):
 			return []byte(`{"schema_version":"test","service_state":"ready"}`), 0, nil
 		default:
@@ -649,7 +669,7 @@ func TestUpgradeFaultAtEveryMutationAndSmokeRestoresExactPriorInstall(t *testing
 				joined := strings.Join(args, " ")
 				switch {
 				case strings.Contains(joined, "capabilities"):
-					return []byte(`{"features":["mindline.scoped-recall.v0.4"]}`), 0, nil
+					return []byte(`{"features":["mindline.scoped-recall.v0.4","mindline.agent-registration.v0.1"]}`), 0, nil
 				case strings.Contains(joined, "status"):
 					return []byte(`{"service_state":"ready"}`), 0, nil
 				default:

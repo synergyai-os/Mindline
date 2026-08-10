@@ -12,6 +12,11 @@ import (
 	"github.com/synergyai-os/Mindline/internal/contentguard"
 )
 
+var (
+	ErrInvalidAgentActorRegistration  = errors.New("invalid agent actor registration")
+	ErrAgentActorRegistrationConflict = errors.New("agent actor registration conflicts with existing identity")
+)
+
 func (store *Store) initializeScoped(ctx context.Context) error {
 	statements := []string{
 		`CREATE TABLE IF NOT EXISTS scoped_meta (
@@ -428,7 +433,7 @@ func (store *Store) RegisterAgentActor(ctx context.Context, actor AgentActor) (A
 	defer store.mutationMu.Unlock()
 	actor.ID, actor.Name = strings.TrimSpace(actor.ID), strings.TrimSpace(actor.Name)
 	if !validBounded(actor.ID, 256) || !validBounded(actor.Name, 1024) || actor.ID == LegacyAgentActorID {
-		return AgentActor{}, false, errors.New("invalid agent actor registration")
+		return AgentActor{}, false, ErrInvalidAgentActorRegistration
 	}
 	now := store.now().UTC().Format(time.RFC3339Nano)
 	result, err := store.db.ExecContext(ctx, `INSERT INTO agent_actors(id, name, status, created_at, updated_at)
@@ -446,12 +451,10 @@ func (store *Store) RegisterAgentActor(ctx context.Context, actor AgentActor) (A
 	}
 	created := createdCount == 1
 	if !created && (saved.Name != actor.Name || saved.Status != StatusActive) {
-		return AgentActor{}, false, errors.New("agent actor registration conflicts with existing identity")
+		return AgentActor{}, false, ErrAgentActorRegistrationConflict
 	}
-	if created {
-		if err := store.writeRecoverySnapshot(ctx); err != nil {
-			return AgentActor{}, false, err
-		}
+	if err := store.writeRecoverySnapshot(ctx); err != nil {
+		return AgentActor{}, false, err
 	}
 	return saved, created, nil
 }

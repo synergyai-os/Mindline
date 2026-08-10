@@ -28,10 +28,71 @@ func TestAgentHelpIsBoundedAndSuccessful(t *testing.T) {
 		text := stdout.String()
 		if !strings.Contains(text, "agent discover") || !strings.Contains(text, "feedback-token") ||
 			!strings.Contains(text, "registration-token") || !strings.Contains(text, "agent register") ||
+			!strings.Contains(text, "owner must supply the complete scope and lens") ||
+			!strings.Contains(text, "Never list, choose, infer") ||
 			!strings.Contains(text, "owner/debug") || strings.Contains(text, "actor-put") ||
 			strings.Count(text, "\n") > 30 || stderr.Len() != 0 {
 			t.Fatalf("unbounded or incomplete help stdout=%q stderr=%q", text, stderr.String())
 		}
+	}
+}
+
+func TestAgentRegisterUsageUsesSharedAgentNamePlaceholder(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewMemoryFS()).Run([]string{"agent", "register"}, &stdout, &stderr)
+	if code != ExitProcess || stdout.Len() != 0 ||
+		!strings.Contains(stderr.String(), "invalid_registration") {
+		t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(usage, "agent register --name <agent-name>") ||
+		strings.Contains(usage, "agent register --name <name>") {
+		t.Fatalf("agent registration usage drifted: %s", usage)
+	}
+}
+
+func TestAgentRegistrationFailurePreservesRetryIdentityUnlessConflictIsConfirmed(t *testing.T) {
+	token := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{3}, 24))
+	for _, test := range []struct {
+		name         string
+		status       int
+		errorCode    string
+		retryable    bool
+		repairAction string
+	}{
+		{name: "confirmed conflict", status: http.StatusConflict, errorCode: "registration_conflict", repairAction: "create_registration_token"},
+		{name: "ambiguous server failure", status: http.StatusInternalServerError, errorCode: "registration_outcome_unknown", retryable: true, repairAction: "retry_same_registration"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			mux.HandleFunc("GET /v1/capabilities", func(writer http.ResponseWriter, _ *http.Request) {
+				writeLegacyAgentEnvelope(t, writer, localservice.Capabilities{
+					SchemaVersion: localservice.CapabilitiesSchemaVersion,
+					Features:      []string{localservice.AgentRegistrationCapability},
+				})
+			})
+			mux.HandleFunc("POST /v1/scoped/actors/register", func(writer http.ResponseWriter, _ *http.Request) {
+				writer.Header().Set("Content-Type", "application/json")
+				writer.WriteHeader(test.status)
+				_ = json.NewEncoder(writer).Encode(map[string]string{
+					"schema_version": localservice.APISchemaVersion,
+					"error":          "registration failed",
+				})
+			})
+			configPath, closeServer := startScopedAgentCLITestServer(t, mux)
+			defer closeServer()
+			var stdout, stderr bytes.Buffer
+			code := NewRunner(NewOSFileSystem()).Run([]string{"agent", "register", "--name", "Fresh agent",
+				"--retry-token", token, "--config", configPath}, &stdout, &stderr)
+			if code != ExitProcess || stdout.Len() != 0 {
+				t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+			}
+			var failure agentContractError
+			if err := json.Unmarshal(stderr.Bytes(), &failure); err != nil ||
+				failure.ErrorCode != test.errorCode || failure.Retryable != test.retryable ||
+				failure.RepairAction != test.repairAction || strings.Contains(stderr.String(), token) {
+				t.Fatalf("failure=%+v err=%v", failure, err)
+			}
+		})
 	}
 }
 

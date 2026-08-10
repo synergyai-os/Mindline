@@ -903,9 +903,20 @@ func TestRegisterAgentActorIsExactReplayOnly(t *testing.T) {
 	if err != nil || !created || first.ID != requested.ID || first.Name != requested.Name || first.Status != StatusActive {
 		t.Fatalf("first=%+v created=%v err=%v", first, created, err)
 	}
+	if err := os.Remove(scopedRecoveryPath(store.path)); err != nil {
+		t.Fatal(err)
+	}
 	replay, created, err := store.RegisterAgentActor(ctx, requested)
 	if err != nil || created || replay != first {
 		t.Fatalf("replay=%+v created=%v err=%v", replay, created, err)
+	}
+	snapshot, present, err := readScopedRecoverySnapshot(store.path)
+	found := false
+	for _, actor := range snapshot.Actors {
+		found = found || actor == first
+	}
+	if err != nil || !present || !found {
+		t.Fatalf("replay did not refresh recovery snapshot: present=%v snapshot=%+v err=%v", present, snapshot, err)
 	}
 	if _, _, err := store.RegisterAgentActor(ctx, AgentActor{
 		ID: requested.ID, Name: "Conflicting name",

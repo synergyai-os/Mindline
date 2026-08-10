@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -235,7 +236,10 @@ func (r Runner) runAgentRegister(args []string, stdout, stderr io.Writer) int {
 		AgentID: agentID, Name: strings.TrimSpace(options.values["name"]),
 	})
 	if err != nil {
-		return writeAgentContractError(stderr, "register", "registration_rejected", false, "create_registration_token")
+		if status, known := localservice.APIStatusCode(err); known && status == http.StatusConflict {
+			return writeAgentContractError(stderr, "register", "registration_conflict", false, "create_registration_token")
+		}
+		return writeAgentContractError(stderr, "register", "registration_outcome_unknown", true, "retry_same_registration")
 	}
 	configPath := ""
 	if strings.TrimSpace(options.configPath) != "" {

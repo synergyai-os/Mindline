@@ -66,6 +66,9 @@ New agent:
 Start:
   %s
 
+The owner must supply the complete scope and lens. Never list, choose, infer,
+update, archive, or invent owner contexts.
+
 Approved workflow:
   %s
   %s

@@ -2,6 +2,7 @@ package localservice
 
 import (
 	"context"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -81,6 +82,15 @@ func TestScopedRecallV04RoutesFailClosedAndKeepLegacyCompactUnchanged(t *testing
 		AgentID: "agent-registered", Name: "Conflicting agent",
 	}); err == nil {
 		t.Fatal("conflicting registration changed an existing actor")
+	} else if status, known := APIStatusCode(err); !known || status != http.StatusConflict {
+		t.Fatalf("conflicting registration status=%d known=%v err=%v", status, known, err)
+	}
+	if _, err := client.RegisterActor(context.Background(), AgentRegistrationInput{
+		AgentID: "", Name: "Invalid agent",
+	}); err == nil {
+		t.Fatal("invalid registration was accepted")
+	} else if status, known := APIStatusCode(err); !known || status != http.StatusBadRequest {
+		t.Fatalf("invalid registration status=%d known=%v err=%v", status, known, err)
 	}
 	if _, err := client.PutScope(context.Background(), agentstate.Scope{
 		ID: "project-b", Name: "Project B", Purpose: "separate context",

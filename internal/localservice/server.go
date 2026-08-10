@@ -673,7 +673,13 @@ func (server *Server) handleRegisterActor(writer http.ResponseWriter, request *h
 		ID: input.AgentID, Name: input.Name,
 	})
 	if err != nil {
-		writeError(writer, http.StatusConflict, err)
+		status := http.StatusBadRequest
+		if errors.Is(err, agentstate.ErrAgentActorRegistrationConflict) {
+			status = http.StatusConflict
+		} else if !errors.Is(err, agentstate.ErrInvalidAgentActorRegistration) {
+			status = http.StatusInternalServerError
+		}
+		writeError(writer, status, err)
 		return
 	}
 	status := http.StatusOK

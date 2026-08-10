@@ -516,8 +516,10 @@ func smokeInstalledCandidate(binaryPath, configPath string) error {
 		if err != nil || exitCode != 0 || !json.Valid(output) {
 			return errors.New("installed local agent smoke failed at " + stage.name)
 		}
-		if stage.name == "smoke-capabilities" && !jsonContainsString(output, "mindline.scoped-recall.v0.4") {
-			return errors.New("installed local agent lacks scoped recall capability")
+		if stage.name == "smoke-capabilities" &&
+			(!jsonContainsString(output, "mindline.scoped-recall.v0.4") ||
+				!jsonContainsString(output, agentcontract.AgentRegistrationCapability)) {
+			return errors.New("installed local agent lacks required agent capabilities")
 		}
 		if stage.name == "smoke-status" && !jsonObjectFieldEquals(output, "service_state", "ready") {
 			return errors.New("installed local agent status is not ready")
