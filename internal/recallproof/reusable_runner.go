@@ -29,6 +29,7 @@ type CommandResult struct {
 	Stdout          []byte
 	Stderr          []byte
 	ToolFingerprint string
+	FailureCode     string
 }
 
 type OSDirectExecutor struct{}
@@ -36,7 +37,7 @@ type OSDirectExecutor struct{}
 func (OSDirectExecutor) Run(ctx context.Context, directory, tool string, argv []string) CommandResult {
 	executable, identity, err := approvedProofExecutable(tool)
 	if err != nil {
-		return CommandResult{ExitCode: -1}
+		return CommandResult{ExitCode: -1, FailureCode: "tool_identity_unavailable"}
 	}
 	commandContext, cancel := context.WithTimeout(ctx, 12*time.Minute)
 	defer cancel()
@@ -49,8 +50,14 @@ func (OSDirectExecutor) Run(ctx context.Context, directory, tool string, argv []
 	err = command.Run()
 	result := CommandResult{Stdout: stdout.Bytes(), Stderr: stderr.Bytes(), ToolFingerprint: identity}
 	after, afterErr := executableFingerprint(executable)
-	if stdout.exceeded || stderr.exceeded || afterErr != nil || after != identity {
+	if stdout.exceeded || stderr.exceeded {
 		result.ExitCode = -1
+		result.FailureCode = "output_limit_exceeded"
+		return result
+	}
+	if afterErr != nil || after != identity {
+		result.ExitCode = -1
+		result.FailureCode = "tool_identity_changed"
 		return result
 	}
 	if err == nil {
@@ -58,9 +65,15 @@ func (OSDirectExecutor) Run(ctx context.Context, directory, tool string, argv []
 	}
 	if exit, ok := err.(*exec.ExitError); ok {
 		result.ExitCode = exit.ExitCode()
+		result.FailureCode = "command_failed"
 		return result
 	}
 	result.ExitCode = -1
+	if errors.Is(commandContext.Err(), context.DeadlineExceeded) {
+		result.FailureCode = "command_timed_out"
+	} else {
+		result.FailureCode = "command_execution_unavailable"
+	}
 	return result
 }
 
@@ -175,7 +188,7 @@ func (runner ReusableProofRunner) RunPreLive(ctx context.Context, repositoryRoot
 		result := runner.Executor.Run(ctx, repositoryRoot, group.Tool, group.Argv)
 		fingerprints[group.ID] = commandCommitment(group.Tool, group.Argv, result)
 		if result.ExitCode != 0 {
-			return StructuralArtifact{}, fmt.Errorf("WP-48 proof group failed: %s (exit %d)", group.ID, result.ExitCode)
+			return StructuralArtifact{}, fmt.Errorf("WP-48 proof group failed: %s (%s, exit %d)", group.ID, result.FailureCode, result.ExitCode)
 		}
 		tests[group.ID] = true
 		count++
@@ -237,7 +250,7 @@ func currentExecutableFingerprint() (string, error) {
 }
 
 func commandCommitment(tool string, argv []string, result CommandResult) string {
-	value := tool + "\x00" + result.ToolFingerprint + "\x00" + strings.Join(argv, "\x00") + fmt.Sprintf("\x00%d\x00", result.ExitCode)
+	value := tool + "\x00" + result.ToolFingerprint + "\x00" + strings.Join(argv, "\x00") + fmt.Sprintf("\x00%d\x00%s\x00", result.ExitCode, result.FailureCode)
 	value += string(result.Stdout) + "\x00" + string(result.Stderr)
 	return shaCommitment([]byte(value))
 }
