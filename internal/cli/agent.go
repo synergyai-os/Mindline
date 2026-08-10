@@ -26,6 +26,8 @@ func (r Runner) runAgent(args []string, stdout, stderr io.Writer) int {
 		return r.runAgentDiscover(args[1:], stdout, stderr)
 	case "feedback-token":
 		return r.runAgentFeedbackToken(args[1:], stdout, stderr)
+	case "build-binding":
+		return r.runAgentBuildBinding(args[1:], stdout, stderr)
 	case "install":
 		return r.runAgentInstall(args[1:], stdout, stderr)
 	case "restart":
@@ -72,6 +74,13 @@ func (r Runner) runAgent(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprint(stderr, usage)
 		return ExitUsage
 	}
+}
+
+func (r Runner) runAgentBuildBinding(args []string, stdout, stderr io.Writer) int {
+	if len(args) != 0 {
+		return agentUsage(stderr)
+	}
+	return encodePersonalMemoryJSON(stdout, stderr, localservice.BuildBindingFor(r.agentExecutable))
 }
 
 func (r Runner) runAgentStatus(args []string, stdout, stderr io.Writer) int {

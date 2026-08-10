@@ -105,18 +105,21 @@ func run(args []string, stdout io.Writer) error {
 	if err != nil || rootAfter != root || headAfter != head || treeAfter != treeFingerprint {
 		return errors.New("source tree changed during audited build")
 	}
-	if err := verifyBuildInfo(temporaryPath, head); err != nil {
-		return err
-	}
 	if err := os.Chmod(temporaryPath, 0o700); err != nil {
 		return errors.New("secure audited build output")
 	}
-	if err := os.Rename(temporaryPath, output); err != nil {
-		return errors.New("commit audited build output")
+	if err := verifyBuildInfo(temporaryPath); err != nil {
+		return err
 	}
-	buildFingerprint, err := regularFingerprint(output)
+	buildFingerprint, err := regularFingerprint(temporaryPath)
 	if err != nil {
 		return err
+	}
+	if err := verifyBuildBinding(temporaryPath, treeFingerprint, buildFingerprint); err != nil {
+		return err
+	}
+	if err := os.Rename(temporaryPath, output); err != nil {
+		return errors.New("commit audited build output")
 	}
 	return json.NewEncoder(stdout).Encode(buildReceipt{
 		SchemaVersion: "mindline-agent-build/v0.1", State: "ready",
@@ -185,7 +188,7 @@ func auditedBuildEnvironment(goPath string) []string {
 	}
 }
 
-func verifyBuildInfo(path, head string) error {
+func verifyBuildInfo(path string) error {
 	info, err := buildinfo.ReadFile(path)
 	if err != nil {
 		return errors.New("audited build information unavailable")
@@ -194,8 +197,37 @@ func verifyBuildInfo(path, head string) error {
 	for _, setting := range info.Settings {
 		settings[setting.Key] = setting.Value
 	}
-	if settings["vcs.revision"] != head || settings["vcs.modified"] != "false" {
-		return errors.New("audited build does not match the clean source commit")
+	if info.Path != "github.com/synergyai-os/Mindline/cmd/mindline" || settings["-trimpath"] != "true" {
+		return errors.New("audited build information is invalid")
+	}
+	return nil
+}
+
+func verifyBuildBinding(path, treeFingerprint, buildFingerprint string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, path, "agent", "build-binding")
+	command.Dir = filepath.Dir(path)
+	command.Env = []string{"HOME=/dev/null", "PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C"}
+	var output boundedBuffer
+	output.maximum = 16 << 10
+	command.Stdout, command.Stderr = &output, io.Discard
+	if err := command.Run(); err != nil || ctx.Err() != nil || output.exceeded {
+		return errors.New("audited build self-binding unavailable")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(output.Bytes()))
+	decoder.DisallowUnknownFields()
+	var binding localservice.BuildBinding
+	if err := decoder.Decode(&binding); err != nil {
+		return errors.New("audited build self-binding invalid")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return errors.New("audited build self-binding invalid")
+	}
+	if binding.SchemaVersion != localservice.BuildBindingSchemaVersion || binding.State != "ready" ||
+		binding.TreeFingerprint != treeFingerprint || binding.BuildFingerprint != buildFingerprint {
+		return errors.New("audited build self-binding mismatch")
 	}
 	return nil
 }

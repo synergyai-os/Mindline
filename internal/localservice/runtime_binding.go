@@ -38,6 +38,40 @@ type RuntimeBinding struct {
 	ConfigurationFingerprint string `json:"configuration_fingerprint,omitempty"`
 }
 
+const BuildBindingSchemaVersion = "mindline-agent-build-binding/v0.1"
+
+// BuildBinding is the self-reported identity of one exact Mindline binary.
+// It deliberately excludes runtime configuration so an audited builder can
+// verify the binary before it is installed or allowed to read user state.
+type BuildBinding struct {
+	SchemaVersion    string `json:"schema_version"`
+	State            string `json:"state"`
+	BuildFingerprint string `json:"build_fingerprint,omitempty"`
+	TreeFingerprint  string `json:"tree_fingerprint,omitempty"`
+}
+
+// BuildBindingFor returns only structural fingerprints derived from the
+// running binary and the source-tree commitment embedded by the supported
+// audited build path.
+func BuildBindingFor(executable string) BuildBinding {
+	binding := BuildBinding{SchemaVersion: BuildBindingSchemaVersion, State: "unavailable"}
+	executable = filepath.Clean(strings.TrimSpace(executable))
+	if !filepath.IsAbs(executable) {
+		return binding
+	}
+	buildFingerprint, err := regularFileFingerprint(executable, maximumBinaryBytes)
+	if err != nil {
+		return binding
+	}
+	binding.BuildFingerprint = buildFingerprint
+	binding.TreeFingerprint = strings.TrimSpace(sourceTreeFingerprint)
+	if runtimeFingerprintPattern.MatchString(binding.BuildFingerprint) &&
+		runtimeFingerprintPattern.MatchString(binding.TreeFingerprint) {
+		binding.State = "ready"
+	}
+	return binding
+}
+
 func runtimeBindingFor(executable, configPath string, config Config) RuntimeBinding {
 	binding := RuntimeBinding{State: "unavailable"}
 	executable = filepath.Clean(strings.TrimSpace(executable))

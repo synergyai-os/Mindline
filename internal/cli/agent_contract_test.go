@@ -48,6 +48,23 @@ func TestAgentFeedbackTokenHasAtLeast128RandomBits(t *testing.T) {
 	}
 }
 
+func TestAgentBuildBindingIsReadOnlyAndStructural(t *testing.T) {
+	runner := NewRunner(NewMemoryFS())
+	var stdout, stderr bytes.Buffer
+	if code := runner.Run([]string{"agent", "build-binding"}, &stdout, &stderr); code != ExitOK {
+		t.Fatalf("code=%d stderr=%s", code, stderr.String())
+	}
+	var binding localservice.BuildBinding
+	if err := json.Unmarshal(stdout.Bytes(), &binding); err != nil {
+		t.Fatal(err)
+	}
+	if binding.SchemaVersion != localservice.BuildBindingSchemaVersion ||
+		binding.BuildFingerprint == "" || binding.State != "unavailable" ||
+		binding.TreeFingerprint != "" || stderr.Len() != 0 {
+		t.Fatalf("unexpected ordinary-build binding: %+v stderr=%q", binding, stderr.String())
+	}
+}
+
 func TestScopedFeedbackFailureUsesClosedRepairSafeSchema(t *testing.T) {
 	secretValue := "private-record-id"
 	var stdout, stderr bytes.Buffer

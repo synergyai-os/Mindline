@@ -56,6 +56,32 @@ func TestRuntimeBindingHashesExactExecutableConfigAndEmbeddedTree(t *testing.T) 
 	}
 }
 
+func TestBuildBindingSelfReportsExactBinaryAndEmbeddedTree(t *testing.T) {
+	root := t.TempDir()
+	executable := filepath.Join(root, "mindline")
+	content := []byte("audited-build")
+	if err := os.WriteFile(executable, content, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	previousTree := sourceTreeFingerprint
+	sourceTreeFingerprint = "sha256:" + strings.Repeat("c", 64)
+	t.Cleanup(func() { sourceTreeFingerprint = previousTree })
+
+	binding := BuildBindingFor(executable)
+	digest := sha256.Sum256(content)
+	if binding.SchemaVersion != BuildBindingSchemaVersion || binding.State != "ready" ||
+		binding.TreeFingerprint != sourceTreeFingerprint ||
+		binding.BuildFingerprint != "sha256:"+hex.EncodeToString(digest[:]) {
+		t.Fatalf("unexpected build binding: %+v", binding)
+	}
+
+	sourceTreeFingerprint = ""
+	if unavailable := BuildBindingFor(executable); unavailable.State != "unavailable" ||
+		unavailable.BuildFingerprint == "" {
+		t.Fatalf("ordinary binary claimed audited identity: %+v", unavailable)
+	}
+}
+
 func TestEvaluationLeaseBlocksLifecycleReplacementForCompleteRun(t *testing.T) {
 	root, err := os.MkdirTemp("/tmp", "mindline-eval-lease-")
 	if err != nil {
