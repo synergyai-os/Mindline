@@ -43,7 +43,7 @@ var usage = strings.NewReplacer(
 	"usage: mindline agent feedback-reverse --judgment <id> --actor user|agent --idempotency-key <key> [--reason <text>] [--config <config.json>]\n",
 	"usage: mindline agent feedback-reverse --judgment <id> --actor user|agent --idempotency-key <key> [--reason <text>] [--config <config.json>]\nusage: mindline agent feedback-reverse --judgment <id> --scope <id> --lens <id> [--agent <id>] --actor owner|agent --idempotency-key <key> [--reason <text>] [--config <config.json>]\n",
 	"usage: mindline agent status [--config <config.json>]\n",
-	"usage: mindline agent help\nusage: mindline agent discover --scope <id> --lens <id> --agent <id> [--config <config.json>]\nusage: mindline agent feedback-token\nusage: mindline agent build-binding\nusage: mindline agent install [--runtime-root <dir>] [--memory-root <dir>] [--start true|false]\nusage: mindline agent restart [--config <config.json>]\nusage: mindline agent rollback [--config <config.json>]\nusage: mindline agent uninstall [--config <config.json>]\nusage: mindline agent status [--config <config.json>]\n",
+	"usage: mindline agent help\nusage: mindline agent registration-token\nusage: mindline agent register --name <agent-name> --retry-token <token> [--config <config.json>]\nusage: mindline agent discover --scope <id> --lens <id> --agent <id> [--config <config.json>]\nusage: mindline agent feedback-token\nusage: mindline agent build-binding\nusage: mindline agent install [--runtime-root <dir>] [--memory-root <dir>] [--start true|false]\nusage: mindline agent restart [--config <config.json>]\nusage: mindline agent rollback [--config <config.json>]\nusage: mindline agent uninstall [--config <config.json>]\nusage: mindline agent status [--config <config.json>]\n",
 	"usage: mindline agent get <record-id> [--config <config.json>]\n",
 	"usage: mindline agent get <record-id> [--config <config.json>]\nusage: mindline agent get <record-id> --run <id> --scope <id> --lens <id> --agent <id> [--config <config.json>]\n",
 	"usage: mindline activation gate-receipt\n",
@@ -88,6 +88,7 @@ type Runner struct {
 	productBrainTransport      http.RoundTripper
 	productBrainSecretProvider productbrain.SecretProvider
 	agentDiscoveryTimeout      time.Duration
+	agentRegistrationTimeout   time.Duration
 }
 
 type FileSystem interface {
@@ -194,7 +195,7 @@ func NewRunnerWithProtectedRoots(fileSystem FileSystem, protectedRoots []string)
 	if err != nil || strings.TrimSpace(executable) == "" {
 		executable = "mindline"
 	}
-	return Runner{fs: fileSystem, agentExecutable: executable, nativeInput: os.Stdin, operatorInput: os.Stdin, protectedRoots: append([]string(nil), protectedRoots...), agentDiscoveryTimeout: 2 * time.Second}
+	return Runner{fs: fileSystem, agentExecutable: executable, nativeInput: os.Stdin, operatorInput: os.Stdin, protectedRoots: append([]string(nil), protectedRoots...), agentDiscoveryTimeout: 2 * time.Second, agentRegistrationTimeout: 10 * time.Second}
 }
 
 func NewRunnerWithInput(fileSystem FileSystem, input io.Reader) Runner {

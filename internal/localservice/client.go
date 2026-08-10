@@ -23,6 +23,21 @@ type Client struct {
 	client     *http.Client
 }
 
+type APIError struct {
+	StatusCode int
+	message    string
+}
+
+func (err *APIError) Error() string { return err.message }
+
+func APIStatusCode(err error) (int, bool) {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		return 0, false
+	}
+	return apiErr.StatusCode, true
+}
+
 func NewClient(socketPath string) *Client {
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
@@ -120,6 +135,12 @@ func (client *Client) PutActor(ctx context.Context, actor agentstate.AgentActor)
 	return saved, err
 }
 
+func (client *Client) RegisterActor(ctx context.Context, input AgentRegistrationInput) (agentstate.AgentActor, error) {
+	var actor agentstate.AgentActor
+	err := client.do(ctx, http.MethodPost, "/v1/scoped/actors/register", input, &actor)
+	return actor, err
+}
+
 func (client *Client) ListActors(ctx context.Context) ([]agentstate.AgentActor, error) {
 	var actors []agentstate.AgentActor
 	err := client.do(ctx, http.MethodGet, "/v1/scoped/actors", nil, &actors)
@@ -203,9 +224,9 @@ func (client *Client) do(ctx context.Context, method, endpoint string, input, ou
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		if strings.TrimSpace(envelope.Error) == "" {
-			return errors.New("local agent request failed")
+			return &APIError{StatusCode: response.StatusCode, message: "local agent request failed"}
 		}
-		return errors.New(envelope.Error)
+		return &APIError{StatusCode: response.StatusCode, message: envelope.Error}
 	}
 	if output == nil {
 		return nil

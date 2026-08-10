@@ -24,12 +24,13 @@ const (
 )
 
 var (
-	restartUserService = restartLaunchAgent
-	stopUserService    = stopLaunchAgent
-	inspectUserService = launchAgentRunning
-	installFaultHook   = func(string) error { return nil }
-	installSmokeRunner = runInstallSmokeCommand
-	uninstallRename    = os.Rename
+	restartUserService        = restartLaunchAgent
+	restartUserServiceContext = restartLaunchAgentContext
+	stopUserService           = stopLaunchAgent
+	inspectUserService        = launchAgentRunning
+	installFaultHook          = func(string) error { return nil }
+	installSmokeRunner        = runInstallSmokeCommand
+	uninstallRename           = os.Rename
 )
 
 type InstallOptions struct {
@@ -387,6 +388,19 @@ func agentSkillRoot() (string, error) {
 }
 
 func Restart(configPath string) (InstallReceipt, error) {
+	return restartWith(configPath, restartUserService)
+}
+
+func RestartContext(ctx context.Context, configPath string) (InstallReceipt, error) {
+	if err := ctx.Err(); err != nil {
+		return InstallReceipt{}, err
+	}
+	return restartWith(configPath, func(path string) error {
+		return restartUserServiceContext(ctx, path)
+	})
+}
+
+func restartWith(configPath string, restart func(string) error) (InstallReceipt, error) {
 	configPath, config, lifecycleLock, err := loadConfigForLifecycle(configPath)
 	if err != nil {
 		return InstallReceipt{}, err
@@ -407,7 +421,7 @@ func Restart(configPath string) (InstallReceipt, error) {
 	if runtime.GOOS != "darwin" || receipt.LaunchAgentPath == "" {
 		return InstallReceipt{}, errors.New("automatic service restart is not supported")
 	}
-	if err := restartUserService(receipt.LaunchAgentPath); err != nil {
+	if err := restart(receipt.LaunchAgentPath); err != nil {
 		return InstallReceipt{}, err
 	}
 	receipt.ServiceState = "restarted"
@@ -516,8 +530,10 @@ func smokeInstalledCandidate(binaryPath, configPath string) error {
 		if err != nil || exitCode != 0 || !json.Valid(output) {
 			return errors.New("installed local agent smoke failed at " + stage.name)
 		}
-		if stage.name == "smoke-capabilities" && !jsonContainsString(output, "mindline.scoped-recall.v0.4") {
-			return errors.New("installed local agent lacks scoped recall capability")
+		if stage.name == "smoke-capabilities" &&
+			(!jsonContainsString(output, "mindline.scoped-recall.v0.4") ||
+				!jsonContainsString(output, agentcontract.AgentRegistrationCapability)) {
+			return errors.New("installed local agent lacks required agent capabilities")
 		}
 		if stage.name == "smoke-status" && !jsonObjectFieldEquals(output, "service_state", "ready") {
 			return errors.New("installed local agent status is not ready")
@@ -611,9 +627,14 @@ all storage and credentials.
 Binary: %s
 Config: %s
 
-1. The owner must supply the complete scope, lens, and actor tuple before work
-   starts. If any value is missing, stop and request it. Never list, choose,
-   infer, create, update, archive, or invent contexts or actors.
+1. The owner must supply the complete scope and lens before work starts. Use an
+   owner-assigned actor ID when one exists. Otherwise create a caller-owned
+   registration token and register a new actor:
+   %s
+   %s
+   Persist the returned actor ID for this agent integration. Never borrow an
+   existing actor ID or list, choose, infer, update, archive, or invent owner
+   contexts.
 2. Validate that exact owner-selected binding and read the machine workflow:
    %s
 3. Request compact cited results with the same complete tuple:
@@ -651,6 +672,6 @@ used lexical fallback. Actor labels are a cooperative local audit convention,
 not authentication between hostile processes; always identify agent feedback
 as --actor agent.
 `, agentcontract.ShellQuote(binaryPath), agentcontract.ShellQuote(configPath),
-		workflow.Discover, workflow.Search, workflow.Get, workflow.FeedbackToken,
+		workflow.RegistrationToken, workflow.Register, workflow.Discover, workflow.Search, workflow.Get, workflow.FeedbackToken,
 		workflow.Feedback, workflow.FeedbackReverse)
 }

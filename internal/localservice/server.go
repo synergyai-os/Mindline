@@ -125,6 +125,7 @@ func (server *Server) Serve() error {
 	mux.HandleFunc("PUT /v1/scoped/scopes/{scopeID}/lenses/{lensID}", server.handlePutScopedLens)
 	mux.HandleFunc("POST /v1/scoped/scopes/{scopeID}/lenses/{lensID}/archive", server.handleArchiveScopedLens)
 	mux.HandleFunc("GET /v1/scoped/actors", server.handleListActors)
+	mux.HandleFunc("POST /v1/scoped/actors/register", server.handleRegisterActor)
 	mux.HandleFunc("PUT /v1/scoped/actors/{actorID}", server.handlePutActor)
 	mux.HandleFunc("POST /v1/scoped/actors/{actorID}/archive", server.handleArchiveActor)
 	mux.HandleFunc("POST /v1/scoped/search/compact", server.handleSearchScoped)
@@ -180,16 +181,18 @@ func (server *Server) handleCapabilities(writer http.ResponseWriter, _ *http.Req
 		CompactAbstentionPolicy:      personalmemory.DefaultCompactAbstentionPolicy(),
 		ExplicitHydrationCommand:     agentcontract.NewWorkflow("mindline", "").Get,
 		FeedbackRetryToken:           true,
-		Features:                     []string{ScopedRecallCapability, DiscoveryCapability},
+		Features:                     []string{ScopedRecallCapability, DiscoveryCapability, AgentRegistrationCapability},
 		ScopedSearchEndpoint:         "/v1/scoped/search/compact",
 		ScopedFeedbackEndpoint:       "/v1/scoped/judgments",
 		ScopedHydrationEndpoint:      ScopedHydrationEndpoint,
+		AgentRegistrationEndpoint:    "/v1/scoped/actors/register",
 		RecommendedAgentRoute:        RecommendedAgentRoute,
 		OwnerDebugRouteClass:         OwnerDebugRouteClass,
 		IdentityAssurance:            agentcontract.IdentityAssurance,
 		HostileProcessAuthentication: false,
 		OwnerMutationEnforcement:     agentcontract.MutationEnforcement,
 		FeedbackTokenCommand:         agentcontract.FeedbackTokenCommand,
+		RegistrationTokenCommand:     agentcontract.RegistrationTokenCommand,
 	})
 }
 
@@ -658,6 +661,32 @@ func (server *Server) handlePutActor(writer http.ResponseWriter, request *http.R
 		return
 	}
 	writeJSON(writer, http.StatusOK, saved)
+}
+
+func (server *Server) handleRegisterActor(writer http.ResponseWriter, request *http.Request) {
+	var input AgentRegistrationInput
+	if err := decodeRequest(request, &input); err != nil {
+		writeError(writer, http.StatusBadRequest, err)
+		return
+	}
+	actor, created, err := server.state.RegisterAgentActor(request.Context(), agentstate.AgentActor{
+		ID: input.AgentID, Name: input.Name,
+	})
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, agentstate.ErrAgentActorRegistrationConflict) {
+			status = http.StatusConflict
+		} else if !errors.Is(err, agentstate.ErrInvalidAgentActorRegistration) {
+			status = http.StatusInternalServerError
+		}
+		writeError(writer, status, err)
+		return
+	}
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	writeJSON(writer, status, actor)
 }
 
 func (server *Server) handleArchiveActor(writer http.ResponseWriter, request *http.Request) {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/synergyai-os/Mindline/internal/agentcontract"
 	"github.com/synergyai-os/Mindline/internal/agentstate"
 	"github.com/synergyai-os/Mindline/internal/localservice"
 )
@@ -25,10 +27,241 @@ func TestAgentHelpIsBoundedAndSuccessful(t *testing.T) {
 		}
 		text := stdout.String()
 		if !strings.Contains(text, "agent discover") || !strings.Contains(text, "feedback-token") ||
+			!strings.Contains(text, "registration-token") || !strings.Contains(text, "agent register") ||
+			!strings.Contains(text, "owner must supply the complete scope and lens") ||
+			!strings.Contains(text, "Never list, choose, infer") ||
 			!strings.Contains(text, "owner/debug") || strings.Contains(text, "actor-put") ||
 			strings.Count(text, "\n") > 30 || stderr.Len() != 0 {
 			t.Fatalf("unbounded or incomplete help stdout=%q stderr=%q", text, stderr.String())
 		}
+	}
+}
+
+func TestAgentRegisterUsageUsesSharedAgentNamePlaceholder(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := NewRunner(NewMemoryFS()).Run([]string{"agent", "register"}, &stdout, &stderr)
+	if code != ExitProcess || stdout.Len() != 0 ||
+		!strings.Contains(stderr.String(), "invalid_registration") {
+		t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(usage, "agent register --name <agent-name>") ||
+		strings.Contains(usage, "agent register --name <name>") {
+		t.Fatalf("agent registration usage drifted: %s", usage)
+	}
+}
+
+func TestAgentRegistrationFailurePreservesRetryIdentityUnlessConflictIsConfirmed(t *testing.T) {
+	token := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{3}, 24))
+	for _, test := range []struct {
+		name         string
+		status       int
+		errorCode    string
+		retryable    bool
+		repairAction string
+	}{
+		{name: "rejected input", status: http.StatusBadRequest, errorCode: "registration_rejected", repairAction: "correct_registration_input"},
+		{name: "confirmed conflict", status: http.StatusConflict, errorCode: "registration_conflict", repairAction: "create_registration_token"},
+		{name: "ambiguous server failure", status: http.StatusInternalServerError, errorCode: "registration_outcome_unknown", retryable: true, repairAction: "retry_same_registration"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			mux.HandleFunc("GET /v1/capabilities", func(writer http.ResponseWriter, _ *http.Request) {
+				writeLegacyAgentEnvelope(t, writer, localservice.Capabilities{
+					SchemaVersion: localservice.CapabilitiesSchemaVersion,
+					Features:      []string{localservice.AgentRegistrationCapability},
+				})
+			})
+			mux.HandleFunc("POST /v1/scoped/actors/register", func(writer http.ResponseWriter, _ *http.Request) {
+				writer.Header().Set("Content-Type", "application/json")
+				writer.WriteHeader(test.status)
+				_ = json.NewEncoder(writer).Encode(map[string]string{
+					"schema_version": localservice.APISchemaVersion,
+					"error":          "registration failed",
+				})
+			})
+			configPath, closeServer := startScopedAgentCLITestServer(t, mux)
+			defer closeServer()
+			var stdout, stderr bytes.Buffer
+			code := NewRunner(NewOSFileSystem()).Run([]string{"agent", "register", "--name", "Fresh agent",
+				"--retry-token", token, "--config", configPath}, &stdout, &stderr)
+			if code != ExitProcess || stdout.Len() != 0 {
+				t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+			}
+			var failure agentContractError
+			if err := json.Unmarshal(stderr.Bytes(), &failure); err != nil ||
+				failure.ErrorCode != test.errorCode || failure.Retryable != test.retryable ||
+				failure.RepairAction != test.repairAction || strings.Contains(stderr.String(), token) {
+				t.Fatalf("failure=%+v err=%v", failure, err)
+			}
+		})
+	}
+}
+
+func TestAgentRegistrationUsesOneBoundedDeadline(t *testing.T) {
+	token := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{4}, 24))
+	for _, hangAt := range []string{"capabilities", "registration"} {
+		t.Run(hangAt, func(t *testing.T) {
+			waitPastDeadline := func(request *http.Request) {
+				timer := time.NewTimer(250 * time.Millisecond)
+				defer timer.Stop()
+				select {
+				case <-request.Context().Done():
+				case <-timer.C:
+				}
+			}
+			mux := http.NewServeMux()
+			mux.HandleFunc("GET /v1/capabilities", func(writer http.ResponseWriter, request *http.Request) {
+				if hangAt == "capabilities" {
+					waitPastDeadline(request)
+					return
+				}
+				writeLegacyAgentEnvelope(t, writer, localservice.Capabilities{
+					SchemaVersion: localservice.CapabilitiesSchemaVersion,
+					Features:      []string{localservice.AgentRegistrationCapability},
+				})
+			})
+			mux.HandleFunc("POST /v1/scoped/actors/register", func(_ http.ResponseWriter, request *http.Request) {
+				waitPastDeadline(request)
+			})
+			configPath, closeServer := startScopedAgentCLITestServer(t, mux)
+			defer closeServer()
+			runner := NewRunner(NewOSFileSystem())
+			runner.agentRegistrationTimeout = 75 * time.Millisecond
+			var stdout, stderr bytes.Buffer
+			started := time.Now()
+			code := runner.Run([]string{"agent", "register", "--name", "Fresh agent",
+				"--retry-token", token, "--config", configPath}, &stdout, &stderr)
+			if elapsed := time.Since(started); elapsed > time.Second {
+				t.Fatalf("registration exceeded bounded deadline: %s", elapsed)
+			}
+			var failure agentContractError
+			expectedCode := "registration_outcome_unknown"
+			if hangAt == "capabilities" {
+				expectedCode = "service_unavailable"
+			}
+			if code != ExitProcess || stdout.Len() != 0 ||
+				json.Unmarshal(stderr.Bytes(), &failure) != nil ||
+				failure.ErrorCode != expectedCode || !failure.Retryable ||
+				failure.RepairAction != "retry_same_registration" ||
+				strings.Contains(stderr.String(), token) {
+				t.Fatalf("code=%d stdout=%s failure=%+v stderr=%s", code, stdout.String(), failure, stderr.String())
+			}
+		})
+	}
+}
+
+func TestAgentRegistrationDeadlineIncludesServiceRecovery(t *testing.T) {
+	token := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{5}, 24))
+	root, err := os.MkdirTemp("/tmp", "mindline-agent-registration-recovery-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(root)
+	config, err := localservice.ConfigFromRoots(filepath.Join(root, "runtime"), filepath.Join(root, "memory"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(config.RuntimeRoot, "config.json")
+	if err := localservice.SaveConfig(configPath, config); err != nil {
+		t.Fatal(err)
+	}
+	originalRestart := restartAgentServiceWithin
+	restartAgentServiceWithin = func(ctx context.Context, _ string) (localservice.InstallReceipt, error) {
+		<-ctx.Done()
+		return localservice.InstallReceipt{}, ctx.Err()
+	}
+	defer func() { restartAgentServiceWithin = originalRestart }()
+	runner := NewRunner(NewOSFileSystem())
+	runner.agentRegistrationTimeout = 75 * time.Millisecond
+	var stdout, stderr bytes.Buffer
+	started := time.Now()
+	code := runner.Run([]string{"agent", "register", "--name", "Fresh agent",
+		"--retry-token", token, "--config", configPath}, &stdout, &stderr)
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("registration recovery exceeded bounded deadline: %s", elapsed)
+	}
+	var failure agentContractError
+	if code != ExitProcess || stdout.Len() != 0 || json.Unmarshal(stderr.Bytes(), &failure) != nil ||
+		failure.ErrorCode != "service_unavailable" || !failure.Retryable ||
+		failure.RepairAction != "retry_service" || strings.Contains(stderr.String(), token) {
+		t.Fatalf("code=%d stdout=%s failure=%+v stderr=%s", code, stdout.String(), failure, stderr.String())
+	}
+}
+
+func TestAgentRegistrationCreatesOpaqueIdentityWithoutSendingOrReturningToken(t *testing.T) {
+	runner := NewRunner(NewOSFileSystem())
+	runner.agentExecutable = "/opt/mindline"
+	var tokenOutput, tokenError bytes.Buffer
+	if code := runner.Run([]string{"agent", "registration-token"}, &tokenOutput, &tokenError); code != ExitOK {
+		t.Fatalf("token code=%d stderr=%s", code, tokenError.String())
+	}
+	var token map[string]string
+	if err := json.Unmarshal(tokenOutput.Bytes(), &token); err != nil {
+		t.Fatal(err)
+	}
+	seenBody := ""
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/capabilities", func(writer http.ResponseWriter, _ *http.Request) {
+		writeLegacyAgentEnvelope(t, writer, localservice.Capabilities{
+			SchemaVersion: localservice.CapabilitiesSchemaVersion,
+			Features:      []string{localservice.AgentRegistrationCapability},
+		})
+	})
+	mux.HandleFunc("POST /v1/scoped/actors/register", func(writer http.ResponseWriter, request *http.Request) {
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		seenBody = string(body)
+		var input localservice.AgentRegistrationInput
+		if err := json.Unmarshal(body, &input); err != nil ||
+			!strings.HasPrefix(input.AgentID, "agent-") || input.Name != "Fresh Cursor agent" {
+			t.Fatalf("registration input=%+v err=%v", input, err)
+		}
+		writeLegacyAgentEnvelope(t, writer, agentstate.AgentActor{
+			ID: input.AgentID, Name: input.Name, Status: agentstate.StatusActive,
+		})
+	})
+	configPath, closeServer := startScopedAgentCLITestServer(t, mux)
+	defer closeServer()
+	var stdout, stderr bytes.Buffer
+	code := runner.Run([]string{"agent", "register", "--name", "Fresh Cursor agent",
+		"--retry-token", token["retry_token"], "--config", configPath}, &stdout, &stderr)
+	if code != ExitOK || stderr.Len() != 0 {
+		t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var receipt agentRegistrationReceipt
+	if err := json.Unmarshal(stdout.Bytes(), &receipt); err != nil {
+		t.Fatal(err)
+	}
+	if receipt.RegistrationState != "ready" || receipt.AgentID == "" ||
+		receipt.AgentName != "Fresh Cursor agent" || receipt.AgentStatus != agentstate.StatusActive ||
+		receipt.RetryTokenPersisted || !receipt.ExactReplayOnly ||
+		!strings.Contains(receipt.NextDiscoveryCommand, agentcontract.ShellQuote(receipt.AgentID)) ||
+		!strings.Contains(receipt.NextDiscoveryCommand, "<same-as-registration>") ||
+		strings.Contains(stdout.String(), token["retry_token"]) ||
+		strings.Contains(seenBody, token["retry_token"]) || strings.Contains(stdout.String(), configPath) {
+		t.Fatalf("receipt=%+v body=%s output=%s", receipt, seenBody, stdout.String())
+	}
+}
+
+func TestRegisteredAgentIDIsDeterministicAndRequiresRandomToken(t *testing.T) {
+	one := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{1}, 24))
+	two := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{2}, 24))
+	first, err := registeredAgentID(one)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, err := registeredAgentID(one)
+	if err != nil || replay != first {
+		t.Fatalf("replay=%q first=%q err=%v", replay, first, err)
+	}
+	other, err := registeredAgentID(two)
+	if err != nil || other == first {
+		t.Fatalf("other=%q first=%q err=%v", other, first, err)
+	}
+	if _, err := registeredAgentID("short"); err == nil {
+		t.Fatal("short registration token was accepted")
 	}
 }
 

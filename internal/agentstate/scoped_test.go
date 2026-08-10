@@ -889,6 +889,152 @@ func seedScopedContexts(t *testing.T, store *Store, ctx context.Context, now tim
 	}
 }
 
+func TestRegisterAgentActorIsExactReplayOnly(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 10, 10, 0, 0, 0, time.UTC)
+	store, err := Open(filepath.Join(t.TempDir(), "state", "agent.sqlite"), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	credential := "pb_sk_synthetic-private-value"
+	for _, invalid := range []AgentActor{
+		{ID: credential, Name: "Fresh outside agent"},
+		{ID: "agent-with-secret-name", Name: credential},
+		{ID: "owner-randy", Name: "Owner identity"},
+		{ID: "agent-not-an-opaque-id", Name: "Predictable agent identity"},
+	} {
+		if _, _, err := store.RegisterAgentActor(ctx, invalid); err == nil {
+			t.Fatalf("credential-shaped registration was accepted: %+v", invalid)
+		}
+	}
+	var leaked int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_actors WHERE id IN (?, ?)`, credential, "agent-with-secret-name").Scan(&leaked); err != nil || leaked != 0 {
+		t.Fatalf("credential-shaped registration reached database: count=%d err=%v", leaked, err)
+	}
+	if sidecar, err := os.ReadFile(scopedRecoveryPath(store.path)); err != nil || bytes.Contains(sidecar, []byte(credential)) {
+		t.Fatalf("credential-shaped registration reached recovery sidecar: %v", err)
+	}
+	requested := AgentActor{ID: "agent-11111111111111111111111111111111", Name: "Fresh outside agent"}
+	first, created, err := store.RegisterAgentActor(ctx, requested)
+	if err != nil || !created || first.ID != requested.ID || first.Name != requested.Name || first.Status != StatusActive {
+		t.Fatalf("first=%+v created=%v err=%v", first, created, err)
+	}
+	if err := os.Remove(scopedRecoveryPath(store.path)); err != nil {
+		t.Fatal(err)
+	}
+	replay, created, err := store.RegisterAgentActor(ctx, requested)
+	if err != nil || created || replay != first {
+		t.Fatalf("replay=%+v created=%v err=%v", replay, created, err)
+	}
+	snapshot, present, err := readScopedRecoverySnapshot(store.path)
+	found := false
+	for _, actor := range snapshot.Actors {
+		found = found || actor == first
+	}
+	if err != nil || !present || !found {
+		t.Fatalf("replay did not refresh recovery snapshot: present=%v snapshot=%+v err=%v", present, snapshot, err)
+	}
+	if _, _, err := store.RegisterAgentActor(ctx, AgentActor{
+		ID: requested.ID, Name: "Conflicting name",
+	}); err == nil {
+		t.Fatal("conflicting registration renamed an existing actor")
+	}
+	unchanged, err := store.GetAgentActor(ctx, requested.ID)
+	if err != nil || unchanged.Name != requested.Name {
+		t.Fatalf("conflict mutated actor=%+v err=%v", unchanged, err)
+	}
+	if _, err := store.ArchiveAgentActor(ctx, requested.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.RegisterAgentActor(ctx, requested); err == nil {
+		t.Fatal("registration reactivated an archived actor")
+	}
+}
+
+func TestRegisterAgentActorPreflightsRecoveryCapacityBeforeInsert(t *testing.T) {
+	now := time.Date(2026, 8, 10, 10, 15, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "state", "agent.sqlite")
+	store, err := Open(path, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	before, err := os.ReadFile(scopedRecoveryPath(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	requested := AgentActor{ID: "agent-22222222222222222222222222222222", Name: strings.Repeat("a", 512)}
+	store.scopedRecoveryByteLimit = int64(len(before) + 1)
+	if _, _, err := store.RegisterAgentActor(ctx, requested); err == nil {
+		t.Fatal("oversized registration recovery projection was committed")
+	}
+	var count int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_actors WHERE id=?`, requested.ID).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("rejected registration reached database: count=%d err=%v", count, err)
+	}
+	after, err := os.ReadFile(scopedRecoveryPath(path))
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("rejected registration changed recovery snapshot: err=%v", err)
+	}
+	store.scopedRecoveryByteLimit = 0
+	if _, created, err := store.RegisterAgentActor(ctx, requested); err != nil || !created {
+		t.Fatalf("exact retry failed after preflight rejection: created=%v err=%v", created, err)
+	}
+}
+
+func TestRegisteredActorsKeepFeedbackIsolated(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 10, 10, 30, 0, 0, time.UTC)
+	store, err := Open(filepath.Join(t.TempDir(), "state", "agent.sqlite"), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	if _, err := store.PutScope(ctx, Scope{ID: "project", Name: "Project", Purpose: "product"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PutScopedLens(ctx, ScopedLens{
+		ScopeID: "project", ID: "product", Name: "Product", Query: "evidence",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	agentA := "agent-33333333333333333333333333333333"
+	agentB := "agent-44444444444444444444444444444444"
+	for _, actor := range []AgentActor{{ID: agentA, Name: "Agent A"}, {ID: agentB, Name: "Agent B"}} {
+		if _, _, err := store.RegisterAgentActor(ctx, actor); err != nil {
+			t.Fatal(err)
+		}
+		runID := "run-" + actor.ID
+		if err := store.SaveScopedRetrieval(ctx, ScopedRetrievalTrace{
+			RunID: runID, ScopeID: "project", LensID: "product", AgentID: actor.ID,
+			Query: "same question", RetrievalMethod: "test", LibraryFingerprint: "fingerprint",
+			CreatedAt: now.Format(time.RFC3339Nano), Candidates: []ScopedCandidateTrace{{
+				RecordID: "record-one", Rank: 1, FinalScore: 1,
+				ComponentScore: map[string]float64{"final": 1},
+			}},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.ApplyScopedJudgment(ctx, ScopedJudgmentRequest{
+		RetryToken: "registered-agent-feedback-retry", RunID: "run-" + agentA,
+		ScopeID: "project", LensID: "product", AgentID: agentA,
+		RecordID: "record-one", Actor: FeedbackAgent, Disposition: "used",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	assertScopedRelevance(t, store, ctx, ScopedContext{
+		ScopeID: "project", LensID: "product", AgentID: agentA,
+	}, 0.025)
+	assertScopedRelevance(t, store, ctx, ScopedContext{
+		ScopeID: "project", LensID: "product", AgentID: agentB,
+	}, 0)
+}
+
 func assertScopedRelevance(
 	t *testing.T,
 	store *Store,

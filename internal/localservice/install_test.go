@@ -57,7 +57,10 @@ func TestInstallCreatesPrivateBinaryConfigSkillAndPreservesEvidenceOnUninstall(t
 		strings.Contains(string(skill), "agent scope-list") ||
 		strings.Contains(string(skill), "agent lens-list") ||
 		strings.Contains(string(skill), "agent actor-list") ||
-		!strings.Contains(string(skill), "owner must supply the complete scope, lens, and actor tuple") ||
+		!strings.Contains(string(skill), "owner must supply the complete scope and lens") ||
+		!strings.Contains(string(skill), "agent registration-token") ||
+		!strings.Contains(string(skill), "agent register --name <agent-name> --retry-token <token>") ||
+		!strings.Contains(string(skill), "Never borrow an") ||
 		!strings.Contains(string(skill), "--format compact-scoped-v0.4") ||
 		!strings.Contains(string(skill), "--scope <scope> --lens <lens> --agent <actor>") ||
 		!strings.Contains(string(skill), "agent get <record>") ||
@@ -208,6 +211,26 @@ func TestDefaultRestartAndUninstallResolveTheCanonicalConfigPath(t *testing.T) {
 	receipt, err = Uninstall("")
 	if err != nil || receipt.ServiceState != "uninstalled_state_preserved" {
 		t.Fatalf("default uninstall receipt=%+v err=%v", receipt, err)
+	}
+}
+
+func TestInstalledCandidateRequiresRegistrationCapability(t *testing.T) {
+	originalSmoke := installSmokeRunner
+	installSmokeRunner = func(_ string, args ...string) ([]byte, int, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "capabilities"):
+			return []byte(`{"features":["mindline.scoped-recall.v0.4"]}`), 0, nil
+		case strings.Contains(joined, "status"):
+			return []byte(`{"service_state":"ready"}`), 0, nil
+		default:
+			return []byte(`{"error":"scope not found"}`), 2, nil
+		}
+	}
+	t.Cleanup(func() { installSmokeRunner = originalSmoke })
+	if err := smokeInstalledCandidate("/unused/mindline", "/unused/config.json"); err == nil ||
+		!strings.Contains(err.Error(), "required agent capabilities") {
+		t.Fatalf("candidate without registration capability was accepted: %v", err)
 	}
 }
 
@@ -533,7 +556,7 @@ func TestUpgradeSmokeFailureRestoresFullPriorInstallAndRollbackBundle(t *testing
 		joined := strings.Join(args, " ")
 		switch {
 		case strings.Contains(joined, "capabilities"):
-			return []byte(`{"schema_version":"test","features":["mindline.scoped-recall.v0.4"]}`), 0, nil
+			return []byte(`{"schema_version":"test","features":["mindline.scoped-recall.v0.4","mindline.agent-registration.v0.1"]}`), 0, nil
 		case strings.Contains(joined, "status"):
 			return []byte(`{"schema_version":"test","service_state":"ready"}`), 0, nil
 		default:
@@ -646,7 +669,7 @@ func TestUpgradeFaultAtEveryMutationAndSmokeRestoresExactPriorInstall(t *testing
 				joined := strings.Join(args, " ")
 				switch {
 				case strings.Contains(joined, "capabilities"):
-					return []byte(`{"features":["mindline.scoped-recall.v0.4"]}`), 0, nil
+					return []byte(`{"features":["mindline.scoped-recall.v0.4","mindline.agent-registration.v0.1"]}`), 0, nil
 				case strings.Contains(joined, "status"):
 					return []byte(`{"service_state":"ready"}`), 0, nil
 				default:

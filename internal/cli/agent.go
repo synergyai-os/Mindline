@@ -28,6 +28,10 @@ func (r Runner) runAgent(args []string, stdout, stderr io.Writer) int {
 		return r.runAgentFeedbackToken(args[1:], stdout, stderr)
 	case "build-binding":
 		return r.runAgentBuildBinding(args[1:], stdout, stderr)
+	case "registration-token":
+		return r.runAgentRegistrationToken(args[1:], stdout, stderr)
+	case "register":
+		return r.runAgentRegister(args[1:], stdout, stderr)
 	case "install":
 		return r.runAgentInstall(args[1:], stdout, stderr)
 	case "restart":
@@ -315,6 +319,35 @@ func agentClient(configPath string) (*localservice.Client, error) {
 	recoveryContext, cancelRecovery := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancelRecovery()
 	if err := waitForAgentReady(recoveryContext, client); err == nil {
+		return client, nil
+	}
+	return nil, errors.New("local agent service is unavailable after one restart attempt")
+}
+
+var restartAgentServiceWithin = localservice.RestartContext
+
+func agentClientWithin(ctx context.Context, configPath string) (*localservice.Client, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	config, err := localservice.LoadConfig(configPath)
+	if err != nil {
+		return nil, err
+	}
+	client := localservice.NewClient(config.SocketPath)
+	initialContext, cancelInitial := context.WithTimeout(ctx, time.Second)
+	_, initialErr := client.Status(initialContext)
+	cancelInitial()
+	if initialErr == nil {
+		return client, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if _, restartErr := restartAgentServiceWithin(ctx, configPath); restartErr != nil {
+		return nil, fmt.Errorf("local agent service is unavailable; restart failed: %w", restartErr)
+	}
+	if err := waitForAgentReady(ctx, client); err == nil {
 		return client, nil
 	}
 	return nil, errors.New("local agent service is unavailable after one restart attempt")

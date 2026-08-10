@@ -2,6 +2,7 @@ package localservice
 
 import (
 	"context"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -35,8 +36,10 @@ func TestScopedRecallV04RoutesFailClosedAndKeepLegacyCompactUnchanged(t *testing
 	capabilities, err := client.Capabilities(context.Background())
 	if err != nil || !hasCapability(capabilities.Features, ScopedRecallCapability) ||
 		!hasCapability(capabilities.Features, DiscoveryCapability) ||
+		!hasCapability(capabilities.Features, AgentRegistrationCapability) ||
 		capabilities.ScopedSearchEndpoint != "/v1/scoped/search/compact" ||
 		capabilities.ScopedHydrationEndpoint != ScopedHydrationEndpoint ||
+		capabilities.AgentRegistrationEndpoint != "/v1/scoped/actors/register" ||
 		capabilities.RecommendedAgentRoute != RecommendedAgentRoute {
 		t.Fatalf("scoped capabilities=%+v err=%v", capabilities, err)
 	}
@@ -62,6 +65,40 @@ func TestScopedRecallV04RoutesFailClosedAndKeepLegacyCompactUnchanged(t *testing
 		ID: "agent-a", Name: "Agent A",
 	}); err != nil {
 		t.Fatal(err)
+	}
+	registeredID := "agent-55555555555555555555555555555555"
+	registered, err := client.RegisterActor(context.Background(), AgentRegistrationInput{
+		AgentID: registeredID, Name: "Registered agent",
+	})
+	if err != nil || registered.ID != registeredID || registered.Status != agentstate.StatusActive {
+		t.Fatalf("registered=%+v err=%v", registered, err)
+	}
+	replay, err := client.RegisterActor(context.Background(), AgentRegistrationInput{
+		AgentID: registeredID, Name: "Registered agent",
+	})
+	if err != nil || replay != registered {
+		t.Fatalf("registration replay=%+v err=%v", replay, err)
+	}
+	if _, err := client.RegisterActor(context.Background(), AgentRegistrationInput{
+		AgentID: registeredID, Name: "Conflicting agent",
+	}); err == nil {
+		t.Fatal("conflicting registration changed an existing actor")
+	} else if status, known := APIStatusCode(err); !known || status != http.StatusConflict {
+		t.Fatalf("conflicting registration status=%d known=%v err=%v", status, known, err)
+	}
+	if _, err := client.RegisterActor(context.Background(), AgentRegistrationInput{
+		AgentID: "", Name: "Invalid agent",
+	}); err == nil {
+		t.Fatal("invalid registration was accepted")
+	} else if status, known := APIStatusCode(err); !known || status != http.StatusBadRequest {
+		t.Fatalf("invalid registration status=%d known=%v err=%v", status, known, err)
+	}
+	if _, err := client.RegisterActor(context.Background(), AgentRegistrationInput{
+		AgentID: "owner-randy", Name: "Owner identity",
+	}); err == nil {
+		t.Fatal("owner-style identity was accepted through agent registration")
+	} else if status, known := APIStatusCode(err); !known || status != http.StatusBadRequest {
+		t.Fatalf("owner-style registration status=%d known=%v err=%v", status, known, err)
 	}
 	if _, err := client.PutScope(context.Background(), agentstate.Scope{
 		ID: "project-b", Name: "Project B", Purpose: "separate context",
