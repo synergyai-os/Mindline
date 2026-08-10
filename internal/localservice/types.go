@@ -87,13 +87,18 @@ type SemanticIndexStatus struct {
 }
 
 type PublicAgentStateStatus struct {
-	SchemaVersion      string `json:"schema_version"`
-	LensCount          int    `json:"lens_count"`
-	RetrievalRunCount  int    `json:"retrieval_run_count"`
-	JudgmentCount      int    `json:"judgment_count"`
-	EmbeddingCount     int    `json:"embedding_count"`
-	IndexedFingerprint string `json:"indexed_library_fingerprint,omitempty"`
-	RecoveryState      string `json:"recovery_state,omitempty"`
+	SchemaVersion           string `json:"schema_version"`
+	LensCount               int    `json:"lens_count"`
+	RetrievalRunCount       int    `json:"retrieval_run_count"`
+	JudgmentCount           int    `json:"judgment_count"`
+	ScopeCount              int    `json:"scope_count"`
+	ScopedLensCount         int    `json:"scoped_lens_count"`
+	AgentActorCount         int    `json:"agent_actor_count"`
+	ScopedRetrievalRunCount int    `json:"scoped_retrieval_run_count"`
+	ScopedJudgmentCount     int    `json:"scoped_judgment_count"`
+	EmbeddingCount          int    `json:"embedding_count"`
+	IndexedFingerprint      string `json:"indexed_library_fingerprint,omitempty"`
+	RecoveryState           string `json:"recovery_state,omitempty"`
 }
 
 type DeleteResult struct {

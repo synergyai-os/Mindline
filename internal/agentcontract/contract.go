@@ -34,25 +34,41 @@ type Workflow struct {
 // the installed skill. executable and configPath are shell-quoted here so a
 // returned command can be copied directly into a local shell.
 func NewWorkflow(executable, configPath string) Workflow {
+	return NewNamespacedWorkflow(executable, "agent", configPath)
+}
+
+// NewNamespacedWorkflow keeps every returned command on one explicit CLI
+// surface. The agent-only namespace is the cooperative least-privilege route;
+// all other callers retain the operator-facing agent namespace.
+func NewNamespacedWorkflow(executable, namespace, configPath string) Workflow {
 	executable = ShellQuote(strings.TrimSpace(executable))
+	namespace = strings.TrimSpace(namespace)
+	if namespace != "agent-only" {
+		namespace = "agent"
+	}
+	prefix := executable + " " + namespace
 	config := ""
 	if strings.TrimSpace(configPath) != "" {
 		config = " --config " + ShellQuote(strings.TrimSpace(configPath))
 	}
 	return Workflow{
-		RegistrationToken: executable + " agent registration-token",
-		Register:          executable + " agent register --name <agent-name> --retry-token <token>" + config,
-		Discover:          executable + " agent discover --scope <scope> --lens <lens> --agent <actor>" + config,
-		Search:            executable + " agent search <query...> --scope <scope> --lens <lens> --agent <actor> --format compact-scoped-v0.4" + config,
-		Get:               executable + " agent get <record> --run <run> --scope <scope> --lens <lens> --agent <actor>" + config,
-		FeedbackToken:     executable + " agent feedback-token",
-		Feedback:          executable + " agent feedback --run <run> --scope <scope> --lens <lens> --agent <actor> --record <record> --actor agent --disposition used|dismissed --retry-token <token>" + config,
-		FeedbackReverse:   executable + " agent feedback-reverse --judgment <judgment> --scope <scope> --lens <lens> --agent <actor> --actor agent --idempotency-key <new-key>" + config,
+		RegistrationToken: prefix + " registration-token",
+		Register:          prefix + " register --name <agent-name> --retry-token <token>" + config,
+		Discover:          prefix + " discover --scope <scope> --lens <lens> --agent <actor>" + config,
+		Search:            prefix + " search <query...> --scope <scope> --lens <lens> --agent <actor> --format compact-scoped-v0.4" + config,
+		Get:               prefix + " get <record> --run <run> --scope <scope> --lens <lens> --agent <actor>" + config,
+		FeedbackToken:     prefix + " feedback-token",
+		Feedback:          prefix + " feedback --run <run> --scope <scope> --lens <lens> --agent <actor> --record <record> --actor agent --disposition <used-or-dismissed> --retry-token <token>" + config,
+		FeedbackReverse:   prefix + " feedback-reverse --judgment <judgment> --scope <scope> --lens <lens> --agent <actor> --actor agent --idempotency-key <new-key>" + config,
 	}
 }
 
 func HelpText(executable string) string {
-	workflow := NewWorkflow(executable, "")
+	return NamespacedHelpText(executable, "agent")
+}
+
+func NamespacedHelpText(executable, namespace string) string {
+	workflow := NewNamespacedWorkflow(executable, namespace, "")
 	return fmt.Sprintf(`Mindline agent recall (cooperative local use)
 
 Use an owner-assigned actor ID when one exists. Otherwise register a new actor;

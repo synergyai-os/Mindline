@@ -58,16 +58,16 @@ func TestInstallCreatesPrivateBinaryConfigSkillAndPreservesEvidenceOnUninstall(t
 		strings.Contains(string(skill), "agent lens-list") ||
 		strings.Contains(string(skill), "agent actor-list") ||
 		!strings.Contains(string(skill), "owner must supply the complete scope and lens") ||
-		!strings.Contains(string(skill), "agent registration-token") ||
-		!strings.Contains(string(skill), "agent register --name <agent-name> --retry-token <token>") ||
+		!strings.Contains(string(skill), "agent-only registration-token") ||
+		!strings.Contains(string(skill), "agent-only register --name <agent-name> --retry-token <token>") ||
 		!strings.Contains(string(skill), "Never borrow an") ||
 		!strings.Contains(string(skill), "--format compact-scoped-v0.4") ||
 		!strings.Contains(string(skill), "--scope <scope> --lens <lens> --agent <actor>") ||
-		!strings.Contains(string(skill), "agent get <record>") ||
+		!strings.Contains(string(skill), "agent-only get <record>") ||
 		!strings.Contains(string(skill), "answer_state: abstained") ||
 		!strings.Contains(string(skill), "--retry-token <token>") ||
-		!strings.Contains(string(skill), "agent feedback-reverse") ||
-		!strings.Contains(string(skill), "'"+receipt.InstalledBinary+"' agent discover") {
+		!strings.Contains(string(skill), "agent-only feedback-reverse") ||
+		!strings.Contains(string(skill), "'"+receipt.InstalledBinary+"' agent-only discover") {
 		t.Fatalf("skill missing safety contract: %v", err)
 	}
 	evidenceMarker := filepath.Join(memoryRoot, "evidence-marker")
@@ -231,6 +231,41 @@ func TestInstalledCandidateRequiresRegistrationCapability(t *testing.T) {
 	if err := smokeInstalledCandidate("/unused/mindline", "/unused/config.json"); err == nil ||
 		!strings.Contains(err.Error(), "required agent capabilities") {
 		t.Fatalf("candidate without registration capability was accepted: %v", err)
+	}
+}
+
+func TestInstalledCandidateWaitsForRestartedServiceReadiness(t *testing.T) {
+	originalSmoke := installSmokeRunner
+	capabilityCalls, statusCalls := 0, 0
+	installSmokeRunner = func(_ string, args ...string) ([]byte, int, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, "capabilities"):
+			capabilityCalls++
+			if capabilityCalls == 1 {
+				return []byte("service restarting"), 2, nil
+			}
+			return []byte(`{"features":["mindline.scoped-recall.v0.4","mindline.agent-registration.v0.1"]}`), 0, nil
+		case strings.Contains(joined, "status"):
+			statusCalls++
+			if statusCalls == 1 {
+				return []byte(`{"service_state":"starting"}`), 0, nil
+			}
+			return []byte(`{"service_state":"ready"}`), 0, nil
+		case strings.Contains(joined, "agent-only help"):
+			return []byte("mindline agent-only search\n"), 0, nil
+		case strings.Contains(joined, "agent-only scope-list"):
+			return []byte(`{"error_code":"route_not_available"}`), 2, nil
+		default:
+			return []byte(`{"error_code":"binding_not_found"}`), 2, nil
+		}
+	}
+	t.Cleanup(func() { installSmokeRunner = originalSmoke })
+	if err := smokeInstalledCandidate("/unused/mindline", "/unused/config.json"); err != nil {
+		t.Fatal(err)
+	}
+	if capabilityCalls != 2 || statusCalls != 2 {
+		t.Fatalf("capability calls=%d status calls=%d", capabilityCalls, statusCalls)
 	}
 }
 
@@ -559,6 +594,10 @@ func TestUpgradeSmokeFailureRestoresFullPriorInstallAndRollbackBundle(t *testing
 			return []byte(`{"schema_version":"test","features":["mindline.scoped-recall.v0.4","mindline.agent-registration.v0.1"]}`), 0, nil
 		case strings.Contains(joined, "status"):
 			return []byte(`{"schema_version":"test","service_state":"ready"}`), 0, nil
+		case strings.Contains(joined, "agent-only help"):
+			return []byte("mindline agent-only search\n"), 0, nil
+		case strings.Contains(joined, "agent-only scope-list"):
+			return []byte(`{"error_code":"route_not_available"}`), 2, nil
 		default:
 			return []byte("mindline agent: scope not found\n"), 2, nil
 		}
@@ -604,7 +643,8 @@ func TestUpgradeFaultAtEveryMutationAndSmokeRestoresExactPriorInstall(t *testing
 		"rollback-binary", "rollback-skill", "rollback-manifest",
 		"config", "receipt-installing", "binary", "skill", "launcher",
 		"receipt-start-pending", "service-restart", "smoke-capabilities",
-		"smoke-status", "smoke-scoped-fail-closed", "receipt-started",
+		"smoke-status", "smoke-agent-only-help", "smoke-scoped-fail-closed",
+		"smoke-owner-route-fail-closed", "receipt-started",
 	}
 	for _, stage := range stages {
 		stage := stage
@@ -672,6 +712,10 @@ func TestUpgradeFaultAtEveryMutationAndSmokeRestoresExactPriorInstall(t *testing
 					return []byte(`{"features":["mindline.scoped-recall.v0.4","mindline.agent-registration.v0.1"]}`), 0, nil
 				case strings.Contains(joined, "status"):
 					return []byte(`{"service_state":"ready"}`), 0, nil
+				case strings.Contains(joined, "agent-only help"):
+					return []byte("mindline agent-only search\n"), 0, nil
+				case strings.Contains(joined, "agent-only scope-list"):
+					return []byte(`{"error_code":"route_not_available"}`), 2, nil
 				default:
 					return []byte("mindline agent: scoped context not found\n"), 2, nil
 				}

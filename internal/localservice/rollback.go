@@ -30,6 +30,7 @@ type rollbackManifest struct {
 	SchemaVersion    string `json:"schema_version"`
 	BinaryBackupPath string `json:"binary_backup_path"`
 	BinarySHA256     string `json:"binary_sha256"`
+	SkillPresent     bool   `json:"skill_present"`
 	SkillBackupPath  string `json:"skill_backup_path"`
 	SkillSHA256      string `json:"skill_sha256"`
 	BackedUpAt       string `json:"backed_up_at"`
@@ -243,7 +244,7 @@ func prepareRollbackBackup(transaction *installTransaction, config Config, binar
 	if !binaryPresent && !skillPresent {
 		return nil
 	}
-	if !binaryPresent || !skillPresent {
+	if !binaryPresent {
 		return errors.New("prior local agent installation is incomplete")
 	}
 	binary, err := privateio.ReadFileBounded(
@@ -252,11 +253,14 @@ func prepareRollbackBackup(transaction *installTransaction, config Config, binar
 	if err != nil || sha256Hex(binary) != binarySnapshot.sha256 {
 		return errors.New("read prior installed binary")
 	}
-	skill, err := privateio.ReadFileBounded(
-		transaction.backupRoot, skillSnapshot.backupPath, skillSnapshot.maximum,
-	)
-	if err != nil || sha256Hex(skill) != skillSnapshot.sha256 {
-		return errors.New("read prior installed skill")
+	var skill []byte
+	if skillPresent {
+		skill, err = privateio.ReadFileBounded(
+			transaction.backupRoot, skillSnapshot.backupPath, skillSnapshot.maximum,
+		)
+		if err != nil || sha256Hex(skill) != skillSnapshot.sha256 {
+			return errors.New("read prior installed skill")
+		}
 	}
 	if err := privateio.PrepareDir(rollbackRoot(config)); err != nil {
 		return errors.New("prepare local agent rollback")
@@ -266,16 +270,28 @@ func prepareRollbackBackup(transaction *installTransaction, config Config, binar
 	}); err != nil {
 		return errors.New("save prior installed binary")
 	}
-	if err := transaction.mutate("rollback-skill", rollbackSkillPath(config), func() error {
-		return privateio.WriteFile(rollbackSkillPath(config), skill, false)
-	}); err != nil {
-		return errors.New("save prior installed skill")
+	if skillPresent {
+		if err := transaction.mutate("rollback-skill", rollbackSkillPath(config), func() error {
+			return privateio.WriteFile(rollbackSkillPath(config), skill, false)
+		}); err != nil {
+			return errors.New("save prior installed skill")
+		}
+	} else if transaction.artifacts[rollbackSkillPath(config)].present {
+		if err := transaction.mutate("rollback-skill-remove", rollbackSkillPath(config), func() error {
+			return removeRegularArtifact(rollbackSkillPath(config))
+		}); err != nil {
+			return errors.New("clear prior installed skill backup")
+		}
 	}
 	manifest := rollbackManifest{
 		SchemaVersion:    rollbackManifestSchemaVersion,
 		BinaryBackupPath: rollbackBinaryPath(config), BinarySHA256: sha256Hex(binary),
-		SkillBackupPath: rollbackSkillPath(config), SkillSHA256: sha256Hex(skill),
-		BackedUpAt: time.Now().UTC().Format(time.RFC3339Nano),
+		SkillPresent: skillPresent,
+		BackedUpAt:   time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	if skillPresent {
+		manifest.SkillBackupPath = rollbackSkillPath(config)
+		manifest.SkillSHA256 = sha256Hex(skill)
 	}
 	if err := transaction.mutate("rollback-manifest", rollbackManifestPath(config), func() error {
 		return privateio.WriteJSON(rollbackManifestPath(config), manifest)
@@ -327,13 +343,20 @@ func Rollback(configPath string) (returnReceipt InstallReceipt, returnErr error)
 	if err != nil {
 		return InstallReceipt{}, err
 	}
-	// Restore the legacy skill first. A successor binary can still run that
-	// skill if the process stops here, while a legacy binary cannot understand
-	// every successor skill command.
-	if err := transaction.mutate("rollback-active-skill", receipt.SkillPath, func() error {
-		return privateio.WriteFile(receipt.SkillPath, skill, false)
-	}); err != nil {
-		return InstallReceipt{}, errors.New("restore prior installed skill")
+	// Restore a prior helper skill before the binary. When the owner had
+	// deliberately removed the optional skill, preserve that absence instead.
+	if rollbackManifestHasSkill(manifest) {
+		if err := transaction.mutate("rollback-active-skill", receipt.SkillPath, func() error {
+			return privateio.WriteFile(receipt.SkillPath, skill, false)
+		}); err != nil {
+			return InstallReceipt{}, errors.New("restore prior installed skill")
+		}
+	} else if transaction.artifacts[receipt.SkillPath].present {
+		if err := transaction.mutate("rollback-active-skill-remove", receipt.SkillPath, func() error {
+			return removeRegularArtifact(receipt.SkillPath)
+		}); err != nil {
+			return InstallReceipt{}, errors.New("restore absent prior installed skill")
+		}
 	}
 	if err := transaction.mutate("rollback-active-binary", receipt.InstalledBinary, func() error {
 		return copyExecutable(manifest.BinaryBackupPath, receipt.InstalledBinary)
@@ -346,11 +369,17 @@ func Rollback(configPath string) (returnReceipt InstallReceipt, returnErr error)
 	if err != nil || !present || sha256Hex(restoredBinary) != manifest.BinarySHA256 {
 		return InstallReceipt{}, errors.New("verify restored installed binary")
 	}
-	restoredSkill, present, err := readArtifact(
+	if rollbackManifestHasSkill(manifest) {
+		restoredSkill, present, err := readArtifact(
+			receipt.SkillPath, privateio.FileMode, maximumSkillBytes,
+		)
+		if err != nil || !present || sha256Hex(restoredSkill) != manifest.SkillSHA256 {
+			return InstallReceipt{}, errors.New("verify restored installed skill")
+		}
+	} else if _, present, err := readArtifact(
 		receipt.SkillPath, privateio.FileMode, maximumSkillBytes,
-	)
-	if err != nil || !present || sha256Hex(restoredSkill) != manifest.SkillSHA256 {
-		return InstallReceipt{}, errors.New("verify restored installed skill")
+	); err != nil || present {
+		return InstallReceipt{}, errors.New("verify absent restored installed skill")
 	}
 	if err := restartUserService(receipt.LaunchAgentPath); err != nil {
 		return InstallReceipt{}, err
@@ -433,11 +462,14 @@ func readRollbackArtifacts(config Config) (rollbackManifest, []byte, []byte, err
 	if err != nil || sha256Hex(binary) != manifest.BinarySHA256 {
 		return rollbackManifest{}, nil, nil, errors.New("verify prior installed binary")
 	}
-	skill, err := privateio.ReadFileBounded(
-		rollbackRoot(config), manifest.SkillBackupPath, maximumSkillBytes,
-	)
-	if err != nil || sha256Hex(skill) != manifest.SkillSHA256 {
-		return rollbackManifest{}, nil, nil, errors.New("verify prior installed skill")
+	var skill []byte
+	if rollbackManifestHasSkill(manifest) {
+		skill, err = privateio.ReadFileBounded(
+			rollbackRoot(config), manifest.SkillBackupPath, maximumSkillBytes,
+		)
+		if err != nil || sha256Hex(skill) != manifest.SkillSHA256 {
+			return rollbackManifest{}, nil, nil, errors.New("verify prior installed skill")
+		}
 	}
 	return manifest, binary, skill, nil
 }
@@ -445,20 +477,45 @@ func readRollbackArtifacts(config Config) (rollbackManifest, []byte, []byte, err
 func validateRollbackManifest(config Config, manifest rollbackManifest) error {
 	if manifest.SchemaVersion != rollbackManifestSchemaVersion ||
 		manifest.BinaryBackupPath != rollbackBinaryPath(config) ||
-		manifest.SkillBackupPath != rollbackSkillPath(config) ||
-		len(manifest.BinarySHA256) != 64 || len(manifest.SkillSHA256) != 64 ||
+		len(manifest.BinarySHA256) != 64 ||
 		strings.TrimSpace(manifest.BackedUpAt) == "" {
 		return errors.New("invalid local agent rollback manifest")
 	}
 	_, binaryErr := hex.DecodeString(manifest.BinarySHA256)
-	_, skillErr := hex.DecodeString(manifest.SkillSHA256)
-	if binaryErr != nil || skillErr != nil {
+	if binaryErr != nil {
 		return errors.New("invalid local agent rollback manifest")
 	}
-	return privateio.ValidateContained(
-		config.RuntimeRoot, manifest.BinaryBackupPath, manifest.SkillBackupPath,
-		rollbackManifestPath(config),
-	)
+	paths := []string{manifest.BinaryBackupPath, rollbackManifestPath(config)}
+	if rollbackManifestHasSkill(manifest) {
+		if manifest.SkillBackupPath != rollbackSkillPath(config) || len(manifest.SkillSHA256) != 64 {
+			return errors.New("invalid local agent rollback manifest")
+		}
+		if _, err := hex.DecodeString(manifest.SkillSHA256); err != nil {
+			return errors.New("invalid local agent rollback manifest")
+		}
+		paths = append(paths, manifest.SkillBackupPath)
+	} else if manifest.SkillPresent || manifest.SkillBackupPath != "" || manifest.SkillSHA256 != "" {
+		return errors.New("invalid local agent rollback manifest")
+	}
+	return privateio.ValidateContained(config.RuntimeRoot, paths...)
+}
+
+func rollbackManifestHasSkill(manifest rollbackManifest) bool {
+	// SkillPresent is explicit for new manifests. The path/hash inference keeps
+	// rollback compatible with manifests written before that field existed.
+	return manifest.SkillPresent ||
+		(manifest.SkillBackupPath != "" && manifest.SkillSHA256 != "")
+}
+
+func removeRegularArtifact(path string) error {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("refuse unsafe installed artifact removal")
+	}
+	return os.Remove(path)
 }
 
 func lifecycleFingerprints(config Config) (string, string, error) {

@@ -1,6 +1,7 @@
 package localservice
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -46,6 +47,7 @@ type InstallReceipt struct {
 	ConfigPath      string `json:"config_path"`
 	InstalledBinary string `json:"installed_binary"`
 	SkillPath       string `json:"skill_path"`
+	SkillState      string `json:"skill_state,omitempty"`
 	LaunchAgentPath string `json:"launch_agent_path,omitempty"`
 	ServiceState    string `json:"service_state"`
 	InstalledAt     string `json:"installed_at"`
@@ -130,6 +132,14 @@ func Install(options InstallOptions) (receipt InstallReceipt, returnErr error) {
 	mutate := func(stage, path string, operation func() error) error {
 		return transaction.mutate(stage, path, operation)
 	}
+	priorBinary := transaction.artifacts[installedBinary]
+	priorSkill := transaction.artifacts[skillPath]
+	writeSkill := !priorBinary.present || priorSkill.present
+	if writeSkill {
+		receipt.SkillState = "installed"
+	} else {
+		receipt.SkillState = "absent_preserved"
+	}
 	if err := prepareRollbackBackup(transaction, options.Config, installedBinary, skillPath); err != nil {
 		return receipt, err
 	}
@@ -151,13 +161,15 @@ func Install(options InstallOptions) (receipt InstallReceipt, returnErr error) {
 	}); err != nil {
 		return receipt, err
 	}
-	if err := privateio.PrepareDir(options.SkillRoot); err != nil {
-		return receipt, errors.New("prepare agent skill directory")
-	}
-	if err := mutate("skill", skillPath, func() error {
-		return privateio.WriteFile(skillPath, []byte(agentSkill(installedBinary, options.ConfigPath)), false)
-	}); err != nil {
-		return receipt, errors.New("write agent skill")
+	if writeSkill {
+		if err := privateio.PrepareDir(options.SkillRoot); err != nil {
+			return receipt, errors.New("prepare agent skill directory")
+		}
+		if err := mutate("skill", skillPath, func() error {
+			return privateio.WriteFile(skillPath, []byte(agentSkill(installedBinary, options.ConfigPath)), false)
+		}); err != nil {
+			return receipt, errors.New("write agent skill")
+		}
 	}
 	if runtime.GOOS == "darwin" {
 		if err := mutate("launcher", receipt.LaunchAgentPath, func() error {
@@ -368,6 +380,8 @@ func validateInstallReceipt(config Config, configPath string, receipt InstallRec
 		receipt.InstalledBinary != filepath.Join(config.RuntimeRoot, "bin", "mindline") ||
 		receipt.SkillPath != filepath.Join(skillRoot, "SKILL.md") ||
 		receipt.LaunchAgentPath != expectedLaunchPath ||
+		(receipt.SkillState != "" && receipt.SkillState != "installed" &&
+			receipt.SkillState != "absent_preserved") ||
 		(receipt.ServiceState != "installing" &&
 			receipt.ServiceState != "installed_not_started" &&
 			receipt.ServiceState != "start_pending" &&
@@ -517,33 +531,42 @@ func copyExecutable(source, destination string) error {
 }
 
 func smokeInstalledCandidate(binaryPath, configPath string) error {
-	type smokeStage struct {
-		name string
-		args []string
+	if err := waitForInstalledSmoke(binaryPath,
+		[]string{"agent", "capabilities", "--config", configPath},
+		func(output []byte) (bool, error) {
+			if !jsonContainsString(output, "mindline.scoped-recall.v0.4") ||
+				!jsonContainsString(output, agentcontract.AgentRegistrationCapability) {
+				return false, errors.New("installed local agent lacks required agent capabilities")
+			}
+			return true, nil
+		},
+	); err != nil {
+		return err
 	}
-	stages := []smokeStage{
-		{name: "smoke-capabilities", args: []string{"agent", "capabilities", "--config", configPath}},
-		{name: "smoke-status", args: []string{"agent", "status", "--config", configPath}},
+	if err := installFaultHook("smoke-capabilities"); err != nil {
+		return err
 	}
-	for _, stage := range stages {
-		output, exitCode, err := installSmokeRunner(binaryPath, stage.args...)
-		if err != nil || exitCode != 0 || !json.Valid(output) {
-			return errors.New("installed local agent smoke failed at " + stage.name)
-		}
-		if stage.name == "smoke-capabilities" &&
-			(!jsonContainsString(output, "mindline.scoped-recall.v0.4") ||
-				!jsonContainsString(output, agentcontract.AgentRegistrationCapability)) {
-			return errors.New("installed local agent lacks required agent capabilities")
-		}
-		if stage.name == "smoke-status" && !jsonObjectFieldEquals(output, "service_state", "ready") {
-			return errors.New("installed local agent status is not ready")
-		}
-		if err := installFaultHook(stage.name); err != nil {
-			return err
-		}
+	if err := waitForInstalledSmoke(binaryPath,
+		[]string{"agent", "status", "--config", configPath},
+		func(output []byte) (bool, error) {
+			return jsonObjectFieldEquals(output, "service_state", "ready"), nil
+		},
+	); err != nil {
+		return errors.New("installed local agent status is not ready")
 	}
-	output, exitCode, err := installSmokeRunner(binaryPath,
-		"agent", "search", "mindline install smoke", "--scope", "__mindline_install_missing_scope__",
+	if err := installFaultHook("smoke-status"); err != nil {
+		return err
+	}
+	output, exitCode, err := installSmokeRunner(binaryPath, "agent-only", "help")
+	if err != nil || exitCode != 0 || !bytes.Contains(output, []byte("agent-only search")) ||
+		bytes.Contains(output, []byte("scope-list")) {
+		return errors.New("installed local agent-only surface is unavailable")
+	}
+	if err := installFaultHook("smoke-agent-only-help"); err != nil {
+		return err
+	}
+	output, exitCode, err = installSmokeRunner(binaryPath,
+		"agent-only", "search", "mindline install smoke", "--scope", "__mindline_install_missing_scope__",
 		"--lens", "__mindline_install_missing_lens__", "--agent", "__mindline_install_missing_actor__",
 		"--format", "compact-scoped-v0.4", "--config", configPath,
 	)
@@ -553,7 +576,37 @@ func smokeInstalledCandidate(binaryPath, configPath string) error {
 	if err := installFaultHook("smoke-scoped-fail-closed"); err != nil {
 		return err
 	}
+	output, exitCode, err = installSmokeRunner(binaryPath, "agent-only", "scope-list")
+	if err != nil || exitCode != 2 || !jsonObjectFieldEquals(output, "error_code", "route_not_available") {
+		return errors.New("installed local agent-only surface exposed owner routes")
+	}
+	if err := installFaultHook("smoke-owner-route-fail-closed"); err != nil {
+		return err
+	}
 	return nil
+}
+
+func waitForInstalledSmoke(
+	binaryPath string, args []string, validate func([]byte) (bool, error),
+) error {
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		output, exitCode, err := installSmokeRunner(binaryPath, args...)
+		if err == nil && exitCode == 0 && json.Valid(output) {
+			ready, validationErr := validate(output)
+			if validationErr != nil {
+				return validationErr
+			}
+			if ready {
+				return nil
+			}
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return errors.New("installed local agent smoke readiness timed out")
+		}
+		time.Sleep(min(50*time.Millisecond, remaining))
+	}
 }
 
 func runInstallSmokeCommand(binaryPath string, args ...string) ([]byte, int, error) {
@@ -612,7 +665,7 @@ func jsonObjectFieldEquals(data []byte, field, expected string) bool {
 }
 
 func agentSkill(binaryPath, configPath string) string {
-	workflow := agentcontract.NewWorkflow(binaryPath, configPath)
+	workflow := agentcontract.NewNamespacedWorkflow(binaryPath, "agent-only", configPath)
 	return fmt.Sprintf(`---
 name: mindline
 description: Retrieve cited private personal evidence through an existing project scope, lens, and stable local agent identity, then record isolated retry-safe feedback.

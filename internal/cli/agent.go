@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/synergyai-os/Mindline/internal/agentcontract"
 	"github.com/synergyai-os/Mindline/internal/agentstate"
 	"github.com/synergyai-os/Mindline/internal/localservice"
 	"github.com/synergyai-os/Mindline/internal/personalmemory"
@@ -158,6 +159,12 @@ func (r Runner) runAgentSearch(args []string, stdout, stderr io.Writer) int {
 		if err != nil {
 			return agentFailure(stderr, err)
 		}
+		if r.agentNamespace == "agent-only" && packet.AuditState != "recorded" {
+			return writeAgentContractError(
+				stderr, "scoped_search", "audit_receipt_unavailable", false, "upgrade_mindline",
+			)
+		}
+		packet.NextActions = r.scopedNextActions(packet, options.configPath)
 		return encodePersonalMemoryJSON(stdout, stderr, packet)
 	}
 	if format != "" && format != "legacy-v0.2" && format != "compact-v0.3" {
@@ -192,6 +199,33 @@ func (r Runner) runAgentSearch(args []string, stdout, stderr io.Writer) int {
 		return agentFailure(stderr, err)
 	}
 	return encodePersonalMemoryJSON(stdout, stderr, packet)
+}
+
+func (r Runner) scopedNextActions(
+	packet personalmemory.CompactContextPacket, configPath string,
+) *personalmemory.AgentNextActions {
+	workflow := r.agentWorkflow(configPath)
+	bind := func(command string) string {
+		return strings.NewReplacer(
+			"<run>", agentcontract.ShellQuote(packet.RunID),
+			"<scope>", agentcontract.ShellQuote(packet.ScopeID),
+			"<lens>", agentcontract.ShellQuote(packet.LensID),
+			"<actor>", agentcontract.ShellQuote(packet.AgentID),
+		).Replace(command)
+	}
+	actions := &personalmemory.AgentNextActions{
+		State: "select_citations", NewQueryRule: "different_query_same_binding_only",
+		ForbiddenFallbacks: []string{"memory search", "memory get", "unscoped agent search", "unscoped agent get"},
+	}
+	if packet.AnswerState == "abstained" {
+		actions.State = "stop_or_new_query_same_binding"
+		actions.AbstentionTerminal = true
+		return actions
+	}
+	actions.HydrateSelectedCommand = bind(workflow.Get)
+	actions.FeedbackTokenCommand = workflow.FeedbackToken
+	actions.FeedbackCommand = bind(workflow.Feedback)
+	return actions
 }
 
 func supportsSearchFormat(formats []string, expected string) bool {
