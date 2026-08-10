@@ -161,10 +161,15 @@ func validateOwnerManifestStructure(manifest OwnerManifest) error {
 		default:
 			return errors.New("owner manifest has unsupported case kind")
 		}
+		expected := make(map[string]struct{}, len(item.ExpectedCanonicalCommitments))
 		for _, commitment := range item.ExpectedCanonicalCommitments {
 			if !isFingerprint(commitment) {
 				return errors.New("owner manifest contains a non-commitment expected record")
 			}
+			if _, duplicate := expected[commitment]; duplicate {
+				return errors.New("owner manifest repeats an expected record")
+			}
+			expected[commitment] = struct{}{}
 		}
 	}
 	if answerable < 12 || noAnswer < 8 {
@@ -186,6 +191,9 @@ func ownerManifestFingerprintUnchecked(manifest OwnerManifest) (string, error) {
 	canonical.Cases = append([]OwnerCase(nil), manifest.Cases...)
 	sort.Slice(canonical.Cases, func(i, j int) bool { return canonical.Cases[i].CaseID < canonical.Cases[j].CaseID })
 	for index := range canonical.Cases {
+		canonical.Cases[index].ExpectedCanonicalCommitments = append(
+			[]string(nil), canonical.Cases[index].ExpectedCanonicalCommitments...,
+		)
 		sort.Strings(canonical.Cases[index].ExpectedCanonicalCommitments)
 	}
 	data, err := json.Marshal(canonical)

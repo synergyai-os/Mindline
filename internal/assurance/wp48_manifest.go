@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"syscall"
 )
 
 const (
@@ -65,9 +66,17 @@ func LoadSignedWP48Manifest(path string) (WP48Manifest, error) {
 	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 		return WP48Manifest{}, errors.New("WP-48 manifest must be a regular non-symlink file")
 	}
-	data, err := os.ReadFile(path)
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return WP48Manifest{}, err
+	}
+	defer file.Close()
+	if info.Size() != int64(len(embeddedWP48Manifest)) {
+		return WP48Manifest{}, errors.New("WP-48 source manifest differs from embedded manifest")
+	}
+	data, err := io.ReadAll(io.LimitReader(file, int64(len(embeddedWP48Manifest))+1))
+	if err != nil || len(data) != len(embeddedWP48Manifest) {
+		return WP48Manifest{}, errors.New("WP-48 source manifest differs from embedded manifest")
 	}
 	if !bytes.Equal(data, embeddedWP48Manifest) {
 		return WP48Manifest{}, errors.New("WP-48 source manifest differs from embedded manifest")

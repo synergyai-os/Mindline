@@ -1,6 +1,7 @@
 package recallproof
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -10,7 +11,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"time"
 
 	"github.com/synergyai-os/Mindline/internal/assurance"
 )
@@ -22,21 +25,34 @@ type DirectExecutor interface {
 }
 
 type CommandResult struct {
-	ExitCode int
-	Stdout   []byte
-	Stderr   []byte
+	ExitCode        int
+	Stdout          []byte
+	Stderr          []byte
+	ToolFingerprint string
 }
 
 type OSDirectExecutor struct{}
 
 func (OSDirectExecutor) Run(ctx context.Context, directory, tool string, argv []string) CommandResult {
-	command := exec.CommandContext(ctx, tool, argv...)
+	executable, identity, err := approvedProofExecutable(tool)
+	if err != nil {
+		return CommandResult{ExitCode: -1}
+	}
+	commandContext, cancel := context.WithTimeout(ctx, 12*time.Minute)
+	defer cancel()
+	command := exec.CommandContext(commandContext, executable, argv...)
 	command.Dir = directory
-	command.Env = append(os.Environ(), "GOCACHE=/tmp/mindline-wp48-proof-gocache")
-	stdout, stderr := &strings.Builder{}, &strings.Builder{}
+	command.Env = proofEnvironment(directory)
+	assurance.ConfigureBoundedProcess(command)
+	stdout, stderr := &proofOutputBuffer{}, &proofOutputBuffer{}
 	command.Stdout, command.Stderr = stdout, stderr
-	err := command.Run()
-	result := CommandResult{Stdout: []byte(stdout.String()), Stderr: []byte(stderr.String())}
+	err = command.Run()
+	result := CommandResult{Stdout: stdout.Bytes(), Stderr: stderr.Bytes(), ToolFingerprint: identity}
+	after, afterErr := executableFingerprint(executable)
+	if stdout.exceeded || stderr.exceeded || afterErr != nil || after != identity {
+		result.ExitCode = -1
+		return result
+	}
 	if err == nil {
 		return result
 	}
@@ -46,6 +62,83 @@ func (OSDirectExecutor) Run(ctx context.Context, directory, tool string, argv []
 	}
 	result.ExitCode = -1
 	return result
+}
+
+func approvedProofExecutable(tool string) (string, string, error) {
+	var path string
+	switch tool {
+	case "go":
+		path = filepath.Join(runtime.GOROOT(), "bin", "go")
+	case "git":
+		if runtime.GOOS == "darwin" {
+			path = "/usr/bin/git"
+		} else if _, err := os.Stat("/usr/bin/git"); err == nil {
+			path = "/usr/bin/git"
+		} else {
+			path = "/bin/git"
+		}
+	default:
+		return "", "", errors.New("proof executable is not allowlisted")
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil || !filepath.IsAbs(resolved) {
+		return "", "", errors.New("proof executable identity is unavailable")
+	}
+	info, err := os.Stat(resolved)
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
+		return "", "", errors.New("proof executable identity is unavailable")
+	}
+	identity, err := executableFingerprint(resolved)
+	return resolved, identity, err
+}
+
+func executableFingerprint(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	digest := sha256.New()
+	if _, err := io.Copy(digest, file); err != nil {
+		return "", err
+	}
+	return "sha256:" + hex.EncodeToString(digest.Sum(nil)), nil
+}
+
+func proofEnvironment(directory string) []string {
+	home, _ := os.UserHomeDir()
+	digest := sha256.Sum256([]byte(filepath.Clean(directory)))
+	cache := filepath.Join(os.TempDir(), "mindline-wp48-proof-"+hex.EncodeToString(digest[:8]))
+	_ = os.MkdirAll(cache, 0o700)
+	path := strings.Join([]string{filepath.Join(runtime.GOROOT(), "bin"), "/usr/bin", "/bin", "/usr/sbin", "/sbin"}, string(os.PathListSeparator))
+	return []string{
+		"HOME=" + home, "TMPDIR=" + os.TempDir(), "PATH=" + path,
+		"GOROOT=" + runtime.GOROOT(), "GOCACHE=" + cache,
+		"GOTOOLCHAIN=local", "GOENV=off", "GOFLAGS=", "GOWORK=off", "GOPROXY=off",
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
+		"LANG=C", "LC_ALL=C", "NO_PROXY=127.0.0.1,localhost",
+	}
+}
+
+type proofOutputBuffer struct {
+	bytes.Buffer
+	exceeded bool
+}
+
+func (buffer *proofOutputBuffer) Write(value []byte) (int, error) {
+	const maximum = 8 << 20
+	original := len(value)
+	remaining := maximum - buffer.Len()
+	if remaining <= 0 {
+		buffer.exceeded = true
+		return original, nil
+	}
+	if len(value) > remaining {
+		value = value[:remaining]
+		buffer.exceeded = true
+	}
+	_, _ = buffer.Buffer.Write(value)
+	return original, nil
 }
 
 type ReusableProofRunner struct{ Executor DirectExecutor }
@@ -144,7 +237,7 @@ func currentExecutableFingerprint() (string, error) {
 }
 
 func commandCommitment(tool string, argv []string, result CommandResult) string {
-	value := tool + "\x00" + strings.Join(argv, "\x00") + fmt.Sprintf("\x00%d\x00", result.ExitCode)
+	value := tool + "\x00" + result.ToolFingerprint + "\x00" + strings.Join(argv, "\x00") + fmt.Sprintf("\x00%d\x00", result.ExitCode)
 	value += string(result.Stdout) + "\x00" + string(result.Stderr)
 	return shaCommitment([]byte(value))
 }

@@ -93,6 +93,9 @@ func (store *Store) ApplyScopedJudgment(ctx context.Context, request ScopedJudgm
 		}
 		judgment.Effect = effect
 	}
+	if err := store.preflightScopedJudgmentRecovery(ctx, judgment); err != nil {
+		return ScopedJudgment{}, err
+	}
 	_, err := store.db.ExecContext(ctx, `INSERT INTO scoped_judgments(
 		judgment_id, idempotency_key, run_id, scope_id, lens_id, agent_id,
 		record_id, actor, disposition, reason, reverses_judgment_id, effect, created_at

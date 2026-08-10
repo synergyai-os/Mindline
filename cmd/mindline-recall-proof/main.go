@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	"github.com/synergyai-os/Mindline/internal/privateio"
 	"github.com/synergyai-os/Mindline/internal/recallproof"
@@ -24,6 +25,7 @@ func main() {
 }
 
 func run(args []string, stdin io.Reader) error {
+	const maximumProofInputBytes = 64 << 10
 	if len(args) == 1 && args[0] == "live-config-fingerprint" {
 		return json.NewEncoder(os.Stdout).Encode(map[string]string{
 			"schema_version": "mindline-recall-live-configuration-receipt/v0.1",
@@ -37,7 +39,7 @@ func run(args []string, stdin io.Reader) error {
 		if args[1] != "-" {
 			return errors.New("run-pre-live accepts its binding only on stdin")
 		}
-		data, err := io.ReadAll(io.LimitReader(stdin, 64<<10))
+		data, err := readBounded(stdin, maximumProofInputBytes)
 		if err != nil {
 			return errors.New("read pre-live binding")
 		}
@@ -58,7 +60,7 @@ func run(args []string, stdin io.Reader) error {
 		return json.NewEncoder(os.Stdout).Encode(artifact)
 	}
 	if args[0] == "authorize-pre-live" {
-		data, err := io.ReadAll(io.LimitReader(stdin, 64<<10))
+		data, err := readBounded(stdin, maximumProofInputBytes)
 		if err != nil {
 			return errors.New("read pre-live binding")
 		}
@@ -100,7 +102,7 @@ func run(args []string, stdin io.Reader) error {
 			"fingerprint":    receipt.ReusableProofFingerprint,
 		})
 	}
-	data, err := os.ReadFile(args[1])
+	data, err := readBoundedRegular(args[1], maximumProofInputBytes)
 	if err != nil {
 		return err
 	}
@@ -133,6 +135,27 @@ func run(args []string, stdin io.Reader) error {
 	default:
 		return errors.New("unknown command")
 	}
+}
+
+func readBounded(reader io.Reader, maximum int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(reader, maximum+1))
+	if err != nil || int64(len(data)) > maximum {
+		return nil, errors.New("proof input exceeds limit")
+	}
+	return data, nil
+}
+
+func readBoundedRegular(path string, maximum int64) ([]byte, error) {
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() > maximum {
+		return nil, errors.New("proof input is unavailable")
+	}
+	return readBounded(file, maximum)
 }
 
 func decodeStrict(data []byte, target any) error {

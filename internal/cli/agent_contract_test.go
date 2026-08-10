@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -110,6 +111,23 @@ func TestMalformedScopedCommandsNeverExposeGlobalUsage(t *testing.T) {
 				t.Fatalf("failure=%v err=%v", failure, err)
 			}
 		})
+	}
+}
+
+func TestScopedFeedbackReverseFailuresKeepReverseOperation(t *testing.T) {
+	tests := [][]string{
+		{"agent", "feedback-reverse", "--scope", "project", "--lens", "product", "--actor", "agent", "--judgment", "judgment", "--idempotency-key", "key"},
+		{"agent", "feedback-reverse", "--scope", "project", "--lens", "product", "--agent", "outside", "--actor", "agent", "--judgment", "judgment"},
+		{"agent", "feedback-reverse", "--scope", "project", "--lens", "product", "--agent", "outside", "--actor", "agent", "--judgment", "judgment", "--idempotency-key", "key"},
+	}
+	for _, args := range tests {
+		var stdout, stderr bytes.Buffer
+		code := NewRunner(NewMemoryFS()).Run(args, &stdout, &stderr)
+		var failure agentContractError
+		if code != ExitProcess || stdout.Len() != 0 || json.Unmarshal(stderr.Bytes(), &failure) != nil ||
+			failure.Operation != "feedback_reverse" || strings.Contains(stderr.String(), "usage:") {
+			t.Fatalf("args=%v code=%d stdout=%s stderr=%s failure=%+v", args, code, stdout.String(), stderr.String(), failure)
+		}
 	}
 }
 
@@ -267,6 +285,72 @@ func TestAgentDiscoverDoesNotRestartAnUnavailableService(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(config.RuntimeRoot, "install.json")); !os.IsNotExist(err) {
 		t.Fatalf("read-only discovery created an install receipt: %v", err)
+	}
+}
+
+func TestAgentDiscoverUsesOneBoundedDeadlineForHungService(t *testing.T) {
+	for _, hangAt := range []string{"status", "capabilities"} {
+		t.Run(hangAt, func(t *testing.T) {
+			configPath, closeServer := startHangingDiscoveryServer(t, hangAt)
+			defer closeServer()
+			runner := NewRunner(NewOSFileSystem())
+			runner.agentDiscoveryTimeout = 75 * time.Millisecond
+			var stdout, stderr bytes.Buffer
+			started := time.Now()
+			code := runner.Run([]string{"agent", "discover", "--scope", "project",
+				"--lens", "product", "--agent", "outside", "--config", configPath}, &stdout, &stderr)
+			if elapsed := time.Since(started); elapsed > time.Second {
+				t.Fatalf("discovery exceeded bounded deadline: %s", elapsed)
+			}
+			var failure agentContractError
+			if code != ExitProcess || stdout.Len() != 0 ||
+				json.Unmarshal(stderr.Bytes(), &failure) != nil ||
+				failure.Operation != "discover" || failure.ErrorCode != "service_unavailable" ||
+				!failure.Retryable {
+				t.Fatalf("code=%d stdout=%s failure=%+v stderr=%s", code, stdout.String(), failure, stderr.String())
+			}
+		})
+	}
+}
+
+func startHangingDiscoveryServer(t *testing.T, hangAt string) (string, func()) {
+	t.Helper()
+	root, err := os.MkdirTemp("/tmp", "mindline-discovery-deadline-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := localservice.ConfigFromRoots(filepath.Join(root, "runtime"), filepath.Join(root, "memory"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(config.RuntimeRoot, "config.json")
+	if err := localservice.SaveConfig(configPath, config); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("unix", config.SocketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/status", func(writer http.ResponseWriter, request *http.Request) {
+		if hangAt == "status" {
+			<-request.Context().Done()
+			return
+		}
+		writeLegacyAgentEnvelope(t, writer, localservice.Status{SchemaVersion: localservice.APISchemaVersion, ServiceState: "ready"})
+	})
+	mux.HandleFunc("GET /v1/capabilities", func(_ http.ResponseWriter, request *http.Request) {
+		<-request.Context().Done()
+	})
+	server := &http.Server{Handler: mux}
+	result := make(chan error, 1)
+	go func() { result <- server.Serve(listener) }()
+	return configPath, func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+		<-result
+		_ = os.RemoveAll(root)
 	}
 }
 

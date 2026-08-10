@@ -30,6 +30,8 @@ type liveConfiguration struct {
 	MaximumRepositoryContentBytes int64  `json:"maximum_repository_content_bytes"`
 	MaximumRecords                int    `json:"maximum_records"`
 	MaximumResources              int    `json:"maximum_resources"`
+	MaximumQueueItems             int    `json:"maximum_queue_items"`
+	MaximumQueueBytes             int64  `json:"maximum_queue_bytes"`
 
 	MaximumLensRequestRunes      int `json:"maximum_lens_request_runes"`
 	MaximumRetrievalContentBytes int `json:"maximum_retrieval_content_bytes"`
@@ -64,6 +66,8 @@ func currentLiveConfiguration() liveConfiguration {
 		MaximumRepositoryContentBytes: personalmemory.MaximumRepositoryContentBytes,
 		MaximumRecords:                personalmemory.MaximumRecords,
 		MaximumResources:              personalmemory.MaximumResources,
+		MaximumQueueItems:             resourcequeue.MaximumQueueItems,
+		MaximumQueueBytes:             resourcequeue.MaximumQueueBytes,
 
 		MaximumLensRequestRunes:      personalmemory.MaximumLensRequestRunes,
 		MaximumRetrievalContentBytes: personalmemory.MaximumRetrievalContentBytes,

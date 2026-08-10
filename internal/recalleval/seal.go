@@ -25,7 +25,7 @@ type DraftCase struct {
 }
 
 func SealOwnerManifest(ctx context.Context, draft DraftManifest, canonical CanonicalEvidencePort) (OwnerManifest, error) {
-	if draft.SchemaVersion != DraftManifestSchemaVersion || canonical == nil {
+	if canonical == nil || validateDraftManifestStructure(draft) != nil {
 		return OwnerManifest{}, errors.New("retrieval evaluation draft is incomplete")
 	}
 	manifest := OwnerManifest{
@@ -35,9 +35,6 @@ func SealOwnerManifest(ctx context.Context, draft DraftManifest, canonical Canon
 	}
 	for _, item := range draft.Cases {
 		sealed := OwnerCase{CaseID: item.CaseID, Kind: item.Kind, Query: item.Query}
-		if item.Kind == CaseNoAnswer && len(item.ExpectedRecordIDs) != 0 {
-			return OwnerManifest{}, errors.New("no-answer draft case has expected records")
-		}
 		for _, recordID := range item.ExpectedRecordIDs {
 			evidence, err := canonical.GetCanonicalEvidence(ctx, recordID)
 			if err != nil {
@@ -63,4 +60,54 @@ func SealOwnerManifest(ctx context.Context, draft DraftManifest, canonical Canon
 	}
 	manifest.Fingerprint = fingerprint
 	return manifest, manifest.Validate()
+}
+
+// validateDraftManifestStructure rejects the complete private label shape
+// before any canonical evidence is hydrated. That makes invalid denominators
+// side-effect free and prevents duplicate labels from being counted twice.
+func validateDraftManifestStructure(draft DraftManifest) error {
+	if draft.SchemaVersion != DraftManifestSchemaVersion ||
+		!isFingerprint(draft.LibraryFingerprint) || !isFingerprint(draft.ReviewerFingerprint) ||
+		draft.Baseline.Validate() != nil || len(draft.Cases) < 20 {
+		return errors.New("retrieval evaluation draft is incomplete")
+	}
+	caseIDs := make(map[string]struct{}, len(draft.Cases))
+	answerable, noAnswer := 0, 0
+	for _, item := range draft.Cases {
+		if !caseIDPattern.MatchString(item.CaseID) || item.Query == "" {
+			return errors.New("retrieval evaluation draft contains an invalid case")
+		}
+		if _, duplicate := caseIDs[item.CaseID]; duplicate {
+			return errors.New("retrieval evaluation draft repeats a case")
+		}
+		caseIDs[item.CaseID] = struct{}{}
+		switch item.Kind {
+		case CaseAnswerable:
+			answerable++
+			if len(item.ExpectedRecordIDs) == 0 {
+				return errors.New("answerable draft case has no expected records")
+			}
+		case CaseNoAnswer:
+			noAnswer++
+			if len(item.ExpectedRecordIDs) != 0 {
+				return errors.New("no-answer draft case has expected records")
+			}
+		default:
+			return errors.New("retrieval evaluation draft has unsupported case kind")
+		}
+		expected := make(map[string]struct{}, len(item.ExpectedRecordIDs))
+		for _, recordID := range item.ExpectedRecordIDs {
+			if recordID == "" {
+				return errors.New("retrieval evaluation draft has empty expected record")
+			}
+			if _, duplicate := expected[recordID]; duplicate {
+				return errors.New("retrieval evaluation draft repeats an expected record")
+			}
+			expected[recordID] = struct{}{}
+		}
+	}
+	if answerable < 12 || noAnswer < 8 {
+		return errors.New("retrieval evaluation draft requires 12 answerable and 8 no-answer cases")
+	}
+	return nil
 }

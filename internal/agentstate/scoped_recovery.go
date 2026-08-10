@@ -120,6 +120,31 @@ func (store *Store) preflightScopedRetrievalRecovery(ctx context.Context, trace 
 	return nil
 }
 
+// preflightScopedJudgmentRecovery proves that the exact post-commit judgment
+// projection fits before the durable database mutation begins. The caller
+// holds mutationMu, so the projection cannot drift between this check and the
+// insert.
+func (store *Store) preflightScopedJudgmentRecovery(ctx context.Context, judgment ScopedJudgment) error {
+	snapshot, err := store.buildScopedRecoverySnapshot(ctx)
+	if err != nil {
+		return err
+	}
+	snapshot.Judgments = append(snapshot.Judgments, judgment)
+	sort.Slice(snapshot.Judgments, func(i, j int) bool {
+		if snapshot.Judgments[i].CreatedAt == snapshot.Judgments[j].CreatedAt {
+			return snapshot.Judgments[i].JudgmentID < snapshot.Judgments[j].JudgmentID
+		}
+		return snapshot.Judgments[i].CreatedAt < snapshot.Judgments[j].CreatedAt
+	})
+	if err := validateScopedRecoverySnapshot(snapshot); err != nil {
+		return errors.New("preflight scoped agent recovery snapshot")
+	}
+	if _, err := encodeScopedRecoverySnapshot(snapshot, store.scopedRecoveryLimit()); err != nil {
+		return errors.New("preflight scoped agent recovery snapshot")
+	}
+	return nil
+}
+
 func writeScopedRecoverySnapshotFile(path string, snapshot scopedRecoverySnapshot, maximum int64) error {
 	data, err := encodeScopedRecoverySnapshot(snapshot, maximum)
 	if err != nil {

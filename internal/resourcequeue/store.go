@@ -16,7 +16,12 @@ const (
 	backupFileName    = "resource-queue.backup.json"
 	queueLockName     = "resource-queue.lock"
 	operationLockName = "resource-queue-operation.lock"
-	maxQueueBytes     = 4 << 20
+	// A canonical personal-memory library may contain 250,000 resources. The
+	// derived queue contains only fixed identifiers and structural counters;
+	// 64 MiB admits that full denominator, including terminal reason fields,
+	// while preserving a hard allocation and persistence boundary.
+	MaximumQueueBytes = 64 << 20
+	maxQueueBytes     = MaximumQueueBytes
 )
 
 // Store serializes all queue transitions under an owner-only advisory lock.
@@ -109,16 +114,22 @@ func (store *Store) update(change func(*Queue) error) (Queue, error) {
 }
 
 func (store *Store) Enqueue(resourceIDs []string) (Queue, error) {
+	if len(resourceIDs) > MaximumQueueItems {
+		return Queue{}, errors.New("resource queue membership exceeds limit")
+	}
 	return store.update(func(queue *Queue) error {
 		known := map[string]bool{}
 		for _, item := range queue.Items {
 			known[item.ResourceID] = true
 		}
 		for _, resourceID := range resourceIDs {
-			if resourceID == "" {
+			if !validQueueText(resourceID, maximumResourceIDBytes) {
 				return errors.New("resource queue resource ID is empty")
 			}
 			if !known[resourceID] {
+				if len(queue.Items) >= MaximumQueueItems {
+					return errors.New("resource queue membership exceeds limit")
+				}
 				queue.Items = append(queue.Items, Item{JobID: JobIdentity(queue.Profile, resourceID), ResourceID: resourceID, State: StateQueued})
 				known[resourceID] = true
 			}
@@ -143,9 +154,12 @@ func (store *Store) PruneMembership(resourceIDs []string) (Queue, error) {
 }
 
 func (store *Store) updateMembership(resourceIDs []string, addMissing bool) (Queue, error) {
+	if len(resourceIDs) > MaximumQueueItems {
+		return Queue{}, errors.New("resource queue membership exceeds limit")
+	}
 	desired := make(map[string]bool, len(resourceIDs))
 	for _, resourceID := range resourceIDs {
-		if resourceID == "" || desired[resourceID] {
+		if !validQueueText(resourceID, maximumResourceIDBytes) || desired[resourceID] {
 			return Queue{}, errors.New("invalid resource queue membership")
 		}
 		desired[resourceID] = true
@@ -224,6 +238,9 @@ func (store *Store) updateMembership(resourceIDs []string, addMissing bool) (Que
 // Rebuild replaces the complete derived queue from canonical resource state.
 // It cannot import URLs, content, attempts, or prior budget counters.
 func (store *Store) Rebuild(items []RebuildItem) (Queue, error) {
+	if len(items) > MaximumQueueItems {
+		return Queue{}, errors.New("resource queue membership exceeds limit")
+	}
 	return store.update(func(queue *Queue) error {
 		queue.Counters = Counters{}
 		queue.GenerationKind = ""
@@ -236,7 +253,7 @@ func (store *Store) Rebuild(items []RebuildItem) (Queue, error) {
 		queue.Items = make([]Item, 0, len(items))
 		seen := map[string]bool{}
 		for _, input := range items {
-			if input.ResourceID == "" || seen[input.ResourceID] {
+			if !validQueueText(input.ResourceID, maximumResourceIDBytes) || seen[input.ResourceID] {
 				return errors.New("invalid resource queue rebuild item")
 			}
 			seen[input.ResourceID] = true

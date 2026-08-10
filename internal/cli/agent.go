@@ -310,13 +310,13 @@ func agentClient(configPath string) (*localservice.Client, error) {
 	return nil, errors.New("local agent service is unavailable after one restart attempt")
 }
 
-func readOnlyAgentClient(configPath string) (*localservice.Client, error) {
+func readOnlyAgentClient(ctx context.Context, configPath string) (*localservice.Client, error) {
 	config, err := localservice.LoadConfig(configPath)
 	if err != nil {
 		return nil, err
 	}
 	client := localservice.NewClient(config.SocketPath)
-	if _, err := client.Status(context.Background()); err != nil {
+	if _, err := client.Status(ctx); err != nil {
 		return nil, errors.New("local agent service is unavailable")
 	}
 	return client, nil

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/synergyai-os/Mindline/internal/agentcontract"
 	"github.com/synergyai-os/Mindline/internal/agentstate"
@@ -61,25 +62,34 @@ func (r Runner) runAgentDiscover(args []string, stdout, stderr io.Writer) int {
 		options.values["agent"] == "" {
 		return writeAgentContractError(stderr, "discover", "incomplete_binding", false, "request_owner_binding")
 	}
-	client, err := readOnlyAgentClient(options.configPath)
+	timeout := r.agentDiscoveryTimeout
+	if timeout <= 0 {
+		timeout = 2 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	client, err := readOnlyAgentClient(ctx, options.configPath)
 	if err != nil {
 		return writeAgentContractError(stderr, "discover", "service_unavailable", true, "retry_service")
 	}
-	capabilities, err := client.Capabilities(context.Background())
-	if err != nil || !supportsSearchFormat(capabilities.Features, localservice.DiscoveryCapability) {
+	capabilities, err := client.Capabilities(ctx)
+	if err != nil {
+		return writeAgentContractError(stderr, "discover", "service_unavailable", true, "retry_service")
+	}
+	if !supportsSearchFormat(capabilities.Features, localservice.DiscoveryCapability) {
 		return writeAgentContractError(stderr, "discover", "capability_unavailable", false, "upgrade_mindline")
 	}
-	scopes, err := client.ListScopes(context.Background())
+	scopes, err := client.ListScopes(ctx)
 	if err != nil {
 		return writeAgentContractError(stderr, "discover", "service_unavailable", true, "retry_service")
 	}
-	actors, err := client.ListActors(context.Background())
+	actors, err := client.ListActors(ctx)
 	if err != nil {
 		return writeAgentContractError(stderr, "discover", "service_unavailable", true, "retry_service")
 	}
-	lenses, err := client.ListScopedLenses(context.Background(), options.values["scope"])
+	lenses, err := client.ListScopedLenses(ctx, options.values["scope"])
 	if err != nil {
-		return writeAgentContractError(stderr, "discover", "binding_not_found", false, "request_owner_binding")
+		return writeAgentContractError(stderr, "discover", "service_unavailable", true, "retry_service")
 	}
 	scope, ok := findScope(scopes, options.values["scope"])
 	if !ok {

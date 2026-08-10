@@ -451,6 +451,44 @@ func TestScopedRetrievalPreflightsRecoveryCapacityBeforeCommit(t *testing.T) {
 	}
 }
 
+func TestScopedFeedbackPreflightsRecoveryCapacityBeforeCommit(t *testing.T) {
+	now := time.Date(2026, 8, 10, 13, 0, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "state", "agent.sqlite")
+	store, err := Open(path, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	seedScopedContexts(t, store, ctx, now)
+	before, err := os.ReadFile(scopedRecoveryPath(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := ScopedJudgmentRequest{
+		RetryToken: "capacity-feedback-token-123456", RunID: "run-scope-a-agent-a",
+		ScopeID: "scope-a", LensID: "lens-one", AgentID: "agent-a",
+		RecordID: "record-one", Actor: FeedbackAgent, Disposition: "used",
+		Reason: strings.Repeat("r", 256),
+	}
+	store.scopedRecoveryByteLimit = int64(len(before) + 8)
+	if _, err := store.ApplyScopedJudgment(ctx, request); err == nil {
+		t.Fatal("oversized feedback recovery projection was committed")
+	}
+	var count int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM scoped_judgments`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("rejected feedback reached database: count=%d err=%v", count, err)
+	}
+	after, err := os.ReadFile(scopedRecoveryPath(path))
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("rejected feedback changed recovery snapshot: err=%v", err)
+	}
+	store.scopedRecoveryByteLimit = 0
+	if _, err := store.ApplyScopedJudgment(ctx, request); err != nil {
+		t.Fatalf("exact retry collided after preflight rejection: %v", err)
+	}
+}
+
 func TestScopedRetrievalRejectsCredentialShapedQueryBeforePersistence(t *testing.T) {
 	now := time.Date(2026, 8, 8, 11, 55, 0, 0, time.UTC)
 	path := filepath.Join(t.TempDir(), "state", "agent.sqlite")

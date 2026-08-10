@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/synergyai-os/Mindline/internal/activationcli"
@@ -86,6 +87,7 @@ type Runner struct {
 	postHogTransport           http.RoundTripper
 	productBrainTransport      http.RoundTripper
 	productBrainSecretProvider productbrain.SecretProvider
+	agentDiscoveryTimeout      time.Duration
 }
 
 type FileSystem interface {
@@ -192,7 +194,7 @@ func NewRunnerWithProtectedRoots(fileSystem FileSystem, protectedRoots []string)
 	if err != nil || strings.TrimSpace(executable) == "" {
 		executable = "mindline"
 	}
-	return Runner{fs: fileSystem, agentExecutable: executable, nativeInput: os.Stdin, operatorInput: os.Stdin, protectedRoots: append([]string(nil), protectedRoots...)}
+	return Runner{fs: fileSystem, agentExecutable: executable, nativeInput: os.Stdin, operatorInput: os.Stdin, protectedRoots: append([]string(nil), protectedRoots...), agentDiscoveryTimeout: 2 * time.Second}
 }
 
 func NewRunnerWithInput(fileSystem FileSystem, input io.Reader) Runner {

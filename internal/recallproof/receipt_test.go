@@ -1,7 +1,6 @@
 package recallproof
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -76,12 +75,7 @@ func TestAuthorityReceiptBindsExactTreeAndConfiguration(t *testing.T) {
 
 func TestAuthorityReceiptCanOnlyBeMintedFromPassingPreLivePhase(t *testing.T) {
 	binding := testBinding()
-	artifact := StructuralArtifact{
-		SchemaVersion: "mindline-reusable-proof/v0.1", Build: "wp48", State: "pass",
-		Counts:       map[string]int{"groups": 1},
-		Fingerprints: map[string]string{"proof": "sha256:" + strings.Repeat("a", 64)},
-		Tests:        map[string]bool{"passed": true},
-	}
+	artifact := validPreLiveArtifact(t)
 	receipt, err := AuthorityReceiptFromPreLive(PhaseReceipt{
 		SchemaVersion: PhaseReceiptSchema, Phase: "pre_live", Binding: binding, Artifact: artifact,
 	})

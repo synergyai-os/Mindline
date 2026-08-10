@@ -10,6 +10,8 @@ import (
 	"io"
 	"regexp"
 	"sort"
+
+	"github.com/synergyai-os/Mindline/internal/assurance"
 )
 
 // StructuralArtifact is the only exported proof shape. It has no free-form
@@ -95,9 +97,9 @@ type ReceiptVerifier interface {
 
 const PhaseReceiptSchema = "mindline-recall-phase-receipt/v0.1"
 
-// PhaseReceipt is the structural handoff used for pre-live, live, evaluation,
-// outside-agent, and final proof phases. The embedded artifact remains within
-// the strict allowlist above.
+// PhaseReceipt is a fail-closed structural handoff. Only phases with a typed,
+// exact artifact contract are accepted; later proof phases remain unavailable
+// until their producers and schemas exist.
 type PhaseReceipt struct {
 	SchemaVersion string             `json:"schema_version"`
 	Phase         string             `json:"phase"`
@@ -109,9 +111,7 @@ func (receipt PhaseReceipt) Validate() error {
 	if receipt.SchemaVersion != PhaseReceiptSchema {
 		return errors.New("unsupported phase receipt schema")
 	}
-	switch receipt.Phase {
-	case "pre_live", "live", "eval", "outside_agent", "final":
-	default:
+	if receipt.Phase != "pre_live" {
 		return errors.New("unsupported proof phase")
 	}
 	if err := receipt.Binding.Validate(); err != nil {
@@ -122,6 +122,44 @@ func (receipt PhaseReceipt) Validate() error {
 	}
 	if receipt.Artifact.State != "pass" {
 		return errors.New("phase receipt is not passing")
+	}
+	return validatePreLiveArtifact(receipt.Artifact)
+}
+
+func validatePreLiveArtifact(artifact StructuralArtifact) error {
+	if artifact.SchemaVersion != "mindline-reusable-proof/v0.1" ||
+		artifact.Build != "wp48" || artifact.State != "pass" ||
+		len(artifact.Counts) != 1 {
+		return errors.New("pre-live artifact does not match the reusable proof contract")
+	}
+	manifest, err := assurance.ParseWP48Manifest(assurance.EmbeddedWP48Manifest())
+	if err != nil {
+		return errors.New("pre-live proof manifest is unavailable")
+	}
+	expected := make(map[string]struct{})
+	for _, group := range manifest.Groups {
+		if group.Phase == "pre_live" {
+			expected[group.ID] = struct{}{}
+		}
+	}
+	if artifact.Counts["executed_pre_live_groups"] != len(expected) ||
+		len(artifact.Tests) != len(expected) || len(artifact.Fingerprints) != len(expected) {
+		return errors.New("pre-live artifact does not cover the exact proof manifest")
+	}
+	for id := range expected {
+		if !artifact.Tests[id] || artifact.Fingerprints[id] == "" {
+			return errors.New("pre-live artifact omits a required proof group")
+		}
+	}
+	for id := range artifact.Tests {
+		if _, exists := expected[id]; !exists {
+			return errors.New("pre-live artifact contains an unapproved proof group")
+		}
+	}
+	for id := range artifact.Fingerprints {
+		if _, exists := expected[id]; !exists {
+			return errors.New("pre-live artifact contains an unapproved proof fingerprint")
+		}
 	}
 	return nil
 }

@@ -1,9 +1,11 @@
 package resourcequeue
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -30,6 +32,73 @@ func TestTerminalMappingIsCanonicalAndFixed(t *testing.T) {
 		if test.state == StateBlocked && (len(missingness) != 1 || missingness[0] != "resource_blocked:"+test.reason) {
 			t.Fatalf("blocked mapping missingness = %#v", missingness)
 		}
+	}
+}
+
+func TestStorePersistsDeclaredMaximumMembership(t *testing.T) {
+	if raceEnabled {
+		t.Skip("bulk persistence boundary is proven without race instrumentation")
+	}
+	if MaximumQueueItems != personalmemory.MaximumResources {
+		t.Fatalf("queue capacity %d differs from canonical capacity %d", MaximumQueueItems, personalmemory.MaximumResources)
+	}
+	items := make([]RebuildItem, MaximumQueueItems)
+	for index := range items {
+		items[index] = RebuildItem{
+			ResourceID: fmt.Sprintf("resource-%055x", index),
+			State:      StateBlocked, Reason: "manual_processing_required",
+		}
+	}
+	root := t.TempDir()
+	store, err := NewStore(root, LiveProfile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue, err := store.Rebuild(items)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(queue.Items) != MaximumQueueItems {
+		t.Fatalf("persisted items=%d", len(queue.Items))
+	}
+	info, err := os.Stat(store.path)
+	if err != nil || info.Size() > maxQueueBytes {
+		t.Fatalf("queue size=%d max=%d err=%v", info.Size(), maxQueueBytes, err)
+	}
+	reopened, err := NewStore(root, LiveProfile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := reopened.Load()
+	if err != nil || len(loaded.Items) != MaximumQueueItems || Validate(loaded) != nil {
+		t.Fatalf("reloaded items=%d err=%v", len(loaded.Items), err)
+	}
+}
+
+func TestStoreRejectsUnsafeResourceIDWithoutReplacingQueue(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewStore(root, FixtureProfile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Enqueue([]string{"safe-resource"}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(store.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, resourceID := range []string{strings.Repeat("x", maximumResourceIDBytes+1), "unsafe<resource>"} {
+		if _, err := store.Enqueue([]string{resourceID}); err == nil {
+			t.Fatalf("unsafe resource ID %q accepted", resourceID)
+		}
+	}
+	if _, err := store.SyncMembership(make([]string, MaximumQueueItems+1)); err == nil {
+		t.Fatal("membership above declared maximum was accepted")
+	}
+	after, err := os.ReadFile(store.path)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("rejected membership replaced queue: %v", err)
 	}
 }
 

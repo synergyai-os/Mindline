@@ -29,6 +29,12 @@ const (
 	BudgetDimensionDecoded        = "decoded"
 	BudgetDimensionExtracted      = "extracted"
 	BudgetDimensionRuntimeStorage = "runtime_storage"
+
+	// MaximumQueueItems matches the canonical personal-memory resource
+	// denominator. MaxResources remains a per-generation processing budget.
+	MaximumQueueItems       = 250_000
+	maximumResourceIDBytes  = 64
+	maximumProfileNameBytes = 64
 )
 
 var fixedBlockedReasons = map[string]bool{
@@ -137,7 +143,7 @@ func SealProfile(profile BudgetProfile) BudgetProfile {
 }
 
 func ValidateProfile(profile BudgetProfile) error {
-	if profile.SchemaVersion != BudgetSchemaVersion || strings.TrimSpace(profile.Name) == "" ||
+	if profile.SchemaVersion != BudgetSchemaVersion || !validQueueText(profile.Name, maximumProfileNameBytes) ||
 		profile.MaxResources < 1 || profile.MaxRequests < 1 ||
 		profile.MaxDownloadedBytes < 1 || profile.MaxDecodedBytes < 1 || profile.MaxExtractedBytes < 1 || profile.MaxRuntimeStorageBytes < 1 ||
 		profile.MaxAttemptsPerResource < 1 || profile.MaxRunWallSeconds < 1 ||
@@ -242,6 +248,7 @@ func Seal(queue Queue) Queue {
 
 func Validate(queue Queue) error {
 	if queue.SchemaVersion != SchemaVersion || ValidateProfile(queue.Profile) != nil || queue.Generation < 0 ||
+		len(queue.Items) > MaximumQueueItems ||
 		!validGenerationKind(queue.GenerationKind) ||
 		queue.Counters.ProcessedResources < 0 || queue.Counters.Requests < 0 || queue.Counters.Attempts < 0 || queue.Counters.ReservedRequests < 0 ||
 		queue.Counters.DownloadedBytes < 0 || queue.Counters.DecodedBytes < 0 || queue.Counters.ExtractedBytes < 0 ||
@@ -250,7 +257,7 @@ func Validate(queue Queue) error {
 	}
 	seen := map[string]bool{}
 	for _, item := range queue.Items {
-		if strings.TrimSpace(item.ResourceID) == "" || item.JobID != JobIdentity(queue.Profile, item.ResourceID) || seen[item.ResourceID] || item.Attempts < 0 || item.ReservedRequests < 0 {
+		if !validQueueText(item.ResourceID, maximumResourceIDBytes) || item.JobID != JobIdentity(queue.Profile, item.ResourceID) || seen[item.ResourceID] || item.Attempts < 0 || item.ReservedRequests < 0 {
 			return errors.New("invalid resource queue item")
 		}
 		seen[item.ResourceID] = true
@@ -276,6 +283,21 @@ func Validate(queue Queue) error {
 		return errors.New("resource queue fingerprint mismatch")
 	}
 	return nil
+}
+
+func validQueueText(value string, maximumBytes int) bool {
+	if value == "" || len(value) > maximumBytes || strings.TrimSpace(value) != value {
+		return false
+	}
+	for _, character := range []byte(value) {
+		if !(character >= 'a' && character <= 'z') &&
+			!(character >= 'A' && character <= 'Z') &&
+			!(character >= '0' && character <= '9') &&
+			character != '-' && character != '_' && character != '.' && character != ':' {
+			return false
+		}
+	}
+	return true
 }
 
 func validGenerationKind(kind string) bool {

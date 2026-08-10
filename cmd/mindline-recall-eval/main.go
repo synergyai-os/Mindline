@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/synergyai-os/Mindline/internal/localservice"
 	"github.com/synergyai-os/Mindline/internal/privateio"
@@ -98,11 +99,16 @@ func run(args []string, stdin io.Reader, stdout io.Writer) error {
 }
 
 func readStrict(path string, target any) error {
-	data, err := os.ReadFile(path)
-	if err != nil || len(data) > maximumOwnerEvalBytes {
+	clean := filepath.Clean(path)
+	root, err := filepath.EvalSymlinks(filepath.Dir(clean))
+	if err != nil {
 		return errors.New("owner evaluation input unavailable")
 	}
-	return privateio.DecodeJSONStrict(data, target)
+	clean = filepath.Join(root, filepath.Base(clean))
+	if err := privateio.ReadJSONStrictBounded(root, clean, maximumOwnerEvalBytes, target); err != nil {
+		return errors.New("owner evaluation input unavailable")
+	}
+	return nil
 }
 
 func fingerprint(value any) string {
