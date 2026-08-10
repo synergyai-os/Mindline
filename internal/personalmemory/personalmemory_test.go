@@ -546,6 +546,58 @@ func TestChangedBatchFingerprintCannotRollBackCurrentCaptureToHistoricalEdit(t *
 	}
 }
 
+func TestLegacyEditedCaptureAdoptsFirstProviderRevisionTimestamp(t *testing.T) {
+	repository := populatedRepository(t)
+	editedNative := fixtureBatch()
+	editedNative.Messages[0].Text = "legacy edited meaning https://example.com/legacy"
+	editedNative.Messages[0].EditDeleteState = "edited"
+	editedNative.Messages[0].RevisionTimestamp = "1785000001.000001"
+	edited := captureBatchForTest(t, editedNative)
+	if _, err := repository.Import(edited); err != nil {
+		t.Fatal(err)
+	}
+	library, err := repository.Load()
+	if err != nil || len(library.Imports) < 2 {
+		t.Fatalf("edited fixture unavailable: imports=%d err=%v", len(library.Imports), err)
+	}
+	for index := range library.Records {
+		if library.Records[index].IdempotencyKey != edited.Records[0].IdempotencyKey {
+			continue
+		}
+		library.Records[index].RevisionAt = ""
+		library.Records[index].ContentHash = fingerprintRecord(library.Records[index])
+	}
+	imports := library.Imports[:0]
+	for _, receipt := range library.Imports {
+		if receipt.BatchFingerprint != captureBatchFingerprint(edited) {
+			imports = append(imports, receipt)
+		}
+	}
+	library.Imports = imports
+	library = sealLibrary(library)
+	if err := repository.persistLibrary(library); err != nil {
+		t.Fatal(err)
+	}
+
+	receipt, err := repository.Import(edited)
+	if err != nil || receipt.UpdatedRecords != 1 {
+		t.Fatalf("legacy edit did not adopt chronology: receipt=%+v err=%v", receipt, err)
+	}
+	migrated, err := repository.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var current CaptureRecord
+	for _, record := range migrated.Records {
+		if record.IdempotencyKey == edited.Records[0].IdempotencyKey {
+			current = record
+		}
+	}
+	if current.RevisionAt != edited.Records[0].RevisionAt || current.RawText != edited.Records[0].RawText {
+		t.Fatalf("legacy edit migration changed meaning or missed chronology: %+v", current)
+	}
+}
+
 func TestUnseenOlderEditCannotReplaceNewerCurrentEdit(t *testing.T) {
 	repository := populatedRepository(t)
 	newer := fixtureBatch()

@@ -200,6 +200,7 @@ func (repository *FileRepository) ImportManyWithinBudget(batches []CaptureBatch,
 		}
 		if exists && prior.ContentHash != final.ContentHash &&
 			prior.EditDeleteState == "edited" && final.EditDeleteState == "edited" &&
+			!legacyRevisionAttachment(prior, final) &&
 			!newerRevision(final.RevisionAt, prior.RevisionAt) {
 			return nil, errors.New("personal evidence conflicting edit has no newer chronology")
 		}
@@ -237,6 +238,18 @@ func newerRevision(candidate, current string) bool {
 	candidateTime, candidateErr := time.Parse(time.RFC3339Nano, strings.TrimSpace(candidate))
 	currentTime, currentErr := time.Parse(time.RFC3339Nano, strings.TrimSpace(current))
 	return candidateErr == nil && currentErr == nil && candidateTime.After(currentTime)
+}
+
+func legacyRevisionAttachment(prior, candidate CaptureRecord) bool {
+	if strings.TrimSpace(prior.RevisionAt) != "" || strings.TrimSpace(candidate.RevisionAt) == "" ||
+		prior.EditDeleteState != "edited" || candidate.EditDeleteState != "edited" {
+		return false
+	}
+	prior.RevisionAt = ""
+	prior.ContentHash = ""
+	candidate.RevisionAt = ""
+	candidate.ContentHash = ""
+	return fingerprintRecord(prior) == fingerprintRecord(candidate)
 }
 
 func (repository *FileRepository) applyCaptureBatch(

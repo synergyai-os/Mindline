@@ -23,6 +23,7 @@ import (
 
 	"github.com/synergyai-os/Mindline/internal/localservice"
 	"github.com/synergyai-os/Mindline/internal/recallproof"
+	"github.com/synergyai-os/Mindline/internal/repositorysnapshot"
 )
 
 const (
@@ -38,6 +39,11 @@ type buildReceipt struct {
 	BuildFingerprint string `json:"build_fingerprint"`
 	Output           string `json:"output"`
 }
+
+// auditedBuilderTreeFingerprint is set only when the delivery operator builds
+// this launcher from an independently materialized committed tree. Direct
+// ambient `go run` invocation is intentionally unable to issue a receipt.
+var auditedBuilderTreeFingerprint string
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout); err != nil {
@@ -57,6 +63,10 @@ func run(args []string, stdout io.Writer) error {
 	root, head, treeFingerprint, err := repositoryBinding()
 	if err != nil {
 		return errors.New("audited source tree unavailable")
+	}
+	if _, err := localservice.AuditedSourceTreeLinkerFlag(auditedBuilderTreeFingerprint); err != nil ||
+		auditedBuilderTreeFingerprint != treeFingerprint {
+		return errors.New("audited builder identity unavailable")
 	}
 	parent, err := filepath.EvalSymlinks(filepath.Dir(requestedOutput))
 	if err != nil || !filepath.IsAbs(parent) {
@@ -95,9 +105,16 @@ func run(args []string, stdout io.Writer) error {
 	if err := os.Mkdir(sourceSnapshot, 0o700); err != nil {
 		return errors.New("prepare audited source snapshot")
 	}
-	if err := snapshotTrackedTree(root, sourceSnapshot); err != nil {
-		return err
+	gitPath, _, err := recallproof.ApprovedProofExecutable("git")
+	if err != nil {
+		return errors.New("audited Git tool unavailable")
 	}
+	snapshotContext, cancelSnapshot := context.WithTimeout(context.Background(), 3*time.Minute)
+	if err := repositorysnapshot.Materialize(snapshotContext, gitPath, root, "HEAD", sourceSnapshot); err != nil {
+		cancelSnapshot()
+		return errors.New("prepare audited source snapshot")
+	}
+	cancelSnapshot()
 	temporaryPath := filepath.Join(stage, "mindline")
 
 	goPath, goFingerprint, err := recallproof.ApprovedProofExecutable("go")
@@ -199,23 +216,6 @@ func gitOutput(root string, args ...string) ([]byte, error) {
 		return nil, errors.New("audited Git operation failed")
 	}
 	return output.Bytes(), nil
-}
-
-func snapshotTrackedTree(root, destination string) error {
-	entries, err := gitOutput(root, "ls-files", "-s", "-z")
-	if err != nil {
-		return errors.New("audited source index unavailable")
-	}
-	for _, entry := range bytes.Split(entries, []byte{0}) {
-		if bytes.HasPrefix(entry, []byte("120000 ")) || bytes.HasPrefix(entry, []byte("160000 ")) {
-			return errors.New("audited source index contains unsupported links")
-		}
-	}
-	prefix := filepath.Clean(destination) + string(filepath.Separator)
-	if _, err := gitOutput(root, "checkout-index", "--all", "--prefix="+prefix); err != nil {
-		return errors.New("prepare audited source snapshot")
-	}
-	return nil
 }
 
 func auditedBuildEnvironment(goPath, home string) []string {

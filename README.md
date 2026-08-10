@@ -14,14 +14,14 @@ activation slice remains a separate gated Slack-to-Product-Brain proof.
 
 ## Local agent access
 
-Build once from a clean committed tree, then install the audited binary as an
-owner-only user service. The build command embeds the exact source-tree
-commitment used by retrieval evaluation:
-
-```bash
-go run ./cmd/mindline-agent-build --out /tmp/mindline
-/tmp/mindline agent install
-```
+The current proof uses an operator-mediated audited build, then installs that
+binary as an owner-only user service. The delivery operator first materializes
+the exact committed blobs outside the working tree, compiles the builder with
+the approved fingerprinted Go tool, and embeds that tree commitment in both
+the builder and service. Direct `go run ./cmd/mindline-agent-build` is not an
+authenticated bootstrap and intentionally cannot issue a ready receipt. A
+future packaged release must distribute an independently signed launcher
+before this becomes a self-service installation path.
 
 On macOS this installs a user LaunchAgent, a stable binary, a Codex-compatible
 skill, and an owner-only Unix-socket service. It uses the canonical personal

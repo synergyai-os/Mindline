@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/synergyai-os/Mindline/internal/assurance"
+	"github.com/synergyai-os/Mindline/internal/repositorysnapshot"
 )
 
 // DirectExecutor is intentionally shell-free. Stdout and stderr are held only
@@ -235,6 +236,16 @@ func (runner ReusableProofRunner) RunPreLive(ctx context.Context, repositoryRoot
 	if err := runner.verifyRepository(ctx, repositoryRoot, binding); err != nil {
 		return StructuralArtifact{}, err
 	}
+	executionRoot := repositoryRoot
+	cleanup := func() {}
+	if usesOSDirectExecutor(runner.Executor) {
+		var err error
+		executionRoot, cleanup, err = prepareProofSnapshot(ctx, repositoryRoot)
+		if err != nil {
+			return StructuralArtifact{}, err
+		}
+		defer cleanup()
+	}
 	fingerprints := map[string]string{}
 	tests := map[string]bool{}
 	count := 0
@@ -247,7 +258,7 @@ func (runner ReusableProofRunner) RunPreLive(ctx context.Context, repositoryRoot
 				return StructuralArtifact{}, errors.New("proof dependency did not pass")
 			}
 		}
-		result := runner.Executor.Run(ctx, repositoryRoot, group.Tool, group.Argv)
+		result := runner.Executor.Run(ctx, executionRoot, group.Tool, group.Argv)
 		fingerprints[group.ID] = commandCommitment(group.Tool, group.Argv, result)
 		if result.ExitCode != 0 {
 			return StructuralArtifact{}, fmt.Errorf("WP-48 proof group failed: %s (%s, exit %d)", group.ID, result.FailureCode, result.ExitCode)
@@ -262,6 +273,63 @@ func (runner ReusableProofRunner) RunPreLive(ctx context.Context, repositoryRoot
 		return StructuralArtifact{}, err
 	}
 	return StructuralArtifact{SchemaVersion: "mindline-reusable-proof/v0.1", Build: "wp48", State: "pass", Counts: map[string]int{"executed_pre_live_groups": count}, Fingerprints: fingerprints, Tests: tests}, nil
+}
+
+func usesOSDirectExecutor(executor DirectExecutor) bool {
+	switch executor.(type) {
+	case OSDirectExecutor, *OSDirectExecutor:
+		return true
+	default:
+		return false
+	}
+}
+
+func prepareProofSnapshot(ctx context.Context, repositoryRoot string) (string, func(), error) {
+	gitPath, _, err := ApprovedProofExecutable("git")
+	if err != nil {
+		return "", func() {}, errors.New("approved Git tool is unavailable")
+	}
+	stage, err := os.MkdirTemp(os.TempDir(), "mindline-wp48-source-*")
+	if err != nil {
+		return "", func() {}, errors.New("prepare exact proof source")
+	}
+	cleanup := func() { _ = os.RemoveAll(stage) }
+	if err := os.Chmod(stage, 0o700); err != nil {
+		cleanup()
+		return "", func() {}, errors.New("secure exact proof source")
+	}
+	snapshot := filepath.Join(stage, "source")
+	if err := os.Mkdir(snapshot, 0o700); err != nil {
+		cleanup()
+		return "", func() {}, errors.New("prepare exact proof source")
+	}
+	if err := repositorysnapshot.Materialize(ctx, gitPath, repositoryRoot, "HEAD", snapshot); err != nil {
+		cleanup()
+		return "", func() {}, errors.New("materialize exact proof source")
+	}
+	if err := repositorysnapshot.InitializeIndex(ctx, gitPath, snapshot); err != nil {
+		cleanup()
+		return "", func() {}, errors.New("index exact proof source")
+	}
+	proofRoot := filepath.Join(snapshot, ".productbrain", "proof")
+	if err := os.MkdirAll(proofRoot, 0o700); err != nil {
+		cleanup()
+		return "", func() {}, errors.New("prepare structural proof fixture")
+	}
+	fixture := []byte("{\"schema_version\":\"mindline-structural-proof/v0.1\",\"state\":\"pass\"}\n")
+	fixturePath := filepath.Join(proofRoot, "pre-live-structural.json")
+	file, err := os.OpenFile(fixturePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		cleanup()
+		return "", func() {}, errors.New("prepare structural proof fixture")
+	}
+	written, writeErr := file.Write(fixture)
+	closeErr := file.Close()
+	if writeErr != nil || closeErr != nil || written != len(fixture) {
+		cleanup()
+		return "", func() {}, errors.New("prepare structural proof fixture")
+	}
+	return snapshot, cleanup, nil
 }
 
 func (runner ReusableProofRunner) verifyRepository(ctx context.Context, root string, binding TreeConfigBinding) error {

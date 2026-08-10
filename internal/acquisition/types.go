@@ -65,6 +65,7 @@ type SourceRecord struct {
 	SourceRecordID     string   `json:"source_record_id"`
 	NativeMessageID    string   `json:"native_message_id"`
 	NativeTimestamp    string   `json:"native_timestamp"`
+	RevisionTimestamp  string   `json:"revision_timestamp,omitempty"`
 	ContentFingerprint string   `json:"content_fingerprint"`
 	URLOccurrenceIDs   []string `json:"url_occurrence_ids"`
 	EditDeleteState    string   `json:"edit_delete_state"`
@@ -183,6 +184,16 @@ func ValidateInventory(snapshot InventorySnapshot) error {
 		}
 		if _, err := NativeTimestampToRFC3339(record.NativeTimestamp); err != nil {
 			return errors.New("invalid source record timestamp")
+		}
+		if record.RevisionTimestamp != "" {
+			revision, revisionErr := NativeRevisionTimestampToRFC3339(record.RevisionTimestamp)
+			occurred, occurredErr := NativeRevisionTimestampToRFC3339(record.NativeTimestamp)
+			revisionTime, revisionParseErr := time.Parse(time.RFC3339Nano, revision)
+			occurredTime, occurredParseErr := time.Parse(time.RFC3339Nano, occurred)
+			if record.EditDeleteState != "edited" || revisionErr != nil || occurredErr != nil ||
+				revisionParseErr != nil || occurredParseErr != nil || !revisionTime.After(occurredTime) {
+				return errors.New("invalid source record revision timestamp")
+			}
 		}
 		if record.AttachmentCount < 0 || record.PrivateFileCount < 0 || record.PrivateFileCount > record.AttachmentCount {
 			return errors.New("invalid source file accounting")
