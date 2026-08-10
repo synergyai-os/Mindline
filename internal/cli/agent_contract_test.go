@@ -59,6 +59,7 @@ func TestAgentRegistrationFailurePreservesRetryIdentityUnlessConflictIsConfirmed
 		retryable    bool
 		repairAction string
 	}{
+		{name: "rejected input", status: http.StatusBadRequest, errorCode: "registration_rejected", repairAction: "correct_registration_input"},
 		{name: "confirmed conflict", status: http.StatusConflict, errorCode: "registration_conflict", repairAction: "create_registration_token"},
 		{name: "ambiguous server failure", status: http.StatusInternalServerError, errorCode: "registration_outcome_unknown", retryable: true, repairAction: "retry_same_registration"},
 	} {

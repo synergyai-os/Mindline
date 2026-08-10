@@ -245,8 +245,13 @@ func (r Runner) runAgentRegister(args []string, stdout, stderr io.Writer) int {
 		AgentID: agentID, Name: strings.TrimSpace(options.values["name"]),
 	})
 	if err != nil {
-		if status, known := localservice.APIStatusCode(err); known && status == http.StatusConflict {
-			return writeAgentContractError(stderr, "register", "registration_conflict", false, "create_registration_token")
+		if status, known := localservice.APIStatusCode(err); known {
+			switch status {
+			case http.StatusBadRequest:
+				return writeAgentContractError(stderr, "register", "registration_rejected", false, "correct_registration_input")
+			case http.StatusConflict:
+				return writeAgentContractError(stderr, "register", "registration_conflict", false, "create_registration_token")
+			}
 		}
 		return writeAgentContractError(stderr, "register", "registration_outcome_unknown", true, "retry_same_registration")
 	}
