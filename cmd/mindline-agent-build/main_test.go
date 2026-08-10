@@ -1,6 +1,7 @@
 package main
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -18,5 +19,15 @@ func TestAuditedBuildUsesTheSupportedExactTreeLinkerContract(t *testing.T) {
 	}
 	if !pathInside("/repo", "/repo/bin/mindline") || pathInside("/repo", "/tmp/mindline") {
 		t.Fatal("audited build output boundary drifted")
+	}
+}
+
+func TestAuditedBuildResolvesTheSystemTemporaryDirectory(t *testing.T) {
+	resolved, err := filepath.EvalSymlinks("/tmp")
+	if err != nil || !filepath.IsAbs(resolved) {
+		t.Fatalf("temporary directory is unavailable: resolved=%q err=%v", resolved, err)
+	}
+	if !filepath.IsAbs(filepath.Join(resolved, "mindline")) {
+		t.Fatal("resolved audited output is not absolute")
 	}
 }

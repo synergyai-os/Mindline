@@ -48,15 +48,23 @@ func run(args []string, stdout io.Writer) error {
 	if len(args) != 2 || args[0] != "--out" {
 		return errors.New("usage: --out <absolute-path-outside-repository>")
 	}
-	output := filepath.Clean(strings.TrimSpace(args[1]))
-	if !filepath.IsAbs(output) {
+	requestedOutput := filepath.Clean(strings.TrimSpace(args[1]))
+	if !filepath.IsAbs(requestedOutput) {
 		return errors.New("audited build output must be absolute")
 	}
 	root, head, treeFingerprint, err := repositoryBinding()
-	if err != nil || pathInside(root, output) {
+	if err != nil {
 		return errors.New("audited source tree unavailable")
 	}
-	parent := filepath.Dir(output)
+	parent, err := filepath.EvalSymlinks(filepath.Dir(requestedOutput))
+	if err != nil || !filepath.IsAbs(parent) {
+		return errors.New("audited build output directory unavailable")
+	}
+	parent = filepath.Clean(parent)
+	output := filepath.Join(parent, filepath.Base(requestedOutput))
+	if pathInside(root, output) {
+		return errors.New("audited source tree unavailable")
+	}
 	parentInfo, err := os.Lstat(parent)
 	if err != nil || !parentInfo.IsDir() || parentInfo.Mode()&os.ModeSymlink != 0 {
 		return errors.New("audited build output directory unavailable")
