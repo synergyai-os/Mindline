@@ -55,6 +55,52 @@ func TestAgentOnlySurfaceExposesGovernedRoutesAndRejectsOwnerRoutes(t *testing.T
 	}
 }
 
+func TestAgentOnlyCapabilitiesExposeOnlyScopedNamespacedRoute(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/capabilities", func(writer http.ResponseWriter, _ *http.Request) {
+		writeLegacyAgentEnvelope(t, writer, localservice.Capabilities{
+			SchemaVersion:             localservice.CapabilitiesSchemaVersion,
+			SearchFormats:             []string{"mindline-agent-context-packet/v0.2", "mindline-agent-context-packet/v0.3"},
+			CompactSearchEndpoint:     "/v1/search/compact",
+			ExplicitHydrationCommand:  "mindline agent get <record>",
+			FeedbackRetryToken:        true,
+			Features:                  []string{localservice.ScopedRecallCapability},
+			ScopedSearchEndpoint:      "/v1/scoped/search/compact",
+			ScopedFeedbackEndpoint:    "/v1/scoped/judgments",
+			ScopedHydrationEndpoint:   localservice.ScopedHydrationEndpoint,
+			AgentRegistrationEndpoint: "/v1/scoped/actors/register",
+			RecommendedAgentRoute:     localservice.RecommendedAgentRoute,
+			OwnerDebugRouteClass:      localservice.OwnerDebugRouteClass,
+			IdentityAssurance:         "declared_local_actor",
+			OwnerMutationEnforcement:  "cooperative",
+			FeedbackTokenCommand:      "agent feedback-token",
+			RegistrationTokenCommand:  "agent registration-token",
+		})
+	})
+	configPath, closeServer := startScopedAgentCLITestServer(t, mux)
+	defer closeServer()
+	runner := NewRunner(NewOSFileSystem())
+	runner.agentExecutable = "/opt/mindline"
+	var stdout, stderr bytes.Buffer
+	if code := runner.Run([]string{"agent-only", "capabilities", "--config", configPath}, &stdout, &stderr); code != ExitOK {
+		t.Fatalf("code=%d stderr=%s", code, stderr.String())
+	}
+	var capabilities localservice.Capabilities
+	if err := json.Unmarshal(stdout.Bytes(), &capabilities); err != nil {
+		t.Fatal(err)
+	}
+	serialized := stdout.String()
+	if capabilities.CompactSearchEndpoint != "" || capabilities.OwnerDebugRouteClass != "" ||
+		len(capabilities.SearchFormats) != 1 || capabilities.SearchFormats[0] != personalmemory.ScopedCompactPacketSchemaVersion ||
+		!strings.Contains(capabilities.ExplicitHydrationCommand, "agent-only get") ||
+		!strings.Contains(capabilities.FeedbackTokenCommand, "agent-only feedback-token") ||
+		!strings.Contains(capabilities.RegistrationTokenCommand, "agent-only registration-token") ||
+		strings.Contains(serialized, "/v1/search/compact") || strings.Contains(serialized, " agent get") ||
+		strings.Contains(serialized, "owner_debug_ungated") {
+		t.Fatalf("capabilities=%+v serialized=%s", capabilities, serialized)
+	}
+}
+
 func TestAgentOnlySearchReturnsRecordedAuditAndExactNextActions(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/capabilities", func(writer http.ResponseWriter, _ *http.Request) {

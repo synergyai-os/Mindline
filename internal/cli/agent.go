@@ -117,7 +117,32 @@ func (r Runner) runAgentCapabilities(args []string, stdout, stderr io.Writer) in
 	if err != nil {
 		return agentFailure(stderr, err)
 	}
+	if r.agentNamespace == "agent-only" {
+		capabilities = r.agentOnlyCapabilities(capabilities)
+	}
 	return encodePersonalMemoryJSON(stdout, stderr, capabilities)
+}
+
+func (r Runner) agentOnlyCapabilities(capabilities localservice.Capabilities) localservice.Capabilities {
+	workflow := r.agentWorkflow("")
+	return localservice.Capabilities{
+		SchemaVersion:                capabilities.SchemaVersion,
+		SearchFormats:                []string{personalmemory.ScopedCompactPacketSchemaVersion},
+		CompactAbstentionPolicy:      capabilities.CompactAbstentionPolicy,
+		ExplicitHydrationCommand:     workflow.Get,
+		FeedbackRetryToken:           capabilities.FeedbackRetryToken,
+		Features:                     capabilities.Features,
+		ScopedSearchEndpoint:         capabilities.ScopedSearchEndpoint,
+		ScopedFeedbackEndpoint:       capabilities.ScopedFeedbackEndpoint,
+		ScopedHydrationEndpoint:      capabilities.ScopedHydrationEndpoint,
+		AgentRegistrationEndpoint:    capabilities.AgentRegistrationEndpoint,
+		RecommendedAgentRoute:        capabilities.RecommendedAgentRoute,
+		IdentityAssurance:            capabilities.IdentityAssurance,
+		HostileProcessAuthentication: capabilities.HostileProcessAuthentication,
+		OwnerMutationEnforcement:     capabilities.OwnerMutationEnforcement,
+		FeedbackTokenCommand:         workflow.FeedbackToken,
+		RegistrationTokenCommand:     workflow.RegistrationToken,
+	}
 }
 
 func (r Runner) runAgentSearch(args []string, stdout, stderr io.Writer) int {
