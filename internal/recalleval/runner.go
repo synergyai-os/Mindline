@@ -55,9 +55,12 @@ type CanonicalEvidencePort interface {
 	GetCanonicalEvidence(context.Context, string) (CanonicalEvidence, error)
 }
 
+var ErrFrozenLibraryBinding = errors.New("frozen library binding unavailable")
+
 type CompactSearchResult struct {
 	Citations                 []CompactCitation `json:"citations"`
 	UnselectedHydratedContent bool              `json:"unselected_hydrated_content"`
+	LibraryFingerprint        string            `json:"library_fingerprint"`
 }
 
 type CompactCitation struct {
@@ -67,22 +70,35 @@ type CompactCitation struct {
 // CanonicalEvidence is local-only hydration evidence. Run returns its
 // commitment, never this value or its record identity.
 type CanonicalEvidence struct {
-	RecordID         string   `json:"record_id"`
-	SourceCommitment string   `json:"source_commitment"`
-	AuthorityClass   string   `json:"authority_class"`
-	Current          bool     `json:"current"`
-	ContentHash      string   `json:"content_hash"`
-	Missingness      []string `json:"missingness"`
-	ResourceStates   []string `json:"resource_states"`
+	RecordID           string   `json:"record_id"`
+	SourceCommitment   string   `json:"source_commitment"`
+	AuthorityClass     string   `json:"authority_class"`
+	Current            bool     `json:"current"`
+	ContentHash        string   `json:"content_hash"`
+	Missingness        []string `json:"missingness"`
+	ResourceStates     []string `json:"resource_states"`
+	LibraryFingerprint string   `json:"library_fingerprint"`
 }
 
 func CanonicalEvidenceCommitment(evidence CanonicalEvidence) (string, error) {
-	if evidence.RecordID == "" || !isFingerprint(evidence.SourceCommitment) || evidence.AuthorityClass == "" || !evidence.Current || !isFingerprint(evidence.ContentHash) {
+	if evidence.RecordID == "" || !isFingerprint(evidence.SourceCommitment) || evidence.AuthorityClass == "" || !evidence.Current || !isFingerprint(evidence.ContentHash) || !isFingerprint(evidence.LibraryFingerprint) {
 		return "", errors.New("incomplete current canonical evidence")
 	}
-	canonical := evidence
-	canonical.Missingness = append([]string(nil), evidence.Missingness...)
-	canonical.ResourceStates = append([]string(nil), evidence.ResourceStates...)
+	canonical := struct {
+		RecordID         string   `json:"record_id"`
+		SourceCommitment string   `json:"source_commitment"`
+		AuthorityClass   string   `json:"authority_class"`
+		Current          bool     `json:"current"`
+		ContentHash      string   `json:"content_hash"`
+		Missingness      []string `json:"missingness"`
+		ResourceStates   []string `json:"resource_states"`
+	}{
+		RecordID: evidence.RecordID, SourceCommitment: evidence.SourceCommitment,
+		AuthorityClass: evidence.AuthorityClass, Current: evidence.Current,
+		ContentHash:    evidence.ContentHash,
+		Missingness:    append([]string(nil), evidence.Missingness...),
+		ResourceStates: append([]string(nil), evidence.ResourceStates...),
+	}
 	sort.Strings(canonical.Missingness)
 	sort.Strings(canonical.ResourceStates)
 	data, err := json.Marshal(canonical)
@@ -204,15 +220,24 @@ func Run(ctx context.Context, manifest OwnerManifest, binding RunBinding, compac
 		if err != nil {
 			return RunResult{}, fmt.Errorf("compact search %s: %w", item.CaseID, err)
 		}
+		if packet.LibraryFingerprint != manifest.LibraryFingerprint {
+			return RunResult{}, fmt.Errorf("compact search %s changed the frozen library", item.CaseID)
+		}
 		caseResult := CaseResult{CaseID: item.CaseID}
 		for _, compactCitation := range packet.Citations {
 			evidence, err := canonical.GetCanonicalEvidence(ctx, compactCitation.RecordID)
 			if err != nil {
+				if errors.Is(err, ErrFrozenLibraryBinding) {
+					return RunResult{}, fmt.Errorf("canonical evidence %s: %w", item.CaseID, err)
+				}
 				caseResult.Citations = append(caseResult.Citations, Citation{
 					RecordFingerprint: invalidCitationCommitment(compactCitation.RecordID),
 					Valid:             false,
 				})
 				continue
+			}
+			if evidence.LibraryFingerprint != manifest.LibraryFingerprint {
+				return RunResult{}, fmt.Errorf("canonical evidence %s changed the frozen library", item.CaseID)
 			}
 			commitment, err := CanonicalEvidenceCommitment(evidence)
 			if err != nil {
@@ -248,6 +273,10 @@ func CompareRuns(manifest OwnerManifest, baseline, candidate RunResult) (Thresho
 	if baseline.Binding != manifest.Baseline ||
 		baseline.Binding.ConfigurationFingerprint != candidate.Binding.ConfigurationFingerprint {
 		return ThresholdResult{}, errors.New("baseline and candidate must bind the frozen manifest and runtime configuration")
+	}
+	if baseline.Evaluation.BuildFingerprint != baseline.Binding.BuildFingerprint ||
+		candidate.Evaluation.BuildFingerprint != candidate.Binding.BuildFingerprint {
+		return ThresholdResult{}, errors.New("evaluation build does not match its run binding")
 	}
 	structural, err := structuralManifest(manifest)
 	if err != nil {

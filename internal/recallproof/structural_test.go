@@ -16,6 +16,13 @@ func TestDecodeStructuralArtifactRejectsPrivateOrUnknownFields(t *testing.T) {
 	}
 }
 
+func TestDecodeStructuralArtifactRejectsFailedTestInPassingArtifact(t *testing.T) {
+	data := []byte(`{"schema_version":"proof_v1","build":"wp48","state":"pass","counts":{"records":1},"fingerprints":{"tree":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"tests":{"fixture":false}}`)
+	if _, err := DecodeStructuralArtifact(data); err == nil {
+		t.Fatal("passing structural artifact accepted a failed test")
+	}
+}
+
 func TestLifecycleRunnerRequiresVerifiedReceiptsAndUsefulFounderOutcome(t *testing.T) {
 	binding := testBinding()
 	receipts := make([]SignedStructuralReceipt, 0, len(requiredLifecycleReceipts))

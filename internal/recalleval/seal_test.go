@@ -31,3 +31,21 @@ func TestSealOwnerManifestConvertsPrivateRecordIDsToCommitments(t *testing.T) {
 		t.Fatal("tampered sealed owner manifest was accepted")
 	}
 }
+
+func TestSealOwnerManifestRejectsChangedLibrary(t *testing.T) {
+	manifest, port := syntheticOwnerManifest(t)
+	draft := DraftManifest{SchemaVersion: DraftManifestSchemaVersion, LibraryFingerprint: manifest.LibraryFingerprint, Baseline: manifest.Baseline, ReviewerFingerprint: manifest.ReviewerFingerprint}
+	for _, item := range manifest.Cases {
+		entry := DraftCase{CaseID: item.CaseID, Kind: item.Kind, Query: item.Query}
+		if item.Kind == CaseAnswerable {
+			entry.ExpectedRecordIDs = []string{"record-" + item.CaseID[len("case-"):]}
+		}
+		draft.Cases = append(draft.Cases, entry)
+	}
+	evidence := port.evidence["record-01"]
+	evidence.LibraryFingerprint = "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+	port.evidence["record-01"] = evidence
+	if _, err := SealOwnerManifest(context.Background(), draft, port); err == nil {
+		t.Fatal("manifest sealing accepted evidence from a changed library")
+	}
+}

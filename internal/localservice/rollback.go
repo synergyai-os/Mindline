@@ -282,7 +282,7 @@ func prepareRollbackBackup(transaction *installTransaction, config Config, binar
 	return nil
 }
 
-func Rollback(configPath string) (InstallReceipt, error) {
+func Rollback(configPath string) (returnReceipt InstallReceipt, returnErr error) {
 	if strings.TrimSpace(configPath) == "" {
 		var err error
 		configPath, err = DefaultConfigPath()
@@ -305,6 +305,24 @@ func Rollback(configPath string) (InstallReceipt, error) {
 	if runtime.GOOS != "darwin" || receipt.LaunchAgentPath == "" {
 		return InstallReceipt{}, errors.New("automatic service rollback is not supported")
 	}
+	priorRunning, err := inspectUserService(receipt.LaunchAgentPath)
+	if err != nil {
+		return InstallReceipt{}, errors.New("inspect local agent service before rollback")
+	}
+	transaction, err := beginInstallTransaction(config, receipt, priorRunning)
+	if err != nil {
+		return InstallReceipt{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed && returnErr != nil {
+			if restoreErr := transaction.restore(); restoreErr != nil {
+				returnErr = fmt.Errorf("%w; restore successor install: %v", returnErr, restoreErr)
+			}
+		}
+		transaction.close()
+	}()
+	transaction.serviceTouched = true
 	if err := stopUserService(receipt.LaunchAgentPath); err != nil {
 		return InstallReceipt{}, err
 	}
@@ -315,10 +333,14 @@ func Rollback(configPath string) (InstallReceipt, error) {
 	// Restore the legacy skill first. A successor binary can still run that
 	// skill if the process stops here, while a legacy binary cannot understand
 	// every successor skill command.
-	if err := privateio.WriteFile(receipt.SkillPath, skill, false); err != nil {
+	if err := transaction.mutate("rollback-active-skill", receipt.SkillPath, func() error {
+		return privateio.WriteFile(receipt.SkillPath, skill, false)
+	}); err != nil {
 		return InstallReceipt{}, errors.New("restore prior installed skill")
 	}
-	if err := copyExecutable(manifest.BinaryBackupPath, receipt.InstalledBinary); err != nil {
+	if err := transaction.mutate("rollback-active-binary", receipt.InstalledBinary, func() error {
+		return copyExecutable(manifest.BinaryBackupPath, receipt.InstalledBinary)
+	}); err != nil {
 		return InstallReceipt{}, errors.New("restore prior installed binary")
 	}
 	restoredBinary, present, err := readArtifact(
@@ -336,6 +358,9 @@ func Rollback(configPath string) (InstallReceipt, error) {
 	if err := restartUserService(receipt.LaunchAgentPath); err != nil {
 		return InstallReceipt{}, err
 	}
+	if err := installFaultHook("rollback-service-restart"); err != nil {
+		return InstallReceipt{}, err
+	}
 	libraryAfter, stateAfter, err := lifecycleFingerprints(config)
 	if err != nil {
 		return InstallReceipt{}, err
@@ -343,7 +368,11 @@ func Rollback(configPath string) (InstallReceipt, error) {
 	if libraryBefore != libraryAfter || stateBefore != stateAfter {
 		return InstallReceipt{}, errors.New("rollback changed canonical or durable agent state")
 	}
+	if err := installFaultHook("rollback-final-fingerprint"); err != nil {
+		return InstallReceipt{}, err
+	}
 	receipt.ServiceState = "rolled_back"
+	committed = true
 	return receipt, nil
 }
 

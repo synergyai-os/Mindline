@@ -16,6 +16,7 @@ type LedgerStore struct {
 	path   string
 	backup string
 	lock   string
+	apply  string
 }
 
 func NewLedgerStore(root string) (*LedgerStore, error) {
@@ -26,11 +27,19 @@ func NewLedgerStore(root string) (*LedgerStore, error) {
 	if err := privateio.PrepareDir(root); err != nil {
 		return nil, errors.New("ingestion ledger storage unavailable")
 	}
-	store := &LedgerStore{root: root, path: filepath.Join(root, "ingestion-ledger.json"), backup: filepath.Join(root, "ingestion-ledger.backup.json"), lock: filepath.Join(root, "ingestion-ledger.lock")}
-	if err := privateio.ValidateContained(root, store.path, store.backup, store.lock); err != nil {
+	store := &LedgerStore{root: root, path: filepath.Join(root, "ingestion-ledger.json"), backup: filepath.Join(root, "ingestion-ledger.backup.json"), lock: filepath.Join(root, "ingestion-ledger.lock"), apply: filepath.Join(root, "ingestion-apply.lock")}
+	if err := privateio.ValidateContained(root, store.path, store.backup, store.lock, store.apply); err != nil {
 		return nil, errors.New("ingestion ledger storage unavailable")
 	}
 	return store, nil
+}
+
+func (store *LedgerStore) AcquireApplyLock() (*privateio.AdvisoryLock, error) {
+	lock, err := privateio.AcquireAdvisoryLock(store.root, store.apply)
+	if err != nil {
+		return nil, errors.New("ingestion apply busy")
+	}
+	return lock, nil
 }
 
 func (store *LedgerStore) Load() (Ledger, error) {

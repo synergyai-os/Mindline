@@ -285,9 +285,25 @@ func (retriever ContextRetriever) SearchCompact(request SearchRequest) (CompactC
 }
 
 func (retriever ContextRetriever) Get(recordID string) (HydratedCapture, error) {
+	return retriever.getAtLibraryFingerprint(recordID, "")
+}
+
+// GetAtLibraryFingerprint fails closed when a prior search is no longer bound
+// to the exact canonical library snapshot being hydrated.
+func (retriever ContextRetriever) GetAtLibraryFingerprint(recordID, expectedFingerprint string) (HydratedCapture, error) {
+	if strings.TrimSpace(expectedFingerprint) == "" {
+		return HydratedCapture{}, errors.New("personal evidence library fingerprint is required")
+	}
+	return retriever.getAtLibraryFingerprint(recordID, expectedFingerprint)
+}
+
+func (retriever ContextRetriever) getAtLibraryFingerprint(recordID, expectedFingerprint string) (HydratedCapture, error) {
 	library, err := retriever.repository.Load()
 	if err != nil {
 		return HydratedCapture{}, err
+	}
+	if expectedFingerprint != "" && library.Fingerprint != expectedFingerprint {
+		return HydratedCapture{}, errors.New("personal evidence library changed after search")
 	}
 	resourcesByID := make(map[string]ResourceContext, len(library.Resources))
 	for _, resource := range library.Resources {

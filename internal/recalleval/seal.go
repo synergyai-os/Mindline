@@ -43,6 +43,9 @@ func SealOwnerManifest(ctx context.Context, draft DraftManifest, canonical Canon
 			if err != nil {
 				return OwnerManifest{}, err
 			}
+			if evidence.LibraryFingerprint != draft.LibraryFingerprint {
+				return OwnerManifest{}, errors.New("canonical evidence changed the frozen library")
+			}
 			commitment, err := CanonicalEvidenceCommitment(evidence)
 			if err != nil {
 				return OwnerManifest{}, err

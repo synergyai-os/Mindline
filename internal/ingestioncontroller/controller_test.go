@@ -115,6 +115,168 @@ func TestApplyRejectsOverlappingDispositionConflictBeforeImport(t *testing.T) {
 	}
 }
 
+func TestApplyRejectsConcurrentRunBeforeCanonicalMutation(t *testing.T) {
+	repository, err := personalmemory.NewFileRepository(filepath.Join(t.TempDir(), "library"), time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledgerStore, err := NewLedgerStore(filepath.Join(t.TempDir(), "ledger"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock, err := ledgerStore.AcquireApplyLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	envelope := testEnvelope([]UnitFrame{unit(0, "000", []acquisitionslack.NativeMessage{message("1.000001", "saved")}, map[string]string{"1.000001": "user"})})
+	if _, err := (Controller{Repository: repository, Ledger: ledgerStore}).Apply(envelope); err == nil {
+		t.Fatal("concurrent ingestion apply was accepted")
+	}
+	status, err := repository.Status()
+	if err != nil || status.RecordCount != 0 {
+		t.Fatalf("rejected concurrent run mutated canonical state: %+v err=%v", status, err)
+	}
+}
+
+func TestApplyRejectsOriginalAfterEditedOverlapBeforeImport(t *testing.T) {
+	repository, err := personalmemory.NewFileRepository(filepath.Join(t.TempDir(), "library"), time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledgerStore, err := NewLedgerStore(filepath.Join(t.TempDir(), "ledger"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := message("1.000001", "original")
+	edited := message("1.000001", "edited")
+	edited.EditDeleteState = "edited"
+	reverted := message("1.000001", "original again")
+	units := []UnitFrame{
+		unit(0, "000", []acquisitionslack.NativeMessage{original}, map[string]string{"1.000001": "user"}),
+		unit(1, "001", []acquisitionslack.NativeMessage{edited}, map[string]string{"1.000001": "user"}),
+		unit(2, "002", []acquisitionslack.NativeMessage{reverted}, map[string]string{"1.000001": "user"}),
+	}
+	if _, err := (Controller{Repository: repository, Ledger: ledgerStore}).Apply(testEnvelope(units)); err == nil {
+		t.Fatal("backward original-after-edit transition was accepted")
+	}
+	status, err := repository.Status()
+	if err != nil || status.RecordCount != 0 {
+		t.Fatalf("rejected transition mutated canonical state: %+v err=%v", status, err)
+	}
+}
+
+func TestApplyKeepsLatestAcceptedEditCurrent(t *testing.T) {
+	repository, err := personalmemory.NewFileRepository(filepath.Join(t.TempDir(), "library"), time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledgerStore, err := NewLedgerStore(filepath.Join(t.TempDir(), "ledger"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := message("1.000001", "original")
+	edited := message("1.000001", "latest edit")
+	edited.EditDeleteState = "edited"
+	units := []UnitFrame{
+		unit(0, "000", []acquisitionslack.NativeMessage{original}, map[string]string{"1.000001": "user"}),
+		unit(1, "001", []acquisitionslack.NativeMessage{edited}, map[string]string{"1.000001": "user"}),
+	}
+	if _, err := (Controller{Repository: repository, Ledger: ledgerStore}).Apply(testEnvelope(units)); err != nil {
+		t.Fatal(err)
+	}
+	library, err := repository.Load()
+	if err != nil || len(library.Records) != 1 || library.Records[0].RawText != "latest edit" || len(library.Revisions) != 1 {
+		t.Fatalf("latest accepted edit was not canonical: records=%+v revisions=%+v err=%v", library.Records, library.Revisions, err)
+	}
+}
+
+func TestApplyReassertsExistingFinalEditAfterNewEarlierOccurrence(t *testing.T) {
+	repository, err := personalmemory.NewFileRepository(filepath.Join(t.TempDir(), "library"), time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledgerStore, err := NewLedgerStore(filepath.Join(t.TempDir(), "ledger"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := Controller{Repository: repository, Ledger: ledgerStore}
+	edited := message("1.000001", "latest edit")
+	edited.EditDeleteState = "edited"
+	editedUnit := unit(0, "000", []acquisitionslack.NativeMessage{edited}, map[string]string{"1.000001": "user"})
+	if _, err := controller.Apply(testEnvelope([]UnitFrame{editedUnit})); err != nil {
+		t.Fatal(err)
+	}
+	original := message("1.000001", "original")
+	orderedEdited := unit(1, "001", []acquisitionslack.NativeMessage{edited}, map[string]string{"1.000001": "user"})
+	envelope := testEnvelope([]UnitFrame{
+		unit(0, "000", []acquisitionslack.NativeMessage{original}, map[string]string{"1.000001": "user"}),
+		orderedEdited,
+	})
+	if _, err := controller.Apply(envelope); err != nil {
+		t.Fatal(err)
+	}
+	library, err := repository.Load()
+	if err != nil || len(library.Records) != 1 || library.Records[0].RawText != "latest edit" {
+		t.Fatalf("existing final edit was not reasserted: records=%+v err=%v", library.Records, err)
+	}
+	for _, revision := range library.Revisions {
+		if revision.Record.ContentHash == library.Records[0].ContentHash {
+			t.Fatalf("current edit was duplicated as historical revision: %+v", revision)
+		}
+	}
+	before, err := repository.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := controller.Apply(envelope); err != nil {
+		t.Fatal(err)
+	}
+	after, err := repository.Status()
+	if err != nil || before != after {
+		t.Fatalf("exact envelope replay changed canonical state: before=%+v after=%+v err=%v", before, after, err)
+	}
+}
+
+func TestApplyRejectsImportedFinalEditWhenNewerCurrentEditExists(t *testing.T) {
+	repository, err := personalmemory.NewFileRepository(filepath.Join(t.TempDir(), "library"), time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledgerStore, err := NewLedgerStore(filepath.Join(t.TempDir(), "ledger"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller := Controller{Repository: repository, Ledger: ledgerStore}
+	editB := message("1.000001", "edit B")
+	editB.EditDeleteState = "edited"
+	if _, err := controller.Apply(testEnvelope([]UnitFrame{unit(0, "000", []acquisitionslack.NativeMessage{editB}, map[string]string{"1.000001": "user"})})); err != nil {
+		t.Fatal(err)
+	}
+	editC := message("1.000001", "newer edit C")
+	editC.EditDeleteState = "edited"
+	if _, err := controller.Apply(testEnvelope([]UnitFrame{unit(0, "000", []acquisitionslack.NativeMessage{editC}, map[string]string{"1.000001": "user"})})); err != nil {
+		t.Fatal(err)
+	}
+	before, err := repository.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := message("1.000001", "newly observed original A")
+	envelope := testEnvelope([]UnitFrame{
+		unit(0, "000", []acquisitionslack.NativeMessage{original}, map[string]string{"1.000001": "user"}),
+		unit(1, "001", []acquisitionslack.NativeMessage{editB}, map[string]string{"1.000001": "user"}),
+	})
+	if _, err := controller.Apply(envelope); err == nil {
+		t.Fatal("stale imported final edit was accepted over a newer current edit")
+	}
+	after, err := repository.Status()
+	library, loadErr := repository.Load()
+	if err != nil || loadErr != nil || before != after || len(library.Records) != 1 || library.Records[0].RawText != "newer edit C" {
+		t.Fatalf("rejected stale envelope changed current evidence: before=%+v after=%+v records=%+v err=%v load=%v", before, after, library.Records, err, loadErr)
+	}
+}
+
 func testEnvelope(units []UnitFrame) Envelope {
 	return Envelope{Begin: BeginFrame{Type: "begin", SchemaVersion: RunSchemaVersion, RunID: "run-test", SourceAdapter: "slack", SourceScope: "slack:T:D", ConfigurationFingerprint: "configuration-test", UnitCount: len(units), MessageCeiling: 100, ByteCeiling: 1}, Units: units, End: EndFrame{Type: "end", UnitCount: len(units), MessageCount: messageCount(units), ByteCount: 1, EnvelopeCommitment: EnvelopeCommitment(units)}, observedUnitBytes: 1}
 }

@@ -60,7 +60,7 @@ func (r Runner) runResourceCommand(args []string, stdout, stderr io.Writer, comm
 		return ExitProcess
 	}
 	// The queue is derived state beside, never within, the canonical root.
-	pipeline, err := resourcepipeline.NewLive(filepath.Join(filepath.Dir(root), "resource-queue"), repository, resourcequeue.LiveProfile(), resourcefetchDependencies())
+	pipeline, err := resourcepipeline.NewLive(resourceQueueRoot(root), repository, resourcequeue.LiveProfile(), resourcefetchDependencies())
 	if err != nil {
 		fmt.Fprintln(stderr, "open resource processing: unavailable")
 		return ExitProcess
@@ -153,6 +153,12 @@ func (r Runner) runResourceCommand(args []string, stdout, stderr io.Writer, comm
 		return ExitProcess
 	}
 	return encodePersonalMemoryJSON(stdout, stderr, proof)
+}
+
+func resourceQueueRoot(memoryRoot string) string {
+	canonical := filepath.Clean(memoryRoot)
+	digest := sha256.Sum256([]byte(canonical))
+	return filepath.Join(filepath.Dir(canonical), "resource-queues", hex.EncodeToString(digest[:]))
 }
 
 func resourceQueueTerminal(queue resourcequeue.Queue) bool {

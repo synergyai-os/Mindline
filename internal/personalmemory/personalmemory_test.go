@@ -77,6 +77,87 @@ func TestImportWithinBudgetRejectsBeforeCanonicalPersistence(t *testing.T) {
 	}
 }
 
+func TestImportManyWithinBudgetRejectsCompleteBatchSetAtomically(t *testing.T) {
+	firstNative := fixtureBatch()
+	firstNative.Messages = firstNative.Messages[:1]
+	firstNative.DeclaredSourceRecords = 1
+	first := captureBatchForTest(t, firstNative)
+	secondNative := fixtureBatch()
+	secondNative.Messages = secondNative.Messages[1:2]
+	secondNative.DeclaredSourceRecords = 1
+	secondNative.LowerInclusive = secondNative.Messages[0].Timestamp
+	second := captureBatchForTest(t, secondNative)
+
+	singleSize := int64(0)
+	for _, batch := range []CaptureBatch{first, second} {
+		repository, err := NewFileRepository(filepath.Join(t.TempDir(), "single"), time.Now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := repository.Import(batch); err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Stat(repository.libraryPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Size() > singleSize {
+			singleSize = info.Size()
+		}
+	}
+	target, err := NewFileRepository(filepath.Join(t.TempDir(), "target"), time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := target.ImportManyWithinBudget([]CaptureBatch{first, second}, singleSize); err == nil {
+		t.Fatal("complete batch set exceeded admission but was accepted")
+	}
+	status, err := target.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	library, err := target.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Fingerprint != EmptyLibrary().Fingerprint || len(library.Records) != 0 || len(library.Imports) != 0 || len(library.Revisions) != 0 {
+		t.Fatalf("rejected batch set partially mutated canonical state: status=%+v library=%+v", status, library)
+	}
+}
+
+func TestGetAtLibraryFingerprintRejectsChangedCaptureOrResource(t *testing.T) {
+	repository := populatedRepository(t)
+	library, err := repository.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	recordID := library.Records[0].RecordID
+	retriever := NewLexicalRetriever(repository)
+	if _, err := retriever.GetAtLibraryFingerprint(recordID, library.Fingerprint); err != nil {
+		t.Fatal(err)
+	}
+	updated := fixtureBatch()
+	updated.Messages[0].Text = "edited knowledge snapshot"
+	updated.Messages[0].EditDeleteState = "edited"
+	if _, err := repository.Import(captureBatchForTest(t, updated)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := retriever.GetAtLibraryFingerprint(recordID, library.Fingerprint); err == nil {
+		t.Fatal("hydration reused a stale search snapshot after record mutation")
+	}
+	current, err := repository.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	resourceURL := current.Resources[0].CanonicalURL
+	if _, err := repository.MergeEnrichment(EnrichmentBatch{SchemaVersion: EnrichmentBatchSchemaVersion, Resources: []acquisition.ImportedEvidence{{CanonicalItemID: "resource", CanonicalURL: resourceURL, State: "partial", RetrievedAt: "2026-08-10T10:00:00Z", AccessClass: "public", Excerpts: []acquisition.ImportedExcerpt{{ExcerptID: "proof", Text: "new resource evidence", Locator: "page"}}}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := retriever.GetAtLibraryFingerprint(recordID, current.Fingerprint); err == nil {
+		t.Fatal("hydration reused a stale search snapshot after resource enrichment")
+	}
+}
+
 func TestStatusCacheInvalidatesAfterLibraryMutation(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "library")
 	repository, err := NewFileRepository(root, time.Now)

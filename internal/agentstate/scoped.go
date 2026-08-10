@@ -569,7 +569,7 @@ func (store *Store) SaveScopedRetrieval(ctx context.Context, trace ScopedRetriev
 func (store *Store) RequireScopedCandidate(
 	ctx context.Context,
 	runID, scopeID, lensID, agentID, recordID string,
-) error {
+) (string, error) {
 	store.mutationMu.Lock()
 	defer store.mutationMu.Unlock()
 	runID, scopeID, lensID = strings.TrimSpace(runID), strings.TrimSpace(scopeID), strings.TrimSpace(lensID)
@@ -577,24 +577,27 @@ func (store *Store) RequireScopedCandidate(
 	if !validBounded(runID, 256) || !validBounded(scopeID, 256) ||
 		!validBounded(lensID, 256) || !validBounded(agentID, 256) ||
 		!validBounded(recordID, 1024) {
-		return errors.New("invalid scoped hydration request")
+		return "", errors.New("invalid scoped hydration request")
 	}
 	if _, _, _, err := store.resolveScopedContext(ctx, ScopedContext{
 		ScopeID: scopeID, LensID: lensID, AgentID: agentID,
 	}); err != nil {
-		return err
+		return "", err
 	}
-	var found int
-	err := store.db.QueryRowContext(ctx, `SELECT 1
+	var libraryFingerprint string
+	err := store.db.QueryRowContext(ctx, `SELECT r.library_fingerprint
 		FROM scoped_retrieval_runs r
 		JOIN scoped_retrieval_candidates c ON c.run_id=r.run_id
 		WHERE r.run_id=? AND r.scope_id=? AND r.lens_id=? AND r.agent_id=? AND c.record_id=?`,
-		runID, scopeID, lensID, agentID, recordID).Scan(&found)
+		runID, scopeID, lensID, agentID, recordID).Scan(&libraryFingerprint)
 	if errors.Is(err, sql.ErrNoRows) {
-		return errors.New("scoped hydration candidate not found")
+		return "", errors.New("scoped hydration candidate not found")
 	}
 	if err != nil {
-		return errors.New("read scoped hydration candidate")
+		return "", errors.New("read scoped hydration candidate")
 	}
-	return nil
+	if !validBounded(libraryFingerprint, 256) {
+		return "", errors.New("scoped hydration run has invalid library binding")
+	}
+	return libraryFingerprint, nil
 }

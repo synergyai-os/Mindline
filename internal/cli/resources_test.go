@@ -107,7 +107,7 @@ func TestResourceReconcileReturnsNonterminalStructuralStatusWithoutNetwork(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	queue, err := resourcequeue.NewStore(filepath.Join(filepath.Dir(root), "resource-queue"), resourcequeue.LiveProfile())
+	queue, err := resourcequeue.NewStore(resourceQueueRoot(root), resourcequeue.LiveProfile())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,6 +151,84 @@ func TestResourceCommandsRejectUnexpectedArguments(t *testing.T) {
 	}
 }
 
+func TestSiblingMemoryRootsKeepIndependentResourceQueues(t *testing.T) {
+	parent := t.TempDir()
+	rootA, rootB := filepath.Join(parent, "memory-a"), filepath.Join(parent, "memory-b")
+	resourceA := importResourceForQueueTest(t, rootA, "https://example.test/shared")
+	resourceB := importResourceForQueueTest(t, rootB, "https://example.test/shared")
+	if resourceA != resourceB {
+		t.Fatal("fixture did not produce the same canonical resource identity")
+	}
+	if resourceQueueRoot(rootA) == resourceQueueRoot(rootB) {
+		t.Fatal("sibling memory roots share a resource queue")
+	}
+	storeA, err := resourcequeue.NewStore(resourceQueueRoot(rootA), resourcequeue.LiveProfile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := storeA.Rebuild([]resourcequeue.RebuildItem{{ResourceID: resourceA, State: resourcequeue.StateComplete}}); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := NewRunner(NewOSFileSystem()).Run([]string{"memory", "resources-reconcile", "--root", rootB}, &stdout, &stderr); code != ExitOK {
+		t.Fatalf("reconcile B exit=%d stderr=%q", code, stderr.String())
+	}
+	storeB, err := resourcequeue.NewStore(resourceQueueRoot(rootB), resourcequeue.LiveProfile())
+	if err != nil {
+		t.Fatal(err)
+	}
+	queueA, err := storeA.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	queueB, err := storeB.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(queueA.Items) != 1 || queueA.Items[0].State != resourcequeue.StateComplete ||
+		len(queueB.Items) != 1 || queueB.Items[0].State != resourcequeue.StateQueued ||
+		queueB.Items[0].Attempts != 0 || queueB.Counters.Attempts != 0 {
+		t.Fatalf("sibling queue state crossed roots: A=%+v B=%+v", queueA, queueB)
+	}
+	for _, privateValue := range []string{rootA, rootB, resourceA} {
+		if strings.Contains(stdout.String(), privateValue) || strings.Contains(stderr.String(), privateValue) {
+			t.Fatalf("resource reconcile leaked private value %q", privateValue)
+		}
+	}
+}
+
+func importResourceForQueueTest(t *testing.T, root, url string) string {
+	t.Helper()
+	repository, err := personalmemory.NewFileRepository(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := personalmemory.NewCaptureRecord(personalmemory.CaptureRecordInput{
+		SourceAdapter: "slack", SourceScopeID: "workspace", SourceContainerID: "self",
+		ExternalID: "shared", OccurredAt: "2026-08-10T10:00:00Z",
+		SourceRef: "slack://workspace/self/shared", RawText: url,
+		EditDeleteState: "original", Missingness: []string{"permalink_unavailable"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch, err := personalmemory.NewCaptureBatch(personalmemory.CaptureBatchInput{
+		SourceIdentity: "slack:workspace:self", LowerInclusive: "1", UpperInclusive: "1",
+		Watermark: "1", DeclaredRecords: 1, Records: []personalmemory.CaptureRecord{record},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.Import(batch); err != nil {
+		t.Fatal(err)
+	}
+	library, err := repository.Load()
+	if err != nil || len(library.Resources) != 1 {
+		t.Fatalf("fixture resources=%d err=%v", len(library.Resources), err)
+	}
+	return library.Resources[0].ResourceID
+}
+
 func TestResourceContinueReturnsTerminalStructuralStatusWithoutPrivateValues(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "private-memory")
 	repository, err := personalmemory.NewFileRepository(root, func() time.Time {
@@ -183,7 +261,7 @@ func TestResourceContinueReturnsTerminalStructuralStatusWithoutPrivateValues(t *
 	if err != nil || len(library.Resources) != 1 {
 		t.Fatalf("library resources=%d err=%v", len(library.Resources), err)
 	}
-	queue, err := resourcequeue.NewStore(filepath.Join(filepath.Dir(root), "resource-queue"), resourcequeue.LiveProfile())
+	queue, err := resourcequeue.NewStore(resourceQueueRoot(root), resourcequeue.LiveProfile())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -59,9 +59,12 @@ func (artifact StructuralArtifact) Validate() error {
 			return errors.New("structural artifact contains invalid fingerprint")
 		}
 	}
-	for key := range artifact.Tests {
+	for key, passed := range artifact.Tests {
 		if !structuralKey.MatchString(key) {
 			return errors.New("structural artifact contains invalid test name")
+		}
+		if artifact.State == "pass" && !passed {
+			return errors.New("passing structural artifact contains a failed test")
 		}
 	}
 	return nil

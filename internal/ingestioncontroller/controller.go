@@ -152,6 +152,11 @@ func (controller Controller) Apply(envelope Envelope) (Ledger, error) {
 	if err := validateEnvelope(envelope); err != nil {
 		return Ledger{}, err
 	}
+	applyLock, err := controller.Ledger.AcquireApplyLock()
+	if err != nil {
+		return Ledger{}, err
+	}
+	defer applyLock.Close()
 	before, err := controller.Repository.Status()
 	if err != nil {
 		return Ledger{}, errors.New("canonical readback unavailable")
@@ -189,6 +194,7 @@ func (controller Controller) Apply(envelope Envelope) (Ledger, error) {
 					return controller.fail(ledger)
 				}
 				ledger.OverlapCount++
+				facts[key] = identityFact{class: class, disposition: disposition, message: message}
 			} else {
 				facts[key] = identityFact{class: class, disposition: disposition, message: message}
 				keys = append(keys, key)
@@ -214,6 +220,7 @@ func (controller Controller) Apply(envelope Envelope) (Ledger, error) {
 	}
 	sort.Strings(keys)
 	ledger.OwnedCount, ledger.AggregateCommitment = len(keys), commitment(keys)
+	captures := make([]personalmemory.CaptureBatch, 0, len(envelope.Units))
 	for _, unit := range envelope.Units {
 		frame := slackadapter.RunFrame{Descriptor: unit.Descriptor, Batch: unit.Batch, AuthorClasses: unit.AuthorClasses}
 		capture, dispositions, err := slackadapter.CaptureBatchForAdoption(frame)
@@ -227,24 +234,36 @@ func (controller Controller) Apply(envelope Envelope) (Ledger, error) {
 			}
 		}
 		if capture.DeclaredRecords > 0 {
-			memoryReceipt, importErr := controller.Repository.ImportWithinBudget(capture, personalmemory.MaximumCaptureLibraryBytes)
-			if importErr != nil || memoryReceipt.DeclaredRecords != capture.DeclaredRecords || memoryReceipt.InsertedRecords+memoryReceipt.UpdatedRecords+memoryReceipt.UnchangedRecords != capture.DeclaredRecords {
-				return controller.fail(ledger)
-			}
+			captures = append(captures, capture)
 			receipt.CanonicalDeclared = capture.DeclaredRecords
-			library, readErr := controller.Repository.Load()
-			if readErr != nil || !capturesCurrent(library, capture) {
-				return controller.fail(ledger)
-			}
-			if _, readErr := controller.Repository.Status(); readErr != nil {
-				return controller.fail(ledger)
-			}
 		}
 		if !receipt.Valid() {
 			return controller.fail(ledger)
 		}
 		ledger.DeliveredCount += receipt.DeliveredNative
 		ledger.CanonicalDeclaredCount += receipt.CanonicalDeclared
+	}
+	if len(captures) > 0 {
+		memoryReceipts, importErr := controller.Repository.ImportManyWithinBudget(captures, personalmemory.MaximumCaptureLibraryBytes)
+		if importErr != nil || len(memoryReceipts) != len(captures) {
+			return controller.fail(ledger)
+		}
+		for index, memoryReceipt := range memoryReceipts {
+			capture := captures[index]
+			if memoryReceipt.DeclaredRecords != capture.DeclaredRecords ||
+				memoryReceipt.InsertedRecords+memoryReceipt.UpdatedRecords+memoryReceipt.UnchangedRecords != capture.DeclaredRecords {
+				return controller.fail(ledger)
+			}
+		}
+		library, readErr := controller.Repository.Load()
+		if readErr != nil {
+			return controller.fail(ledger)
+		}
+		for _, capture := range captures {
+			if !capturesCurrent(library, capture) {
+				return controller.fail(ledger)
+			}
+		}
 	}
 	after, err := controller.Repository.Status()
 	if err != nil {

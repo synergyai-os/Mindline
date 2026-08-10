@@ -14,13 +14,14 @@ func (server *Server) handleGetScoped(writer http.ResponseWriter, request *http.
 		writeError(writer, http.StatusBadRequest, errors.New("invalid scoped hydration request"))
 		return
 	}
-	if err := server.state.RequireScopedCandidate(
+	libraryFingerprint, err := server.state.RequireScopedCandidate(
 		request.Context(), input.RunID, input.ScopeID, input.LensID, input.AgentID, input.RecordID,
-	); err != nil {
+	)
+	if err != nil {
 		writeError(writer, http.StatusBadRequest, errors.New("scoped hydration rejected"))
 		return
 	}
-	capture, err := personalmemory.NewLexicalRetriever(server.repository).Get(input.RecordID)
+	capture, err := personalmemory.NewLexicalRetriever(server.repository).GetAtLibraryFingerprint(input.RecordID, libraryFingerprint)
 	if err != nil {
 		writeError(writer, http.StatusNotFound, errors.New("scoped hydration rejected"))
 		return
