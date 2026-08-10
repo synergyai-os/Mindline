@@ -140,6 +140,7 @@ func TestPipelineRejectsOverlappingOperationsBeforeRecoveryOrFetch(t *testing.T)
 		{name: "continue", run: func() error { return pipeline.Continue(context.Background()) }},
 		{name: "retry", run: func() error { return pipeline.Retry(context.Background(), "rate_limited") }},
 		{name: "recover", run: func() error { return pipeline.Recover(context.Background()) }},
+		{name: "reconcile", run: func() error { return pipeline.Reconcile(context.Background()) }},
 	}
 	for _, operation := range operations {
 		if err := operation.run(); err == nil || !strings.Contains(err.Error(), "operation busy") {

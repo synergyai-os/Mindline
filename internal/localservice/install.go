@@ -54,6 +54,11 @@ func Install(options InstallOptions) (receipt InstallReceipt, returnErr error) {
 	if err := options.Config.Validate(); err != nil {
 		return InstallReceipt{}, err
 	}
+	lifecycleLock, err := acquireLifecycleLock(options.Config.RuntimeRoot)
+	if err != nil {
+		return InstallReceipt{}, err
+	}
+	defer lifecycleLock.Close()
 	if runtime.GOOS != "darwin" && options.Start {
 		return InstallReceipt{}, errors.New("automatic service installation is not supported on this operating system")
 	}
@@ -201,6 +206,11 @@ func Uninstall(configPath string) (InstallReceipt, error) {
 			return InstallReceipt{}, err
 		}
 	}
+	lifecycleLock, err := acquireLifecycleLock(filepath.Dir(filepath.Clean(configPath)))
+	if err != nil {
+		return InstallReceipt{}, err
+	}
+	defer lifecycleLock.Close()
 	config, err := LoadConfig(configPath)
 	if err != nil {
 		return InstallReceipt{}, err
@@ -394,6 +404,11 @@ func Restart(configPath string) (InstallReceipt, error) {
 			return InstallReceipt{}, err
 		}
 	}
+	lifecycleLock, err := acquireLifecycleLock(filepath.Dir(filepath.Clean(configPath)))
+	if err != nil {
+		return InstallReceipt{}, err
+	}
+	defer lifecycleLock.Close()
 	config, err := LoadConfig(configPath)
 	if err != nil {
 		return InstallReceipt{}, err
@@ -421,6 +436,26 @@ func Restart(configPath string) (InstallReceipt, error) {
 		return receipt, errors.New("update install receipt")
 	}
 	return receipt, nil
+}
+
+func acquireLifecycleLock(runtimeRoot string) (*privateio.AdvisoryLock, error) {
+	runtimeRoot = filepath.Clean(runtimeRoot)
+	if !filepath.IsAbs(runtimeRoot) {
+		return nil, errors.New("local agent lifecycle root is invalid")
+	}
+	if err := privateio.PrepareDir(runtimeRoot); err != nil {
+		return nil, errors.New("local agent lifecycle lock unavailable")
+	}
+	lock, err := privateio.AcquireAdvisoryLock(
+		runtimeRoot, filepath.Join(runtimeRoot, "lifecycle.lock"),
+	)
+	if errors.Is(err, privateio.ErrLockBusy) {
+		return nil, errors.New("local agent lifecycle operation busy")
+	}
+	if err != nil {
+		return nil, errors.New("local agent lifecycle lock unavailable")
+	}
+	return lock, nil
 }
 
 func copyExecutable(source, destination string) error {

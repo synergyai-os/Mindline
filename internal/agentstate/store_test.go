@@ -85,6 +85,35 @@ func TestStorePersistsUnlimitedLensesAndReversibleWeightedFeedback(t *testing.T)
 	}
 }
 
+func TestLegacyAgentStateRejectsCredentialShapedDurableText(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "state", "agent.sqlite"), time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	secret := "Bearer synthetic-private-token"
+	if _, err := store.PutLens(ctx, Lens{ID: "secret-lens", Name: "Secret lens", Query: secret}); err == nil {
+		t.Fatal("credential-shaped lens text was accepted")
+	}
+	if err := store.SaveRetrieval(ctx, RetrievalTrace{
+		RunID: "secret-run", Query: secret, LensID: "missing",
+		RetrievalMethod: "test", LibraryFingerprint: "fingerprint", CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}); err == nil {
+		t.Fatal("credential-shaped retrieval query was accepted")
+	}
+	var lensCount, runCount int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM lenses WHERE id='secret-lens'`).Scan(&lensCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM retrieval_runs WHERE run_id='secret-run'`).Scan(&runCount); err != nil {
+		t.Fatal(err)
+	}
+	if lensCount != 0 || runCount != 0 {
+		t.Fatalf("rejected credential text reached durable state: lenses=%d runs=%d", lensCount, runCount)
+	}
+}
+
 func TestOpenRecoveringQuarantinesCorruptDatabase(t *testing.T) {
 	t.Parallel()
 	root := filepath.Join(t.TempDir(), "state")

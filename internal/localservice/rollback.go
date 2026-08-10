@@ -293,6 +293,11 @@ func Rollback(configPath string) (returnReceipt InstallReceipt, returnErr error)
 			return InstallReceipt{}, err
 		}
 	}
+	lifecycleLock, err := acquireLifecycleLock(filepath.Dir(filepath.Clean(configPath)))
+	if err != nil {
+		return InstallReceipt{}, err
+	}
+	defer lifecycleLock.Close()
 	config, err := LoadConfig(configPath)
 	if err != nil {
 		return InstallReceipt{}, err

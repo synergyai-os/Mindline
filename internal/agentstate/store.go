@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/synergyai-os/Mindline/internal/contentguard"
 	"github.com/synergyai-os/Mindline/internal/privateio"
 	_ "modernc.org/sqlite"
 )
@@ -273,7 +274,7 @@ func (store *Store) SetIndexedFingerprint(ctx context.Context, fingerprint strin
 func (store *Store) SaveRetrieval(ctx context.Context, trace RetrievalTrace) error {
 	if !validBounded(trace.RunID, 256) || !validBounded(trace.Query, maximumTextRunes) ||
 		len(trace.Candidates) > 100 || !validBounded(trace.RetrievalMethod, 1024) ||
-		!validBounded(trace.LibraryFingerprint, 256) {
+		!validBounded(trace.LibraryFingerprint, 256) || contentguard.ContainsSecretLike(trace.Query) {
 		return errors.New("invalid retrieval trace")
 	}
 	tx, err := store.db.BeginTx(ctx, nil)

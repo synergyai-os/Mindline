@@ -172,6 +172,11 @@ func (pipeline *Pipeline) Reconcile(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	lock, err := pipeline.Store.AcquireOperationLock()
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	library, err := pipeline.Repository.Load()
 	if err != nil {
 		return err

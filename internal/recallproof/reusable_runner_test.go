@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/synergyai-os/Mindline/internal/assurance"
 )
 
 func TestReusableProofRunnerExecutesManifestAndDoesNotExportOutput(t *testing.T) {
@@ -34,6 +36,31 @@ func TestReusableProofRunnerCannotPassFailedGroup(t *testing.T) {
 	}
 }
 
+func TestReusableProofRunnerRejectsUnverifiedBindingCommitments(t *testing.T) {
+	root, binding, executor := reusableRunnerFixture(t)
+	tests := []struct {
+		name   string
+		mutate func(*TreeConfigBinding)
+	}{
+		{name: "binary", mutate: func(value *TreeConfigBinding) { value.BinaryFingerprint = "sha256:" + strings.Repeat("1", 64) }},
+		{name: "manifest", mutate: func(value *TreeConfigBinding) {
+			value.AssuranceManifestFingerprint = "sha256:" + strings.Repeat("2", 64)
+		}},
+		{name: "configuration", mutate: func(value *TreeConfigBinding) {
+			value.LiveConfigurationFingerprint = "sha256:" + strings.Repeat("3", 64)
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			drift := binding
+			test.mutate(&drift)
+			if _, err := (ReusableProofRunner{Executor: executor}).RunPreLive(context.Background(), root, drift); err == nil {
+				t.Fatal("fabricated binding commitment was accepted")
+			}
+		})
+	}
+}
+
 type fakeDirectExecutor struct{ results map[string]CommandResult }
 
 func (executor *fakeDirectExecutor) Run(_ context.Context, _ string, tool string, argv []string) CommandResult {
@@ -47,7 +74,11 @@ func reusableRunnerFixture(t *testing.T) (string, TreeConfigBinding, *fakeDirect
 	t.Helper()
 	root := filepath.Clean(filepath.Join("..", ".."))
 	treeBytes := []byte("synthetic tracked tree\n")
-	binding := TreeConfigBinding{SchemaVersion: BindingSchemaVersion, Commit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", TreeFingerprint: shaCommitment(treeBytes), BinaryFingerprint: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", AssuranceManifestFingerprint: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", LiveConfigurationFingerprint: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}
+	binaryFingerprint, err := currentExecutableFingerprint()
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := TreeConfigBinding{SchemaVersion: BindingSchemaVersion, Commit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", TreeFingerprint: shaCommitment(treeBytes), BinaryFingerprint: binaryFingerprint, AssuranceManifestFingerprint: "sha256:" + assurance.WP48ManifestFingerprint(), LiveConfigurationFingerprint: LiveConfigurationFingerprint()}
 	executor := &fakeDirectExecutor{results: map[string]CommandResult{
 		"git\x00rev-parse\x00--show-toplevel":                      {Stdout: []byte(root + "\n")},
 		"git\x00rev-parse\x00HEAD":                                 {Stdout: []byte(binding.Commit + "\n")},

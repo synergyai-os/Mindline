@@ -6,6 +6,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"github.com/synergyai-os/Mindline/internal/contentguard"
 )
 
 func (store *Store) PutLens(ctx context.Context, lens Lens) (Lens, error) {
@@ -14,7 +16,8 @@ func (store *Store) PutLens(ctx context.Context, lens Lens) (Lens, error) {
 	lens.ID = strings.TrimSpace(lens.ID)
 	lens.Name = strings.TrimSpace(lens.Name)
 	lens.Query = strings.TrimSpace(lens.Query)
-	if !validBounded(lens.ID, 256) || !validBounded(lens.Name, 1024) || !validBounded(lens.Query, maximumTextRunes) {
+	if !validBounded(lens.ID, 256) || !validBounded(lens.Name, 1024) || !validBounded(lens.Query, maximumTextRunes) ||
+		contentguard.ContainsSecretLike(lens.Name) || contentguard.ContainsSecretLike(lens.Query) {
 		return Lens{}, errors.New("invalid lens")
 	}
 	now := store.now().UTC().Format(time.RFC3339Nano)

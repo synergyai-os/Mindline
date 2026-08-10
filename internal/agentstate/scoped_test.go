@@ -451,6 +451,36 @@ func TestScopedRetrievalPreflightsRecoveryCapacityBeforeCommit(t *testing.T) {
 	}
 }
 
+func TestScopedRetrievalRejectsCredentialShapedQueryBeforePersistence(t *testing.T) {
+	now := time.Date(2026, 8, 8, 11, 55, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "state", "agent.sqlite")
+	store, err := Open(path, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	seedScopedContexts(t, store, ctx, now)
+	secret := "Bearer synthetic-private-token"
+	trace := ScopedRetrievalTrace{
+		RunID: "secret-query-run", Query: "find governance notes " + secret,
+		ScopeID: "scope-a", LensID: "lens-one", AgentID: "agent-a",
+		RetrievalMethod: "test", LibraryFingerprint: "fingerprint",
+		CreatedAt: now.Format(time.RFC3339Nano),
+	}
+	if err := store.SaveScopedRetrieval(ctx, trace); err == nil {
+		t.Fatal("credential-shaped scoped query was accepted")
+	}
+	var count int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM scoped_retrieval_runs WHERE run_id=?`, trace.RunID).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("rejected query reached database: count=%d err=%v", count, err)
+	}
+	sidecar, err := os.ReadFile(scopedRecoveryPath(path))
+	if err != nil || bytes.Contains(sidecar, []byte(secret)) {
+		t.Fatalf("rejected query reached recovery snapshot: err=%v", err)
+	}
+}
+
 func TestScopedFeedbackRetryRepairsFailedRecoverySnapshot(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)

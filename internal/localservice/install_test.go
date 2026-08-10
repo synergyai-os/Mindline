@@ -82,6 +82,57 @@ func TestInstallCreatesPrivateBinaryConfigSkillAndPreservesEvidenceOnUninstall(t
 	}
 }
 
+func TestLifecycleOperationsRefuseConcurrentRuntimeMutation(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root, err := os.MkdirTemp("/tmp", "mindline-lifecycle-lock-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	config, err := ConfigFromRoots(filepath.Join(root, "runtime"), filepath.Join(root, "memory"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(config.RuntimeRoot, "config.json")
+	if _, err := Install(InstallOptions{Config: config, ConfigPath: configPath, SourceBinary: executable}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(filepath.Join(config.RuntimeRoot, "install.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock, err := acquireLifecycleLock(config.RuntimeRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	operations := []struct {
+		name string
+		run  func() error
+	}{
+		{name: "install", run: func() error {
+			_, err := Install(InstallOptions{Config: config, ConfigPath: configPath, SourceBinary: executable})
+			return err
+		}},
+		{name: "uninstall", run: func() error { _, err := Uninstall(configPath); return err }},
+		{name: "restart", run: func() error { _, err := Restart(configPath); return err }},
+		{name: "rollback", run: func() error { _, err := Rollback(configPath); return err }},
+	}
+	for _, operation := range operations {
+		if err := operation.run(); err == nil || !strings.Contains(err.Error(), "lifecycle operation busy") {
+			t.Fatalf("concurrent %s was accepted: %v", operation.name, err)
+		}
+	}
+	after, err := os.ReadFile(filepath.Join(config.RuntimeRoot, "install.json"))
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("rejected lifecycle operation changed receipt: err=%v", err)
+	}
+}
+
 func TestDefaultRestartAndUninstallResolveTheCanonicalConfigPath(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("launchd proof is Darwin-specific")

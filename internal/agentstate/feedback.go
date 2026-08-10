@@ -9,6 +9,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"github.com/synergyai-os/Mindline/internal/contentguard"
 )
 
 const maximumFeedbackRetryTokenRunes = 256
@@ -42,7 +44,7 @@ func (store *Store) ApplyJudgment(ctx context.Context, request JudgmentRequest) 
 		return Judgment{}, errors.New("invalid judgment idempotency key")
 	}
 	if (request.Actor != "user" && request.Actor != "agent") ||
-		!validOptional(request.Reason, 4096) ||
+		!validOptional(request.Reason, 4096) || contentguard.ContainsSecretLike(request.Reason) ||
 		(request.ReversesID == "" &&
 			(!validBounded(request.RunID, 256) ||
 				!validBounded(request.LensID, 256) ||

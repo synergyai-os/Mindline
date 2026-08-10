@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -109,7 +110,34 @@ func (runner ReusableProofRunner) verifyRepository(ctx context.Context, root str
 	if tree.ExitCode != 0 || shaCommitment(tree.Stdout) != binding.TreeFingerprint {
 		return errors.New("repository tree does not match supplied binding")
 	}
+	binaryFingerprint, err := currentExecutableFingerprint()
+	if err != nil || binaryFingerprint != binding.BinaryFingerprint {
+		return errors.New("running proof binary does not match supplied binding")
+	}
+	if "sha256:"+assurance.WP48ManifestFingerprint() != binding.AssuranceManifestFingerprint {
+		return errors.New("embedded assurance manifest does not match supplied binding")
+	}
+	if LiveConfigurationFingerprint() != binding.LiveConfigurationFingerprint {
+		return errors.New("live configuration does not match supplied binding")
+	}
 	return nil
+}
+
+func currentExecutableFingerprint() (string, error) {
+	path, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	digest := sha256.New()
+	if _, err := io.Copy(digest, file); err != nil {
+		return "", err
+	}
+	return "sha256:" + hex.EncodeToString(digest.Sum(nil)), nil
 }
 
 func commandCommitment(tool string, argv []string, result CommandResult) string {
