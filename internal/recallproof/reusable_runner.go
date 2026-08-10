@@ -187,7 +187,7 @@ func proofEnvironment(directory, tool, executable string) []string {
 		"HOME=" + home, "TMPDIR=" + os.TempDir(), "PATH=" + strings.Join(pathParts, string(os.PathListSeparator)),
 		"GOCACHE=" + cache,
 		"GOTOOLCHAIN=local", "GOENV=off", "GOFLAGS=", "GOWORK=off", "GOPROXY=off",
-		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1",
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_NO_REPLACE_OBJECTS=1",
 		"LANG=C", "LC_ALL=C", "NO_PROXY=127.0.0.1,localhost",
 	}
 	if goRoot != "" {

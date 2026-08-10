@@ -207,7 +207,7 @@ func gitOutput(root string, args ...string) ([]byte, error) {
 	defer cancel()
 	command := exec.CommandContext(ctx, gitPath, args...)
 	command.Dir = root
-	command.Env = []string{"PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1"}
+	command.Env = []string{"PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_NO_REPLACE_OBJECTS=1"}
 	var output boundedBuffer
 	output.maximum = maximumBuildOutputBytes
 	command.Stdout, command.Stderr = &output, io.Discard

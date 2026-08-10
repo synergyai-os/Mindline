@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -24,6 +25,13 @@ func TestMaterializeUsesTrackedBlobsDespiteIgnoreFilterAndSparseState(t *testing
 	runGit(t, gitPath, repository, "config", "filter.mutate.clean", "cat")
 	runGit(t, gitPath, repository, "add", ".gitignore", ".gitattributes", "tracked.go")
 	runGit(t, gitPath, repository, "commit", "-m", "fixture", "--author", "Test <test@example.invalid>")
+	original := gitValue(t, gitPath, repository, "rev-parse", "HEAD")
+	writeTestFile(t, filepath.Join(repository, "tracked.go"), "package fixture // replacement\n")
+	runGit(t, gitPath, repository, "add", "tracked.go")
+	runGit(t, gitPath, repository, "commit", "-m", "replacement", "--author", "Test <test@example.invalid>")
+	replacement := gitValue(t, gitPath, repository, "rev-parse", "HEAD")
+	runGit(t, gitPath, repository, "reset", "--hard", original)
+	runGit(t, gitPath, repository, "replace", original, replacement)
 	runGit(t, gitPath, repository, "update-index", "--skip-worktree", "tracked.go")
 	if err := os.Remove(filepath.Join(repository, "tracked.go")); err != nil {
 		t.Fatal(err)
@@ -47,6 +55,18 @@ func TestMaterializeUsesTrackedBlobsDespiteIgnoreFilterAndSparseState(t *testing
 		t.Fatal(err)
 	}
 	runGit(t, gitPath, destination, "diff", "--check")
+}
+
+func gitValue(t *testing.T, gitPath, root string, args ...string) string {
+	t.Helper()
+	command := exec.Command(gitPath, args...)
+	command.Dir = root
+	command.Env = []string{"PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1"}
+	output, err := command.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(string(output))
 }
 
 func testGitPath(t *testing.T) string {

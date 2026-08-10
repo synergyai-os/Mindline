@@ -110,6 +110,13 @@ func TestOSDirectExecutorIgnoresAmbientPathAndRejectsUnknownTools(t *testing.T) 
 	}
 }
 
+func TestProofEnvironmentDisablesGitReplacementObjects(t *testing.T) {
+	environment := strings.Join(proofEnvironment(filepath.Clean(filepath.Join("..", "..")), "git", "/usr/bin/git"), "\n")
+	if !strings.Contains(environment, "GIT_NO_REPLACE_OBJECTS=1") {
+		t.Fatalf("proof environment permits replacement refs: %s", environment)
+	}
+}
+
 type fakeDirectExecutor struct{ results map[string]CommandResult }
 
 func (executor *fakeDirectExecutor) Run(_ context.Context, _ string, tool string, argv []string) CommandResult {
