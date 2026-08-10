@@ -15,9 +15,21 @@ import (
 
 var runtimeFingerprintPattern = regexp.MustCompile(`^sha256:[a-f0-9]{64}$`)
 
+const sourceTreeLinkerSymbol = "github.com/synergyai-os/Mindline/internal/localservice.sourceTreeFingerprint"
+
 // sourceTreeFingerprint is set only by the audited candidate/baseline build.
 // Ordinary builds remain usable, but cannot claim an evaluation binding.
 var sourceTreeFingerprint string
+
+// AuditedSourceTreeLinkerFlag is the single supported linker contract for a
+// service build that may participate in retrieval evaluation.
+func AuditedSourceTreeLinkerFlag(treeFingerprint string) (string, error) {
+	treeFingerprint = strings.TrimSpace(treeFingerprint)
+	if !runtimeFingerprintPattern.MatchString(treeFingerprint) {
+		return "", errors.New("audited source tree fingerprint is invalid")
+	}
+	return "-X=" + sourceTreeLinkerSymbol + "=" + treeFingerprint, nil
+}
 
 type RuntimeBinding struct {
 	State                    string `json:"state"`

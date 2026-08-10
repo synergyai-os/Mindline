@@ -9,7 +9,9 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/synergyai-os/Mindline/internal/acquisition"
 	acquisitionslack "github.com/synergyai-os/Mindline/internal/acquisition/slack"
 	slackadapter "github.com/synergyai-os/Mindline/internal/adapters/slack"
 	"github.com/synergyai-os/Mindline/internal/personalmemory"
@@ -307,6 +309,13 @@ func truthfulTransition(before, after acquisitionslack.NativeMessage) bool {
 	}
 	if before.EditDeleteState == "deleted" || before.EditDeleteState == "tombstone" {
 		return false
+	}
+	if before.EditDeleteState == "edited" && after.EditDeleteState == "edited" {
+		beforeRevision, beforeErr := acquisition.NativeRevisionTimestampToRFC3339(before.RevisionTimestamp)
+		afterRevision, afterErr := acquisition.NativeRevisionTimestampToRFC3339(after.RevisionTimestamp)
+		beforeTime, beforeParseErr := time.Parse(time.RFC3339Nano, beforeRevision)
+		afterTime, afterParseErr := time.Parse(time.RFC3339Nano, afterRevision)
+		return beforeErr == nil && afterErr == nil && beforeParseErr == nil && afterParseErr == nil && afterTime.After(beforeTime)
 	}
 	return after.EditDeleteState == "edited" || after.EditDeleteState == "deleted" || after.EditDeleteState == "tombstone"
 }

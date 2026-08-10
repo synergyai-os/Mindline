@@ -14,10 +14,12 @@ activation slice remains a separate gated Slack-to-Product-Brain proof.
 
 ## Local agent access
 
-Build once, then install the current binary as an owner-only user service:
+Build once from a clean committed tree, then install the audited binary as an
+owner-only user service. The build command embeds the exact source-tree
+commitment used by retrieval evaluation:
 
 ```bash
-go build -o /tmp/mindline ./cmd/mindline
+go run ./cmd/mindline-agent-build --out /tmp/mindline
 /tmp/mindline agent install
 ```
 

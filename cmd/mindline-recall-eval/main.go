@@ -69,6 +69,11 @@ func run(args []string, stdin io.Reader, stdout io.Writer) error {
 		port := recalleval.LocalServicePort{
 			Client: localservice.NewClient(args[2]), Mode: mode,
 		}
+		lease, err := localservice.AcquireEvaluationLease(args[2])
+		if err != nil {
+			return err
+		}
+		defer lease.Close()
 		statusContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		if err := verifyServiceBinding(statusContext, port.Client, binding); err != nil {
 			cancel()
@@ -79,6 +84,12 @@ func run(args []string, stdin io.Reader, stdout io.Writer) error {
 		if err != nil {
 			return err
 		}
+		finalStatusContext, finalCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := verifyServiceBinding(finalStatusContext, port.Client, binding); err != nil {
+			finalCancel()
+			return err
+		}
+		finalCancel()
 		if err := privateio.WriteJSON(args[5], result); err != nil {
 			return err
 		}

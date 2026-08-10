@@ -1039,7 +1039,7 @@ func captureBatchForTest(t *testing.T, batch acquisitionslack.NativeBatch) Captu
 		}
 		revisionAt := ""
 		if message.RevisionTimestamp != "" {
-			revisionAt, err = acquisition.NativeTimestampToRFC3339(message.RevisionTimestamp)
+			revisionAt, err = acquisition.NativeRevisionTimestampToRFC3339(message.RevisionTimestamp)
 			if err != nil {
 				t.Fatal(err)
 			}

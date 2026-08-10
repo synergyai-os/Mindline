@@ -55,3 +55,41 @@ func TestRuntimeBindingHashesExactExecutableConfigAndEmbeddedTree(t *testing.T) 
 		t.Fatalf("ordinary build claimed an audited tree: %+v", unavailable)
 	}
 }
+
+func TestEvaluationLeaseBlocksLifecycleReplacementForCompleteRun(t *testing.T) {
+	root, err := os.MkdirTemp("/tmp", "mindline-eval-lease-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	config, err := ConfigFromRoots(filepath.Join(root, "runtime"), filepath.Join(root, "memory"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveConfig(filepath.Join(config.RuntimeRoot, "config.json"), config); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := acquireLifecycleLock(config.RuntimeRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	lease, err := AcquireEvaluationLease(config.SocketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lifecycle, err := acquireLifecycleLock(config.RuntimeRoot); err == nil {
+		_ = lifecycle.Close()
+		t.Fatal("lifecycle replacement acquired the complete-evaluation lease")
+	}
+	if err := lease.Close(); err != nil {
+		t.Fatal(err)
+	}
+	lifecycle, err := acquireLifecycleLock(config.RuntimeRoot)
+	if err != nil {
+		t.Fatalf("released evaluation lease still blocked lifecycle: %v", err)
+	}
+	_ = lifecycle.Close()
+}

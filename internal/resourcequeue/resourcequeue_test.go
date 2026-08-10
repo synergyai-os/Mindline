@@ -437,7 +437,7 @@ func (fetcher *countingBlockedFetcher) Fetch(context.Context, Target) (FetchResu
 	return FetchResult{BlockedReason: "access_denied"}, nil
 }
 
-func TestCompleteDrainOverheadCannotCrossRunWallBudget(t *testing.T) {
+func TestCompleteDrainDeadlineLeavesARecoverableContinuation(t *testing.T) {
 	profile := FixtureProfile()
 	profile.Name = "fixture-complete-drain-wall"
 	profile.MaxRunWallSeconds = 1
@@ -474,13 +474,17 @@ func TestCompleteDrainOverheadCannotCrossRunWallBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fetcher.calls != 0 || queue.Counters.WallSeconds != profile.MaxRunWallSeconds {
+	if fetcher.calls != 0 || repository.merges != 0 || queue.Counters.WallSeconds != profile.MaxRunWallSeconds {
 		t.Fatalf("complete-drain overhead escaped the wall budget: calls=%d queue=%+v", fetcher.calls, queue)
 	}
 	for _, item := range queue.Items {
-		if item.State != StateBlocked || item.Reason != ReasonRunBudgetDeferred {
-			t.Fatalf("wall-budget remainder was not terminalized: %+v", queue.Items)
+		if item.State != StateQueued || item.Reason != "" {
+			t.Fatalf("deadline performed unbounded settlement instead of preserving recovery: %+v", queue.Items)
 		}
+	}
+	continued, continuationStarted, err := store.StartNextGeneration()
+	if err != nil || !continuationStarted || continued.Generation != 1 || continued.Counters != (Counters{}) {
+		t.Fatalf("deadline remainder was not recoverable: started=%v queue=%+v err=%v", continuationStarted, continued, err)
 	}
 }
 
@@ -883,9 +887,19 @@ func TestEveryGlobalBudgetDimensionDefersAndContinuesExactlyOneGeneration(t *tes
 			if beforeDeferred == 0 {
 				t.Fatalf("%s cap did not preserve deferred work: %+v", test.name, before)
 			}
+			beforeQueued := 0
+			for _, item := range before.Items {
+				if item.State == StateQueued {
+					beforeQueued++
+				}
+			}
 			if test.name == "resources" {
 				if beforePartial != 1 || beforeDeferred != 2 {
 					t.Fatalf("resource cap outcomes = partial:%d deferred:%d", beforePartial, beforeDeferred)
+				}
+			} else if test.name == "wall" {
+				if beforePartial != 0 || beforeDeferred != 1 || beforeQueued != 2 {
+					t.Fatalf("wall deadline did not preserve a recoverable remainder: partial:%d deferred:%d queued:%d", beforePartial, beforeDeferred, beforeQueued)
 				}
 			} else if beforePartial != 0 || beforeDeferred != 3 {
 				t.Fatalf("%s aggregate overage did not defer current and remainder: partial:%d deferred:%d", test.name, beforePartial, beforeDeferred)

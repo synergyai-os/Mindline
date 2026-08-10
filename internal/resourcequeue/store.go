@@ -552,9 +552,15 @@ func (store *Store) TerminalizeBudgetRemainder(resourceIDs []string) error {
 func (store *Store) StartNextGeneration() (Queue, bool, error) {
 	started := false
 	queue, err := store.update(func(queue *Queue) error {
+		hasQueued := false
+		allQueuedDeferred := true
 		for _, item := range queue.Items {
-			if item.State == StateQueued || item.State == StateProcessing {
+			if item.State == StateProcessing {
 				return nil
+			}
+			if item.State == StateQueued {
+				hasQueued = true
+				allQueuedDeferred = allQueuedDeferred && budgetDefersItem(*queue, item)
 			}
 		}
 		eligible := make([]int, 0)
@@ -567,7 +573,13 @@ func (store *Store) StartNextGeneration() (Queue, bool, error) {
 				eligible = append(eligible, index)
 			}
 		}
-		if len(eligible) == 0 {
+		// A wall deadline can intentionally leave queued work uncanonicalized
+		// rather than running settlement past the drain deadline. That exact
+		// exhausted state is a valid, operator-started continuation boundary.
+		if hasQueued && (!globalBudgetExhausted(*queue) || !allQueuedDeferred) {
+			return nil
+		}
+		if len(eligible) == 0 && !hasQueued {
 			return nil
 		}
 		queue.Generation++

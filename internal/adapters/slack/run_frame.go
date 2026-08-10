@@ -108,7 +108,7 @@ func CaptureBatchForAdoption(frame RunFrame) (personalmemory.CaptureBatch, map[s
 		}
 		revisionAt := ""
 		if message.RevisionTimestamp != "" {
-			revisionAt, err = acquisition.NativeTimestampToRFC3339(message.RevisionTimestamp)
+			revisionAt, err = acquisition.NativeRevisionTimestampToRFC3339(message.RevisionTimestamp)
 			if err != nil {
 				return personalmemory.CaptureBatch{}, nil, errors.New("invalid personal evidence revision timestamp")
 			}

@@ -82,7 +82,10 @@ func (runner Runner) Drain(ctx context.Context) (returnErr error) {
 	}
 	remainingWall := queue.Profile.MaxRunWallSeconds - queue.Counters.WallSeconds
 	if remainingWall <= 0 {
-		return runner.settleAllBudgetRemainder()
+		// The expired generation remains recoverable through
+		// StartNextGeneration. Do not perform unbounded canonical settlement
+		// after the complete-drain deadline.
+		return nil
 	}
 	startingWall := queue.Counters.WallSeconds
 	chargeElapsed := func() (bool, error) {
@@ -108,7 +111,7 @@ func (runner Runner) Drain(ctx context.Context) (returnErr error) {
 		if _, err := chargeElapsed(); err != nil {
 			return err
 		}
-		return runner.settleAllBudgetRemainder()
+		return nil
 	}
 	runContext, cancel := context.WithTimeout(ctx, runWindow)
 	defer cancel()
@@ -120,18 +123,24 @@ func (runner Runner) Drain(ctx context.Context) (returnErr error) {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			return runner.settleAllBudgetRemainder()
-		}
-		settled, err := runner.settleBudgetRemainder()
-		if err != nil {
-			return err
+			return nil
 		}
 		exhausted, err := chargeElapsed()
 		if err != nil {
 			return err
 		}
 		if exhausted {
-			return runner.settleAllBudgetRemainder()
+			return nil
+		}
+		settled, err := runner.settleBudgetRemainder(runContext)
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if errors.Is(err, context.DeadlineExceeded) && runContext.Err() != nil {
+				return nil
+			}
+			return err
 		}
 		if settled {
 			continue
@@ -146,12 +155,12 @@ func (runner Runner) Drain(ctx context.Context) (returnErr error) {
 				return ctx.Err()
 			}
 			if errors.Is(err, context.DeadlineExceeded) && runContext.Err() != nil {
-				return runner.settleAllBudgetRemainder()
+				return nil
 			}
 			return err
 		}
 		if exhausted {
-			return runner.settleAllBudgetRemainder()
+			return nil
 		}
 		if !processed {
 			return nil
@@ -166,22 +175,22 @@ func (runner Runner) wallNow() time.Time {
 	return time.Now()
 }
 
-func (runner Runner) settleAllBudgetRemainder() error {
-	for {
-		settled, err := runner.settleBudgetRemainder()
-		if err != nil || !settled {
-			return err
-		}
+func (runner Runner) settleBudgetRemainder(ctx context.Context) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
 	}
-}
-
-func (runner Runner) settleBudgetRemainder() (bool, error) {
 	resourceIDs, found, err := runner.Store.BudgetRemainder()
 	if err != nil || !found {
 		return false, err
 	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	library, err := runner.Repository.Load()
 	if err != nil {
+		return false, err
+	}
+	if err := ctx.Err(); err != nil {
 		return false, err
 	}
 	urls := make(map[string]string, len(library.Resources))
@@ -189,7 +198,12 @@ func (runner Runner) settleBudgetRemainder() (bool, error) {
 		urls[resource.ResourceID] = resource.CanonicalURL
 	}
 	resources := make([]acquisition.ImportedEvidence, 0, len(resourceIDs))
-	for _, resourceID := range resourceIDs {
+	for index, resourceID := range resourceIDs {
+		if index%1024 == 0 {
+			if err := ctx.Err(); err != nil {
+				return false, err
+			}
+		}
 		canonicalURL, exists := urls[resourceID]
 		if !exists {
 			return false, errors.New("queued resource is absent from canonical library")
@@ -201,12 +215,18 @@ func (runner Runner) settleBudgetRemainder() (bool, error) {
 			Missingness:  []string{"resource_blocked:" + ReasonRunBudgetDeferred},
 		})
 	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	if _, err := runner.Repository.MergeEnrichment(personalmemory.EnrichmentBatch{
 		SchemaVersion: personalmemory.EnrichmentBatchSchemaVersion,
 		Resources:     resources,
 	}); err != nil {
 		return false, err
 	}
+	// Once the canonical idempotent batch is committed, finish the matching
+	// derived transition immediately. A subsequent run can replay this pair if
+	// the process exits between the two writes.
 	if err := runner.Store.TerminalizeBudgetRemainder(resourceIDs); err != nil {
 		return false, err
 	}

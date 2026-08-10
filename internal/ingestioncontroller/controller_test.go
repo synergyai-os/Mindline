@@ -344,6 +344,34 @@ func TestApplyRejectsImportedFinalEditWhenNewerCurrentEditExists(t *testing.T) {
 	}
 }
 
+func TestApplyRejectsOlderEditLaterInSameEnvelope(t *testing.T) {
+	repository, err := personalmemory.NewFileRepository(filepath.Join(t.TempDir(), "library"), time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledgerStore, err := NewLedgerStore(filepath.Join(t.TempDir(), "ledger"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	newer := message("1.000001", "newer edit")
+	newer.EditDeleteState = "edited"
+	newer.RevisionTimestamp = "1.000003"
+	older := message("1.000001", "unseen older edit")
+	older.EditDeleteState = "edited"
+	older.RevisionTimestamp = "1.000002"
+	envelope := testEnvelope([]UnitFrame{
+		unit(0, "000", []acquisitionslack.NativeMessage{newer}, map[string]string{"1.000001": "user"}),
+		unit(1, "001", []acquisitionslack.NativeMessage{older}, map[string]string{"1.000001": "user"}),
+	})
+	if _, err := (Controller{Repository: repository, Ledger: ledgerStore}).Apply(envelope); err == nil {
+		t.Fatal("an older overlapping edit was accepted as the envelope final state")
+	}
+	status, err := repository.Status()
+	if err != nil || status.RecordCount != 0 {
+		t.Fatalf("rejected overlapping edit changed canonical evidence: %+v err=%v", status, err)
+	}
+}
+
 func testEnvelope(units []UnitFrame) Envelope {
 	return Envelope{Begin: BeginFrame{Type: "begin", SchemaVersion: RunSchemaVersion, RunID: "run-test", SourceAdapter: "slack", SourceScope: "slack:T:D", ConfigurationFingerprint: "configuration-test", UnitCount: len(units), MessageCeiling: 100, ByteCeiling: 1}, Units: units, End: EndFrame{Type: "end", UnitCount: len(units), MessageCount: messageCount(units), ByteCount: 1, EnvelopeCommitment: EnvelopeCommitment(units)}, observedUnitBytes: 1}
 }

@@ -346,28 +346,49 @@ func ValidateImportedEvidence(evidence []ImportedEvidence, snapshot InventorySna
 }
 
 func NativeTimestampToRFC3339(value string) (string, error) {
+	parsed, err := parseNativeTimestamp(value)
+	if err != nil {
+		return "", err
+	}
+	// Preserve the established canonical representation for ordinary source
+	// timestamps. Changing this format would rewrite every existing capture on
+	// an exact replay.
+	return parsed.UTC().Format(time.RFC3339), nil
+}
+
+// NativeRevisionTimestampToRFC3339 preserves sub-second provider chronology
+// without changing the established canonical OccurredAt representation.
+func NativeRevisionTimestampToRFC3339(value string) (string, error) {
+	parsed, err := parseNativeTimestamp(value)
+	if err != nil {
+		return "", err
+	}
+	return parsed.UTC().Format(time.RFC3339Nano), nil
+}
+
+func parseNativeTimestamp(value string) (time.Time, error) {
 	trimmed := strings.TrimSpace(value)
 	if parsed, err := time.Parse(time.RFC3339, trimmed); err == nil {
-		return parsed.UTC().Format(time.RFC3339Nano), nil
+		return parsed, nil
 	}
 	parts := strings.SplitN(trimmed, ".", 2)
 	seconds, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil || seconds < 0 {
-		return "", errors.New("invalid native timestamp")
+		return time.Time{}, errors.New("invalid native timestamp")
 	}
 	nanos := int64(0)
 	if len(parts) == 2 {
 		fraction := parts[1]
 		if len(fraction) > 9 || fraction == "" {
-			return "", errors.New("invalid native timestamp")
+			return time.Time{}, errors.New("invalid native timestamp")
 		}
 		fraction += strings.Repeat("0", 9-len(fraction))
 		nanos, err = strconv.ParseInt(fraction, 10, 64)
 		if err != nil {
-			return "", errors.New("invalid native timestamp")
+			return time.Time{}, errors.New("invalid native timestamp")
 		}
 	}
-	return time.Unix(seconds, nanos).UTC().Format(time.RFC3339Nano), nil
+	return time.Unix(seconds, nanos).UTC(), nil
 }
 
 func Fingerprint(value any) string {
