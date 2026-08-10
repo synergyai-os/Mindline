@@ -50,7 +50,7 @@ func NewOllama(baseURL, model string, client *http.Client) (*Ollama, error) {
 }
 
 func (ollama *Ollama) ModelID() string {
-	return "ollama/" + ollama.model
+	return "ollama/" + ollama.model + "/retrieval-input-v0.2"
 }
 
 func (ollama *Ollama) Embed(ctx context.Context, inputs []string) ([][]float64, error) {
@@ -107,4 +107,41 @@ func (ollama *Ollama) Embed(ctx context.Context, inputs []string) ([][]float64, 
 		}
 	}
 	return payload.Embeddings, nil
+}
+
+func (ollama *Ollama) EmbedQuery(ctx context.Context, input string) ([]float64, error) {
+	vectors, err := ollama.EmbedQueries(ctx, []string{input})
+	if err != nil {
+		return nil, err
+	}
+	return vectors[0], nil
+}
+
+func (ollama *Ollama) EmbedQueries(ctx context.Context, inputs []string) ([][]float64, error) {
+	prepared := make([]string, 0, len(inputs))
+	for _, input := range inputs {
+		input = strings.TrimSpace(input)
+		if ollama.usesEmbeddingGemmaPrompts() {
+			input = "task: search result | query: " + input
+		}
+		prepared = append(prepared, input)
+	}
+	return ollama.Embed(ctx, prepared)
+}
+
+func (ollama *Ollama) EmbedDocuments(ctx context.Context, inputs []string) ([][]float64, error) {
+	prepared := make([]string, 0, len(inputs))
+	for _, input := range inputs {
+		input = strings.TrimSpace(input)
+		if ollama.usesEmbeddingGemmaPrompts() {
+			input = "title: none | text: " + input
+		}
+		prepared = append(prepared, input)
+	}
+	return ollama.Embed(ctx, prepared)
+}
+
+func (ollama *Ollama) usesEmbeddingGemmaPrompts() bool {
+	name := strings.ToLower(strings.TrimSpace(ollama.model))
+	return name == "embeddinggemma" || strings.HasPrefix(name, "embeddinggemma:")
 }

@@ -73,6 +73,11 @@ func validateNativeBatch(batch NativeBatch) error {
 		if strings.TrimSpace(message.NativeMessageID) == "" || !webAPITimestampInWindow(message.Timestamp, batch.LowerInclusive, batch.UpperInclusive) || seen[message.NativeMessageID] {
 			return errors.New("invalid native Slack source-record denominator")
 		}
+		if message.RevisionTimestamp != "" &&
+			(!webAPITimestampPattern.MatchString(message.RevisionTimestamp) ||
+				compareWebAPITimestamp(message.RevisionTimestamp, message.Timestamp) <= 0) {
+			return errors.New("invalid native Slack revision chronology")
+		}
 		seen[message.NativeMessageID] = true
 		occurrences += len(ExtractURLOccurrences(message.Text))
 		if occurrences > MaximumNativeURLOccurrences {

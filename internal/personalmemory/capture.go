@@ -28,6 +28,7 @@ type CaptureRecordInput struct {
 	AttachmentCount   int
 	PrivateFileCount  int
 	EditDeleteState   string
+	RevisionAt        string
 	Missingness       []string
 }
 
@@ -53,6 +54,14 @@ func NewCaptureRecord(input CaptureRecordInput) (CaptureRecord, error) {
 	if _, err := time.Parse(time.RFC3339, input.OccurredAt); err != nil {
 		return CaptureRecord{}, errors.New("invalid personal evidence timestamp")
 	}
+	input.RevisionAt = strings.TrimSpace(input.RevisionAt)
+	if input.RevisionAt != "" {
+		revisionAt, err := time.Parse(time.RFC3339, input.RevisionAt)
+		occurredAt, occurredErr := time.Parse(time.RFC3339, input.OccurredAt)
+		if err != nil || occurredErr != nil || !revisionAt.After(occurredAt) {
+			return CaptureRecord{}, errors.New("invalid personal evidence revision timestamp")
+		}
+	}
 	missingness := append([]string(nil), input.Missingness...)
 	sourceRef := strings.TrimSpace(input.SourceRef)
 	if sourceRef == "" || containsSecret(sourceRef) || containsUnsafeURL(sourceRef) {
@@ -69,18 +78,19 @@ func NewCaptureRecord(input CaptureRecordInput) (CaptureRecord, error) {
 	rawInput := strings.TrimSpace(input.RawText)
 	rawText := rawInput
 	contextState := "source_complete"
-	if containsSecret(rawText) {
-		rawText = "[REDACTED SECRET-LIKE CONTENT]"
+	if sanitized, redacted := redactSecretFragments(rawText); redacted {
+		rawText = sanitized
 		contextState = "secret_redacted"
 		missingness = append(missingness, "secret_like_content_redacted")
-	} else if rawText == "" {
+	}
+	if rawText == "" {
 		rawText = "[Capture has no text]"
 		contextState = "empty_source"
 		missingness = append(missingness, "source_text_empty")
 	} else {
-		var redacted bool
-		rawText, redacted = sanitizeTextURLs(rawText)
-		if redacted {
+		var urlRedacted bool
+		rawText, urlRedacted = sanitizeTextURLs(rawText)
+		if urlRedacted {
 			missingness = append(missingness, "sensitive_url_redacted")
 		}
 	}
@@ -132,6 +142,7 @@ func NewCaptureRecord(input CaptureRecordInput) (CaptureRecord, error) {
 		SourceRef: sourceRef, RawText: rawText, URLs: urls, ResourceIDs: resourceIDs,
 		ThreadParentID: threadParentID, AttachmentCount: input.AttachmentCount,
 		PrivateFileCount: input.PrivateFileCount, EditDeleteState: editDeleteState,
+		RevisionAt:   input.RevisionAt,
 		ContextState: contextState, Missingness: uniqueSorted(missingness),
 		AuthorityClass: AuthorityClass, SourceContentFingerprint: hex.EncodeToString(sourceDigest[:]),
 	}

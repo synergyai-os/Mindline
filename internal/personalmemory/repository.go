@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/synergyai-os/Mindline/internal/privateio"
@@ -20,7 +21,19 @@ const (
 	backupFileName  = "library.backup.json"
 	lockFileName    = "library.lock"
 	contentDirName  = "content"
+	// MaximumCaptureLibraryBytes reserves room beneath MaximumLibraryBytes for
+	// atomic recovery. All Slack capture entry points use this admission limit.
+	MaximumCaptureLibraryBytes = 48 << 20
 )
+
+var ErrInvalidEnrichment = errors.New("invalid personal evidence enrichment")
+
+func invalidEnrichment(err error) error {
+	if err == nil {
+		return ErrInvalidEnrichment
+	}
+	return errors.Join(ErrInvalidEnrichment, err)
+}
 
 type RepositoryPort interface {
 	Load() (Library, error)
@@ -36,6 +49,15 @@ type FileRepository struct {
 	lockPath    string
 	contentDir  string
 	now         func() time.Time
+	statusMu    sync.Mutex
+	statusCache *statusCache
+}
+
+type statusCache struct {
+	fileExists bool
+	fileSize   int64
+	modifiedAt time.Time
+	status     Status
 }
 
 func NewFileRepository(root string, now func() time.Time) (*FileRepository, error) {
@@ -90,21 +112,167 @@ func (repository *FileRepository) Load() (Library, error) {
 }
 
 func (repository *FileRepository) Import(batch CaptureBatch) (ImportReceipt, error) {
-	if err := validateCaptureBatch(batch); err != nil {
+	return repository.ImportWithinBudget(batch, MaximumCaptureLibraryBytes)
+}
+
+// ImportWithinBudget is the only capture-admission path. It holds the
+// repository lock while applying the canonical transition and serializing the
+// exact next library, so callers cannot race a separate estimate with commit.
+func (repository *FileRepository) ImportWithinBudget(batch CaptureBatch, maximumBytes int64) (ImportReceipt, error) {
+	receipts, err := repository.ImportManyWithinBudget([]CaptureBatch{batch}, maximumBytes)
+	if err != nil {
 		return ImportReceipt{}, err
 	}
-	batchFingerprint := captureBatchFingerprint(batch)
+	return receipts[0], nil
+}
+
+// ImportManyWithinBudget applies a complete source envelope under one lock and
+// persists only after the final combined library passes admission.
+func (repository *FileRepository) ImportManyWithinBudget(batches []CaptureBatch, maximumBytes int64) ([]ImportReceipt, error) {
+	if len(batches) == 0 {
+		return nil, errors.New("personal evidence capture batch set is empty")
+	}
+	for _, batch := range batches {
+		if err := validateCaptureBatch(batch); err != nil {
+			return nil, err
+		}
+	}
+	if maximumBytes <= 0 || maximumBytes > MaximumLibraryBytes {
+		return nil, errors.New("personal evidence capture admission limit is invalid")
+	}
 	lock, err := privateio.AcquireAdvisoryLock(repository.root, repository.lockPath)
 	if err != nil {
-		return ImportReceipt{}, errors.New("personal evidence library busy")
+		return nil, errors.New("personal evidence library busy")
 	}
 	defer lock.Close()
 	library, err := repository.Load()
 	if err != nil {
-		return ImportReceipt{}, err
+		return nil, err
 	}
+	imported := make(map[string]bool, len(library.Imports))
+	for _, existing := range library.Imports {
+		imported[existing.BatchFingerprint] = true
+	}
+	initialContent := make(map[string]string, len(library.Records))
+	initialRecords := make(map[string]CaptureRecord, len(library.Records))
+	historicalContent := make(map[string]map[string]bool, len(library.Revisions))
+	for _, record := range library.Records {
+		initialContent[record.IdempotencyKey] = record.ContentHash
+		initialRecords[record.IdempotencyKey] = record
+	}
+	for _, revision := range library.Revisions {
+		key := revision.Record.IdempotencyKey
+		if historicalContent[key] == nil {
+			historicalContent[key] = map[string]bool{}
+		}
+		historicalContent[key][revision.Record.ContentHash] = true
+	}
+	envelopeKeys := make(map[string]bool)
+	for _, batch := range batches {
+		if imported[captureBatchFingerprint(batch)] {
+			continue
+		}
+		for _, record := range batch.Records {
+			envelopeKeys[record.IdempotencyKey] = true
+		}
+	}
+	finalContent := make(map[string]string, len(envelopeKeys))
+	finalRecords := make(map[string]CaptureRecord, len(envelopeKeys))
+	finalImported := make(map[string]bool, len(envelopeKeys))
+	for _, batch := range batches {
+		batchWasImported := imported[captureBatchFingerprint(batch)]
+		for _, record := range batch.Records {
+			if envelopeKeys[record.IdempotencyKey] {
+				finalContent[record.IdempotencyKey] = record.ContentHash
+				finalRecords[record.IdempotencyKey] = record
+				finalImported[record.IdempotencyKey] = batchWasImported
+			}
+		}
+	}
+	for key, wasImported := range finalImported {
+		if wasImported && initialContent[key] != finalContent[key] {
+			return nil, errors.New("personal evidence envelope final state is stale")
+		}
+		prior, exists := initialRecords[key]
+		final := finalRecords[key]
+		if exists && prior.ContentHash != final.ContentHash && historicalContent[key][final.ContentHash] {
+			return nil, errors.New("personal evidence envelope final state is a stale historical revision")
+		}
+		if exists && prior.ContentHash != final.ContentHash &&
+			prior.EditDeleteState == "edited" && final.EditDeleteState == "edited" &&
+			!legacyRevisionAttachment(prior, final) &&
+			!newerRevision(final.RevisionAt, prior.RevisionAt) {
+			return nil, errors.New("personal evidence conflicting edit has no newer chronology")
+		}
+		if exists && prior.ContentHash != final.ContentHash &&
+			prior.EditDeleteState == "edited" && final.EditDeleteState == "original" {
+			return nil, errors.New("personal evidence edited state cannot revert to original")
+		}
+		if exists && isDeletedCapture(prior) && !isDeletedCapture(final) && prior.ContentHash != final.ContentHash {
+			return nil, errors.New("personal evidence deleted state cannot be resurrected without chronology")
+		}
+	}
+	receipts := make([]ImportReceipt, 0, len(batches))
+	mutated := false
+	touchedKeys := make(map[string]bool, len(envelopeKeys))
+	for _, batch := range batches {
+		receipt, changed := repository.applyCaptureBatch(&library, batch, imported, touchedKeys, finalContent)
+		receipts = append(receipts, receipt)
+		mutated = mutated || changed
+	}
+	if !mutated {
+		return receipts, nil
+	}
+	library = sealLibrary(library)
+	if err := repository.persistLibraryWithinBudget(library, maximumBytes); err != nil {
+		return nil, err
+	}
+	return receipts, nil
+}
+
+func isDeletedCapture(record CaptureRecord) bool {
+	return record.EditDeleteState == "deleted" || record.EditDeleteState == "tombstone"
+}
+
+func newerRevision(candidate, current string) bool {
+	candidateTime, candidateErr := time.Parse(time.RFC3339Nano, strings.TrimSpace(candidate))
+	currentTime, currentErr := time.Parse(time.RFC3339Nano, strings.TrimSpace(current))
+	return candidateErr == nil && currentErr == nil && candidateTime.After(currentTime)
+}
+
+func legacyRevisionAttachment(prior, candidate CaptureRecord) bool {
+	if strings.TrimSpace(prior.RevisionAt) != "" || strings.TrimSpace(candidate.RevisionAt) == "" ||
+		prior.EditDeleteState != "edited" || candidate.EditDeleteState != "edited" {
+		return false
+	}
+	prior.RevisionAt = ""
+	prior.ContentHash = ""
+	candidate.RevisionAt = ""
+	candidate.ContentHash = ""
+	return fingerprintRecord(prior) == fingerprintRecord(candidate)
+}
+
+func (repository *FileRepository) applyCaptureBatch(
+	library *Library,
+	batch CaptureBatch,
+	imported, touchedKeys map[string]bool,
+	finalContent map[string]string,
+) (ImportReceipt, bool) {
+	batchFingerprint := captureBatchFingerprint(batch)
+	var existingImport *ImportReceipt
 	for _, existing := range library.Imports {
 		if existing.BatchFingerprint == batchFingerprint {
+			existing := existing
+			existingImport = &existing
+			break
+		}
+	}
+	if existingImport != nil {
+		orderedReplay := false
+		for _, record := range batch.Records {
+			orderedReplay = orderedReplay || touchedKeys[record.IdempotencyKey]
+		}
+		if !orderedReplay {
 			return ImportReceipt{
 				BatchFingerprint: batchFingerprint,
 				SourceIdentity:   batch.SourceIdentity,
@@ -114,8 +282,8 @@ func (repository *FileRepository) Import(batch CaptureBatch) (ImportReceipt, err
 				DeclaredRecords:  batch.DeclaredRecords,
 				UnchangedRecords: len(batch.Records),
 				TotalRecords:     len(library.Records),
-				ImportedAt:       existing.ImportedAt,
-			}, nil
+				ImportedAt:       existingImport.ImportedAt,
+			}, false
 		}
 	}
 	byKey := make(map[string]int, len(library.Records))
@@ -140,6 +308,13 @@ func (repository *FileRepository) Import(batch CaptureBatch) (ImportReceipt, err
 		ImportedAt:       repository.now().UTC().Format(time.RFC3339Nano),
 	}
 	for _, record := range batch.Records {
+		if existingImport != nil && !touchedKeys[record.IdempotencyKey] {
+			receipt.UnchangedRecords++
+			continue
+		}
+		if existingImport == nil {
+			touchedKeys[record.IdempotencyKey] = true
+		}
 		for index, resourceID := range record.ResourceIDs {
 			if resourcesByID[resourceID] {
 				continue
@@ -160,7 +335,7 @@ func (repository *FileRepository) Import(batch CaptureBatch) (ImportReceipt, err
 		}
 		prior := library.Records[index]
 		revisionID := stableRevisionID(prior)
-		if !revisionsByID[revisionID] {
+		if prior.ContentHash != finalContent[prior.IdempotencyKey] && !revisionsByID[revisionID] {
 			library.Revisions = append(library.Revisions, CaptureRevision{
 				RevisionID: revisionID, SupersededAt: receipt.ImportedAt, Record: prior,
 			})
@@ -170,21 +345,23 @@ func (repository *FileRepository) Import(batch CaptureBatch) (ImportReceipt, err
 		receipt.UpdatedRecords++
 	}
 	receipt.TotalRecords = len(library.Records)
-	library.Revision++
-	library.Imports = append(library.Imports, receipt)
-	library = sealLibrary(library)
-	if err := repository.persistLibrary(library); err != nil {
-		return ImportReceipt{}, err
+	if existingImport != nil && receipt.InsertedRecords+receipt.UpdatedRecords == 0 {
+		return receipt, false
 	}
-	return receipt, nil
+	library.Revision++
+	if !imported[batchFingerprint] {
+		library.Imports = append(library.Imports, receipt)
+		imported[batchFingerprint] = true
+	}
+	return receipt, true
 }
 
 func (repository *FileRepository) MergeEnrichment(batch EnrichmentBatch) (EnrichmentReceipt, error) {
 	if batch.SchemaVersion != EnrichmentBatchSchemaVersion || len(batch.Resources)+len(batch.Contents) == 0 {
-		return EnrichmentReceipt{}, errors.New("personal evidence enrichment is empty")
+		return EnrichmentReceipt{}, invalidEnrichment(errors.New("personal evidence enrichment is empty"))
 	}
 	if len(batch.Resources)+len(batch.Contents) > MaximumResources {
-		return EnrichmentReceipt{}, errors.New("personal evidence enrichment exceeds resource limit")
+		return EnrichmentReceipt{}, invalidEnrichment(errors.New("personal evidence enrichment exceeds resource limit"))
 	}
 	contentByURL := map[string]*ContentArtifactRef{}
 	contentPayloads := map[string][]byte{}
@@ -194,10 +371,10 @@ func (repository *FileRepository) MergeEnrichment(batch EnrichmentBatch) (Enrich
 	for _, content := range batch.Contents {
 		canonicalURL, reference, payload, contentMissingness, contentAccess, secretLike, err := prepareExtractedContent(content)
 		if err != nil {
-			return EnrichmentReceipt{}, err
+			return EnrichmentReceipt{}, invalidEnrichment(err)
 		}
 		if _, duplicate := contentByURL[canonicalURL]; duplicate || secretContentURLs[canonicalURL] {
-			return EnrichmentReceipt{}, errors.New("personal evidence enrichment contains duplicate content")
+			return EnrichmentReceipt{}, invalidEnrichment(errors.New("personal evidence enrichment contains duplicate content"))
 		}
 		if secretLike {
 			secretContentURLs[canonicalURL] = true
@@ -219,10 +396,10 @@ func (repository *FileRepository) MergeEnrichment(batch EnrichmentBatch) (Enrich
 			resource, err = resourceFromImportedEvidence(input, contentByURL[input.CanonicalURL], contentMissingnessByURL[input.CanonicalURL], contentAccessByURL[input.CanonicalURL])
 		}
 		if err != nil {
-			return EnrichmentReceipt{}, err
+			return EnrichmentReceipt{}, invalidEnrichment(err)
 		}
 		if seenInputs[resource.ResourceID] {
-			return EnrichmentReceipt{}, errors.New("personal evidence enrichment contains duplicate resources")
+			return EnrichmentReceipt{}, invalidEnrichment(errors.New("personal evidence enrichment contains duplicate resources"))
 		}
 		seenInputs[resource.ResourceID] = true
 		resources = append(resources, resource)
@@ -285,24 +462,37 @@ func (repository *FileRepository) MergeEnrichment(batch EnrichmentBatch) (Enrich
 	resourceGraph := make([]ResourceContext, 0, len(library.Resources)+len(resources))
 	resourceGraph = append(resourceGraph, library.Resources...)
 	resourceGraph = append(resourceGraph, resources...)
-	for changed := true; changed; {
-		changed = false
-		for _, resource := range resourceGraph {
-			if !allowed[resource.ResourceID] {
-				continue
-			}
-			for _, related := range resource.RelatedURLs {
-				relatedID := stableResourceID(related.URL)
-				if !allowed[relatedID] {
-					allowed[relatedID] = true
-					changed = true
-				}
+	relatedByResourceID := make(map[string][]string, len(resourceGraph))
+	for _, resource := range resourceGraph {
+		for _, related := range resource.RelatedURLs {
+			if FollowableRelatedResource(related) {
+				relatedByResourceID[resource.ResourceID] = append(
+					relatedByResourceID[resource.ResourceID], stableResourceID(related.URL),
+				)
 			}
 		}
 	}
+	existingResourceIDs := make(map[string]bool, len(library.Resources))
+	for _, resource := range library.Resources {
+		existingResourceIDs[resource.ResourceID] = true
+	}
+	queue := make([]string, 0, len(allowed))
+	for resourceID := range allowed {
+		queue = append(queue, resourceID)
+	}
+	for index := 0; index < len(queue); index++ {
+		for _, relatedID := range relatedByResourceID[queue[index]] {
+			if allowed[relatedID] {
+				continue
+			}
+			allowed[relatedID] = true
+			queue = append(queue, relatedID)
+		}
+	}
 	for _, resource := range resources {
-		if !allowed[resource.ResourceID] {
-			return EnrichmentReceipt{}, errors.New("personal evidence enrichment is not reachable from a retained capture")
+		if !allowed[resource.ResourceID] &&
+			!(existingResourceIDs[resource.ResourceID] && referenceOnlyTerminalization(resource)) {
+			return EnrichmentReceipt{}, invalidEnrichment(errors.New("personal evidence enrichment is not reachable from a retained capture"))
 		}
 	}
 	byID := make(map[string]int, len(library.Resources))
@@ -359,6 +549,9 @@ func (repository *FileRepository) MergeEnrichment(batch EnrichmentBatch) (Enrich
 	}
 	for _, resource := range resources {
 		for _, related := range resource.RelatedURLs {
+			if !FollowableRelatedResource(related) {
+				continue
+			}
 			resourceID := stableResourceID(related.URL)
 			if _, exists := byID[resourceID]; exists {
 				continue
@@ -378,6 +571,18 @@ func (repository *FileRepository) MergeEnrichment(batch EnrichmentBatch) (Enrich
 	}
 	committed = true
 	return receipt, nil
+}
+
+func referenceOnlyTerminalization(resource ResourceContext) bool {
+	return resource.State == "inaccessible" &&
+		resource.AccessClass == "unsupported" &&
+		resource.RetrievedAt == "" &&
+		resource.Metadata == (ResourceMetadata{}) &&
+		len(resource.Excerpts) == 0 &&
+		len(resource.RelatedURLs) == 0 &&
+		resource.Content == nil &&
+		len(resource.Missingness) == 1 &&
+		resource.Missingness[0] == "resource_blocked:manual_processing_required"
 }
 
 func (repository *FileRepository) LoadContent(reference ContentArtifactRef) (ExtractedContentArtifact, error) {
@@ -528,11 +733,28 @@ func validContentArtifactFileName(name string) bool {
 }
 
 func (repository *FileRepository) Status() (Status, error) {
+	repository.statusMu.Lock()
+	defer repository.statusMu.Unlock()
+
+	info, statErr := os.Lstat(repository.libraryPath)
+	if statErr != nil && !errors.Is(statErr, fs.ErrNotExist) {
+		return Status{}, errors.New("personal evidence library unavailable")
+	}
+	fileExists := statErr == nil
+	if fileExists && (!info.Mode().IsRegular() || info.Mode().Perm() != privateio.FileMode) {
+		return Status{}, errors.New("personal evidence library unavailable")
+	}
+	if cached := repository.statusCache; cached != nil &&
+		cached.fileExists == fileExists &&
+		(!fileExists || (cached.fileSize == info.Size() && cached.modifiedAt.Equal(info.ModTime()))) {
+		return cached.status, nil
+	}
+
 	library, err := repository.Load()
 	if err != nil {
 		return Status{}, err
 	}
-	return Status{
+	status := Status{
 		SchemaVersion:           library.SchemaVersion,
 		Revision:                library.Revision,
 		Fingerprint:             library.Fingerprint,
@@ -543,7 +765,13 @@ func (repository *FileRepository) Status() (Status, error) {
 		ImportCount:             len(library.Imports),
 		EnrichmentImportCount:   len(library.EnrichmentImports),
 		AuthorityClass:          AuthorityClass,
-	}, nil
+	}
+	repository.statusCache = &statusCache{fileExists: fileExists, status: status}
+	if fileExists {
+		repository.statusCache.fileSize = info.Size()
+		repository.statusCache.modifiedAt = info.ModTime()
+	}
+	return status, nil
 }
 
 func validateCaptureBatch(batch CaptureBatch) error {
@@ -589,9 +817,16 @@ func captureBatchFingerprint(batch CaptureBatch) string {
 }
 
 func (repository *FileRepository) persistLibrary(library Library) error {
+	return repository.persistLibraryWithinBudget(library, MaximumLibraryBytes)
+}
+
+func (repository *FileRepository) persistLibraryWithinBudget(library Library, maximumBytes int64) error {
 	next, err := privateio.CanonicalJSONBytes(library)
 	if err != nil {
 		return errors.New("personal evidence library unavailable")
+	}
+	if int64(len(next)) > maximumBytes {
+		return errors.New("personal evidence library exceeds capture admission limit")
 	}
 	var prior []byte
 	if _, err := os.Lstat(repository.libraryPath); err == nil {
@@ -610,5 +845,8 @@ func (repository *FileRepository) persistLibrary(library Library) error {
 	if err := privateio.AtomicReplaceWithBackup(repository.root, repository.libraryPath, repository.backupPath, next, prior, MaximumLibraryBytes, validate, nil); err != nil {
 		return errors.New("personal evidence library unavailable")
 	}
+	repository.statusMu.Lock()
+	repository.statusCache = nil
+	repository.statusMu.Unlock()
 	return nil
 }

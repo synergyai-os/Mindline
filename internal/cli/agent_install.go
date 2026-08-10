@@ -70,6 +70,18 @@ func (r Runner) runAgentRestart(args []string, stdout, stderr io.Writer) int {
 	return encodePersonalMemoryJSON(stdout, stderr, receipt)
 }
 
+func (r Runner) runAgentRollback(args []string, stdout, stderr io.Writer) int {
+	options, err := parseAgentOptions(args)
+	if err != nil || len(options.positionals) != 0 || len(options.values) != 0 {
+		return agentUsage(stderr)
+	}
+	receipt, err := localservice.Rollback(options.configPath)
+	if err != nil {
+		return agentFailure(stderr, err)
+	}
+	return encodePersonalMemoryJSON(stdout, stderr, receipt)
+}
+
 func (r Runner) runAgentUninstall(args []string, stdout, stderr io.Writer) int {
 	options, err := parseAgentOptions(args)
 	if err != nil || len(options.positionals) != 0 || len(options.values) != 0 {

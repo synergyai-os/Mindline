@@ -3,12 +3,14 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/synergyai-os/Mindline/internal/acquisition"
 	acquisitionslack "github.com/synergyai-os/Mindline/internal/acquisition/slack"
+	"github.com/synergyai-os/Mindline/internal/ingestioncontroller"
 	"github.com/synergyai-os/Mindline/internal/personalmemory"
 )
 
@@ -47,7 +49,8 @@ func TestPersonalMemoryCLIImportsSearchesAndSurvivesNewRunner(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &packet); err != nil {
 		t.Fatal(err)
 	}
-	if len(packet.Citations) != 1 || packet.Citations[0].AuthorityClass != personalmemory.AuthorityClass {
+	if len(packet.Citations) != 1 || packet.Citations[0].AuthorityClass != personalmemory.AuthorityClass ||
+		packet.RouteClass != "owner_debug_ungated" || packet.AgentRecallApproved {
 		t.Fatalf("unexpected agent context packet: %+v", packet)
 	}
 	if !strings.Contains(packet.Records[0].RawText, "company-brain") {
@@ -108,6 +111,7 @@ func TestPersonalMemoryCLIImportsSearchesAndSurvivesNewRunner(t *testing.T) {
 	var hydrated personalmemory.HydratedCapture
 	if err := json.Unmarshal(stdout.Bytes(), &hydrated); err != nil ||
 		len(hydrated.Contents) != 1 ||
+		hydrated.RouteClass != "owner_debug_ungated" || hydrated.AgentRecallApproved ||
 		!strings.Contains(hydrated.Contents[0].Text, "complete retained context") {
 		t.Fatalf("hydrated capture did not return durable full content: %+v err=%v", hydrated, err)
 	}
@@ -149,6 +153,55 @@ func TestPersonalMemoryCLIImportsSearchesAndSurvivesNewRunner(t *testing.T) {
 	}
 }
 
+func TestSiblingMemoryRootsKeepIndependentIngestionLedgers(t *testing.T) {
+	parent := t.TempDir()
+	rootA, rootB := filepath.Join(parent, "memory-a"), filepath.Join(parent, "memory-b")
+	ledgerRootA := personalMemoryRuntimeRoot(rootA, "ingestion-ledgers")
+	ledgerRootB := personalMemoryRuntimeRoot(rootB, "ingestion-ledgers")
+	if ledgerRootA == ledgerRootB {
+		t.Fatal("sibling memory roots share an ingestion ledger")
+	}
+	for index, fixture := range []struct {
+		root  string
+		count int
+	}{{ledgerRootA, 1}, {ledgerRootB, 2}} {
+		store, err := ingestioncontroller.NewLedgerStore(fixture.root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ledger := ingestioncontroller.Ledger{
+			SchemaVersion: ingestioncontroller.LedgerSchemaVersion,
+			RunID:         fmt.Sprintf("run-%d", index), State: "complete",
+			SourceAdapter: "slack", SourceScope: "slack:T:D",
+			ConfigurationFingerprint: strings.Repeat("c", 64),
+			DeliveredCount:           fixture.count, CanonicalDeclaredCount: fixture.count,
+			OwnedCount: fixture.count, RetainedCount: fixture.count,
+			AggregateCommitment:        strings.Repeat("a", 64),
+			CanonicalBeforeFingerprint: strings.Repeat("b", 64),
+			CanonicalAfterFingerprint:  strings.Repeat("d", 64),
+			CanonicalAfterCount:        fixture.count,
+		}
+		if err := store.Save(ledger); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, fixture := range []struct {
+		root string
+		want int
+	}{{rootA, 1}, {rootB, 2}} {
+		var stdout, stderr bytes.Buffer
+		if code := NewRunner(NewOSFileSystem()).Run(
+			[]string{"memory", "ingest-slack-run-status", "--root", fixture.root}, &stdout, &stderr,
+		); code != ExitOK {
+			t.Fatalf("root status exit=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+		}
+		var proof ingestionProof
+		if err := json.Unmarshal(stdout.Bytes(), &proof); err != nil || proof.UniqueNativeCount != fixture.want {
+			t.Fatalf("root status count=%d want=%d err=%v", proof.UniqueNativeCount, fixture.want, err)
+		}
+	}
+}
+
 func TestPersonalMemoryCLIRejectsDuplicateJSONKeys(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "personal-memory")
 	payload := []byte(`{"schema_version":"mindline-personal-enrichment-batch/v0.1","schema_version":"mindline-personal-enrichment-batch/v0.1","resources":[]}`)
@@ -156,5 +209,76 @@ func TestPersonalMemoryCLIRejectsDuplicateJSONKeys(t *testing.T) {
 	runner := NewRunnerWithInput(NewOSFileSystem(), bytes.NewReader(payload))
 	if code := runner.Run([]string{"memory", "enrich", "-", "--root", root}, &stdout, &stderr); code != ExitUsage {
 		t.Fatalf("duplicate JSON keys were accepted: code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestIngestionCommandsProjectPrivateScopeOutOfStdout(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "personal-memory")
+	unit := ingestioncontroller.UnitFrame{
+		Type: "unit", Ordinal: 0, Descriptor: "000",
+		AuthorClasses: map[string]string{"1.000001": "user"},
+		Batch: acquisitionslack.NativeBatch{
+			SchemaVersion: acquisitionslack.NativeBatchSchema,
+			WorkspaceID:   "T-private", ChannelID: "D-private",
+			LowerInclusive: "1.000000", UpperInclusive: "2.000000",
+			Watermark: "2.000000", IncludeThreads: true, IncludeReplies: true,
+			PaginationExhausted: true, ThreadPaginationExhausted: true,
+			DeclaredSourceRecords: 1,
+			Messages: []acquisitionslack.NativeMessage{{
+				NativeMessageID: "1.000001", Timestamp: "1.000001",
+				AuthorID: "U-private", Text: "private saved lesson",
+			}},
+		},
+	}
+	unitJSON, err := json.Marshal(unit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	begin := ingestioncontroller.BeginFrame{
+		Type: "begin", SchemaVersion: ingestioncontroller.RunSchemaVersion,
+		RunID: "run-private-output", SourceAdapter: "slack",
+		SourceScope:              "slack:T-private:D-private",
+		ConfigurationFingerprint: "configuration-private-output",
+		UnitCount:                1, MessageCeiling: 1, ByteCeiling: int64(len(unitJSON) + 1),
+	}
+	end := ingestioncontroller.EndFrame{
+		Type: "end", UnitCount: 1, MessageCount: 1,
+		ByteCount: int64(len(unitJSON) + 1),
+		EnvelopeCommitment: ingestioncontroller.EnvelopeCommitment(
+			[]ingestioncontroller.UnitFrame{unit},
+		),
+	}
+	beginJSON, _ := json.Marshal(begin)
+	endJSON, _ := json.Marshal(end)
+	wire := bytes.Join([][]byte{beginJSON, unitJSON, endJSON}, []byte("\n"))
+	wire = append(wire, '\n')
+
+	var stdout, stderr bytes.Buffer
+	runner := NewRunnerWithInput(NewOSFileSystem(), bytes.NewReader(wire))
+	if code := runner.Run(
+		[]string{"memory", "ingest-slack-run", "-", "--root", root},
+		&stdout, &stderr,
+	); code != ExitOK {
+		t.Fatalf("ingestion failed: code=%d stderr=%q", code, stderr.String())
+	}
+	for _, forbidden := range []string{
+		"T-private", "D-private", "U-private", "private saved lesson", "source_scope",
+	} {
+		if strings.Contains(stdout.String(), forbidden) {
+			t.Fatalf("ingestion output exposed %q: %s", forbidden, stdout.String())
+		}
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := NewRunner(NewOSFileSystem()).Run(
+		[]string{"memory", "ingest-slack-run-status", "--root", root},
+		&stdout, &stderr,
+	); code != ExitOK {
+		t.Fatalf("status failed: code=%d stderr=%q", code, stderr.String())
+	}
+	for _, forbidden := range []string{"T-private", "D-private", "source_scope"} {
+		if strings.Contains(stdout.String(), forbidden) {
+			t.Fatalf("status output exposed %q: %s", forbidden, stdout.String())
+		}
 	}
 }

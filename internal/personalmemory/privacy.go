@@ -8,6 +8,10 @@ func containsSecret(value string) bool {
 	return contentguard.ContainsSecretLike(value)
 }
 
+func redactSecretFragments(value string) (string, bool) {
+	return contentguard.RedactSecretLike(value)
+}
+
 func importedEvidenceContainsSecret(inputStrings ...string) bool {
 	for _, value := range inputStrings {
 		if contentguard.ContainsSecretLike(value) {

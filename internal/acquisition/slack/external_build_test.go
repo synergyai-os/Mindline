@@ -122,6 +122,35 @@ func TestBuildExternalManifestPreservesDuplicateOccurrencesAndClassifiesFormats(
 	}
 }
 
+func TestExternalManifestCommitsProviderEditChronology(t *testing.T) {
+	build := func(revision string) ExternalManifest {
+		manifest, err := BuildExternalManifest(BuildInput{
+			WorkspaceID: "T-synthetic", ChannelID: "C-synthetic",
+			LowerInclusive: "1700000000.000001", UpperInclusive: "1700000010.000001",
+			Watermark: "1700000010.000001", DataClass: DataClassSynthetic,
+			Messages: []NativeMessage{{
+				NativeMessageID: "m-edit", Timestamp: "1700000000.000001",
+				RevisionTimestamp: revision, EditDeleteState: "edited",
+				Text: "same edited content https://example.com/evidence",
+			}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return manifest
+	}
+	first := build("1700000001.000001")
+	second := build("1700000002.000001")
+	if first.SourceRecords[0].RevisionTimestamp != "1700000001.000001" ||
+		second.SourceRecords[0].RevisionTimestamp != "1700000002.000001" ||
+		first.ContentFingerprint == second.ContentFingerprint {
+		t.Fatalf("provider edit chronology was not committed: first=%+v second=%+v", first.SourceRecords[0], second.SourceRecords[0])
+	}
+	if _, err := ValidateExternalManifest(first); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestExtractURLOccurrencesHandlesSlackLabelsAndPunctuation(t *testing.T) {
 	urls := ExtractURLOccurrences("see <https://example.com/a?x=1|label>, then HTTPS://example.com/b).")
 	if len(urls) != 2 || urls[0] != "https://example.com/a?x=1" || urls[1] != "HTTPS://example.com/b" {

@@ -23,13 +23,14 @@ type WebAPIIdentity struct {
 }
 
 type WebAPIMessage struct {
-	Timestamp        string
-	ThreadTimestamp  string
-	Text             string
-	ReplyCount       int
-	Subtype          string
-	FileCount        int
-	PrivateFileCount int
+	Timestamp         string
+	RevisionTimestamp string
+	ThreadTimestamp   string
+	Text              string
+	ReplyCount        int
+	Subtype           string
+	FileCount         int
+	PrivateFileCount  int
 }
 
 type WebAPIPage struct {
@@ -291,6 +292,11 @@ func validateWebAPIMessage(message WebAPIMessage) error {
 	if !webAPITimestampPattern.MatchString(message.Timestamp) || message.ReplyCount < 0 || message.FileCount < 0 || message.PrivateFileCount < 0 || message.PrivateFileCount > message.FileCount {
 		return errors.New("invalid Slack Web API message")
 	}
+	if message.RevisionTimestamp != "" &&
+		(!webAPITimestampPattern.MatchString(message.RevisionTimestamp) ||
+			compareWebAPITimestamp(message.RevisionTimestamp, message.Timestamp) <= 0) {
+		return errors.New("invalid Slack Web API revision chronology")
+	}
 	return nil
 }
 
@@ -319,8 +325,8 @@ func nativeWebAPIMessage(message WebAPIMessage, parent string) NativeMessage {
 	if message.Subtype == "message_deleted" {
 		state = "deleted"
 	}
-	if message.Subtype == "message_changed" {
+	if message.Subtype == "message_changed" || message.RevisionTimestamp != "" {
 		state = "edited"
 	}
-	return NativeMessage{NativeMessageID: fmt.Sprintf("slack:%s", message.Timestamp), Timestamp: message.Timestamp, ThreadParentID: parent, Text: message.Text, EditDeleteState: state, AttachmentCount: message.FileCount, PrivateFileCount: message.PrivateFileCount}
+	return NativeMessage{NativeMessageID: fmt.Sprintf("slack:%s", message.Timestamp), Timestamp: message.Timestamp, RevisionTimestamp: message.RevisionTimestamp, ThreadParentID: parent, Text: message.Text, EditDeleteState: state, AttachmentCount: message.FileCount, PrivateFileCount: message.PrivateFileCount}
 }

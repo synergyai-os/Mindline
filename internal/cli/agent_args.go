@@ -52,3 +52,26 @@ func onlyAgentKeys(values map[string]string, allowed ...string) bool {
 	}
 	return true
 }
+
+func hasAgentOption(args []string, names ...string) bool {
+	allowed := make(map[string]bool, len(names))
+	for _, name := range names {
+		allowed["--"+name] = true
+	}
+	for _, value := range args {
+		if allowed[value] {
+			return true
+		}
+	}
+	return false
+}
+
+func hasAgentOptionValue(args []string, name, expected string) bool {
+	option := "--" + name
+	for index := 0; index+1 < len(args); index++ {
+		if args[index] == option && strings.TrimSpace(args[index+1]) == expected {
+			return true
+		}
+	}
+	return false
+}

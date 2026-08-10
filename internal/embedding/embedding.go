@@ -11,6 +11,23 @@ type Port interface {
 	Embed(context.Context, []string) ([][]float64, error)
 }
 
+// RetrievalPort lets a provider adapter distinguish asymmetric query and
+// document inputs without leaking model-specific prompt syntax into ranking.
+// Backends may fall back to Port for providers that do not implement it.
+type RetrievalPort interface {
+	Port
+	EmbedQuery(context.Context, string) ([]float64, error)
+	EmbedDocuments(context.Context, []string) ([][]float64, error)
+}
+
+// QueryBatchPort lets retrieval embed its bounded authorization and contextual
+// queries in one provider request. It is optional so existing providers retain
+// their compatibility path.
+type QueryBatchPort interface {
+	RetrievalPort
+	EmbedQueries(context.Context, []string) ([][]float64, error)
+}
+
 func Cosine(left, right []float64) (float64, error) {
 	if len(left) == 0 || len(left) != len(right) {
 		return 0, errors.New("embedding dimensions do not match")

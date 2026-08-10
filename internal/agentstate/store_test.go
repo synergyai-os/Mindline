@@ -1,7 +1,9 @@
 package agentstate
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"math"
 	"os"
@@ -82,6 +84,50 @@ func TestStorePersistsUnlimitedLensesAndReversibleWeightedFeedback(t *testing.T)
 	relevance, err = store.Relevance(ctx, lenses[0].ID, []string{"record-1"})
 	if err != nil || math.Abs(relevance["record-1"]-0.025) > 1e-12 {
 		t.Fatalf("reversed relevance=%v err=%v", relevance, err)
+	}
+}
+
+func TestLegacyAgentStateRejectsCredentialShapedDurableText(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "state", "agent.sqlite"), time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	secret := "Bearer synthetic-private-token"
+	if _, err := store.PutLens(ctx, Lens{ID: "secret-lens", Name: "Secret lens", Query: secret}); err == nil {
+		t.Fatal("credential-shaped lens text was accepted")
+	}
+	if err := store.SaveRetrieval(ctx, RetrievalTrace{
+		RunID: "secret-run", Query: secret, LensID: "missing",
+		RetrievalMethod: "test", LibraryFingerprint: "fingerprint", CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}); err == nil {
+		t.Fatal("credential-shaped retrieval query was accepted")
+	}
+	credentialID := "pb_sk_synthetic-private-value"
+	if _, err := store.PutLens(ctx, Lens{ID: credentialID, Name: "Secret ID", Query: "query"}); err == nil {
+		t.Fatal("credential-shaped lens ID was accepted")
+	}
+	if err := store.SaveRetrieval(ctx, RetrievalTrace{
+		RunID: credentialID, Query: "query", LensID: "missing",
+		RetrievalMethod: "test", LibraryFingerprint: "fingerprint", CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}); err == nil {
+		t.Fatal("credential-shaped retrieval ID was accepted")
+	}
+	var lensCount, runCount int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM lenses WHERE id='secret-lens'`).Scan(&lensCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM retrieval_runs WHERE run_id='secret-run'`).Scan(&runCount); err != nil {
+		t.Fatal(err)
+	}
+	if lensCount != 0 || runCount != 0 {
+		t.Fatalf("rejected credential text reached durable state: lenses=%d runs=%d", lensCount, runCount)
+	}
+	if snapshot, present, err := readRecoverySnapshot(store.path); err != nil || !present {
+		t.Fatalf("read recovery snapshot: present=%v err=%v", present, err)
+	} else if data, err := json.Marshal(snapshot); err != nil || bytes.Contains(data, []byte(credentialID)) {
+		t.Fatalf("credential-shaped ID reached recovery snapshot: %v", err)
 	}
 }
 

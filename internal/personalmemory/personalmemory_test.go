@@ -1,6 +1,7 @@
 package personalmemory
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,6 +53,136 @@ func TestPersonalEvidenceLibraryPersistsEverySlackRecordAndReplaysIdempotently(t
 	}
 	if len(library.Resources) != 3 {
 		t.Fatalf("restart lost resource placeholders: resources=%d", len(library.Resources))
+	}
+}
+
+func TestImportWithinBudgetRejectsBeforeCanonicalPersistence(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "library")
+	repository, err := NewFileRepository(root, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch := captureBatchForTest(t, fixtureBatch())
+	if _, err := repository.ImportWithinBudget(batch, 1); err == nil {
+		t.Fatal("expected lock-held admission rejection")
+	}
+	status, err := repository.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.RecordCount != 0 || status.Fingerprint != EmptyLibrary().Fingerprint {
+		t.Fatalf("rejected admission mutated canonical state: %+v", status)
+	}
+	if _, err := repository.ImportWithinBudget(batch, MaximumCaptureLibraryBytes); err != nil {
+		t.Fatalf("expected admitted import: %v", err)
+	}
+}
+
+func TestImportManyWithinBudgetRejectsCompleteBatchSetAtomically(t *testing.T) {
+	firstNative := fixtureBatch()
+	firstNative.Messages = firstNative.Messages[:1]
+	firstNative.DeclaredSourceRecords = 1
+	first := captureBatchForTest(t, firstNative)
+	secondNative := fixtureBatch()
+	secondNative.Messages = secondNative.Messages[1:2]
+	secondNative.DeclaredSourceRecords = 1
+	secondNative.LowerInclusive = secondNative.Messages[0].Timestamp
+	second := captureBatchForTest(t, secondNative)
+
+	singleSize := int64(0)
+	for _, batch := range []CaptureBatch{first, second} {
+		repository, err := NewFileRepository(filepath.Join(t.TempDir(), "single"), time.Now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := repository.Import(batch); err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Stat(repository.libraryPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Size() > singleSize {
+			singleSize = info.Size()
+		}
+	}
+	target, err := NewFileRepository(filepath.Join(t.TempDir(), "target"), time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := target.ImportManyWithinBudget([]CaptureBatch{first, second}, singleSize); err == nil {
+		t.Fatal("complete batch set exceeded admission but was accepted")
+	}
+	status, err := target.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	library, err := target.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Fingerprint != EmptyLibrary().Fingerprint || len(library.Records) != 0 || len(library.Imports) != 0 || len(library.Revisions) != 0 {
+		t.Fatalf("rejected batch set partially mutated canonical state: status=%+v library=%+v", status, library)
+	}
+}
+
+func TestGetAtLibraryFingerprintRejectsChangedCaptureOrResource(t *testing.T) {
+	repository := populatedRepository(t)
+	library, err := repository.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	recordID := library.Records[0].RecordID
+	retriever := NewLexicalRetriever(repository)
+	if _, err := retriever.GetAtLibraryFingerprint(recordID, library.Fingerprint); err != nil {
+		t.Fatal(err)
+	}
+	updated := fixtureBatch()
+	updated.Messages[0].Text = "edited knowledge snapshot"
+	updated.Messages[0].EditDeleteState = "edited"
+	if _, err := repository.Import(captureBatchForTest(t, updated)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := retriever.GetAtLibraryFingerprint(recordID, library.Fingerprint); err == nil {
+		t.Fatal("hydration reused a stale search snapshot after record mutation")
+	}
+	current, err := repository.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	resourceURL := current.Resources[0].CanonicalURL
+	if _, err := repository.MergeEnrichment(EnrichmentBatch{SchemaVersion: EnrichmentBatchSchemaVersion, Resources: []acquisition.ImportedEvidence{{CanonicalItemID: "resource", CanonicalURL: resourceURL, State: "partial", RetrievedAt: "2026-08-10T10:00:00Z", AccessClass: "public", Excerpts: []acquisition.ImportedExcerpt{{ExcerptID: "proof", Text: "new resource evidence", Locator: "page"}}}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := retriever.GetAtLibraryFingerprint(recordID, current.Fingerprint); err == nil {
+		t.Fatal("hydration reused a stale search snapshot after resource enrichment")
+	}
+}
+
+func TestStatusCacheInvalidatesAfterLibraryMutation(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "library")
+	repository, err := NewFileRepository(root, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := repository.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.RecordCount != 0 {
+		t.Fatalf("unexpected initial status: %+v", before)
+	}
+
+	receipt, err := repository.Import(captureBatchForTest(t, fixtureBatch()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := repository.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.RecordCount != receipt.TotalRecords || after.Fingerprint == before.Fingerprint || after.Revision <= before.Revision {
+		t.Fatalf("status cache survived a committed library mutation: before=%+v after=%+v receipt=%+v", before, after, receipt)
 	}
 }
 
@@ -380,6 +511,151 @@ func TestExactOlderBatchReplayCannotRollBackCurrentCapture(t *testing.T) {
 	}
 }
 
+func TestChangedBatchFingerprintCannotRollBackCurrentCaptureToHistoricalEdit(t *testing.T) {
+	repository := populatedRepository(t)
+	editBNative := fixtureBatch()
+	editBNative.Messages[0].Text = "edit B https://example.com/b"
+	editBNative.Messages[0].EditDeleteState = "edited"
+	editBNative.Messages[0].RevisionTimestamp = "1785000001.000001"
+	editB := captureBatchForTest(t, editBNative)
+	if _, err := repository.Import(editB); err != nil {
+		t.Fatal(err)
+	}
+	editCNative := fixtureBatch()
+	editCNative.Messages[0].Text = "newer edit C https://example.com/c"
+	editCNative.Messages[0].EditDeleteState = "edited"
+	editCNative.Messages[0].RevisionTimestamp = "1785000002.000001"
+	if _, err := repository.Import(captureBatchForTest(t, editCNative)); err != nil {
+		t.Fatal(err)
+	}
+	before, err := repository.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleNative := editBNative
+	staleNative.UpperInclusive = "1785050000.000777"
+	staleNative.Watermark = staleNative.UpperInclusive
+	if _, err := repository.Import(captureBatchForTest(t, staleNative)); err == nil {
+		t.Fatal("changed batch fingerprint rolled current evidence back to a historical edit")
+	}
+	after, err := repository.Status()
+	library, loadErr := repository.Load()
+	if err != nil || loadErr != nil || before != after ||
+		!strings.Contains(library.Records[0].RawText, "newer edit C") {
+		t.Fatalf("stale edit changed canonical evidence: before=%+v after=%+v record=%+v err=%v load=%v", before, after, library.Records[0], err, loadErr)
+	}
+}
+
+func TestLegacyEditedCaptureAdoptsFirstProviderRevisionTimestamp(t *testing.T) {
+	repository := populatedRepository(t)
+	editedNative := fixtureBatch()
+	editedNative.Messages[0].Text = "legacy edited meaning https://example.com/legacy"
+	editedNative.Messages[0].EditDeleteState = "edited"
+	editedNative.Messages[0].RevisionTimestamp = "1785000001.000001"
+	edited := captureBatchForTest(t, editedNative)
+	if _, err := repository.Import(edited); err != nil {
+		t.Fatal(err)
+	}
+	library, err := repository.Load()
+	if err != nil || len(library.Imports) < 2 {
+		t.Fatalf("edited fixture unavailable: imports=%d err=%v", len(library.Imports), err)
+	}
+	for index := range library.Records {
+		if library.Records[index].IdempotencyKey != edited.Records[0].IdempotencyKey {
+			continue
+		}
+		library.Records[index].RevisionAt = ""
+		library.Records[index].ContentHash = fingerprintRecord(library.Records[index])
+	}
+	imports := library.Imports[:0]
+	for _, receipt := range library.Imports {
+		if receipt.BatchFingerprint != captureBatchFingerprint(edited) {
+			imports = append(imports, receipt)
+		}
+	}
+	library.Imports = imports
+	library = sealLibrary(library)
+	if err := repository.persistLibrary(library); err != nil {
+		t.Fatal(err)
+	}
+
+	receipt, err := repository.Import(edited)
+	if err != nil || receipt.UpdatedRecords != 1 {
+		t.Fatalf("legacy edit did not adopt chronology: receipt=%+v err=%v", receipt, err)
+	}
+	migrated, err := repository.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var current CaptureRecord
+	for _, record := range migrated.Records {
+		if record.IdempotencyKey == edited.Records[0].IdempotencyKey {
+			current = record
+		}
+	}
+	if current.RevisionAt != edited.Records[0].RevisionAt || current.RawText != edited.Records[0].RawText {
+		t.Fatalf("legacy edit migration changed meaning or missed chronology: %+v", current)
+	}
+}
+
+func TestUnseenOlderEditCannotReplaceNewerCurrentEdit(t *testing.T) {
+	repository := populatedRepository(t)
+	newer := fixtureBatch()
+	newer.Messages[0].Text = "newest observed edit https://example.com/newest"
+	newer.Messages[0].EditDeleteState = "edited"
+	newer.Messages[0].RevisionTimestamp = "1785000003.000001"
+	if _, err := repository.Import(captureBatchForTest(t, newer)); err != nil {
+		t.Fatal(err)
+	}
+	before, err := repository.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := fixtureBatch()
+	stale.Messages[0].Text = "previously unseen older edit https://example.com/older"
+	stale.Messages[0].EditDeleteState = "edited"
+	stale.Messages[0].RevisionTimestamp = "1785000002.000001"
+	stale.UpperInclusive = "1785050000.000777"
+	stale.Watermark = stale.UpperInclusive
+	if _, err := repository.Import(captureBatchForTest(t, stale)); err == nil {
+		t.Fatal("unseen stale edit replaced newer current evidence")
+	}
+	after, err := repository.Status()
+	library, loadErr := repository.Load()
+	if err != nil || loadErr != nil || before != after ||
+		!strings.Contains(library.Records[0].RawText, "newest observed edit") {
+		t.Fatalf("stale edit changed canonical evidence: before=%+v after=%+v record=%+v err=%v load=%v", before, after, library.Records[0], err, loadErr)
+	}
+}
+
+func TestNewBatchCannotResurrectDeletedCaptureWithoutChronology(t *testing.T) {
+	repository := populatedRepository(t)
+	deletedNative := fixtureBatch()
+	deletedNative.Messages[0].EditDeleteState = "deleted"
+	deleted := captureBatchForTest(t, deletedNative)
+	if _, err := repository.Import(deleted); err != nil {
+		t.Fatal(err)
+	}
+	before, err := repository.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleEditNative := fixtureBatch()
+	staleEditNative.UpperInclusive = "1785050000.000001"
+	staleEditNative.Watermark = "1785050000.000001"
+	staleEditNative.Messages[0].Text = "stale edited content"
+	staleEditNative.Messages[0].EditDeleteState = "edited"
+	staleEdit := captureBatchForTest(t, staleEditNative)
+	if _, err := repository.Import(staleEdit); err == nil {
+		t.Fatal("new batch resurrected a deleted capture without chronology")
+	}
+	after, err := repository.Status()
+	library, loadErr := repository.Load()
+	if err != nil || loadErr != nil || before != after || !isDeletedCapture(library.Records[0]) {
+		t.Fatalf("rejected resurrection changed canonical evidence: before=%+v after=%+v record=%+v err=%v load=%v", before, after, library.Records[0], err, loadErr)
+	}
+}
+
 func TestNewCoverageWindowPersistsEvenWhenAllRecordsAreUnchanged(t *testing.T) {
 	repository := populatedRepository(t)
 	base := captureBatchForTest(t, fixtureBatch())
@@ -396,7 +672,11 @@ func TestNewCoverageWindowPersistsEvenWhenAllRecordsAreUnchanged(t *testing.T) {
 		t.Fatalf("unchanged expanded coverage failed: %+v err=%v", receipt, err)
 	}
 	library, err := repository.Load()
-	if err != nil || len(library.Imports) != 2 || library.Imports[1].Watermark != expanded.Watermark {
+	foundExpanded := false
+	for _, imported := range library.Imports {
+		foundExpanded = foundExpanded || imported.Watermark == expanded.Watermark
+	}
+	if err != nil || len(library.Imports) != 2 || !foundExpanded {
 		t.Fatalf("new coverage evidence was not persisted: %+v err=%v", library.Imports, err)
 	}
 }
@@ -422,6 +702,50 @@ func TestUnreachableIncomingRelatedCycleCannotAuthorizeItself(t *testing.T) {
 	}
 	if _, err := repository.MergeEnrichment(batch); err == nil {
 		t.Fatal("unreachable incoming related-resource cycle authorized itself")
+	}
+}
+
+func TestReachableIncomingRelatedChainIsOrderIndependent(t *testing.T) {
+	repository := populatedRepository(t)
+	library, err := repository.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const chainLength = 1024
+	urls := make([]string, chainLength)
+	for index := range urls {
+		urls[index] = fmt.Sprintf("https://related.example/item-%04d", index)
+	}
+	resources := make([]acquisition.ImportedEvidence, 0, chainLength+1)
+	for index := chainLength - 1; index >= 0; index-- {
+		resource := acquisition.ImportedEvidence{
+			CanonicalItemID: fmt.Sprintf("chain-%04d", index), CanonicalURL: urls[index],
+			State: "partial", AccessClass: "public",
+			Excerpts: []acquisition.ImportedExcerpt{{ExcerptID: "chain-edge", Text: "retained chain evidence", Locator: "page"}},
+		}
+		if index+1 < chainLength {
+			resource.RelatedURLs = []acquisition.ImportedRelated{{
+				URL: urls[index+1], Relation: "source_links_to",
+				DiscoveryEvidenceRef: "chain-edge", SemanticallyRelevant: true,
+			}}
+		}
+		resources = append(resources, resource)
+	}
+	root := acquisition.ImportedEvidence{
+		CanonicalItemID: "retained-root", CanonicalURL: library.Resources[0].CanonicalURL,
+		State: "partial", AccessClass: "public",
+		Excerpts: []acquisition.ImportedExcerpt{{ExcerptID: "chain-root", Text: "root chain evidence", Locator: "page"}},
+		RelatedURLs: []acquisition.ImportedRelated{{
+			URL: urls[0], Relation: "source_links_to",
+			DiscoveryEvidenceRef: "chain-root", SemanticallyRelevant: true,
+		}},
+	}
+	resources = append(resources, root)
+	receipt, err := repository.MergeEnrichment(EnrichmentBatch{
+		SchemaVersion: EnrichmentBatchSchemaVersion, Resources: resources,
+	})
+	if err != nil || receipt.DeclaredResources != chainLength+1 {
+		t.Fatalf("reverse-ordered reachable chain failed: receipt=%+v err=%v", receipt, err)
 	}
 }
 
@@ -765,6 +1089,13 @@ func captureBatchForTest(t *testing.T, batch acquisitionslack.NativeBatch) Captu
 		if err != nil {
 			t.Fatal(err)
 		}
+		revisionAt := ""
+		if message.RevisionTimestamp != "" {
+			revisionAt, err = acquisition.NativeRevisionTimestampToRFC3339(message.RevisionTimestamp)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
 		sourceRef := "slack://" + batch.WorkspaceID + "/" + batch.ChannelID + "/" + message.NativeMessageID
 		missingness := []string{"permalink_unavailable"}
 		if message.Permalink != "" {
@@ -777,7 +1108,7 @@ func captureBatchForTest(t *testing.T, batch acquisitionslack.NativeBatch) Captu
 			OccurredAt: occurredAt, AuthorID: message.AuthorID, AuthorName: message.AuthorName,
 			SourceRef: sourceRef, RawText: message.Text, ThreadParentID: message.ThreadParentID,
 			AttachmentCount: message.AttachmentCount, PrivateFileCount: message.PrivateFileCount,
-			EditDeleteState: message.EditDeleteState, Missingness: missingness,
+			EditDeleteState: message.EditDeleteState, RevisionAt: revisionAt, Missingness: missingness,
 		})
 		if err != nil {
 			t.Fatal(err)

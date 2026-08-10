@@ -1,0 +1,28 @@
+{
+  "schema_version": "mindline-agent-discovery-latency-manifest/v0.1",
+  "measurement_boundary": "process_spawn_to_process_exit",
+  "cold_iterations": 1,
+  "warm_iterations": 20,
+  "percentile_method": "nearest_rank_ceil_minus_one",
+  "baseline_commit": "723b7b319627a4fd4f508e0745bfd002fa2d0398",
+  "cases": [
+    {"id": "agent_help", "p95_ceiling_ms": 250, "requires_service": false},
+    {"id": "feedback_token", "p95_ceiling_ms": 250, "requires_service": false},
+    {"id": "agent_status", "p95_ceiling_ms": 3000, "requires_service": true},
+    {"id": "discover_ready", "p95_ceiling_ms": 3000, "requires_service": true},
+    {"id": "discover_invalid_binding", "p95_ceiling_ms": 3000, "requires_service": true},
+    {"id": "scoped_get", "p95_ceiling_ms": 5000, "requires_service": true},
+    {"id": "typed_scoped_get_error", "p95_ceiling_ms": 5000, "requires_service": true},
+    {"id": "scoped_feedback", "p95_ceiling_ms": 5000, "requires_service": true},
+    {"id": "typed_feedback_error", "p95_ceiling_ms": 5000, "requires_service": true},
+    {"id": "feedback_reverse", "p95_ceiling_ms": 5000, "requires_service": true},
+    {"id": "scoped_search", "p95_ceiling_ms": 25000, "requires_service": true}
+  ],
+  "private_binding_requirements": [
+    "installed_binary_sha256",
+    "config_fingerprint",
+    "library_fingerprint",
+    "machine_os_identity",
+    "domain_separated_hmac_question_commitments"
+  ]
+}

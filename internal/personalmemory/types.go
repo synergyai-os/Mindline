@@ -69,6 +69,7 @@ type CaptureRecord struct {
 	AttachmentCount          int      `json:"attachment_count"`
 	PrivateFileCount         int      `json:"private_file_count"`
 	EditDeleteState          string   `json:"edit_delete_state"`
+	RevisionAt               string   `json:"revision_at,omitempty"`
 	ContextState             string   `json:"context_state"`
 	Missingness              []string `json:"missingness"`
 	AuthorityClass           string   `json:"authority_class"`
@@ -193,10 +194,18 @@ type Status struct {
 }
 
 type SearchRequest struct {
-	Query  string `json:"query"`
-	Limit  int    `json:"limit"`
-	RunID  string `json:"run_id,omitempty"`
-	LensID string `json:"lens_id,omitempty"`
+	Query        string `json:"query"`
+	LexicalQuery string `json:"-"`
+	Limit        int    `json:"limit"`
+	RunID        string `json:"run_id,omitempty"`
+	LensID       string `json:"lens_id,omitempty"`
+	ScopeID      string `json:"scope_id,omitempty"`
+	AgentID      string `json:"agent_id,omitempty"`
+	ScopePurpose string `json:"-"`
+	LensQuery    string `json:"-"`
+	// QueryAuthorizedLimit preserves the caller-visible bound while compact
+	// retrieval asks the ranking backend for its larger internal candidate pool.
+	QueryAuthorizedLimit int `json:"-"`
 }
 
 type Citation struct {
@@ -231,30 +240,132 @@ type EvidenceReference struct {
 }
 
 type ContextPacket struct {
-	SchemaVersion      string             `json:"schema_version"`
-	RunID              string             `json:"run_id,omitempty"`
-	Query              string             `json:"query"`
-	LensID             string             `json:"lens_id,omitempty"`
-	RetrievalMethod    string             `json:"retrieval_method"`
-	RetrievalState     string             `json:"retrieval_state,omitempty"`
-	DegradedReason     string             `json:"degraded_reason,omitempty"`
-	AuthorityClass     string             `json:"authority_class"`
-	LibraryRevision    uint64             `json:"library_revision"`
-	LibraryFingerprint string             `json:"library_fingerprint"`
-	Citations          []Citation         `json:"citations"`
-	Records            []CaptureRecord    `json:"records"`
-	Resources          []ResourceContext  `json:"resources"`
-	ResourceRevisions  []ResourceRevision `json:"resource_revisions"`
+	SchemaVersion       string             `json:"schema_version"`
+	RunID               string             `json:"run_id,omitempty"`
+	Query               string             `json:"query"`
+	LensID              string             `json:"lens_id,omitempty"`
+	RetrievalMethod     string             `json:"retrieval_method"`
+	RetrievalState      string             `json:"retrieval_state,omitempty"`
+	DegradedReason      string             `json:"degraded_reason,omitempty"`
+	AuthorityClass      string             `json:"authority_class"`
+	LibraryRevision     uint64             `json:"library_revision"`
+	LibraryFingerprint  string             `json:"library_fingerprint"`
+	RouteClass          string             `json:"route_class"`
+	AgentRecallApproved bool               `json:"agent_recall_approved"`
+	Citations           []Citation         `json:"citations"`
+	Records             []CaptureRecord    `json:"records"`
+	Resources           []ResourceContext  `json:"resources"`
+	ResourceRevisions   []ResourceRevision `json:"resource_revisions"`
+}
+
+type CompactContextPacket struct {
+	SchemaVersion               string                 `json:"schema_version"`
+	RunID                       string                 `json:"run_id,omitempty"`
+	Query                       string                 `json:"query"`
+	LensID                      string                 `json:"lens_id,omitempty"`
+	ScopeID                     string                 `json:"scope_id,omitempty"`
+	AgentID                     string                 `json:"agent_id,omitempty"`
+	RetrievalMethod             string                 `json:"retrieval_method"`
+	RetrievalState              string                 `json:"retrieval_state,omitempty"`
+	DegradedReason              string                 `json:"degraded_reason,omitempty"`
+	AbstentionPolicyFingerprint string                 `json:"abstention_policy_fingerprint"`
+	AuthorityClass              string                 `json:"authority_class"`
+	LibraryRevision             uint64                 `json:"library_revision"`
+	LibraryFingerprint          string                 `json:"library_fingerprint"`
+	RouteClass                  string                 `json:"route_class"`
+	AgentRecallApproved         bool                   `json:"agent_recall_approved"`
+	AnswerState                 string                 `json:"answer_state"`
+	AbstentionReason            string                 `json:"abstention_reason,omitempty"`
+	AbstentionDiagnostics       *AbstentionDiagnostics `json:"abstention_diagnostics,omitempty"`
+	Citations                   []CompactCitation      `json:"citations"`
+}
+
+type AbstentionDiagnostics struct {
+	Classification           string `json:"classification"`
+	RankedCandidateCount     int    `json:"ranked_candidate_count"`
+	AuthorizedCandidateCount int    `json:"authorized_candidate_count"`
+}
+
+type CompactAbstentionPolicy struct {
+	SchemaVersion                  string  `json:"schema_version"`
+	MinimumSemanticCosine          float64 `json:"minimum_semantic_cosine"`
+	MinimumSemanticMargin          float64 `json:"minimum_semantic_margin"`
+	MinimumSemanticOnlyCosine      float64 `json:"minimum_semantic_only_cosine"`
+	MinimumSemanticOnlyMargin      float64 `json:"minimum_semantic_only_margin"`
+	MinimumSemanticLexicalCoverage float64 `json:"minimum_semantic_lexical_coverage"`
+	MinimumLexicalIDFCoverage      float64 `json:"minimum_lexical_idf_coverage"`
+	MaximumLexicalDocumentRatio    float64 `json:"maximum_lexical_document_ratio"`
+	MinimumLexicalWinnerMargin     float64 `json:"minimum_lexical_winner_margin"`
+	MinimumLexicalMatchedTerms     int     `json:"minimum_lexical_matched_terms"`
+	MinimumOrderedPhraseTerms      int     `json:"minimum_ordered_phrase_terms"`
+	MinimumFullCoverageTerms       int     `json:"minimum_full_coverage_terms"`
+	MinimumBroadQueryTerms         int     `json:"minimum_broad_query_terms"`
+	MinimumBroadQueryMatches       int     `json:"minimum_broad_query_matches"`
+	MinimumBroadQueryIDFCoverage   float64 `json:"minimum_broad_query_idf_coverage"`
+	MaximumBroadQueryRank          int     `json:"maximum_broad_query_rank"`
+	MinimumBroadSemanticCosine     float64 `json:"minimum_broad_semantic_cosine"`
+	LexicalEvidenceRule            string  `json:"lexical_evidence_rule"`
+	StopwordPolicy                 string  `json:"stopword_policy"`
+	SemanticCalibrationIdentity    string  `json:"semantic_calibration_identity"`
+	RankingIdentity                string  `json:"ranking_identity"`
+	ChunkingIdentity               string  `json:"chunking_identity"`
+	Fingerprint                    string  `json:"fingerprint"`
+}
+
+type CompactCitation struct {
+	RecordID                string                     `json:"record_id"`
+	LogicalRecordID         string                     `json:"logical_record_id"`
+	VersionState            string                     `json:"version_state"`
+	SourceRef               string                     `json:"source_ref"`
+	OccurredAt              string                     `json:"occurred_at"`
+	Author                  string                     `json:"author,omitempty"`
+	Snippet                 string                     `json:"snippet"`
+	MatchedTerms            []string                   `json:"matched_terms"`
+	Score                   float64                    `json:"score"`
+	ComponentScores         map[string]float64         `json:"component_scores,omitempty"`
+	ContentHash             string                     `json:"content_hash"`
+	ContextState            string                     `json:"context_state"`
+	Missingness             []string                   `json:"missingness"`
+	EvidenceRefs            []CompactEvidenceReference `json:"evidence_refs"`
+	ResourceStates          []ResourceStateSummary     `json:"resource_states"`
+	ResourceStatesTruncated bool                       `json:"resource_states_truncated,omitempty"`
+	AuthorityClass          string                     `json:"authority_class"`
+}
+
+type CompactEvidenceReference struct {
+	ResourceID           string `json:"resource_id"`
+	ResourceHash         string `json:"resource_hash"`
+	ResourceVersionState string `json:"resource_version_state"`
+	ResourceRevisionID   string `json:"resource_revision_id,omitempty"`
+	ExcerptID            string `json:"excerpt_id,omitempty"`
+	ArtifactID           string `json:"artifact_id,omitempty"`
+	Locator              string `json:"locator"`
+	MatchedSnippet       string `json:"matched_snippet"`
+}
+
+type ResourceStateSummary struct {
+	ResourceID     string   `json:"resource_id"`
+	State          string   `json:"state"`
+	AccessClass    string   `json:"access_class"`
+	ContentHash    string   `json:"content_hash"`
+	Missingness    []string `json:"missingness"`
+	AuthorityClass string   `json:"authority_class"`
 }
 
 type HydratedCapture struct {
-	SchemaVersion     string                     `json:"schema_version"`
-	RecordID          string                     `json:"record_id"`
-	VersionState      string                     `json:"version_state"`
-	Record            CaptureRecord              `json:"record"`
-	Resources         []ResourceContext          `json:"resources"`
-	ResourceRevisions []ResourceRevision         `json:"resource_revisions"`
-	Contents          []ExtractedContentArtifact `json:"contents"`
+	SchemaVersion       string                     `json:"schema_version"`
+	RecordID            string                     `json:"record_id"`
+	VersionState        string                     `json:"version_state"`
+	Record              CaptureRecord              `json:"record"`
+	Resources           []ResourceContext          `json:"resources"`
+	ResourceRevisions   []ResourceRevision         `json:"resource_revisions"`
+	Contents            []ExtractedContentArtifact `json:"contents"`
+	RunID               string                     `json:"run_id,omitempty"`
+	ScopeID             string                     `json:"scope_id,omitempty"`
+	LensID              string                     `json:"lens_id,omitempty"`
+	AgentID             string                     `json:"agent_id,omitempty"`
+	RouteClass          string                     `json:"route_class"`
+	AgentRecallApproved bool                       `json:"agent_recall_approved"`
 }
 
 type Lens struct {
@@ -430,7 +541,7 @@ func validateRecord(record CaptureRecord) error {
 		record.IdempotencyKey, record.SourceAdapter, record.SourceScopeID,
 		record.SourceContainerID, record.ExternalID, record.AuthorID,
 		record.AuthorName, record.SourceRef, record.RawText, record.ThreadParentID,
-		record.EditDeleteState,
+		record.EditDeleteState, record.RevisionAt,
 		strings.Join(record.Missingness, " "),
 	}
 	if importedEvidenceContainsSecret(recordText...) ||
@@ -458,6 +569,13 @@ func validateRecord(record CaptureRecord) error {
 	case "original", "edited", "deleted", "tombstone":
 	default:
 		return errors.New("invalid personal evidence edit/delete state")
+	}
+	if record.RevisionAt != "" {
+		revisionAt, err := time.Parse(time.RFC3339Nano, record.RevisionAt)
+		occurredAt, occurredErr := time.Parse(time.RFC3339Nano, record.OccurredAt)
+		if err != nil || occurredErr != nil || !revisionAt.After(occurredAt) {
+			return errors.New("invalid personal evidence revision chronology")
+		}
 	}
 	if record.AttachmentCount < 0 || record.PrivateFileCount < 0 || record.PrivateFileCount > record.AttachmentCount {
 		return errors.New("invalid personal evidence attachment accounting")

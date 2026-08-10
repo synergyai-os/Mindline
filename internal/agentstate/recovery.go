@@ -3,6 +3,7 @@ package agentstate
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -75,6 +76,7 @@ func validateRecoverySnapshot(snapshot recoverySnapshot) error {
 		if !validBounded(lens.ID, 256) || !validBounded(lens.Name, 1024) ||
 			!validBounded(lens.Query, maximumTextRunes) ||
 			!validBounded(lens.CreatedAt, 256) || !validBounded(lens.UpdatedAt, 256) ||
+			containsSecretLikeAny(lens.ID, lens.Name, lens.Query, lens.CreatedAt, lens.UpdatedAt) ||
 			lensIDs[lens.ID] {
 			return errors.New("invalid agent recovery snapshot")
 		}
@@ -159,7 +161,7 @@ func (store *Store) writeRecoverySnapshot(ctx context.Context) error {
 	if err := privateio.WriteJSON(recoveryPath(store.path), snapshot); err != nil {
 		return errors.New("write agent recovery snapshot")
 	}
-	return nil
+	return store.writeScopedRecoverySnapshot(ctx)
 }
 
 func OpenRecovering(path string, now Clock) (*Store, string, error) {
@@ -190,6 +192,10 @@ func openRecovering(path string, now Clock, hooks recoveryHooks) (*Store, string
 		if snapshotErr != nil {
 			return nil, "", snapshotErr
 		}
+		scopedSnapshot, scopedPresent, scopedErr := readScopedRecoverySnapshot(path)
+		if scopedErr != nil {
+			return nil, "", scopedErr
+		}
 		marker, markerErr := createRecoveryMarker(path, present, now)
 		if markerErr != nil {
 			return nil, "", markerErr
@@ -197,7 +203,9 @@ func openRecovering(path string, now Clock, hooks recoveryHooks) (*Store, string
 		if present && validateRecoverySnapshot(snapshot) != nil {
 			return nil, "", errors.New("start agent state recovery")
 		}
-		return resumeRecoveryWithSnapshot(path, marker, snapshot, present, now, hooks)
+		return resumeRecoveryWithSnapshot(
+			path, marker, snapshot, present, scopedSnapshot, scopedPresent, now, hooks,
+		)
 	default:
 		return nil, "", err
 	}
@@ -269,7 +277,13 @@ func resumeRecovery(
 	if marker.SnapshotPresent != present {
 		return nil, "", errors.New("resume agent state recovery: recovery snapshot changed")
 	}
-	return resumeRecoveryWithSnapshot(databasePath, marker, snapshot, present, now, hooks)
+	scopedSnapshot, scopedPresent, err := readScopedRecoverySnapshot(databasePath)
+	if err != nil {
+		return nil, "", err
+	}
+	return resumeRecoveryWithSnapshot(
+		databasePath, marker, snapshot, present, scopedSnapshot, scopedPresent, now, hooks,
+	)
 }
 
 func resumeRecoveryWithSnapshot(
@@ -277,10 +291,14 @@ func resumeRecoveryWithSnapshot(
 	marker recoveryMarker,
 	snapshot recoverySnapshot,
 	snapshotPresent bool,
+	scopedSnapshot scopedRecoverySnapshot,
+	scopedSnapshotPresent bool,
 	now Clock,
 	hooks recoveryHooks,
 ) (*Store, string, error) {
-	if store, state, err := inspectRecoveryCanonical(databasePath, snapshot, snapshotPresent, now); err != nil {
+	if store, state, err := inspectRecoveryCanonical(
+		databasePath, snapshot, snapshotPresent, scopedSnapshot, scopedSnapshotPresent, now,
+	); err != nil {
 		return nil, "", err
 	} else if state == "complete" {
 		if err := finalizeRecovery(databasePath, store); err != nil {
@@ -296,6 +314,11 @@ func resumeRecoveryWithSnapshot(
 	if err := removeRecoveryStage(marker.StagePath); err != nil {
 		return nil, "", err
 	}
+	if scopedSnapshotPresent {
+		if err := privateio.WriteJSON(scopedRecoveryPath(marker.StagePath), scopedSnapshot); err != nil {
+			return nil, "", errors.New("prepare scoped agent state recovery stage")
+		}
+	}
 	stage, err := openStore(marker.StagePath, now, false)
 	if err != nil {
 		return nil, "", errors.New("prepare agent state recovery stage")
@@ -306,18 +329,52 @@ func resumeRecoveryWithSnapshot(
 			return nil, "", errors.New("restore agent state recovery stage")
 		}
 	}
+	// Prove the scoped sidecar itself was restored before legacy ingress is
+	// projected into the reserved root/legacy context below.
+	if err := scopedRecoverySnapshotMatches(
+		context.Background(), stage, scopedSnapshot, scopedSnapshotPresent,
+	); err != nil {
+		_ = stage.Close()
+		return nil, "", err
+	}
 	if snapshotPresent {
 		if err := stage.restoreRecoverySnapshot(context.Background(), snapshot); err != nil {
 			_ = stage.Close()
 			return nil, "", err
 		}
 	}
+	if !scopedSnapshotPresent {
+		if err := stage.projectLegacyState(context.Background()); err != nil {
+			_ = stage.Close()
+			return nil, "", errors.New("project legacy state during recovery")
+		}
+	}
+	scopedSnapshot, err = stage.buildScopedRecoverySnapshot(context.Background())
+	if err != nil {
+		_ = stage.Close()
+		return nil, "", fmt.Errorf("reconcile scoped agent state recovery snapshot: %w", err)
+	}
+	scopedSnapshotPresent = true
 	if err := recoverySnapshotMatches(context.Background(), stage, snapshot, snapshotPresent); err != nil {
+		_ = stage.Close()
+		return nil, "", err
+	}
+	if err := scopedRecoverySnapshotMatches(
+		context.Background(), stage, scopedSnapshot, scopedSnapshotPresent,
+	); err != nil {
 		_ = stage.Close()
 		return nil, "", err
 	}
 	if err := stage.Close(); err != nil {
 		return nil, "", errors.New("close agent state recovery stage")
+	}
+	if err := removeScopedRecoveryStage(marker.StagePath); err != nil {
+		return nil, "", err
+	}
+	// Persist the reconciled projection before promotion so an interruption
+	// after the database rename resumes against the exact promoted state.
+	if err := privateio.WriteJSON(scopedRecoveryPath(databasePath), scopedSnapshot); err != nil {
+		return nil, "", errors.New("persist reconciled scoped recovery snapshot")
 	}
 	if err := hooks.rename(marker.StagePath, databasePath); err != nil {
 		return nil, "", errors.New("promote agent state recovery stage")
@@ -333,6 +390,12 @@ func resumeRecoveryWithSnapshot(
 		_ = recovered.Close()
 		return nil, "", err
 	}
+	if err := scopedRecoverySnapshotMatches(
+		context.Background(), recovered, scopedSnapshot, scopedSnapshotPresent,
+	); err != nil {
+		_ = recovered.Close()
+		return nil, "", err
+	}
 	if err := finalizeRecovery(databasePath, recovered); err != nil {
 		_ = recovered.Close()
 		return nil, "", err
@@ -344,6 +407,8 @@ func inspectRecoveryCanonical(
 	databasePath string,
 	snapshot recoverySnapshot,
 	snapshotPresent bool,
+	scopedSnapshot scopedRecoverySnapshot,
+	scopedSnapshotPresent bool,
 	now Clock,
 ) (*Store, string, error) {
 	if _, err := os.Lstat(databasePath); os.IsNotExist(err) {
@@ -361,6 +426,12 @@ func inspectRecoveryCanonical(
 	if err := recoverySnapshotMatches(context.Background(), store, snapshot, snapshotPresent); err != nil {
 		_ = store.Close()
 		return nil, "", errors.New("resume agent state recovery: canonical state does not match recovery snapshot")
+	}
+	if err := scopedRecoverySnapshotMatches(
+		context.Background(), store, scopedSnapshot, scopedSnapshotPresent,
+	); err != nil {
+		_ = store.Close()
+		return nil, "", errors.New("resume agent state recovery: canonical scoped state does not match recovery snapshot")
 	}
 	return store, "complete", nil
 }
@@ -384,6 +455,34 @@ func recoverySnapshotMatches(
 	}
 	if !reflect.DeepEqual(actual, expected) {
 		return errors.New("verify agent state recovery snapshot")
+	}
+	return nil
+}
+
+func scopedRecoverySnapshotMatches(
+	ctx context.Context,
+	store *Store,
+	expected scopedRecoverySnapshot,
+	present bool,
+) error {
+	if !present {
+		return nil
+	}
+	actual, err := store.buildScopedRecoverySnapshot(ctx)
+	if err != nil {
+		return errors.New("verify scoped agent state recovery snapshot")
+	}
+	if !reflect.DeepEqual(actual, expected) {
+		return fmt.Errorf(
+			"verify scoped agent state recovery snapshot: scopes=%t lenses=%t(%d/%d) actors=%t runs=%t judgments=%t(%d/%d)",
+			reflect.DeepEqual(actual.Scopes, expected.Scopes),
+			reflect.DeepEqual(actual.Lenses, expected.Lenses),
+			len(actual.Lenses), len(expected.Lenses),
+			reflect.DeepEqual(actual.Actors, expected.Actors),
+			reflect.DeepEqual(actual.Runs, expected.Runs),
+			reflect.DeepEqual(actual.Judgments, expected.Judgments),
+			len(actual.Judgments), len(expected.Judgments),
+		)
 	}
 	return nil
 }
@@ -440,6 +539,24 @@ func removeRecoveryStage(stagePath string) error {
 	}
 	if err := syncDirectory(filepath.Dir(stagePath)); err != nil {
 		return errors.New("clear agent state recovery stage")
+	}
+	return nil
+}
+
+func removeScopedRecoveryStage(stagePath string) error {
+	path := scopedRecoveryPath(stagePath)
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != privateio.FileMode {
+		return errors.New("clear scoped agent state recovery stage")
+	}
+	if err := os.Remove(path); err != nil {
+		return errors.New("clear scoped agent state recovery stage")
+	}
+	if err := syncDirectory(filepath.Dir(stagePath)); err != nil {
+		return errors.New("clear scoped agent state recovery stage")
 	}
 	return nil
 }

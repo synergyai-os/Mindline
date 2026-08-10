@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/synergyai-os/Mindline/internal/acquisition"
 	"github.com/synergyai-os/Mindline/internal/assurance"
@@ -15,16 +16,17 @@ import (
 )
 
 type NativeMessage struct {
-	NativeMessageID  string `json:"native_message_id"`
-	Timestamp        string `json:"timestamp"`
-	AuthorID         string `json:"author_id,omitempty"`
-	AuthorName       string `json:"author_name,omitempty"`
-	Permalink        string `json:"permalink,omitempty"`
-	ThreadParentID   string `json:"thread_parent_id,omitempty"`
-	Text             string `json:"text"`
-	EditDeleteState  string `json:"edit_delete_state,omitempty"`
-	AttachmentCount  int    `json:"attachment_count"`
-	PrivateFileCount int    `json:"private_file_count"`
+	NativeMessageID   string `json:"native_message_id"`
+	Timestamp         string `json:"timestamp"`
+	AuthorID          string `json:"author_id,omitempty"`
+	AuthorName        string `json:"author_name,omitempty"`
+	Permalink         string `json:"permalink,omitempty"`
+	ThreadParentID    string `json:"thread_parent_id,omitempty"`
+	Text              string `json:"text"`
+	EditDeleteState   string `json:"edit_delete_state,omitempty"`
+	RevisionTimestamp string `json:"revision_timestamp,omitempty"`
+	AttachmentCount   int    `json:"attachment_count"`
+	PrivateFileCount  int    `json:"private_file_count"`
 }
 
 type BuildInput struct {
@@ -97,7 +99,17 @@ func buildExternalManifest(input BuildInput, privateAuthorized bool) (ExternalMa
 		if message.AttachmentCount < 0 || message.PrivateFileCount < 0 || message.PrivateFileCount > message.AttachmentCount {
 			return ExternalManifest{}, errors.New("invalid Slack file accounting")
 		}
-		record := acquisition.SourceRecord{SourceRecordID: sourceID, NativeMessageID: message.NativeMessageID, NativeTimestamp: message.Timestamp, ContentFingerprint: hex.EncodeToString(digest[:]), EditDeleteState: state, ThreadParentID: message.ThreadParentID, AttachmentCount: message.AttachmentCount, PrivateFileCount: message.PrivateFileCount}
+		if message.RevisionTimestamp != "" {
+			revision, revisionErr := acquisition.NativeRevisionTimestampToRFC3339(message.RevisionTimestamp)
+			occurred, occurredErr := acquisition.NativeRevisionTimestampToRFC3339(message.Timestamp)
+			revisionTime, revisionParseErr := time.Parse(time.RFC3339Nano, revision)
+			occurredTime, occurredParseErr := time.Parse(time.RFC3339Nano, occurred)
+			if state != "edited" || revisionErr != nil || occurredErr != nil ||
+				revisionParseErr != nil || occurredParseErr != nil || !revisionTime.After(occurredTime) {
+				return ExternalManifest{}, errors.New("invalid Slack revision chronology")
+			}
+		}
+		record := acquisition.SourceRecord{SourceRecordID: sourceID, NativeMessageID: message.NativeMessageID, NativeTimestamp: message.Timestamp, RevisionTimestamp: message.RevisionTimestamp, ContentFingerprint: hex.EncodeToString(digest[:]), EditDeleteState: state, ThreadParentID: message.ThreadParentID, AttachmentCount: message.AttachmentCount, PrivateFileCount: message.PrivateFileCount}
 		for index, observed := range ExtractURLOccurrences(message.Text) {
 			safeObserved, storageState, err := routing.PrepareURLForStorage(observed)
 			if err != nil {

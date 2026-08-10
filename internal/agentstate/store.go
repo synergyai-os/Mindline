@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/synergyai-os/Mindline/internal/contentguard"
 	"github.com/synergyai-os/Mindline/internal/privateio"
 	_ "modernc.org/sqlite"
 )
@@ -27,10 +28,11 @@ var (
 )
 
 type Store struct {
-	db         *sql.DB
-	path       string
-	now        Clock
-	mutationMu sync.Mutex
+	db                      *sql.DB
+	path                    string
+	now                     Clock
+	mutationMu              sync.Mutex
+	scopedRecoveryByteLimit int64
 }
 
 func Open(path string, now Clock) (*Store, error) {
@@ -172,9 +174,15 @@ func (store *Store) initialize() error {
 	}
 	if _, err := store.db.Exec(
 		`INSERT INTO state_meta(key, value) VALUES('schema_version', ?)
-		 ON CONFLICT(key) DO UPDATE SET value=excluded.value`, SchemaVersion,
+			 ON CONFLICT(key) DO UPDATE SET value=excluded.value`, SchemaVersion,
 	); err != nil {
 		return errors.New("initialize agent state schema")
+	}
+	if err := store.initializeScoped(context.Background()); err != nil {
+		return err
+	}
+	if err := store.validateDurablePrivacy(context.Background()); err != nil {
+		return err
 	}
 	return store.secureFiles()
 }
@@ -232,6 +240,7 @@ func (store *Store) SaveEmbedding(ctx context.Context, embedding Embedding) erro
 	if !validBounded(embedding.DocumentID, 1024) ||
 		!validBounded(embedding.DocumentFingerprint, 256) ||
 		!validBounded(embedding.Model, 512) ||
+		containsSecretLikeAny(embedding.DocumentID, embedding.DocumentFingerprint, embedding.Model) ||
 		len(embedding.Vector) == 0 || len(embedding.Vector) > maximumVectorSize {
 		return errors.New("invalid embedding")
 	}
@@ -258,7 +267,7 @@ func (store *Store) SaveEmbedding(ctx context.Context, embedding Embedding) erro
 }
 
 func (store *Store) SetIndexedFingerprint(ctx context.Context, fingerprint string) error {
-	if !validBounded(fingerprint, 256) {
+	if !validBounded(fingerprint, 256) || contentguard.ContainsSecretLike(fingerprint) {
 		return errors.New("invalid library fingerprint")
 	}
 	_, err := store.db.ExecContext(ctx, `INSERT INTO state_meta(key, value) VALUES('indexed_library_fingerprint', ?)
@@ -269,8 +278,20 @@ func (store *Store) SetIndexedFingerprint(ctx context.Context, fingerprint strin
 func (store *Store) SaveRetrieval(ctx context.Context, trace RetrievalTrace) error {
 	if !validBounded(trace.RunID, 256) || !validBounded(trace.Query, maximumTextRunes) ||
 		len(trace.Candidates) > 100 || !validBounded(trace.RetrievalMethod, 1024) ||
-		!validBounded(trace.LibraryFingerprint, 256) {
+		!validBounded(trace.LibraryFingerprint, 256) || !validBounded(trace.CreatedAt, 256) ||
+		containsSecretLikeAny(trace.RunID, trace.Query, trace.LensID, trace.RetrievalMethod,
+			trace.LibraryFingerprint, trace.CreatedAt) {
 		return errors.New("invalid retrieval trace")
+	}
+	for _, candidate := range trace.Candidates {
+		if !validBounded(candidate.RecordID, 1024) || contentguard.ContainsSecretLike(candidate.RecordID) {
+			return errors.New("invalid retrieval trace")
+		}
+		for component := range candidate.ComponentScore {
+			if !validBounded(component, 256) || contentguard.ContainsSecretLike(component) {
+				return errors.New("invalid retrieval trace")
+			}
+		}
 	}
 	tx, err := store.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -328,4 +349,13 @@ func validBounded(value string, maximum int) bool {
 
 func validOptional(value string, maximum int) bool {
 	return strings.TrimSpace(value) == "" || len([]rune(value)) <= maximum
+}
+
+func containsSecretLikeAny(values ...string) bool {
+	for _, value := range values {
+		if contentguard.ContainsSecretLike(value) {
+			return true
+		}
+	}
+	return false
 }
