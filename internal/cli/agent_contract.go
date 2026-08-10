@@ -224,16 +224,16 @@ func (r Runner) runAgentRegister(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return writeAgentContractError(stderr, "register", "invalid_registration_token", false, "create_registration_token")
 	}
-	client, err := agentClient(options.configPath)
-	if err != nil {
-		return writeAgentContractError(stderr, "register", "service_unavailable", true, "retry_service")
-	}
 	timeout := r.agentRegistrationTimeout
 	if timeout <= 0 {
 		timeout = 10 * time.Second
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
+	client, err := agentClientWithin(ctx, options.configPath)
+	if err != nil {
+		return writeAgentContractError(stderr, "register", "service_unavailable", true, "retry_service")
+	}
 	capabilities, err := client.Capabilities(ctx)
 	if err != nil {
 		return writeAgentContractError(stderr, "register", "service_unavailable", true, "retry_same_registration")

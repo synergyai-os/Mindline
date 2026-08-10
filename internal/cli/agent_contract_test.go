@@ -150,6 +150,44 @@ func TestAgentRegistrationUsesOneBoundedDeadline(t *testing.T) {
 	}
 }
 
+func TestAgentRegistrationDeadlineIncludesServiceRecovery(t *testing.T) {
+	token := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{5}, 24))
+	root, err := os.MkdirTemp("/tmp", "mindline-agent-registration-recovery-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(root)
+	config, err := localservice.ConfigFromRoots(filepath.Join(root, "runtime"), filepath.Join(root, "memory"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(config.RuntimeRoot, "config.json")
+	if err := localservice.SaveConfig(configPath, config); err != nil {
+		t.Fatal(err)
+	}
+	originalRestart := restartAgentServiceWithin
+	restartAgentServiceWithin = func(ctx context.Context, _ string) (localservice.InstallReceipt, error) {
+		<-ctx.Done()
+		return localservice.InstallReceipt{}, ctx.Err()
+	}
+	defer func() { restartAgentServiceWithin = originalRestart }()
+	runner := NewRunner(NewOSFileSystem())
+	runner.agentRegistrationTimeout = 75 * time.Millisecond
+	var stdout, stderr bytes.Buffer
+	started := time.Now()
+	code := runner.Run([]string{"agent", "register", "--name", "Fresh agent",
+		"--retry-token", token, "--config", configPath}, &stdout, &stderr)
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("registration recovery exceeded bounded deadline: %s", elapsed)
+	}
+	var failure agentContractError
+	if code != ExitProcess || stdout.Len() != 0 || json.Unmarshal(stderr.Bytes(), &failure) != nil ||
+		failure.ErrorCode != "service_unavailable" || !failure.Retryable ||
+		failure.RepairAction != "retry_service" || strings.Contains(stderr.String(), token) {
+		t.Fatalf("code=%d stdout=%s failure=%+v stderr=%s", code, stdout.String(), failure, stderr.String())
+	}
+}
+
 func TestAgentRegistrationCreatesOpaqueIdentityWithoutSendingOrReturningToken(t *testing.T) {
 	runner := NewRunner(NewOSFileSystem())
 	runner.agentExecutable = "/opt/mindline"

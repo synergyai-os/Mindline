@@ -324,6 +324,35 @@ func agentClient(configPath string) (*localservice.Client, error) {
 	return nil, errors.New("local agent service is unavailable after one restart attempt")
 }
 
+var restartAgentServiceWithin = localservice.RestartContext
+
+func agentClientWithin(ctx context.Context, configPath string) (*localservice.Client, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	config, err := localservice.LoadConfig(configPath)
+	if err != nil {
+		return nil, err
+	}
+	client := localservice.NewClient(config.SocketPath)
+	initialContext, cancelInitial := context.WithTimeout(ctx, time.Second)
+	_, initialErr := client.Status(initialContext)
+	cancelInitial()
+	if initialErr == nil {
+		return client, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if _, restartErr := restartAgentServiceWithin(ctx, configPath); restartErr != nil {
+		return nil, fmt.Errorf("local agent service is unavailable; restart failed: %w", restartErr)
+	}
+	if err := waitForAgentReady(ctx, client); err == nil {
+		return client, nil
+	}
+	return nil, errors.New("local agent service is unavailable after one restart attempt")
+}
+
 func waitForAgentReady(ctx context.Context, client *localservice.Client) error {
 	for {
 		if _, err := client.Status(ctx); err == nil {

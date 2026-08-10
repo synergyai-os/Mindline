@@ -24,12 +24,13 @@ const (
 )
 
 var (
-	restartUserService = restartLaunchAgent
-	stopUserService    = stopLaunchAgent
-	inspectUserService = launchAgentRunning
-	installFaultHook   = func(string) error { return nil }
-	installSmokeRunner = runInstallSmokeCommand
-	uninstallRename    = os.Rename
+	restartUserService        = restartLaunchAgent
+	restartUserServiceContext = restartLaunchAgentContext
+	stopUserService           = stopLaunchAgent
+	inspectUserService        = launchAgentRunning
+	installFaultHook          = func(string) error { return nil }
+	installSmokeRunner        = runInstallSmokeCommand
+	uninstallRename           = os.Rename
 )
 
 type InstallOptions struct {
@@ -387,6 +388,19 @@ func agentSkillRoot() (string, error) {
 }
 
 func Restart(configPath string) (InstallReceipt, error) {
+	return restartWith(configPath, restartUserService)
+}
+
+func RestartContext(ctx context.Context, configPath string) (InstallReceipt, error) {
+	if err := ctx.Err(); err != nil {
+		return InstallReceipt{}, err
+	}
+	return restartWith(configPath, func(path string) error {
+		return restartUserServiceContext(ctx, path)
+	})
+}
+
+func restartWith(configPath string, restart func(string) error) (InstallReceipt, error) {
 	configPath, config, lifecycleLock, err := loadConfigForLifecycle(configPath)
 	if err != nil {
 		return InstallReceipt{}, err
@@ -407,7 +421,7 @@ func Restart(configPath string) (InstallReceipt, error) {
 	if runtime.GOOS != "darwin" || receipt.LaunchAgentPath == "" {
 		return InstallReceipt{}, errors.New("automatic service restart is not supported")
 	}
-	if err := restartUserService(receipt.LaunchAgentPath); err != nil {
+	if err := restart(receipt.LaunchAgentPath); err != nil {
 		return InstallReceipt{}, err
 	}
 	receipt.ServiceState = "restarted"

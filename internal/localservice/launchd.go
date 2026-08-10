@@ -2,6 +2,7 @@ package localservice
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -133,26 +134,39 @@ func xmlEscape(value string) string {
 }
 
 func restartLaunchAgent(plistPath string) error {
+	return restartLaunchAgentContext(context.Background(), plistPath)
+}
+
+func restartLaunchAgentContext(ctx context.Context, plistPath string) error {
 	domain := "gui/" + strconv.Itoa(os.Getuid())
 	serviceTarget := domain + "/" + launchAgentLabel
-	loaded, err := launchAgentLoaded(serviceTarget)
+	loaded, err := launchAgentLoadedContext(ctx, serviceTarget)
 	if err != nil {
 		return err
 	}
 	if loaded {
-		command := exec.Command("launchctl", "kickstart", "-k", serviceTarget)
+		command := exec.CommandContext(ctx, "launchctl", "kickstart", "-k", serviceTarget)
 		if output, err := command.CombinedOutput(); err != nil {
+			if ctx.Err() != nil {
+				return errors.New("restart local agent service deadline exceeded")
+			}
 			return fmt.Errorf("kickstart local agent service: %s", safeCommandError(output))
 		}
 		return nil
 	}
 
-	command := exec.Command("launchctl", "bootstrap", domain, plistPath)
+	command := exec.CommandContext(ctx, "launchctl", "bootstrap", domain, plistPath)
 	if output, err := command.CombinedOutput(); err != nil {
+		if ctx.Err() != nil {
+			return errors.New("restart local agent service deadline exceeded")
+		}
 		return fmt.Errorf("start local agent service: %s", safeCommandError(output))
 	}
-	command = exec.Command("launchctl", "kickstart", "-k", serviceTarget)
+	command = exec.CommandContext(ctx, "launchctl", "kickstart", "-k", serviceTarget)
 	if output, err := command.CombinedOutput(); err != nil {
+		if ctx.Err() != nil {
+			return errors.New("restart local agent service deadline exceeded")
+		}
 		return fmt.Errorf("kickstart local agent service: %s", safeCommandError(output))
 	}
 	return nil
@@ -178,10 +192,17 @@ func launchAgentRunning(_ string) (bool, error) {
 }
 
 func launchAgentLoaded(serviceTarget string) (bool, error) {
-	command := exec.Command("launchctl", "print", serviceTarget)
+	return launchAgentLoadedContext(context.Background(), serviceTarget)
+}
+
+func launchAgentLoadedContext(ctx context.Context, serviceTarget string) (bool, error) {
+	command := exec.CommandContext(ctx, "launchctl", "print", serviceTarget)
 	output, err := command.CombinedOutput()
 	if err == nil {
 		return true, nil
+	}
+	if ctx.Err() != nil {
+		return false, errors.New("inspect local agent service deadline exceeded")
 	}
 	message := strings.ToLower(string(output))
 	if strings.Contains(message, "could not find") ||
