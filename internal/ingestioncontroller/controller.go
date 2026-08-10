@@ -289,6 +289,9 @@ func truthfulTransition(before, after acquisitionslack.NativeMessage) bool {
 	if before.NativeMessageID != after.NativeMessageID || before.Timestamp != after.Timestamp || before.ThreadParentID != after.ThreadParentID {
 		return false
 	}
+	if before.EditDeleteState == "deleted" || before.EditDeleteState == "tombstone" {
+		return false
+	}
 	return after.EditDeleteState == "edited" || after.EditDeleteState == "deleted" || after.EditDeleteState == "tombstone"
 }
 

@@ -510,6 +510,34 @@ func TestExactOlderBatchReplayCannotRollBackCurrentCapture(t *testing.T) {
 	}
 }
 
+func TestNewBatchCannotResurrectDeletedCaptureWithoutChronology(t *testing.T) {
+	repository := populatedRepository(t)
+	deletedNative := fixtureBatch()
+	deletedNative.Messages[0].EditDeleteState = "deleted"
+	deleted := captureBatchForTest(t, deletedNative)
+	if _, err := repository.Import(deleted); err != nil {
+		t.Fatal(err)
+	}
+	before, err := repository.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleEditNative := fixtureBatch()
+	staleEditNative.UpperInclusive = "1785050000.000001"
+	staleEditNative.Watermark = "1785050000.000001"
+	staleEditNative.Messages[0].Text = "stale edited content"
+	staleEditNative.Messages[0].EditDeleteState = "edited"
+	staleEdit := captureBatchForTest(t, staleEditNative)
+	if _, err := repository.Import(staleEdit); err == nil {
+		t.Fatal("new batch resurrected a deleted capture without chronology")
+	}
+	after, err := repository.Status()
+	library, loadErr := repository.Load()
+	if err != nil || loadErr != nil || before != after || !isDeletedCapture(library.Records[0]) {
+		t.Fatalf("rejected resurrection changed canonical evidence: before=%+v after=%+v record=%+v err=%v load=%v", before, after, library.Records[0], err, loadErr)
+	}
+}
+
 func TestNewCoverageWindowPersistsEvenWhenAllRecordsAreUnchanged(t *testing.T) {
 	repository := populatedRepository(t)
 	base := captureBatchForTest(t, fixtureBatch())

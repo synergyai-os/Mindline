@@ -1,6 +1,7 @@
 package agentstate
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"math"
@@ -366,6 +367,36 @@ func TestCorruptRecoveryRejectsInvalidScopedSidecar(t *testing.T) {
 	}
 	if matches, _ := filepath.Glob(path + ".corrupt-*"); len(matches) != 0 {
 		t.Fatal("database was quarantined before invalid scoped recovery sidecar failed closed")
+	}
+}
+
+func TestOversizedScopedRecoveryDoesNotReplaceReadableSnapshot(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 8, 11, 45, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "state", "agent.sqlite")
+	store, err := Open(path, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedScopedContexts(t, store, context.Background(), now)
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	sidecar := scopedRecoveryPath(path)
+	before, err := os.ReadFile(sidecar)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, present, err := readScopedRecoverySnapshot(path)
+	if err != nil || !present {
+		t.Fatalf("snapshot present=%v err=%v", present, err)
+	}
+	if err := writeScopedRecoverySnapshotFile(sidecar, snapshot, 1); err == nil {
+		t.Fatal("oversized scoped recovery snapshot replaced the readable copy")
+	}
+	after, err := os.ReadFile(sidecar)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("oversized write changed readable snapshot: err=%v", err)
 	}
 }
 

@@ -186,10 +186,11 @@ func TestRedirectAndBodyLimitsFailClosed(t *testing.T) {
 	if _, err := validateMIME("application/vnd.github.raw", "raw.githubusercontent.com"); err != nil {
 		t.Fatalf("GitHub raw MIME rejected: %v", err)
 	}
-	if _, err := boundedRead(
+	wire, err := boundedRead(
 		strings.NewReader(strings.Repeat("x", int(policy.MaximumWireBytes)+1)),
 		policy.MaximumWireBytes, BudgetDimensionWire,
-	); ReasonOf(err) != ReasonBudgetExhausted ||
+	)
+	if ReasonOf(err) != ReasonBudgetExhausted || len(wire) != int(policy.MaximumWireBytes)+1 ||
 		BudgetDimensionOf(err) != BudgetDimensionWire {
 		t.Fatalf("wire cap reason = %q dimension=%q", ReasonOf(err), BudgetDimensionOf(err))
 	}
@@ -197,7 +198,8 @@ func TestRedirectAndBodyLimitsFailClosed(t *testing.T) {
 	writer := gzip.NewWriter(&compressed)
 	_, _ = writer.Write([]byte(strings.Repeat("x", int(policy.MaximumDecodedBytes)+1)))
 	_ = writer.Close()
-	if _, err := decodeBody(compressed.Bytes(), "gzip", policy.MaximumDecodedBytes); ReasonOf(err) != ReasonBudgetExhausted ||
+	decoded, err := decodeBody(compressed.Bytes(), "gzip", policy.MaximumDecodedBytes)
+	if ReasonOf(err) != ReasonBudgetExhausted || len(decoded) != int(policy.MaximumDecodedBytes)+1 ||
 		BudgetDimensionOf(err) != BudgetDimensionDecoded {
 		t.Fatalf("decoded cap reason = %q dimension=%q", ReasonOf(err), BudgetDimensionOf(err))
 	}
@@ -219,7 +221,9 @@ func TestProviderProfilesAndExtractedCap(t *testing.T) {
 	if !strings.Contains(strings.Join(result.Missingness, ","), "transcript_not_publicly_accessible") {
 		t.Fatalf("missing transcript status: %#v", result.Missingness)
 	}
-	if _, err := extract([]byte("a"+strings.Repeat("b", policy.MaximumExtractedBytes)), "text/plain", target, policy); ReasonOf(err) != ReasonBudgetExhausted ||
+	blocked, err := extract([]byte("a"+strings.Repeat("b", policy.MaximumExtractedBytes)), "text/plain", target, policy)
+	if ReasonOf(err) != ReasonBudgetExhausted || blocked.DecodedBytes != int64(policy.MaximumExtractedBytes+1) ||
+		blocked.ExtractedBytes != policy.MaximumExtractedBytes+1 ||
 		BudgetDimensionOf(err) != BudgetDimensionExtracted {
 		t.Fatalf("extracted cap reason = %q dimension=%q", ReasonOf(err), BudgetDimensionOf(err))
 	}
@@ -270,8 +274,47 @@ func TestFrozenPolicyControlsCapsAndIsReturnedStructurally(t *testing.T) {
 	result := fetcher.Fetch(context.Background(), "http://public.example/capped")
 	if result.State != "blocked" || result.Reason != ReasonBudgetExhausted ||
 		result.ExhaustedBudgetDimension != BudgetDimensionWire ||
-		result.RequestCount != 1 || result.PolicyFingerprint != policy.Fingerprint {
+		result.RequestCount != 1 || result.WireBytes != policy.MaximumWireBytes+1 ||
+		result.PolicyFingerprint != policy.Fingerprint {
 		t.Fatalf("capped result = %#v", result)
+	}
+}
+
+func TestFailedDecodeAndExtractionReturnConsumedUsage(t *testing.T) {
+	peer := &net.TCPAddr{IP: net.ParseIP("8.8.8.8"), Port: 80}
+	resolver := staticResolver{"public.example": {netip.MustParseAddr("8.8.8.8")}}
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed)
+	_, _ = writer.Write([]byte("four"))
+	_ = writer.Close()
+	gzipResponse := fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Encoding: gzip\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s", compressed.Len(), compressed.String())
+
+	decodedPolicy := DefaultPolicy()
+	decodedPolicy.Fingerprint = "mindline-resource-fetch-policy/v0.1:fixture-decoded-cap"
+	decodedPolicy.MaximumDecodedBytes = 3
+	decodedDial := &scriptedDial{peer: peer, responses: []string{gzipResponse}}
+	decodedFetcher, err := NewWithPolicy(Dependencies{Resolver: resolver, DialContext: decodedDial.dial}, decodedPolicy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded := decodedFetcher.Fetch(context.Background(), "http://public.example/decoded-cap")
+	if decoded.State != "blocked" || decoded.ExhaustedBudgetDimension != BudgetDimensionDecoded ||
+		decoded.WireBytes != int64(compressed.Len()) || decoded.DecodedBytes != 4 {
+		t.Fatalf("decoded failure lost consumed usage: %#v", decoded)
+	}
+
+	extractedPolicy := DefaultPolicy()
+	extractedPolicy.Fingerprint = "mindline-resource-fetch-policy/v0.1:fixture-extracted-cap"
+	extractedPolicy.MaximumExtractedBytes = 3
+	extractedDial := &scriptedDial{peer: peer, responses: []string{"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 4\r\nConnection: close\r\n\r\nfour"}}
+	extractedFetcher, err := NewWithPolicy(Dependencies{Resolver: resolver, DialContext: extractedDial.dial}, extractedPolicy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	extracted := extractedFetcher.Fetch(context.Background(), "http://public.example/extracted-cap")
+	if extracted.State != "blocked" || extracted.ExhaustedBudgetDimension != BudgetDimensionExtracted ||
+		extracted.WireBytes != 4 || extracted.DecodedBytes != 4 || extracted.ExtractedBytes != 4 {
+		t.Fatalf("extracted failure lost consumed usage: %#v", extracted)
 	}
 }
 

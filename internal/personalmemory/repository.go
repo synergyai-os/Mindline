@@ -145,8 +145,10 @@ func (repository *FileRepository) ImportManyWithinBudget(batches []CaptureBatch,
 		imported[existing.BatchFingerprint] = true
 	}
 	initialContent := make(map[string]string, len(library.Records))
+	initialRecords := make(map[string]CaptureRecord, len(library.Records))
 	for _, record := range library.Records {
 		initialContent[record.IdempotencyKey] = record.ContentHash
+		initialRecords[record.IdempotencyKey] = record
 	}
 	envelopeKeys := make(map[string]bool)
 	for _, batch := range batches {
@@ -158,12 +160,14 @@ func (repository *FileRepository) ImportManyWithinBudget(batches []CaptureBatch,
 		}
 	}
 	finalContent := make(map[string]string, len(envelopeKeys))
+	finalRecords := make(map[string]CaptureRecord, len(envelopeKeys))
 	finalImported := make(map[string]bool, len(envelopeKeys))
 	for _, batch := range batches {
 		batchWasImported := imported[captureBatchFingerprint(batch)]
 		for _, record := range batch.Records {
 			if envelopeKeys[record.IdempotencyKey] {
 				finalContent[record.IdempotencyKey] = record.ContentHash
+				finalRecords[record.IdempotencyKey] = record
 				finalImported[record.IdempotencyKey] = batchWasImported
 			}
 		}
@@ -171,6 +175,11 @@ func (repository *FileRepository) ImportManyWithinBudget(batches []CaptureBatch,
 	for key, wasImported := range finalImported {
 		if wasImported && initialContent[key] != finalContent[key] {
 			return nil, errors.New("personal evidence envelope final state is stale")
+		}
+		prior, exists := initialRecords[key]
+		final := finalRecords[key]
+		if exists && isDeletedCapture(prior) && !isDeletedCapture(final) && prior.ContentHash != final.ContentHash {
+			return nil, errors.New("personal evidence deleted state cannot be resurrected without chronology")
 		}
 	}
 	receipts := make([]ImportReceipt, 0, len(batches))
@@ -189,6 +198,10 @@ func (repository *FileRepository) ImportManyWithinBudget(batches []CaptureBatch,
 		return nil, err
 	}
 	return receipts, nil
+}
+
+func isDeletedCapture(record CaptureRecord) bool {
+	return record.EditDeleteState == "deleted" || record.EditDeleteState == "tombstone"
 }
 
 func (repository *FileRepository) applyCaptureBatch(

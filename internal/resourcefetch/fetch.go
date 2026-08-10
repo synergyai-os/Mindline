@@ -83,7 +83,11 @@ func (fetcher Fetcher) fetchPrepared(ctx context.Context, target PreparedURL) Re
 			requestCount++
 		}
 		if err != nil {
-			return withRequestCount(blockedError(err), requestCount)
+			blocked := blockedError(err)
+			blocked.WireBytes = result.WireBytes
+			blocked.DecodedBytes = result.DecodedBytes
+			blocked.ExtractedBytes = result.ExtractedBytes
+			return withRequestCount(blocked, requestCount)
 		}
 		if redirect == "" {
 			return withRequestCount(result, requestCount)
@@ -149,15 +153,17 @@ func (fetcher Fetcher) fetchOnce(parent context.Context, target PreparedURL) (Re
 	}
 	wire, err := boundedRead(response.Body, fetcher.policy.MaximumWireBytes, BudgetDimensionWire)
 	if err != nil {
-		return Result{}, "", true, err
+		return Result{WireBytes: int64(len(wire))}, "", true, err
 	}
 	decoded, err := decodeBody(wire, response.Header.Get("Content-Encoding"), fetcher.policy.MaximumDecodedBytes)
 	if err != nil {
-		return Result{}, "", true, err
+		return Result{WireBytes: int64(len(wire)), DecodedBytes: int64(len(decoded))}, "", true, err
 	}
 	result, err := extract(decoded, mediaType, target, fetcher.policy)
 	if err != nil {
-		return Result{}, "", true, err
+		result.WireBytes = int64(len(wire))
+		result.DecodedBytes = int64(len(decoded))
+		return result, "", true, err
 	}
 	result.WireBytes = int64(len(wire))
 	result.DecodedBytes = int64(len(decoded))

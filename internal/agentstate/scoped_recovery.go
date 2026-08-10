@@ -13,7 +13,10 @@ import (
 	"github.com/synergyai-os/Mindline/internal/privateio"
 )
 
-const scopedRecoverySchemaVersion = "mindline-agent-scoped-recovery/v0.1"
+const (
+	scopedRecoverySchemaVersion = "mindline-agent-scoped-recovery/v0.1"
+	maximumScopedRecoveryBytes  = 128 << 20
+)
 
 type scopedRecoverySnapshot struct {
 	SchemaVersion string                 `json:"schema_version"`
@@ -59,7 +62,7 @@ func readScopedRecoverySnapshot(databasePath string) (scopedRecoverySnapshot, bo
 		return scopedRecoverySnapshot{}, false, errors.New("read scoped agent recovery snapshot")
 	}
 	var snapshot scopedRecoverySnapshot
-	if err := privateio.ReadJSONStrictBounded(filepath.Dir(path), path, 128<<20, &snapshot); err != nil ||
+	if err := privateio.ReadJSONStrictBounded(filepath.Dir(path), path, maximumScopedRecoveryBytes, &snapshot); err != nil ||
 		validateScopedRecoverySnapshot(snapshot) != nil {
 		return scopedRecoverySnapshot{}, false, errors.New("read scoped agent recovery snapshot")
 	}
@@ -71,10 +74,22 @@ func (store *Store) writeScopedRecoverySnapshot(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := privateio.WriteJSON(scopedRecoveryPath(store.path), snapshot); err != nil {
+	if err := writeScopedRecoverySnapshotFile(scopedRecoveryPath(store.path), snapshot, maximumScopedRecoveryBytes); err != nil {
 		return errors.New("write scoped agent recovery snapshot")
 	}
 	return nil
+}
+
+func writeScopedRecoverySnapshotFile(path string, snapshot scopedRecoverySnapshot, maximum int64) error {
+	data, err := json.MarshalIndent(snapshot, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	if maximum < 1 || int64(len(data)) > maximum {
+		return errors.New("scoped agent recovery snapshot exceeds limit")
+	}
+	return privateio.WriteFile(path, data, false)
 }
 
 func (store *Store) buildScopedRecoverySnapshot(ctx context.Context) (scopedRecoverySnapshot, error) {

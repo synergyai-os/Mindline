@@ -166,6 +166,36 @@ func TestApplyRejectsOriginalAfterEditedOverlapBeforeImport(t *testing.T) {
 	}
 }
 
+func TestApplyRejectsEditedContentAfterDeletedOverlapBeforeImport(t *testing.T) {
+	for _, state := range []string{"deleted", "tombstone"} {
+		t.Run(state, func(t *testing.T) {
+			repository, err := personalmemory.NewFileRepository(filepath.Join(t.TempDir(), "library"), time.Now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ledgerStore, err := NewLedgerStore(filepath.Join(t.TempDir(), "ledger"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			deleted := message("1.000001", state)
+			deleted.EditDeleteState = state
+			staleEdit := message("1.000001", "stale edited content")
+			staleEdit.EditDeleteState = "edited"
+			units := []UnitFrame{
+				unit(0, "000", []acquisitionslack.NativeMessage{deleted}, map[string]string{"1.000001": "user"}),
+				unit(1, "001", []acquisitionslack.NativeMessage{staleEdit}, map[string]string{"1.000001": "user"}),
+			}
+			if _, err := (Controller{Repository: repository, Ledger: ledgerStore}).Apply(testEnvelope(units)); err == nil {
+				t.Fatal("edited content after a deleted state was accepted")
+			}
+			status, err := repository.Status()
+			if err != nil || status.RecordCount != 0 {
+				t.Fatalf("rejected resurrection mutated canonical state: %+v err=%v", status, err)
+			}
+		})
+	}
+}
+
 func TestApplyKeepsLatestAcceptedEditCurrent(t *testing.T) {
 	repository, err := personalmemory.NewFileRepository(filepath.Join(t.TempDir(), "library"), time.Now)
 	if err != nil {

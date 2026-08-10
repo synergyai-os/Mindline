@@ -72,6 +72,8 @@ func TestUpgradeBacksUpAndRollbackRestoresOnlyBinaryAndSkill(t *testing.T) {
 	originalStop := stopUserService
 	originalRestart := restartUserService
 	originalInspect := inspectUserService
+	originalReadiness := rollbackReadinessCheck
+	readinessChecks := 0
 	var stateAfterStop []byte
 	stopUserService = func(string) error {
 		store, err := agentstate.Open(config.StatePath, nil)
@@ -90,14 +92,19 @@ func TestUpgradeBacksUpAndRollbackRestoresOnlyBinaryAndSkill(t *testing.T) {
 	}
 	restartUserService = func(string) error { return nil }
 	inspectUserService = func(string) (bool, error) { return true, nil }
+	rollbackReadinessCheck = func(Config) error { readinessChecks++; return nil }
 	t.Cleanup(func() {
 		stopUserService = originalStop
 		restartUserService = originalRestart
 		inspectUserService = originalInspect
+		rollbackReadinessCheck = originalReadiness
 	})
 	receipt, err := Rollback(first.ConfigPath)
 	if err != nil || receipt.ServiceState != "rolled_back" {
 		t.Fatalf("rollback receipt=%+v err=%v", receipt, err)
+	}
+	if readinessChecks != 1 {
+		t.Fatalf("rollback committed without one readiness check: %d", readinessChecks)
 	}
 	if restored, err := os.ReadFile(first.InstalledBinary); err != nil ||
 		!bytes.Equal(restored, priorBinary) {
@@ -164,10 +171,12 @@ func TestRollbackFailureAfterStopRestoresSuccessorInstallAndService(t *testing.T
 	}
 	originalStop, originalRestart := stopUserService, restartUserService
 	originalInspect, originalFault := inspectUserService, installFaultHook
+	originalReadiness := rollbackReadinessCheck
 	stops, restarts := 0, 0
 	stopUserService = func(string) error { stops++; return nil }
 	restartUserService = func(string) error { restarts++; return nil }
 	inspectUserService = func(string) (bool, error) { return true, nil }
+	rollbackReadinessCheck = func(Config) error { return nil }
 	installFaultHook = func(stage string) error {
 		if stage == "rollback-active-binary" {
 			return errors.New("injected rollback failure")
@@ -177,6 +186,7 @@ func TestRollbackFailureAfterStopRestoresSuccessorInstallAndService(t *testing.T
 	t.Cleanup(func() {
 		stopUserService, restartUserService = originalStop, originalRestart
 		inspectUserService, installFaultHook = originalInspect, originalFault
+		rollbackReadinessCheck = originalReadiness
 	})
 	if _, err := Rollback(first.ConfigPath); err == nil {
 		t.Fatal("injected rollback failure was accepted")
@@ -211,6 +221,22 @@ func TestRollbackFailureAfterStopRestoresSuccessorInstallAndService(t *testing.T
 	}
 	if stops != 2 || restarts != 1 {
 		t.Fatalf("uncertain stop was not compensated: stops=%d restarts=%d", stops, restarts)
+	}
+
+	stops, restarts = 0, 0
+	stopUserService = func(string) error { stops++; return nil }
+	rollbackReadinessCheck = func(Config) error { return errors.New("restored service exited") }
+	if _, err := Rollback(first.ConfigPath); err == nil {
+		t.Fatal("rollback without service readiness was accepted")
+	}
+	if restored, err := os.ReadFile(first.InstalledBinary); err != nil || !bytes.Equal(restored, successorBinary) {
+		t.Fatalf("readiness failure lost successor binary: err=%v", err)
+	}
+	if restored, err := os.ReadFile(first.SkillPath); err != nil || !bytes.Equal(restored, successorSkill) {
+		t.Fatalf("readiness failure lost successor skill: err=%v", err)
+	}
+	if stops != 2 || restarts != 2 {
+		t.Fatalf("readiness failure was not compensated: stops=%d restarts=%d", stops, restarts)
 	}
 }
 

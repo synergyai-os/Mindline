@@ -72,8 +72,12 @@ func TestPipelineEnqueueRunAndDerivedQueueRebuildPreserveReadback(t *testing.T) 
 		get := digest(library.Resources[0].ContentHash + "\x00" + library.Resources[0].State + "\x00" + join(library.Resources[0].Missingness))
 		return CanonicalReadback{Canonical: library.Fingerprint, Compact: compact, Get: get}, nil
 	}
-	if _, err := pipeline.DeleteAndRebuild(readback); err != nil {
+	pair, err := pipeline.DeleteAndRebuild(readback)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if pair.Before != pair.After || pair.Before.Canonical == "" || pair.Before.Compact == "" || pair.Before.Get == "" {
+		t.Fatalf("rebuild did not return its verified readback pair: %+v", pair)
 	}
 	if _, err := pipeline.StructuralProof(); err != nil {
 		t.Fatal(err)

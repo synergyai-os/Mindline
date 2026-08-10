@@ -1,6 +1,7 @@
 package localservice
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -22,6 +23,8 @@ const (
 	rollbackManifestSchemaVersion = "mindline-local-agent-rollback/v0.1"
 	maximumSkillBytes             = 1 << 20
 )
+
+var rollbackReadinessCheck = waitForRollbackReadiness
 
 type rollbackManifest struct {
 	SchemaVersion    string `json:"schema_version"`
@@ -361,6 +364,9 @@ func Rollback(configPath string) (returnReceipt InstallReceipt, returnErr error)
 	if err := installFaultHook("rollback-service-restart"); err != nil {
 		return InstallReceipt{}, err
 	}
+	if err := rollbackReadinessCheck(config); err != nil {
+		return InstallReceipt{}, errors.New("restored local agent service is not ready")
+	}
 	libraryAfter, stateAfter, err := lifecycleFingerprints(config)
 	if err != nil {
 		return InstallReceipt{}, err
@@ -374,6 +380,19 @@ func Rollback(configPath string) (returnReceipt InstallReceipt, returnErr error)
 	receipt.ServiceState = "rolled_back"
 	committed = true
 	return receipt, nil
+}
+
+func waitForRollbackReadiness(config Config) error {
+	client := NewClient(config.SocketPath)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		status, err := client.Status(context.Background())
+		if err == nil && status.ServiceState == "ready" {
+			return nil
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return errors.New("local agent service readiness timed out")
 }
 
 func readValidatedInstallReceipt(config Config, configPath string) (InstallReceipt, error) {

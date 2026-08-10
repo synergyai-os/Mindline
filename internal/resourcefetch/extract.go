@@ -38,10 +38,10 @@ type Result struct {
 func boundedRead(reader io.Reader, maximum int64, dimension string) ([]byte, error) {
 	payload, err := io.ReadAll(io.LimitReader(reader, maximum+1))
 	if err != nil {
-		return nil, reasonError(ReasonUnreachable)
+		return payload, reasonError(ReasonUnreachable)
 	}
 	if int64(len(payload)) > maximum {
-		return nil, budgetError(dimension)
+		return payload, budgetError(dimension)
 	}
 	return payload, nil
 }
@@ -71,22 +71,24 @@ var (
 )
 
 func extract(decoded []byte, mediaType string, target PreparedURL, policy FrozenPolicy) (Result, error) {
+	result := Result{Profile: ProfileForHost(target.Host), MediaType: mediaType, DecodedBytes: int64(len(decoded))}
 	if len(decoded) > int(policy.MaximumDecodedBytes) {
-		return Result{}, budgetError(BudgetDimensionDecoded)
+		return result, budgetError(BudgetDimensionDecoded)
 	}
-	profile := ProfileForHost(target.Host)
+	profile := result.Profile
 	text := string(decoded)
-	result := Result{State: "complete", Profile: profile, MediaType: mediaType, DecodedBytes: int64(len(decoded))}
+	result.State = "complete"
 	if mediaType == "text/html" {
 		result.Title, result.Author, result.PublishedAt = htmlMetadata(text)
 		result.RelatedURLs = publicRelatedURLs(text, target)
 		text = strings.TrimSpace(whitespacePattern.ReplaceAllString(tagPattern.ReplaceAllString(text, " "), " "))
 	}
 	if !utf8.ValidString(text) {
-		return Result{}, reasonError(ReasonUnreachable)
+		return result, reasonError(ReasonUnreachable)
 	}
 	if len([]byte(text)) > policy.MaximumExtractedBytes {
-		return Result{}, budgetError(BudgetDimensionExtracted)
+		result.ExtractedBytes = len([]byte(text))
+		return result, budgetError(BudgetDimensionExtracted)
 	}
 	text = truncateUTF8(text, policy.MaximumExtractedBytes)
 	result.Text, result.ExtractedBytes = text, len([]byte(text))

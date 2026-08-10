@@ -116,12 +116,7 @@ func (r Runner) runResourceCommand(args []string, stdout, stderr io.Writer, comm
 		return encodePersonalMemoryJSON(stdout, stderr, status)
 	}
 	if command == "rebuild" {
-		before, err := personalMemoryCanonicalReadback(repository)
-		if err != nil {
-			fmt.Fprintln(stderr, "read resource rebuild proof: unavailable")
-			return ExitProcess
-		}
-		after, err := pipeline.DeleteAndRebuild(func() (resourcepipeline.CanonicalReadback, error) {
+		readbacks, err := pipeline.DeleteAndRebuild(func() (resourcepipeline.CanonicalReadback, error) {
 			return personalMemoryCanonicalReadback(repository)
 		})
 		if err != nil {
@@ -136,12 +131,12 @@ func (r Runner) runResourceCommand(args []string, stdout, stderr io.Writer, comm
 		proof := map[string]any{
 			"schema_version":     "mindline-resource-queue-rebuild-proof/v0.1",
 			"state":              "pass",
-			"canonical_before":   before.Canonical,
-			"canonical_after":    after.Canonical,
-			"compact_before":     before.Compact,
-			"compact_after":      after.Compact,
-			"get_before":         before.Get,
-			"get_after":          after.Get,
+			"canonical_before":   readbacks.Before.Canonical,
+			"canonical_after":    readbacks.After.Canonical,
+			"compact_before":     readbacks.Before.Compact,
+			"compact_after":      readbacks.After.Compact,
+			"get_before":         readbacks.Before.Get,
+			"get_after":          readbacks.After.Get,
 			"all_terminal":       true,
 			"terminal_resources": len(queue.Items),
 		}

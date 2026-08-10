@@ -497,28 +497,33 @@ func (pipeline *Pipeline) StructuralProof() (Status, error) { return pipeline.St
 // change canonical, compact, or explicit-get readback without exposing them.
 type CanonicalReadback struct{ Canonical, Compact, Get string }
 
-func (pipeline *Pipeline) DeleteAndRebuild(read func() (CanonicalReadback, error)) (CanonicalReadback, error) {
+type CanonicalReadbackPair struct {
+	Before CanonicalReadback
+	After  CanonicalReadback
+}
+
+func (pipeline *Pipeline) DeleteAndRebuild(read func() (CanonicalReadback, error)) (CanonicalReadbackPair, error) {
 	if read == nil {
-		return CanonicalReadback{}, errors.New("canonical readback is required")
+		return CanonicalReadbackPair{}, errors.New("canonical readback is required")
 	}
 	before, err := read()
 	if err != nil {
-		return CanonicalReadback{}, err
+		return CanonicalReadbackPair{}, err
 	}
 	if err := pipeline.Store.Delete(); err != nil {
-		return CanonicalReadback{}, err
+		return CanonicalReadbackPair{}, err
 	}
 	if err := pipeline.RebuildCurrent(); err != nil {
-		return CanonicalReadback{}, err
+		return CanonicalReadbackPair{}, err
 	}
 	after, err := read()
 	if err != nil {
-		return CanonicalReadback{}, err
+		return CanonicalReadbackPair{}, err
 	}
 	if before != after {
-		return CanonicalReadback{}, errors.New("derived queue rebuild changed canonical readback")
+		return CanonicalReadbackPair{}, errors.New("derived queue rebuild changed canonical readback")
 	}
-	return after, nil
+	return CanonicalReadbackPair{Before: before, After: after}, nil
 }
 
 // Compile-time narrow dependency check; FileRepository satisfies the port.
