@@ -214,7 +214,8 @@ func (controller Controller) Apply(envelope Envelope) (Ledger, error) {
 		}
 	}
 	for parent := range parents {
-		if _, exists := facts[parent]; !exists {
+		fact, exists := facts[parent]
+		if !exists || fact.disposition == slackadapter.DispositionExclude {
 			ledger.GapCount++
 			return controller.fail(ledger)
 		}

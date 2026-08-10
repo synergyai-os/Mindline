@@ -90,6 +90,34 @@ func TestApplyRejectsMissingThreadParentBeforeImport(t *testing.T) {
 	}
 }
 
+func TestApplyRejectsStructurallyExcludedThreadParentBeforeImport(t *testing.T) {
+	repository, err := personalmemory.NewFileRepository(filepath.Join(t.TempDir(), "library"), time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledgerStore, err := NewLedgerStore(filepath.Join(t.TempDir(), "ledger"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := message("1.000001", "")
+	reply := message("1.000002", "retained reply")
+	reply.ThreadParentID = parent.NativeMessageID
+	frame := unit(0, "000", []acquisitionslack.NativeMessage{parent, reply}, map[string]string{
+		parent.NativeMessageID: "non_user", reply.NativeMessageID: "user",
+	})
+	if _, err := (Controller{Repository: repository, Ledger: ledgerStore}).Apply(testEnvelope([]UnitFrame{frame})); err == nil {
+		t.Fatal("reply with a structurally excluded parent was accepted")
+	}
+	status, err := repository.Status()
+	if err != nil || status.RecordCount != 0 {
+		t.Fatalf("excluded-parent thread gap mutated canonical evidence: %+v err=%v", status, err)
+	}
+	ledger, err := ledgerStore.Load()
+	if err != nil || ledger.State != "incomplete" || ledger.GapCount != 1 {
+		t.Fatalf("excluded-parent gap was not recorded truthfully: %+v err=%v", ledger, err)
+	}
+}
+
 func TestApplyRejectsOverlappingDispositionConflictBeforeImport(t *testing.T) {
 	repository, err := personalmemory.NewFileRepository(filepath.Join(t.TempDir(), "library"), time.Now)
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -112,9 +113,11 @@ func approvedProofExecutable(tool string) (string, string, error) {
 
 func approvedGoExecutable() (string, error) {
 	version := strings.TrimPrefix(runtime.Version(), "go")
-	home, _ := os.UserHomeDir()
+	home, err := trustedUserHome()
+	if err != nil {
+		return "", err
+	}
 	roots := []string{
-		runtime.GOROOT(), os.Getenv("GOROOT"),
 		filepath.Join(home, "go", "pkg", "mod", "golang.org", "toolchain@v0.0.1-go"+version+"."+runtime.GOOS+"-"+runtime.GOARCH),
 		filepath.Join(home, ".proto", "tools", "go", version),
 		"/usr/local/go", "/opt/homebrew/opt/go/libexec", "/usr/local/opt/go/libexec",
@@ -145,6 +148,14 @@ func approvedGoExecutable() (string, error) {
 	return "", errors.New("approved Go toolchain is unavailable")
 }
 
+func trustedUserHome() (string, error) {
+	current, err := user.Current()
+	if err != nil || !filepath.IsAbs(current.HomeDir) {
+		return "", errors.New("approved user identity is unavailable")
+	}
+	return filepath.Clean(current.HomeDir), nil
+}
+
 func executableFingerprint(path string) (string, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -159,7 +170,7 @@ func executableFingerprint(path string) (string, error) {
 }
 
 func proofEnvironment(directory, tool, executable string) []string {
-	home, _ := os.UserHomeDir()
+	home, _ := trustedUserHome()
 	digest := sha256.Sum256([]byte(filepath.Clean(directory)))
 	cache := filepath.Join(os.TempDir(), "mindline-wp48-proof-"+hex.EncodeToString(digest[:8]))
 	_ = os.MkdirAll(cache, 0o700)

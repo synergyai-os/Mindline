@@ -71,18 +71,32 @@ func TestReusableProofRunnerRejectsTreeDriftDuringProof(t *testing.T) {
 }
 
 func TestOSDirectExecutorIgnoresAmbientPathAndRejectsUnknownTools(t *testing.T) {
+	approvedGo, err := approvedGoExecutable()
+	if err != nil {
+		t.Fatal(err)
+	}
 	hostileRoot := t.TempDir()
 	bin := filepath.Join(hostileRoot, "bin")
 	if err := os.MkdirAll(bin, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	for _, tool := range []string{"go", "git"} {
-		if err := os.WriteFile(filepath.Join(bin, tool), []byte("#!/bin/sh\necho attacker-path-tool\n"), 0o700); err != nil {
-			t.Fatal(err)
-		}
+	goBytes, err := os.ReadFile(approvedGo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "go"), goBytes, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte("#!/bin/sh\necho attacker-path-tool\n"), 0o700); err != nil {
+		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin)
 	t.Setenv("GOROOT", hostileRoot)
+	t.Setenv("HOME", hostileRoot)
+	selectedGo, err := approvedGoExecutable()
+	if err != nil || strings.HasPrefix(selectedGo, hostileRoot+string(os.PathSeparator)) {
+		t.Fatalf("ambient GOROOT selected proof tool: path=%q err=%v", selectedGo, err)
+	}
 	result := (OSDirectExecutor{}).Run(context.Background(), filepath.Clean(filepath.Join("..", "..")), "git", []string{"--version"})
 	if result.ExitCode != 0 || result.ToolFingerprint == "" || strings.Contains(string(result.Stdout), "attacker-path-tool") {
 		t.Fatalf("ambient PATH selected proof tool: %+v", result)

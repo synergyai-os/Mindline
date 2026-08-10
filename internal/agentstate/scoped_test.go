@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"math"
 	"os"
 	"path/filepath"
@@ -486,6 +487,127 @@ func TestScopedFeedbackPreflightsRecoveryCapacityBeforeCommit(t *testing.T) {
 	store.scopedRecoveryByteLimit = 0
 	if _, err := store.ApplyScopedJudgment(ctx, request); err != nil {
 		t.Fatalf("exact retry collided after preflight rejection: %v", err)
+	}
+}
+
+func TestScopedMetadataPreflightsRecoveryCapacityBeforeCommit(t *testing.T) {
+	now := time.Date(2026, 8, 10, 13, 30, 0, 0, time.UTC)
+	tests := []struct {
+		name   string
+		mutate func(context.Context, *Store) error
+		check  func(context.Context, *Store) error
+	}{
+		{
+			name: "put scope",
+			mutate: func(ctx context.Context, store *Store) error {
+				_, err := store.PutScope(ctx, Scope{ID: "scope-a", Name: "Scope A", Purpose: strings.Repeat("p", 512)})
+				return err
+			},
+			check: func(ctx context.Context, store *Store) error {
+				value, err := store.GetScope(ctx, "scope-a")
+				if err == nil && value.Purpose != "architecture" {
+					return errors.New("rejected scope update reached database")
+				}
+				return err
+			},
+		},
+		{
+			name: "archive scope",
+			mutate: func(ctx context.Context, store *Store) error {
+				_, err := store.ArchiveScope(ctx, "scope-a")
+				return err
+			},
+			check: func(ctx context.Context, store *Store) error {
+				value, err := store.GetScope(ctx, "scope-a")
+				if err == nil && value.Status != StatusActive {
+					return errors.New("rejected scope archive reached database")
+				}
+				return err
+			},
+		},
+		{
+			name: "put lens",
+			mutate: func(ctx context.Context, store *Store) error {
+				_, err := store.PutScopedLens(ctx, ScopedLens{ScopeID: "scope-a", ID: "lens-one", Name: "Lens one", Query: strings.Repeat("q", 512)})
+				return err
+			},
+			check: func(ctx context.Context, store *Store) error {
+				value, err := store.GetScopedLens(ctx, "scope-a", "lens-one")
+				if err == nil && value.Query != "reliability" {
+					return errors.New("rejected lens update reached database")
+				}
+				return err
+			},
+		},
+		{
+			name: "archive lens",
+			mutate: func(ctx context.Context, store *Store) error {
+				_, err := store.ArchiveScopedLens(ctx, "scope-a", "lens-one")
+				return err
+			},
+			check: func(ctx context.Context, store *Store) error {
+				value, err := store.GetScopedLens(ctx, "scope-a", "lens-one")
+				if err == nil && value.Status != StatusActive {
+					return errors.New("rejected lens archive reached database")
+				}
+				return err
+			},
+		},
+		{
+			name: "put actor",
+			mutate: func(ctx context.Context, store *Store) error {
+				_, err := store.PutAgentActor(ctx, AgentActor{ID: "agent-a", Name: strings.Repeat("a", 512)})
+				return err
+			},
+			check: func(ctx context.Context, store *Store) error {
+				value, err := store.GetAgentActor(ctx, "agent-a")
+				if err == nil && value.Name != "Agent A" {
+					return errors.New("rejected actor update reached database")
+				}
+				return err
+			},
+		},
+		{
+			name: "archive actor",
+			mutate: func(ctx context.Context, store *Store) error {
+				_, err := store.ArchiveAgentActor(ctx, "agent-a")
+				return err
+			},
+			check: func(ctx context.Context, store *Store) error {
+				value, err := store.GetAgentActor(ctx, "agent-a")
+				if err == nil && value.Status != StatusActive {
+					return errors.New("rejected actor archive reached database")
+				}
+				return err
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "state", "agent.sqlite")
+			store, err := Open(path, func() time.Time { return now })
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			ctx := context.Background()
+			seedScopedContexts(t, store, ctx, now)
+			before, err := os.ReadFile(scopedRecoveryPath(path))
+			if err != nil {
+				t.Fatal(err)
+			}
+			store.scopedRecoveryByteLimit = int64(len(before) + 1)
+			if err := test.mutate(ctx, store); err == nil {
+				t.Fatal("oversized scoped metadata projection was committed")
+			}
+			if err := test.check(ctx, store); err != nil {
+				t.Fatal(err)
+			}
+			after, err := os.ReadFile(scopedRecoveryPath(path))
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatalf("rejected metadata changed recovery snapshot: err=%v", err)
+			}
+		})
 	}
 }
 

@@ -313,6 +313,22 @@ func TestAgentDiscoverUsesOneBoundedDeadlineForHungService(t *testing.T) {
 	}
 }
 
+func TestOrdinaryAgentReadinessUsesCallerDeadlineForHungService(t *testing.T) {
+	configPath, closeServer := startHangingDiscoveryServer(t, "status")
+	defer closeServer()
+	config, err := localservice.LoadConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	err = waitForAgentReady(ctx, localservice.NewClient(config.SocketPath))
+	if elapsed := time.Since(started); err == nil || elapsed > time.Second {
+		t.Fatalf("ordinary readiness did not honor its deadline: elapsed=%s err=%v", elapsed, err)
+	}
+}
+
 func startHangingDiscoveryServer(t *testing.T, hangAt string) (string, func()) {
 	t.Helper()
 	root, err := os.MkdirTemp("/tmp", "mindline-discovery-deadline-")

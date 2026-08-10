@@ -215,7 +215,13 @@ func (store *Store) PutScope(ctx context.Context, scope Scope) (Scope, error) {
 		return Scope{}, errors.New("invalid scope")
 	}
 	now := store.now().UTC().Format(time.RFC3339Nano)
-	_, err := store.db.ExecContext(ctx, `INSERT INTO scopes(id, name, purpose, status, created_at, updated_at)
+	_, err := store.preflightScopeRecovery(ctx, Scope{
+		ID: scope.ID, Name: scope.Name, Purpose: scope.Purpose, UpdatedAt: now,
+	})
+	if err != nil {
+		return Scope{}, err
+	}
+	_, err = store.db.ExecContext(ctx, `INSERT INTO scopes(id, name, purpose, status, created_at, updated_at)
 		VALUES(?, ?, ?, 'active', ?, ?)
 		ON CONFLICT(id) DO UPDATE SET name=excluded.name, purpose=excluded.purpose,
 		updated_at=excluded.updated_at`, scope.ID, scope.Name, scope.Purpose, now, now)
@@ -287,6 +293,13 @@ func (store *Store) PutScopedLens(ctx context.Context, lens ScopedLens) (ScopedL
 		return ScopedLens{}, errors.New("active scope not found")
 	}
 	now := store.now().UTC().Format(time.RFC3339Nano)
+	_, err = store.preflightScopedLensRecovery(ctx, ScopedLens{
+		ScopeID: lens.ScopeID, ID: lens.ID, Name: lens.Name, Query: lens.Query,
+		UpdatedAt: now,
+	})
+	if err != nil {
+		return ScopedLens{}, err
+	}
 	_, err = store.db.ExecContext(ctx, `INSERT INTO scoped_lenses(
 		scope_id, id, name, query, status, created_at, updated_at
 	) VALUES(?, ?, ?, ?, 'active', ?, ?)
@@ -355,6 +368,14 @@ func (store *Store) ArchiveScopedLens(ctx context.Context, scopeID, lensID strin
 		return ScopedLens{}, errors.New("invalid scoped lens")
 	}
 	now := store.now().UTC().Format(time.RFC3339Nano)
+	current, err := store.getScopedLens(ctx, scopeID, lensID)
+	if err != nil {
+		return ScopedLens{}, errors.New("scoped lens not found")
+	}
+	current.Status, current.UpdatedAt = StatusArchived, now
+	if _, err := store.preflightScopedLensRecovery(ctx, current); err != nil {
+		return ScopedLens{}, err
+	}
 	result, err := store.db.ExecContext(ctx, `UPDATE scoped_lenses SET status='archived', updated_at=?
 		WHERE scope_id=? AND id=?`, now, scopeID, lensID)
 	if err != nil {
@@ -380,7 +401,13 @@ func (store *Store) PutAgentActor(ctx context.Context, actor AgentActor) (AgentA
 		return AgentActor{}, errors.New("invalid agent actor")
 	}
 	now := store.now().UTC().Format(time.RFC3339Nano)
-	_, err := store.db.ExecContext(ctx, `INSERT INTO agent_actors(id, name, status, created_at, updated_at)
+	_, err := store.preflightAgentActorRecovery(ctx, AgentActor{
+		ID: actor.ID, Name: actor.Name, UpdatedAt: now,
+	})
+	if err != nil {
+		return AgentActor{}, err
+	}
+	_, err = store.db.ExecContext(ctx, `INSERT INTO agent_actors(id, name, status, created_at, updated_at)
 		VALUES(?, ?, 'active', ?, ?) ON CONFLICT(id) DO UPDATE SET
 		name=excluded.name, updated_at=excluded.updated_at`, actor.ID, actor.Name, now, now)
 	if err != nil {
@@ -438,6 +465,14 @@ func (store *Store) ArchiveAgentActor(ctx context.Context, id string) (AgentActo
 		return AgentActor{}, errors.New("invalid agent actor")
 	}
 	now := store.now().UTC().Format(time.RFC3339Nano)
+	current, err := store.getAgentActor(ctx, id)
+	if err != nil {
+		return AgentActor{}, errors.New("agent actor not found")
+	}
+	current.Status, current.UpdatedAt = StatusArchived, now
+	if _, err := store.preflightAgentActorRecovery(ctx, current); err != nil {
+		return AgentActor{}, err
+	}
 	result, err := store.db.ExecContext(ctx, `UPDATE agent_actors SET status='archived', updated_at=? WHERE id=?`, now, id)
 	if err != nil {
 		return AgentActor{}, errors.New("archive agent actor")
@@ -460,6 +495,14 @@ func (store *Store) archiveScopeObject(ctx context.Context, table, id, parentID,
 		return Scope{}, fmt.Errorf("invalid %s", object)
 	}
 	now := store.now().UTC().Format(time.RFC3339Nano)
+	current, err := store.getScope(ctx, id)
+	if err != nil {
+		return Scope{}, fmt.Errorf("%s not found", object)
+	}
+	current.Status, current.UpdatedAt = StatusArchived, now
+	if _, err := store.preflightScopeRecovery(ctx, current); err != nil {
+		return Scope{}, err
+	}
 	result, err := store.db.ExecContext(ctx, `UPDATE scopes SET status='archived', updated_at=? WHERE id=?`, now, id)
 	if err != nil {
 		return Scope{}, fmt.Errorf("archive %s", object)

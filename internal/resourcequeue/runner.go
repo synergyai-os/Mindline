@@ -193,7 +193,21 @@ func (runner Runner) ProcessNext(ctx context.Context) (bool, error) {
 		return true, runner.mergeAndFinish(target, item, FetchResult{})
 	}
 	if retryEligible(result) && item.Attempts < runner.profileAttempts() {
-		if err := runner.sleepRetry(ctx, item.Attempts, result.RetryAfterSeconds); err != nil {
+		delay, err := runner.retryDelay(item.Attempts, result.RetryAfterSeconds)
+		if err != nil {
+			return true, err
+		}
+		delayExhausted, err := runner.Store.Consume(item.ResourceID, Usage{
+			WallSeconds: int64(delay / time.Second),
+		})
+		if err != nil {
+			return true, err
+		}
+		if delayExhausted {
+			item.State, item.Reason = StateBlocked, ReasonRunBudgetDeferred
+			return true, runner.mergeAndFinish(target, item, FetchResult{})
+		}
+		if err := runner.sleepRetry(ctx, delay); err != nil {
 			if requeueErr := runner.Store.Requeue(item.ResourceID); requeueErr != nil {
 				return true, requeueErr
 			}
@@ -271,10 +285,10 @@ func retryEligible(result FetchResult) bool {
 	return result.TransientNetwork || result.HTTPStatus == 429 || (result.HTTPStatus >= 500 && result.HTTPStatus <= 599)
 }
 
-func (runner Runner) sleepRetry(ctx context.Context, attempt int, retryAfter int64) error {
+func (runner Runner) retryDelay(attempt int, retryAfter int64) (time.Duration, error) {
 	queue, err := runner.Store.Load()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	delay := queue.Profile.FetchPolicy.RetryBackoffOneSeconds
 	if attempt > 1 {
@@ -289,16 +303,20 @@ func (runner Runner) sleepRetry(ctx context.Context, attempt int, retryAfter int
 	if delay > queue.Profile.FetchPolicy.MaxRetryAfterSeconds {
 		delay = queue.Profile.FetchPolicy.MaxRetryAfterSeconds
 	}
+	return time.Duration(delay) * time.Second, nil
+}
+
+func (runner Runner) sleepRetry(ctx context.Context, delay time.Duration) error {
 	if runner.Now != nil {
 		_ = runner.Now()
 	}
 	if runner.Sleep != nil {
-		return runner.Sleep(ctx, time.Duration(delay)*time.Second)
+		return runner.Sleep(ctx, delay)
 	}
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-time.After(time.Duration(delay) * time.Second):
+	case <-time.After(delay):
 		return nil
 	}
 }

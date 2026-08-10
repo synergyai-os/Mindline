@@ -155,9 +155,17 @@ func (repository *FileRepository) ImportManyWithinBudget(batches []CaptureBatch,
 	}
 	initialContent := make(map[string]string, len(library.Records))
 	initialRecords := make(map[string]CaptureRecord, len(library.Records))
+	historicalContent := make(map[string]map[string]bool, len(library.Revisions))
 	for _, record := range library.Records {
 		initialContent[record.IdempotencyKey] = record.ContentHash
 		initialRecords[record.IdempotencyKey] = record
+	}
+	for _, revision := range library.Revisions {
+		key := revision.Record.IdempotencyKey
+		if historicalContent[key] == nil {
+			historicalContent[key] = map[string]bool{}
+		}
+		historicalContent[key][revision.Record.ContentHash] = true
 	}
 	envelopeKeys := make(map[string]bool)
 	for _, batch := range batches {
@@ -187,6 +195,9 @@ func (repository *FileRepository) ImportManyWithinBudget(batches []CaptureBatch,
 		}
 		prior, exists := initialRecords[key]
 		final := finalRecords[key]
+		if exists && prior.ContentHash != final.ContentHash && historicalContent[key][final.ContentHash] {
+			return nil, errors.New("personal evidence envelope final state is a stale historical revision")
+		}
 		if exists && isDeletedCapture(prior) && !isDeletedCapture(final) && prior.ContentHash != final.ContentHash {
 			return nil, errors.New("personal evidence deleted state cannot be resurrected without chronology")
 		}

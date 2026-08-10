@@ -510,6 +510,39 @@ func TestExactOlderBatchReplayCannotRollBackCurrentCapture(t *testing.T) {
 	}
 }
 
+func TestChangedBatchFingerprintCannotRollBackCurrentCaptureToHistoricalEdit(t *testing.T) {
+	repository := populatedRepository(t)
+	editBNative := fixtureBatch()
+	editBNative.Messages[0].Text = "edit B https://example.com/b"
+	editBNative.Messages[0].EditDeleteState = "edited"
+	editB := captureBatchForTest(t, editBNative)
+	if _, err := repository.Import(editB); err != nil {
+		t.Fatal(err)
+	}
+	editCNative := fixtureBatch()
+	editCNative.Messages[0].Text = "newer edit C https://example.com/c"
+	editCNative.Messages[0].EditDeleteState = "edited"
+	if _, err := repository.Import(captureBatchForTest(t, editCNative)); err != nil {
+		t.Fatal(err)
+	}
+	before, err := repository.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleNative := editBNative
+	staleNative.UpperInclusive = "1785050000.000777"
+	staleNative.Watermark = staleNative.UpperInclusive
+	if _, err := repository.Import(captureBatchForTest(t, staleNative)); err == nil {
+		t.Fatal("changed batch fingerprint rolled current evidence back to a historical edit")
+	}
+	after, err := repository.Status()
+	library, loadErr := repository.Load()
+	if err != nil || loadErr != nil || before != after ||
+		!strings.Contains(library.Records[0].RawText, "newer edit C") {
+		t.Fatalf("stale edit changed canonical evidence: before=%+v after=%+v record=%+v err=%v load=%v", before, after, library.Records[0], err, loadErr)
+	}
+}
+
 func TestNewBatchCannotResurrectDeletedCaptureWithoutChronology(t *testing.T) {
 	repository := populatedRepository(t)
 	deletedNative := fixtureBatch()

@@ -145,6 +145,111 @@ func (store *Store) preflightScopedJudgmentRecovery(ctx context.Context, judgmen
 	return nil
 }
 
+func (store *Store) preflightScopeRecovery(ctx context.Context, proposed Scope) (Scope, error) {
+	snapshot, err := store.buildScopedRecoverySnapshot(ctx)
+	if err != nil {
+		return Scope{}, err
+	}
+	found := false
+	for index := range snapshot.Scopes {
+		if snapshot.Scopes[index].ID != proposed.ID {
+			continue
+		}
+		proposed.CreatedAt = snapshot.Scopes[index].CreatedAt
+		if proposed.Status == "" {
+			proposed.Status = snapshot.Scopes[index].Status
+		}
+		snapshot.Scopes[index] = proposed
+		found = true
+		break
+	}
+	if !found {
+		proposed.Status = StatusActive
+		proposed.CreatedAt = proposed.UpdatedAt
+		snapshot.Scopes = append(snapshot.Scopes, proposed)
+	}
+	sort.Slice(snapshot.Scopes, func(i, j int) bool { return snapshot.Scopes[i].ID < snapshot.Scopes[j].ID })
+	if err := validateAndEncodeScopedRecoveryProjection(snapshot, store.scopedRecoveryLimit()); err != nil {
+		return Scope{}, err
+	}
+	return proposed, nil
+}
+
+func (store *Store) preflightScopedLensRecovery(ctx context.Context, proposed ScopedLens) (ScopedLens, error) {
+	snapshot, err := store.buildScopedRecoverySnapshot(ctx)
+	if err != nil {
+		return ScopedLens{}, err
+	}
+	found := false
+	for index := range snapshot.Lenses {
+		if snapshot.Lenses[index].ScopeID != proposed.ScopeID || snapshot.Lenses[index].ID != proposed.ID {
+			continue
+		}
+		proposed.CreatedAt = snapshot.Lenses[index].CreatedAt
+		if proposed.Status == "" {
+			proposed.Status = snapshot.Lenses[index].Status
+		}
+		snapshot.Lenses[index] = proposed
+		found = true
+		break
+	}
+	if !found {
+		proposed.Status = StatusActive
+		proposed.CreatedAt = proposed.UpdatedAt
+		snapshot.Lenses = append(snapshot.Lenses, proposed)
+	}
+	sort.Slice(snapshot.Lenses, func(i, j int) bool {
+		if snapshot.Lenses[i].ScopeID == snapshot.Lenses[j].ScopeID {
+			return snapshot.Lenses[i].ID < snapshot.Lenses[j].ID
+		}
+		return snapshot.Lenses[i].ScopeID < snapshot.Lenses[j].ScopeID
+	})
+	if err := validateAndEncodeScopedRecoveryProjection(snapshot, store.scopedRecoveryLimit()); err != nil {
+		return ScopedLens{}, err
+	}
+	return proposed, nil
+}
+
+func (store *Store) preflightAgentActorRecovery(ctx context.Context, proposed AgentActor) (AgentActor, error) {
+	snapshot, err := store.buildScopedRecoverySnapshot(ctx)
+	if err != nil {
+		return AgentActor{}, err
+	}
+	found := false
+	for index := range snapshot.Actors {
+		if snapshot.Actors[index].ID != proposed.ID {
+			continue
+		}
+		proposed.CreatedAt = snapshot.Actors[index].CreatedAt
+		if proposed.Status == "" {
+			proposed.Status = snapshot.Actors[index].Status
+		}
+		snapshot.Actors[index] = proposed
+		found = true
+		break
+	}
+	if !found {
+		proposed.Status = StatusActive
+		proposed.CreatedAt = proposed.UpdatedAt
+		snapshot.Actors = append(snapshot.Actors, proposed)
+	}
+	sort.Slice(snapshot.Actors, func(i, j int) bool { return snapshot.Actors[i].ID < snapshot.Actors[j].ID })
+	if err := validateAndEncodeScopedRecoveryProjection(snapshot, store.scopedRecoveryLimit()); err != nil {
+		return AgentActor{}, err
+	}
+	return proposed, nil
+}
+
+func validateAndEncodeScopedRecoveryProjection(snapshot scopedRecoverySnapshot, maximum int64) error {
+	if err := validateScopedRecoverySnapshot(snapshot); err != nil {
+		return errors.New("preflight scoped agent recovery snapshot")
+	}
+	if _, err := encodeScopedRecoverySnapshot(snapshot, maximum); err != nil {
+		return errors.New("preflight scoped agent recovery snapshot")
+	}
+	return nil
+}
+
 func writeScopedRecoverySnapshotFile(path string, snapshot scopedRecoverySnapshot, maximum int64) error {
 	data, err := encodeScopedRecoverySnapshot(snapshot, maximum)
 	if err != nil {

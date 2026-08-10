@@ -369,17 +369,64 @@ func TestRetryEligibilityAndFrozenBackoffs(t *testing.T) {
 	}
 	delays := []time.Duration{}
 	runner := Runner{Store: store, Now: func() time.Time { return time.Unix(0, 0) }, Sleep: func(_ context.Context, delay time.Duration) error { delays = append(delays, delay); return nil }}
-	if err := runner.sleepRetry(context.Background(), 1, 0); err != nil {
-		t.Fatal(err)
-	}
-	if err := runner.sleepRetry(context.Background(), 2, 0); err != nil {
-		t.Fatal(err)
-	}
-	if err := runner.sleepRetry(context.Background(), 2, 100); err != nil {
-		t.Fatal(err)
+	for _, input := range []struct {
+		attempt    int
+		retryAfter int64
+	}{{1, 0}, {2, 0}, {2, 100}} {
+		delay, err := runner.retryDelay(input.attempt, input.retryAfter)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := runner.sleepRetry(context.Background(), delay); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if len(delays) != 3 || delays[0] != time.Second || delays[1] != 3*time.Second || delays[2] != 60*time.Second {
 		t.Fatalf("retry delays = %#v", delays)
+	}
+}
+
+type wallBudgetRetryFetcher struct{ maximum int64 }
+
+func (fetcher wallBudgetRetryFetcher) Fetch(context.Context, Target) (FetchResult, error) {
+	return FetchResult{
+		BlockedReason: "unreachable", TransientNetwork: true,
+		Usage: Usage{Requests: 1, WallSeconds: fetcher.maximum},
+	}, nil
+}
+
+func TestRetryDelayCannotCrossRunWallBudget(t *testing.T) {
+	profile := FixtureProfile()
+	store, err := NewStore(t.TempDir()+"/queue", profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resourceID := "resource-wall-budget-retry"
+	if _, err := store.Enqueue([]string{resourceID}); err != nil {
+		t.Fatal(err)
+	}
+	repository := &retryRepository{library: personalmemory.Library{
+		Resources: []personalmemory.ResourceContext{{
+			ResourceID: resourceID, CanonicalURL: "https://example.com/retry",
+		}},
+	}}
+	sleeps := 0
+	runner := Runner{
+		Store: store, Repository: repository,
+		Fetcher: wallBudgetRetryFetcher{maximum: profile.MaxRunWallSeconds},
+		Sleep:   func(context.Context, time.Duration) error { sleeps++; return nil },
+	}
+	if err := runner.Drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	queue, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sleeps != 0 || len(queue.Items) != 1 || queue.Items[0].State != StateBlocked ||
+		queue.Items[0].Reason != ReasonRunBudgetDeferred ||
+		queue.Counters.WallSeconds != profile.MaxRunWallSeconds {
+		t.Fatalf("retry delay escaped wall budget: sleeps=%d queue=%+v", sleeps, queue)
 	}
 }
 

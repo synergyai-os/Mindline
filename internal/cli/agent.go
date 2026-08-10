@@ -294,20 +294,44 @@ func agentClient(configPath string) (*localservice.Client, error) {
 		return nil, err
 	}
 	client := localservice.NewClient(config.SocketPath)
-	if _, err := client.Status(context.Background()); err == nil {
+	initialContext, cancelInitial := context.WithTimeout(context.Background(), time.Second)
+	_, initialErr := client.Status(initialContext)
+	cancelInitial()
+	if initialErr == nil {
 		return client, nil
 	}
 	if _, restartErr := localservice.Restart(configPath); restartErr != nil {
 		return nil, fmt.Errorf("local agent service is unavailable; restart failed: %w", restartErr)
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if _, err := client.Status(context.Background()); err == nil {
-			return client, nil
-		}
-		time.Sleep(50 * time.Millisecond)
+	recoveryContext, cancelRecovery := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelRecovery()
+	if err := waitForAgentReady(recoveryContext, client); err == nil {
+		return client, nil
 	}
 	return nil, errors.New("local agent service is unavailable after one restart attempt")
+}
+
+func waitForAgentReady(ctx context.Context, client *localservice.Client) error {
+	for {
+		if _, err := client.Status(ctx); err == nil {
+			return nil
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		timer := time.NewTimer(50 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
 }
 
 func readOnlyAgentClient(ctx context.Context, configPath string) (*localservice.Client, error) {
