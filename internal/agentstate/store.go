@@ -35,6 +35,7 @@ type Store struct {
 	scopedRecoveryByteLimit    int64
 	projectConnectionInitHook  func() error
 	projectConnectionWriteHook func() error
+	projectConnectionPending   *projectConnectionPendingMutation
 }
 
 func Open(path string, now Clock) (*Store, error) {

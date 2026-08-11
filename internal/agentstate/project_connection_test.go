@@ -37,6 +37,12 @@ func TestProjectConnectionLifecycleIsStableAndIsolated(t *testing.T) {
 	if err != nil || !replay.Replayed || replay.CreatedAt != connection.CreatedAt {
 		t.Fatalf("replay=%+v err=%v", replay, err)
 	}
+	if err := os.Remove(projectConnectionRecoveryPath(path)); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, actor, err := store.ResolveProjectConnection(ctx, digest); err != nil || actor.ID != binding.AgentID {
+		t.Fatalf("normal resolution read the recovery sidecar: actor=%+v err=%v", actor, err)
+	}
 	if _, err := store.BindProjectConnection(ctx, digest, ScopedContext{
 		ScopeID: "scope-a", LensID: "lens-one", AgentID: "agent-b",
 	}); !errors.Is(err, ErrProjectConnectionConflict) {
@@ -427,9 +433,24 @@ func TestProjectConnectionRecoveryResumeRejectsMissingBoundSnapshot(t *testing.T
 		t.Fatal("injected recovery interruption was accepted")
 	}
 	marker, err := readRecoveryMarker(path)
-	if err != nil || !marker.ProjectConnectionsAdopted || !marker.ProjectSnapshotPresent ||
-		marker.ProjectSnapshotFingerprint == "" {
-		t.Fatalf("marker=%+v err=%v", marker, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding, present, err := readProjectRecoveryBinding(path, marker)
+	if err != nil || !present || !binding.ProjectConnectionsAdopted || !binding.ProjectSnapshotPresent ||
+		binding.ProjectSnapshotFingerprint == "" {
+		t.Fatalf("binding=%+v present=%v err=%v", binding, present, err)
+	}
+	var legacyMarker struct {
+		SchemaVersion   string `json:"schema_version"`
+		QuarantineBase  string `json:"quarantine_base"`
+		StagePath       string `json:"stage_path"`
+		SnapshotPresent bool   `json:"snapshot_present"`
+	}
+	if err := privateio.ReadJSONStrictBounded(filepath.Dir(path), recoveryMarkerPath(path),
+		maximumRecoveryMarkerBytes, &legacyMarker); err != nil ||
+		legacyMarker.SchemaVersion != "mindline-agent-recovery-marker/v0.1" {
+		t.Fatalf("previous binary cannot read recovery marker: marker=%+v err=%v", legacyMarker, err)
 	}
 	quarantineBefore, err := os.ReadFile(marker.QuarantineBase)
 	if err != nil {
@@ -453,6 +474,49 @@ func TestProjectConnectionRecoveryResumeRejectsMissingBoundSnapshot(t *testing.T
 	}
 	if _, err := os.Lstat(path); !os.IsNotExist(err) {
 		t.Fatalf("failed resume promoted a canonical database: %v", err)
+	}
+}
+
+func TestProjectConnectionNewBinaryResumesLegacyV01RecoveryMarker(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 11, 16, 0, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "state", "agent.sqlite")
+	ctx := context.Background()
+	store, err := Open(path, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedScopedContexts(t, store, ctx, now)
+	digest := strings.Repeat("2", 64)
+	if _, err := store.BindProjectConnection(ctx, digest, ScopedContext{
+		ScopeID: "scope-a", LensID: "lens-one", AgentID: "agent-a",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("corrupt-agent-state"), privateio.FileMode); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := openRecovering(path, func() time.Time { return now.Add(time.Minute) }, recoveryHooks{
+		rename: os.Rename,
+		beforeRestore: func() error {
+			return errors.New("injected legacy recovery interruption")
+		},
+	}); err == nil {
+		t.Fatal("injected recovery interruption was accepted")
+	}
+	if err := os.Remove(projectRecoveryBindingPath(path)); err != nil {
+		t.Fatal(err)
+	}
+	recovered, quarantine, err := OpenRecovering(path, func() time.Time { return now.Add(2 * time.Minute) })
+	if err != nil || quarantine == "" {
+		t.Fatalf("legacy marker resume quarantine=%q err=%v", quarantine, err)
+	}
+	defer recovered.Close()
+	if _, _, _, actor, err := recovered.ResolveProjectConnection(ctx, digest); err != nil || actor.ID != "agent-a" {
+		t.Fatalf("legacy marker resume actor=%+v err=%v", actor, err)
 	}
 }
 
