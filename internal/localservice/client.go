@@ -153,6 +153,32 @@ func (client *Client) ArchiveActor(ctx context.Context, id string) (agentstate.A
 	return actor, err
 }
 
+func (client *Client) BindProjectConnection(
+	ctx context.Context, input ProjectConnectionInput,
+) (ProjectConnectionReceipt, error) {
+	var receipt ProjectConnectionReceipt
+	err := client.do(ctx, http.MethodPost, "/v1/scoped/connections/bind", input, &receipt)
+	return receipt, err
+}
+
+func (client *Client) ResolveProjectConnection(
+	ctx context.Context, digest string,
+) (ProjectConnectionResolution, error) {
+	var resolution ProjectConnectionResolution
+	err := client.do(ctx, http.MethodPost, "/v1/scoped/connections/resolve",
+		ProjectConnectionDigestInput{Digest: digest}, &resolution)
+	return resolution, err
+}
+
+func (client *Client) ArchiveProjectConnection(
+	ctx context.Context, digest string,
+) (ProjectConnectionReceipt, error) {
+	var receipt ProjectConnectionReceipt
+	err := client.do(ctx, http.MethodPost, "/v1/scoped/connections/archive",
+		ProjectConnectionDigestInput{Digest: digest}, &receipt)
+	return receipt, err
+}
+
 func (client *Client) Get(ctx context.Context, recordID string) (personalmemory.HydratedCapture, error) {
 	var capture personalmemory.HydratedCapture
 	err := client.do(ctx, http.MethodGet, "/v1/captures/"+url.PathEscape(recordID), nil, &capture)

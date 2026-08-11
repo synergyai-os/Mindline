@@ -27,6 +27,12 @@ func (r Runner) runAgent(args []string, stdout, stderr io.Writer) int {
 		return r.runAgentDiscover(args[1:], stdout, stderr)
 	case "feedback-token":
 		return r.runAgentFeedbackToken(args[1:], stdout, stderr)
+	case "connection-handle":
+		return r.runAgentConnectionHandle(args[1:], stdout, stderr)
+	case "connection-bind":
+		return r.runAgentConnectionBind(args[1:], stdout, stderr)
+	case "connection-archive":
+		return r.runAgentConnectionArchive(args[1:], stdout, stderr)
 	case "build-binding":
 		return r.runAgentBuildBinding(args[1:], stdout, stderr)
 	case "registration-token":
@@ -142,6 +148,7 @@ func (r Runner) agentOnlyCapabilities(capabilities localservice.Capabilities) lo
 		OwnerMutationEnforcement:     capabilities.OwnerMutationEnforcement,
 		FeedbackTokenCommand:         workflow.FeedbackToken,
 		RegistrationTokenCommand:     workflow.RegistrationToken,
+		ProjectConnectionEndpoint:    capabilities.ProjectConnectionEndpoint,
 	}
 }
 

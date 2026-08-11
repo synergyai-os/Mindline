@@ -2,6 +2,8 @@ package agentstate
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -14,10 +16,13 @@ import (
 )
 
 const (
-	recoverySchemaVersion       = "mindline-agent-recovery/v0.1"
-	recoveryMarkerSchemaVersion = "mindline-agent-recovery-marker/v0.1"
-	maximumRecoveryBytes        = 128 << 20
-	maximumRecoveryMarkerBytes  = 64 << 10
+	recoverySchemaVersion               = "mindline-agent-recovery/v0.1"
+	recoveryMarkerSchemaVersion         = "mindline-agent-recovery-marker/v0.1"
+	projectRecoveryBindingSchemaVersion = "mindline-project-recovery-binding/v0.1"
+	projectRecoveryBindingSuffix        = ".project-connections-recovery-binding.json"
+	maximumRecoveryBytes                = 128 << 20
+	maximumRecoveryMarkerBytes          = 64 << 10
+	maximumProjectRecoveryBindingBytes  = 64 << 10
 )
 
 type recoverySnapshot struct {
@@ -33,6 +38,14 @@ type recoveryMarker struct {
 	SnapshotPresent bool   `json:"snapshot_present"`
 }
 
+type projectRecoveryBinding struct {
+	SchemaVersion              string `json:"schema_version"`
+	QuarantineBase             string `json:"quarantine_base"`
+	ProjectConnectionsAdopted  bool   `json:"project_connections_adopted"`
+	ProjectSnapshotPresent     bool   `json:"project_snapshot_present"`
+	ProjectSnapshotFingerprint string `json:"project_snapshot_fingerprint"`
+}
+
 type recoveryHooks struct {
 	rename        func(string, string) error
 	beforeRestore func() error
@@ -44,6 +57,10 @@ func recoveryPath(databasePath string) string {
 
 func recoveryMarkerPath(databasePath string) string {
 	return databasePath + ".recovery-in-progress.json"
+}
+
+func projectRecoveryBindingPath(databasePath string) string {
+	return databasePath + projectRecoveryBindingSuffix
 }
 
 func recoveryMarkerExists(databasePath string) bool {
@@ -161,7 +178,10 @@ func (store *Store) writeRecoverySnapshot(ctx context.Context) error {
 	if err := privateio.WriteJSON(recoveryPath(store.path), snapshot); err != nil {
 		return errors.New("write agent recovery snapshot")
 	}
-	return store.writeScopedRecoverySnapshot(ctx)
+	if err := store.writeScopedRecoverySnapshot(ctx); err != nil {
+		return err
+	}
+	return nil
 }
 
 func OpenRecovering(path string, now Clock) (*Store, string, error) {
@@ -196,7 +216,30 @@ func openRecovering(path string, now Clock, hooks recoveryHooks) (*Store, string
 		if scopedErr != nil {
 			return nil, "", scopedErr
 		}
-		marker, markerErr := createRecoveryMarker(path, present, now)
+		projectSnapshot, projectPresent, projectErr := readProjectConnectionRecoverySnapshot(path)
+		if projectErr != nil {
+			return nil, "", projectErr
+		}
+		projectAdopted, adoptionErr := readProjectConnectionAdoptionMarker(path)
+		if adoptionErr != nil {
+			return nil, "", adoptionErr
+		}
+		if projectPresent && !projectAdopted {
+			if err := ensureProjectConnectionAdoptionMarker(path); err != nil {
+				return nil, "", err
+			}
+			projectAdopted = true
+		}
+		if projectAdopted && !projectPresent {
+			return nil, "", errors.New("project connection recovery snapshot unavailable")
+		}
+		binding, bindingErr := newProjectRecoveryBinding(
+			projectAdopted, projectSnapshot, projectPresent,
+		)
+		if bindingErr != nil {
+			return nil, "", bindingErr
+		}
+		marker, markerErr := createRecoveryMarker(path, present, binding, now)
 		if markerErr != nil {
 			return nil, "", markerErr
 		}
@@ -204,14 +247,20 @@ func openRecovering(path string, now Clock, hooks recoveryHooks) (*Store, string
 			return nil, "", errors.New("start agent state recovery")
 		}
 		return resumeRecoveryWithSnapshot(
-			path, marker, snapshot, present, scopedSnapshot, scopedPresent, now, hooks,
+			path, marker, snapshot, present, scopedSnapshot, scopedPresent,
+			projectSnapshot, projectPresent, now, hooks,
 		)
 	default:
 		return nil, "", err
 	}
 }
 
-func createRecoveryMarker(databasePath string, snapshotPresent bool, now Clock) (recoveryMarker, error) {
+func createRecoveryMarker(
+	databasePath string,
+	snapshotPresent bool,
+	binding projectRecoveryBinding,
+	now Clock,
+) (recoveryMarker, error) {
 	if now == nil {
 		now = time.Now
 	}
@@ -222,7 +271,11 @@ func createRecoveryMarker(databasePath string, snapshotPresent bool, now Clock) 
 		StagePath:       databasePath + ".recovery-stage",
 		SnapshotPresent: snapshotPresent,
 	}
+	binding.QuarantineBase = marker.QuarantineBase
 	if err := validateRecoveryMarker(databasePath, marker); err != nil {
+		return recoveryMarker{}, err
+	}
+	if err := validateProjectRecoveryBinding(databasePath, marker, binding); err != nil {
 		return recoveryMarker{}, err
 	}
 	for _, suffix := range []string{"", "-wal", "-shm"} {
@@ -231,6 +284,9 @@ func createRecoveryMarker(databasePath string, snapshotPresent bool, now Clock) 
 		} else if !os.IsNotExist(err) {
 			return recoveryMarker{}, errors.New("start agent state recovery")
 		}
+	}
+	if err := privateio.WriteJSON(projectRecoveryBindingPath(databasePath), binding); err != nil {
+		return recoveryMarker{}, errors.New("bind project connection recovery")
 	}
 	if err := privateio.WriteJSONNoReplace(recoveryMarkerPath(databasePath), marker); err != nil {
 		return recoveryMarker{}, errors.New("start agent state recovery")
@@ -261,6 +317,10 @@ func validateRecoveryMarker(databasePath string, marker recoveryMarker) error {
 	return privateio.ValidateContained(
 		root, databasePath, marker.StagePath, marker.QuarantineBase,
 		recoveryMarkerPath(databasePath), recoveryPath(databasePath),
+		scopedRecoveryPath(databasePath),
+		projectConnectionRecoveryPath(databasePath),
+		projectConnectionAdoptionPath(databasePath),
+		projectRecoveryBindingPath(databasePath),
 	)
 }
 
@@ -281,9 +341,139 @@ func resumeRecovery(
 	if err != nil {
 		return nil, "", err
 	}
+	projectSnapshot, projectPresent, err := readProjectConnectionRecoverySnapshot(databasePath)
+	if err != nil {
+		return nil, "", err
+	}
+	binding, bindingPresent, err := readProjectRecoveryBinding(databasePath, marker)
+	if err != nil {
+		return nil, "", err
+	}
+	if !bindingPresent {
+		projectAdopted, adoptionErr := readProjectConnectionAdoptionMarker(databasePath)
+		if adoptionErr != nil {
+			return nil, "", adoptionErr
+		}
+		if projectAdopted || projectPresent {
+			return nil, "", errors.New("resume agent state recovery: project connection recovery snapshot changed")
+		}
+		binding, err = newProjectRecoveryBinding(
+			false, projectSnapshot, false,
+		)
+		if err != nil {
+			return nil, "", err
+		}
+		binding.QuarantineBase = marker.QuarantineBase
+		if err := privateio.WriteJSONNoReplace(projectRecoveryBindingPath(databasePath), binding); err != nil {
+			return nil, "", errors.New("bind project connection recovery")
+		}
+	}
+	if err := verifyRecoveryBindingProjectSnapshot(binding, projectSnapshot, projectPresent); err != nil {
+		return nil, "", err
+	}
 	return resumeRecoveryWithSnapshot(
-		databasePath, marker, snapshot, present, scopedSnapshot, scopedPresent, now, hooks,
+		databasePath, marker, snapshot, present, scopedSnapshot, scopedPresent,
+		projectSnapshot, projectPresent, now, hooks,
 	)
+}
+
+func newProjectRecoveryBinding(
+	projectAdopted bool,
+	projectSnapshot projectConnectionRecoverySnapshot,
+	projectSnapshotPresent bool,
+) (projectRecoveryBinding, error) {
+	projectFingerprint, err := projectConnectionSnapshotFingerprint(
+		projectSnapshot, projectSnapshotPresent,
+	)
+	if err != nil {
+		return projectRecoveryBinding{}, err
+	}
+	return projectRecoveryBinding{
+		SchemaVersion:              projectRecoveryBindingSchemaVersion,
+		ProjectConnectionsAdopted:  projectAdopted,
+		ProjectSnapshotPresent:     projectSnapshotPresent,
+		ProjectSnapshotFingerprint: projectFingerprint,
+	}, nil
+}
+
+func readProjectRecoveryBinding(
+	databasePath string, marker recoveryMarker,
+) (projectRecoveryBinding, bool, error) {
+	path := projectRecoveryBindingPath(databasePath)
+	if _, err := os.Lstat(path); os.IsNotExist(err) {
+		return projectRecoveryBinding{}, false, nil
+	} else if err != nil {
+		return projectRecoveryBinding{}, false, errors.New("read project connection recovery binding")
+	}
+	var binding projectRecoveryBinding
+	if err := privateio.ReadJSONStrictBounded(filepath.Dir(path), path,
+		maximumProjectRecoveryBindingBytes, &binding); err != nil ||
+		validateProjectRecoveryBinding(databasePath, marker, binding) != nil {
+		return projectRecoveryBinding{}, false, errors.New("read project connection recovery binding")
+	}
+	return binding, true, nil
+}
+
+func validateProjectRecoveryBinding(
+	databasePath string, marker recoveryMarker, binding projectRecoveryBinding,
+) error {
+	if binding.SchemaVersion != projectRecoveryBindingSchemaVersion ||
+		binding.QuarantineBase != marker.QuarantineBase ||
+		binding.ProjectConnectionsAdopted != binding.ProjectSnapshotPresent ||
+		!validProjectSnapshotFingerprint(binding.ProjectSnapshotFingerprint, binding.ProjectSnapshotPresent) {
+		return errors.New("invalid project connection recovery binding")
+	}
+	return privateio.ValidateContained(filepath.Dir(databasePath), projectRecoveryBindingPath(databasePath))
+}
+
+func projectConnectionSnapshotFingerprint(
+	snapshot projectConnectionRecoverySnapshot, present bool,
+) (string, error) {
+	if !present {
+		return "", nil
+	}
+	data, err := encodeProjectConnectionRecoverySnapshot(snapshot)
+	if err != nil {
+		return "", errors.New("fingerprint project connection recovery snapshot")
+	}
+	digest := sha256.Sum256(data)
+	return hex.EncodeToString(digest[:]), nil
+}
+
+func validProjectSnapshotFingerprint(value string, present bool) bool {
+	if !present {
+		return value == ""
+	}
+	if len(value) != 64 || value != strings.ToLower(value) {
+		return false
+	}
+	decoded, err := hex.DecodeString(value)
+	return err == nil && len(decoded) == sha256.Size
+}
+
+func verifyRecoveryBindingProjectSnapshot(
+	binding projectRecoveryBinding,
+	snapshot projectConnectionRecoverySnapshot,
+	present bool,
+) error {
+	if binding.ProjectConnectionsAdopted {
+		fingerprint, err := projectConnectionSnapshotFingerprint(snapshot, present)
+		if err != nil || !present || fingerprint != binding.ProjectSnapshotFingerprint {
+			return errors.New("resume agent state recovery: project connection recovery snapshot changed")
+		}
+		return nil
+	}
+	if !present {
+		return nil
+	}
+	empty := projectConnectionRecoverySnapshot{
+		SchemaVersion: ProjectConnectionSchemaVersion,
+		Connections:   []ProjectConnection{},
+	}
+	if !reflect.DeepEqual(snapshot, empty) {
+		return errors.New("resume agent state recovery: project connection recovery snapshot changed")
+	}
+	return nil
 }
 
 func resumeRecoveryWithSnapshot(
@@ -293,11 +483,14 @@ func resumeRecoveryWithSnapshot(
 	snapshotPresent bool,
 	scopedSnapshot scopedRecoverySnapshot,
 	scopedSnapshotPresent bool,
+	projectSnapshot projectConnectionRecoverySnapshot,
+	projectSnapshotPresent bool,
 	now Clock,
 	hooks recoveryHooks,
 ) (*Store, string, error) {
 	if store, state, err := inspectRecoveryCanonical(
-		databasePath, snapshot, snapshotPresent, scopedSnapshot, scopedSnapshotPresent, now,
+		databasePath, snapshot, snapshotPresent, scopedSnapshot, scopedSnapshotPresent,
+		projectSnapshot, projectSnapshotPresent, now,
 	); err != nil {
 		return nil, "", err
 	} else if state == "complete" {
@@ -314,9 +507,23 @@ func resumeRecoveryWithSnapshot(
 	if err := removeRecoveryStage(marker.StagePath); err != nil {
 		return nil, "", err
 	}
+	if err := removeScopedRecoveryStage(marker.StagePath); err != nil {
+		return nil, "", err
+	}
+	if err := removeProjectConnectionRecoveryStage(marker.StagePath); err != nil {
+		return nil, "", err
+	}
+	if err := removeProjectConnectionAdoptionStage(marker.StagePath); err != nil {
+		return nil, "", err
+	}
 	if scopedSnapshotPresent {
 		if err := privateio.WriteJSON(scopedRecoveryPath(marker.StagePath), scopedSnapshot); err != nil {
 			return nil, "", errors.New("prepare scoped agent state recovery stage")
+		}
+	}
+	if projectSnapshotPresent {
+		if err := privateio.WriteJSON(projectConnectionRecoveryPath(marker.StagePath), projectSnapshot); err != nil {
+			return nil, "", errors.New("prepare project connection recovery stage")
 		}
 	}
 	stage, err := openStore(marker.StagePath, now, false)
@@ -333,6 +540,12 @@ func resumeRecoveryWithSnapshot(
 	// projected into the reserved root/legacy context below.
 	if err := scopedRecoverySnapshotMatches(
 		context.Background(), stage, scopedSnapshot, scopedSnapshotPresent,
+	); err != nil {
+		_ = stage.Close()
+		return nil, "", err
+	}
+	if err := projectConnectionRecoverySnapshotMatches(
+		context.Background(), stage, projectSnapshot, projectSnapshotPresent,
 	); err != nil {
 		_ = stage.Close()
 		return nil, "", err
@@ -355,6 +568,12 @@ func resumeRecoveryWithSnapshot(
 		return nil, "", fmt.Errorf("reconcile scoped agent state recovery snapshot: %w", err)
 	}
 	scopedSnapshotPresent = true
+	projectSnapshot, err = stage.buildProjectConnectionRecoverySnapshot(context.Background())
+	if err != nil {
+		_ = stage.Close()
+		return nil, "", fmt.Errorf("reconcile project connection recovery snapshot: %w", err)
+	}
+	projectSnapshotPresent = true
 	if err := recoverySnapshotMatches(context.Background(), stage, snapshot, snapshotPresent); err != nil {
 		_ = stage.Close()
 		return nil, "", err
@@ -365,16 +584,31 @@ func resumeRecoveryWithSnapshot(
 		_ = stage.Close()
 		return nil, "", err
 	}
+	if err := projectConnectionRecoverySnapshotMatches(
+		context.Background(), stage, projectSnapshot, projectSnapshotPresent,
+	); err != nil {
+		_ = stage.Close()
+		return nil, "", err
+	}
 	if err := stage.Close(); err != nil {
 		return nil, "", errors.New("close agent state recovery stage")
 	}
 	if err := removeScopedRecoveryStage(marker.StagePath); err != nil {
 		return nil, "", err
 	}
+	if err := removeProjectConnectionRecoveryStage(marker.StagePath); err != nil {
+		return nil, "", err
+	}
+	if err := removeProjectConnectionAdoptionStage(marker.StagePath); err != nil {
+		return nil, "", err
+	}
 	// Persist the reconciled projection before promotion so an interruption
 	// after the database rename resumes against the exact promoted state.
 	if err := privateio.WriteJSON(scopedRecoveryPath(databasePath), scopedSnapshot); err != nil {
 		return nil, "", errors.New("persist reconciled scoped recovery snapshot")
+	}
+	if err := privateio.WriteJSON(projectConnectionRecoveryPath(databasePath), projectSnapshot); err != nil {
+		return nil, "", errors.New("persist reconciled project connection recovery snapshot")
 	}
 	if err := hooks.rename(marker.StagePath, databasePath); err != nil {
 		return nil, "", errors.New("promote agent state recovery stage")
@@ -396,6 +630,12 @@ func resumeRecoveryWithSnapshot(
 		_ = recovered.Close()
 		return nil, "", err
 	}
+	if err := projectConnectionRecoverySnapshotMatches(
+		context.Background(), recovered, projectSnapshot, projectSnapshotPresent,
+	); err != nil {
+		_ = recovered.Close()
+		return nil, "", err
+	}
 	if err := finalizeRecovery(databasePath, recovered); err != nil {
 		_ = recovered.Close()
 		return nil, "", err
@@ -409,6 +649,8 @@ func inspectRecoveryCanonical(
 	snapshotPresent bool,
 	scopedSnapshot scopedRecoverySnapshot,
 	scopedSnapshotPresent bool,
+	projectSnapshot projectConnectionRecoverySnapshot,
+	projectSnapshotPresent bool,
 	now Clock,
 ) (*Store, string, error) {
 	if _, err := os.Lstat(databasePath); os.IsNotExist(err) {
@@ -432,6 +674,12 @@ func inspectRecoveryCanonical(
 	); err != nil {
 		_ = store.Close()
 		return nil, "", errors.New("resume agent state recovery: canonical scoped state does not match recovery snapshot")
+	}
+	if err := projectConnectionRecoverySnapshotMatches(
+		context.Background(), store, projectSnapshot, projectSnapshotPresent,
+	); err != nil {
+		_ = store.Close()
+		return nil, "", errors.New("resume agent state recovery: canonical project connections do not match recovery snapshot")
 	}
 	return store, "complete", nil
 }
@@ -561,7 +809,49 @@ func removeScopedRecoveryStage(stagePath string) error {
 	return nil
 }
 
+func removeProjectConnectionRecoveryStage(stagePath string) error {
+	path := projectConnectionRecoveryPath(stagePath)
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != privateio.FileMode {
+		return errors.New("clear project connection recovery stage")
+	}
+	if err := os.Remove(path); err != nil {
+		return errors.New("clear project connection recovery stage")
+	}
+	if err := syncDirectory(filepath.Dir(stagePath)); err != nil {
+		return errors.New("clear project connection recovery stage")
+	}
+	return nil
+}
+
+func removeProjectConnectionAdoptionStage(stagePath string) error {
+	path := projectConnectionAdoptionPath(stagePath)
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != privateio.FileMode {
+		return errors.New("clear project connection adoption stage")
+	}
+	if err := os.Remove(path); err != nil {
+		return errors.New("clear project connection adoption stage")
+	}
+	if err := syncDirectory(filepath.Dir(stagePath)); err != nil {
+		return errors.New("clear project connection adoption stage")
+	}
+	return nil
+}
+
 func finalizeRecovery(databasePath string, store *Store) error {
+	if err := os.Remove(projectRecoveryBindingPath(databasePath)); err != nil && !os.IsNotExist(err) {
+		return errors.New("finalize project connection recovery binding")
+	}
+	if err := syncDirectory(filepath.Dir(databasePath)); err != nil {
+		return errors.New("finalize project connection recovery binding")
+	}
 	if err := os.Remove(recoveryMarkerPath(databasePath)); err != nil {
 		return errors.New("finalize agent state recovery")
 	}

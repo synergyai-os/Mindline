@@ -29,7 +29,10 @@ func TestAgentOnlySurfaceExposesGovernedRoutesAndRejectsOwnerRoutes(t *testing.T
 			t.Fatalf("agent-only help missing %q: %s", expected, help.String())
 		}
 	}
-	for _, forbidden := range []string{"scope-list", "lens-list", "actor-list", "agent install"} {
+	for _, forbidden := range []string{
+		"scope-list", "lens-list", "actor-list", "agent install",
+		"connection-handle", "connection-bind", "connection-archive",
+	} {
 		if strings.Contains(help.String(), forbidden) {
 			t.Fatalf("agent-only help exposed %q: %s", forbidden, help.String())
 		}
@@ -40,6 +43,9 @@ func TestAgentOnlySurfaceExposesGovernedRoutesAndRejectsOwnerRoutes(t *testing.T
 		{"agent-only", "search", "query"},
 		{"agent-only", "get", "record"},
 		{"agent-only", "install"},
+		{"agent-only", "connection-handle"},
+		{"agent-only", "connection-bind", "--connection", "connection", "--scope", "scope", "--lens", "lens", "--agent", "agent"},
+		{"agent-only", "connection-archive", "--connection", "connection"},
 		{"agent-only", "feedback", "--run", "run", "--scope", "scope", "--lens", "lens", "--agent", "agent", "--record", "record", "--actor", "owner", "--disposition", "used", "--retry-token", "token"},
 	}
 	for _, args := range blocked {
@@ -91,6 +97,7 @@ func TestAgentOnlyCapabilitiesExposeOnlyScopedNamespacedRoute(t *testing.T) {
 	}
 	serialized := stdout.String()
 	if capabilities.CompactSearchEndpoint != "" || capabilities.OwnerDebugRouteClass != "" ||
+		capabilities.ConnectionHandleCommand != "" ||
 		len(capabilities.SearchFormats) != 1 || capabilities.SearchFormats[0] != personalmemory.ScopedCompactPacketSchemaVersion ||
 		!strings.Contains(capabilities.ExplicitHydrationCommand, "agent-only get") ||
 		!strings.Contains(capabilities.FeedbackTokenCommand, "agent-only feedback-token") ||

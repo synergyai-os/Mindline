@@ -128,6 +128,9 @@ func (server *Server) Serve() error {
 	mux.HandleFunc("POST /v1/scoped/actors/register", server.handleRegisterActor)
 	mux.HandleFunc("PUT /v1/scoped/actors/{actorID}", server.handlePutActor)
 	mux.HandleFunc("POST /v1/scoped/actors/{actorID}/archive", server.handleArchiveActor)
+	mux.HandleFunc("POST /v1/scoped/connections/bind", server.handleBindProjectConnection)
+	mux.HandleFunc("POST /v1/scoped/connections/resolve", server.handleResolveProjectConnection)
+	mux.HandleFunc("POST /v1/scoped/connections/archive", server.handleArchiveProjectConnection)
 	mux.HandleFunc("POST /v1/scoped/search/compact", server.handleSearchScoped)
 	mux.HandleFunc("POST /v1/scoped/get", server.handleGetScoped)
 	mux.HandleFunc("POST /v1/scoped/judgments", server.handleScopedJudgment)
@@ -181,7 +184,7 @@ func (server *Server) handleCapabilities(writer http.ResponseWriter, _ *http.Req
 		CompactAbstentionPolicy:      personalmemory.DefaultCompactAbstentionPolicy(),
 		ExplicitHydrationCommand:     agentcontract.NewWorkflow("mindline", "").Get,
 		FeedbackRetryToken:           true,
-		Features:                     []string{ScopedRecallCapability, DiscoveryCapability, AgentRegistrationCapability},
+		Features:                     []string{ScopedRecallCapability, DiscoveryCapability, AgentRegistrationCapability, ProjectConnectionCapability},
 		ScopedSearchEndpoint:         "/v1/scoped/search/compact",
 		ScopedFeedbackEndpoint:       "/v1/scoped/judgments",
 		ScopedHydrationEndpoint:      ScopedHydrationEndpoint,
@@ -193,6 +196,8 @@ func (server *Server) handleCapabilities(writer http.ResponseWriter, _ *http.Req
 		OwnerMutationEnforcement:     agentcontract.MutationEnforcement,
 		FeedbackTokenCommand:         agentcontract.FeedbackTokenCommand,
 		RegistrationTokenCommand:     agentcontract.RegistrationTokenCommand,
+		ConnectionHandleCommand:      agentcontract.ConnectionHandleCommand,
+		ProjectConnectionEndpoint:    "/v1/scoped/connections/resolve",
 	})
 }
 
@@ -226,6 +231,9 @@ func projectAgentStateStatus(state agentstate.Status) PublicAgentStateStatus {
 		AgentActorCount:         state.AgentActorCount,
 		ScopedRetrievalRunCount: state.ScopedRetrievalRunCount,
 		ScopedJudgmentCount:     state.ScopedJudgmentCount,
+		ProjectConnectionCount:  state.ProjectConnectionCount,
+		ActiveConnectionCount:   state.ActiveConnectionCount,
+		ArchivedConnectionCount: state.ArchivedConnectionCount,
 		EmbeddingCount:          state.EmbeddingCount, IndexedFingerprint: state.IndexedFingerprint,
 		RecoveryState: state.RecoveryState,
 	}
