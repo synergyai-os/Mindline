@@ -179,6 +179,54 @@ func TestAgentProjectConnectionUnknownOutcomeRequiresExactRetry(t *testing.T) {
 	}
 }
 
+func TestAgentProjectConnectionDroppedResponseRequiresExactRetry(t *testing.T) {
+	handle := "mlc1_" + base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{8}, 32))
+	mux := http.NewServeMux()
+	dropResponse := func(writer http.ResponseWriter) {
+		hijacker, ok := writer.(http.Hijacker)
+		if !ok {
+			t.Fatal("test server does not support connection hijacking")
+		}
+		connection, _, err := hijacker.Hijack()
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = connection.Close()
+	}
+	mux.HandleFunc("POST /v1/scoped/connections/bind", func(writer http.ResponseWriter, _ *http.Request) {
+		dropResponse(writer)
+	})
+	mux.HandleFunc("POST /v1/scoped/connections/archive", func(writer http.ResponseWriter, _ *http.Request) {
+		dropResponse(writer)
+	})
+	configPath, closeServer := startScopedAgentCLITestServer(t, mux)
+	defer closeServer()
+	runner := NewRunner(NewOSFileSystem())
+	for _, test := range []struct {
+		operation, repair string
+		args              []string
+	}{
+		{operation: "connection_bind", repair: "retry_same_connection_bind", args: []string{
+			"agent", "connection-bind", "--connection", handle,
+			"--scope", "project", "--lens", "product", "--agent", "agent-a", "--config", configPath,
+		}},
+		{operation: "connection_archive", repair: "retry_same_connection_archive", args: []string{
+			"agent", "connection-archive", "--connection", handle, "--config", configPath,
+		}},
+	} {
+		var stdout, stderr bytes.Buffer
+		if code := runner.Run(test.args, &stdout, &stderr); code != ExitProcess || stdout.Len() != 0 {
+			t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+		}
+		var failure agentContractError
+		if err := json.Unmarshal(stderr.Bytes(), &failure); err != nil ||
+			failure.ErrorCode != "connection_outcome_unknown" || failure.Operation != test.operation ||
+			!failure.Retryable || failure.RepairAction != test.repair || strings.Contains(stderr.String(), handle) {
+			t.Fatalf("failure=%+v err=%v stderr=%s", failure, err, stderr.String())
+		}
+	}
+}
+
 func TestAgentRegisterUsageUsesSharedAgentNamePlaceholder(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := NewRunner(NewMemoryFS()).Run([]string{"agent", "register"}, &stdout, &stderr)

@@ -2,6 +2,7 @@ package agentstate
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -203,6 +204,12 @@ func openRecovering(path string, now Clock, hooks recoveryHooks) (*Store, string
 		if projectErr != nil {
 			return nil, "", projectErr
 		}
+		if !projectPresent {
+			hasSchema, inspectErr := databaseHasProjectConnectionSchema(path)
+			if hasSchema || (inspectErr != nil && (present || scopedPresent)) {
+				return nil, "", errors.New("project connection recovery snapshot unavailable")
+			}
+		}
 		marker, markerErr := createRecoveryMarker(path, present, now)
 		if markerErr != nil {
 			return nil, "", markerErr
@@ -217,6 +224,21 @@ func openRecovering(path string, now Clock, hooks recoveryHooks) (*Store, string
 	default:
 		return nil, "", err
 	}
+}
+
+func databaseHasProjectConnectionSchema(path string) (bool, error) {
+	database, err := sql.Open("sqlite", path)
+	if err != nil {
+		return false, errors.New("inspect project connection schema")
+	}
+	defer database.Close()
+	var count int
+	err = database.QueryRow(`SELECT COUNT(*) FROM sqlite_master
+		WHERE type='table' AND name IN ('project_connections', 'project_connection_meta')`).Scan(&count)
+	if err != nil {
+		return false, errors.New("inspect project connection schema")
+	}
+	return count > 0, nil
 }
 
 func createRecoveryMarker(databasePath string, snapshotPresent bool, now Clock) (recoveryMarker, error) {

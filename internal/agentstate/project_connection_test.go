@@ -255,6 +255,8 @@ func TestProjectConnectionPostCommitFailureRequiresRetryAndRestartKeepsAcknowled
 	}
 	seedScopedContexts(t, store, ctx, now)
 	digest := strings.Repeat("9", 64)
+	secondDigest := strings.Repeat("7", 64)
+	thirdDigest := strings.Repeat("6", 64)
 	binding := ScopedContext{ScopeID: "scope-a", LensID: "lens-one", AgentID: "agent-a"}
 	before, err := os.ReadFile(projectConnectionRecoveryPath(path))
 	if err != nil {
@@ -268,6 +270,21 @@ func TestProjectConnectionPostCommitFailureRequiresRetryAndRestartKeepsAcknowled
 	if err != nil || !bytes.Equal(before, afterFailure) {
 		t.Fatalf("failed bind changed acknowledged recovery: err=%v", err)
 	}
+	if _, err := store.BindProjectConnection(ctx, secondDigest, binding); !errors.Is(err, ErrProjectConnectionOutcomeUnknown) {
+		t.Fatalf("different bind was allowed while an outcome was pending: %v", err)
+	}
+	if _, found, err := store.projectConnectionByDigest(ctx, secondDigest); err != nil || found {
+		t.Fatalf("different bind mutated state: found=%v err=%v", found, err)
+	}
+	store.projectConnectionWriteHook = nil
+	replayed, err := store.BindProjectConnection(ctx, digest, binding)
+	if err != nil || !replayed.Replayed {
+		t.Fatalf("identical bind retry failed: connection=%+v err=%v", replayed, err)
+	}
+	store.projectConnectionWriteHook = func() error { return errors.New("injected second bind failure") }
+	if _, err := store.BindProjectConnection(ctx, secondDigest, binding); !errors.Is(err, ErrProjectConnectionOutcomeUnknown) {
+		t.Fatalf("second bind outcome err=%v", err)
+	}
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -275,15 +292,21 @@ func TestProjectConnectionPostCommitFailureRequiresRetryAndRestartKeepsAcknowled
 	if err != nil || quarantine == "" {
 		t.Fatalf("restart recovery quarantine=%q err=%v", quarantine, err)
 	}
-	if _, _, _, _, err := recovered.ResolveProjectConnection(ctx, digest); !errors.Is(err, ErrProjectConnectionNotFound) {
-		t.Fatalf("restart promoted unacknowledged bind: %v", err)
+	if _, _, _, actor, err := recovered.ResolveProjectConnection(ctx, digest); err != nil || actor.ID != binding.AgentID {
+		t.Fatalf("restart lost acknowledged bind: actor=%+v err=%v", actor, err)
 	}
-	if _, err := recovered.BindProjectConnection(ctx, digest, binding); err != nil {
-		t.Fatalf("identical bind retry failed: %v", err)
+	if _, _, _, _, err := recovered.ResolveProjectConnection(ctx, secondDigest); !errors.Is(err, ErrProjectConnectionNotFound) {
+		t.Fatalf("restart promoted unacknowledged bind: %v", err)
 	}
 	recovered.projectConnectionWriteHook = func() error { return errors.New("injected archive failure") }
 	if _, err := recovered.ArchiveProjectConnection(ctx, digest); !errors.Is(err, ErrProjectConnectionOutcomeUnknown) {
 		t.Fatalf("archive outcome err=%v", err)
+	}
+	if _, err := recovered.BindProjectConnection(ctx, thirdDigest, binding); !errors.Is(err, ErrProjectConnectionOutcomeUnknown) {
+		t.Fatalf("different mutation was allowed while archive outcome was pending: %v", err)
+	}
+	if _, found, err := recovered.projectConnectionByDigest(ctx, thirdDigest); err != nil || found {
+		t.Fatalf("different mutation changed state: found=%v err=%v", found, err)
 	}
 	if err := recovered.Close(); err != nil {
 		t.Fatal(err)
@@ -313,6 +336,52 @@ func TestProjectConnectionPostCommitFailureRequiresRetryAndRestartKeepsAcknowled
 	if err != nil || status.AgentActorCount != 3 || status.ProjectConnectionCount != 1 ||
 		status.ActiveConnectionCount != 0 || status.ArchivedConnectionCount != 1 {
 		t.Fatalf("status=%+v err=%v", status, err)
+	}
+}
+
+func TestProjectConnectionMissingRecoverySnapshotFailsClosedWithoutMutation(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 11, 14, 0, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "state", "agent.sqlite")
+	ctx := context.Background()
+	store, err := Open(path, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedScopedContexts(t, store, ctx, now)
+	if _, err := store.BindProjectConnection(ctx, strings.Repeat("4", 64), ScopedContext{
+		ScopeID: "scope-a", LensID: "lens-one", AgentID: "agent-a",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(projectConnectionRecoveryPath(path)); err != nil {
+		t.Fatal(err)
+	}
+	if recovered, quarantine, err := OpenRecovering(path, func() time.Time { return now.Add(time.Minute) }); err == nil {
+		if recovered != nil {
+			recovered.Close()
+		}
+		t.Fatalf("missing recovery snapshot was accepted with quarantine %q", quarantine)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("failed-closed recovery mutated database: err=%v", err)
+	}
+	if _, err := os.Lstat(recoveryMarkerPath(path)); !os.IsNotExist(err) {
+		t.Fatalf("failed-closed recovery created a marker: %v", err)
+	}
+	if matches, err := filepath.Glob(path + ".corrupt-*"); err != nil || len(matches) != 0 {
+		t.Fatalf("failed-closed recovery quarantined state: matches=%v err=%v", matches, err)
+	}
+	if _, err := os.Lstat(projectConnectionRecoveryPath(path)); !os.IsNotExist(err) {
+		t.Fatalf("failed-closed recovery recreated missing snapshot: %v", err)
 	}
 }
 

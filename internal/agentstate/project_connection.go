@@ -168,6 +168,23 @@ func (store *Store) BindProjectConnection(
 		return ProjectConnection{}, err
 	}
 	binding = ScopedContext{ScopeID: scope.ID, LensID: lens.ID, AgentID: actor.ID}
+	acknowledged, current, pending, err := store.projectConnectionRecoveryState(ctx)
+	if err != nil {
+		return ProjectConnection{}, err
+	}
+	if pending {
+		existing, found := projectConnectionInSnapshot(current, digest)
+		if !found || existing.Status != StatusActive || existing.ScopeID != binding.ScopeID ||
+			existing.LensID != binding.LensID || existing.AgentID != binding.AgentID ||
+			!reflect.DeepEqual(projectConnectionSnapshotWith(acknowledged, existing), current) {
+			return ProjectConnection{}, ErrProjectConnectionOutcomeUnknown
+		}
+		if err := store.writeProjectConnectionRecoverySnapshot(ctx); err != nil {
+			return ProjectConnection{}, ErrProjectConnectionOutcomeUnknown
+		}
+		existing.Replayed = true
+		return existing, nil
+	}
 	if existing, found, err := store.projectConnectionByDigest(ctx, digest); err != nil {
 		return ProjectConnection{}, err
 	} else if found {
@@ -244,6 +261,22 @@ func (store *Store) ArchiveProjectConnection(ctx context.Context, digest string)
 	defer store.mutationMu.Unlock()
 	if !validProjectConnectionDigest(digest) {
 		return ProjectConnection{}, errors.New("invalid project connection")
+	}
+	acknowledged, current, pending, err := store.projectConnectionRecoveryState(ctx)
+	if err != nil {
+		return ProjectConnection{}, err
+	}
+	if pending {
+		existing, found := projectConnectionInSnapshot(current, digest)
+		if !found || existing.Status != StatusArchived ||
+			!reflect.DeepEqual(projectConnectionSnapshotWith(acknowledged, existing), current) {
+			return ProjectConnection{}, ErrProjectConnectionOutcomeUnknown
+		}
+		if err := store.writeProjectConnectionRecoverySnapshot(ctx); err != nil {
+			return ProjectConnection{}, ErrProjectConnectionOutcomeUnknown
+		}
+		existing.Replayed = true
+		return existing, nil
 	}
 	connection, found, err := store.projectConnectionByDigest(ctx, digest)
 	if err != nil {
@@ -341,6 +374,32 @@ func projectConnectionSnapshotWith(
 		return snapshot.Connections[i].Digest < snapshot.Connections[j].Digest
 	})
 	return snapshot
+}
+
+func (store *Store) projectConnectionRecoveryState(
+	ctx context.Context,
+) (projectConnectionRecoverySnapshot, projectConnectionRecoverySnapshot, bool, error) {
+	acknowledged, present, err := readProjectConnectionRecoverySnapshot(store.path)
+	if err != nil || !present {
+		return projectConnectionRecoverySnapshot{}, projectConnectionRecoverySnapshot{}, false,
+			errors.New("read acknowledged project connections")
+	}
+	current, err := store.buildProjectConnectionRecoverySnapshot(ctx)
+	if err != nil {
+		return projectConnectionRecoverySnapshot{}, projectConnectionRecoverySnapshot{}, false, err
+	}
+	return acknowledged, current, !reflect.DeepEqual(acknowledged, current), nil
+}
+
+func projectConnectionInSnapshot(
+	snapshot projectConnectionRecoverySnapshot, digest string,
+) (ProjectConnection, bool) {
+	for _, connection := range snapshot.Connections {
+		if connection.Digest == digest {
+			return connection, true
+		}
+	}
+	return ProjectConnection{}, false
 }
 
 func (store *Store) preflightProjectConnectionRecovery(ctx context.Context, proposed ProjectConnection) error {
