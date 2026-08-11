@@ -132,6 +132,53 @@ func TestAgentProjectConnectionHandleHasExactOpaqueGrammar(t *testing.T) {
 	}
 }
 
+func TestAgentProjectConnectionUnknownOutcomeRequiresExactRetry(t *testing.T) {
+	handle := "mlc1_" + base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{6}, 32))
+	mux := http.NewServeMux()
+	writeUnknown := func(writer http.ResponseWriter) {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(writer).Encode(map[string]string{
+			"schema_version": localservice.APISchemaVersion,
+			"error":          "project connection outcome requires identical retry",
+		})
+	}
+	mux.HandleFunc("POST /v1/scoped/connections/bind", func(writer http.ResponseWriter, _ *http.Request) {
+		writeUnknown(writer)
+	})
+	mux.HandleFunc("POST /v1/scoped/connections/archive", func(writer http.ResponseWriter, _ *http.Request) {
+		writeUnknown(writer)
+	})
+	configPath, closeServer := startScopedAgentCLITestServer(t, mux)
+	defer closeServer()
+	runner := NewRunner(NewOSFileSystem())
+	for _, test := range []struct {
+		name, operation, repair string
+		args                    []string
+	}{
+		{name: "bind", operation: "connection_bind", repair: "retry_same_connection_bind", args: []string{
+			"agent", "connection-bind", "--connection", handle,
+			"--scope", "project", "--lens", "product", "--agent", "agent-a", "--config", configPath,
+		}},
+		{name: "archive", operation: "connection_archive", repair: "retry_same_connection_archive", args: []string{
+			"agent", "connection-archive", "--connection", handle, "--config", configPath,
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if code := runner.Run(test.args, &stdout, &stderr); code != ExitProcess || stdout.Len() != 0 {
+				t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+			}
+			var failure agentContractError
+			if err := json.Unmarshal(stderr.Bytes(), &failure); err != nil ||
+				failure.ErrorCode != "connection_outcome_unknown" || failure.Operation != test.operation ||
+				!failure.Retryable || failure.RepairAction != test.repair || strings.Contains(stderr.String(), handle) {
+				t.Fatalf("failure=%+v err=%v stderr=%s", failure, err, stderr.String())
+			}
+		})
+	}
+}
+
 func TestAgentRegisterUsageUsesSharedAgentNamePlaceholder(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := NewRunner(NewMemoryFS()).Run([]string{"agent", "register"}, &stdout, &stderr)

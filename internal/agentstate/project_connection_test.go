@@ -243,3 +243,117 @@ func TestProjectConnectionSurvivesCorruptionRecoveryAndReupgrade(t *testing.T) {
 		t.Fatalf("recovery reactivated archived tombstone: %v", err)
 	}
 }
+
+func TestProjectConnectionPostCommitFailureRequiresRetryAndRestartKeepsAcknowledgedState(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 11, 12, 0, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "state", "agent.sqlite")
+	ctx := context.Background()
+	store, err := Open(path, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedScopedContexts(t, store, ctx, now)
+	digest := strings.Repeat("9", 64)
+	binding := ScopedContext{ScopeID: "scope-a", LensID: "lens-one", AgentID: "agent-a"}
+	before, err := os.ReadFile(projectConnectionRecoveryPath(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.projectConnectionWriteHook = func() error { return errors.New("injected post-commit failure") }
+	if _, err := store.BindProjectConnection(ctx, digest, binding); !errors.Is(err, ErrProjectConnectionOutcomeUnknown) {
+		t.Fatalf("bind outcome err=%v", err)
+	}
+	afterFailure, err := os.ReadFile(projectConnectionRecoveryPath(path))
+	if err != nil || !bytes.Equal(before, afterFailure) {
+		t.Fatalf("failed bind changed acknowledged recovery: err=%v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	recovered, quarantine, err := OpenRecovering(path, func() time.Time { return now.Add(time.Minute) })
+	if err != nil || quarantine == "" {
+		t.Fatalf("restart recovery quarantine=%q err=%v", quarantine, err)
+	}
+	if _, _, _, _, err := recovered.ResolveProjectConnection(ctx, digest); !errors.Is(err, ErrProjectConnectionNotFound) {
+		t.Fatalf("restart promoted unacknowledged bind: %v", err)
+	}
+	if _, err := recovered.BindProjectConnection(ctx, digest, binding); err != nil {
+		t.Fatalf("identical bind retry failed: %v", err)
+	}
+	recovered.projectConnectionWriteHook = func() error { return errors.New("injected archive failure") }
+	if _, err := recovered.ArchiveProjectConnection(ctx, digest); !errors.Is(err, ErrProjectConnectionOutcomeUnknown) {
+		t.Fatalf("archive outcome err=%v", err)
+	}
+	if err := recovered.Close(); err != nil {
+		t.Fatal(err)
+	}
+	recovered, quarantine, err = OpenRecovering(path, func() time.Time { return now.Add(2 * time.Minute) })
+	if err != nil || quarantine == "" {
+		t.Fatalf("archive restart quarantine=%q err=%v", quarantine, err)
+	}
+	if _, _, _, actor, err := recovered.ResolveProjectConnection(ctx, digest); err != nil || actor.ID != binding.AgentID {
+		t.Fatalf("restart promoted unacknowledged archive: actor=%+v err=%v", actor, err)
+	}
+	if _, err := recovered.ArchiveProjectConnection(ctx, digest); err != nil {
+		t.Fatalf("identical archive retry failed: %v", err)
+	}
+	if err := recovered.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(path, func() time.Time { return now.Add(3 * time.Minute) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if _, _, _, _, err := reopened.ResolveProjectConnection(ctx, digest); !errors.Is(err, ErrProjectConnectionArchived) {
+		t.Fatalf("acknowledged archive did not survive restart: %v", err)
+	}
+	status, err := reopened.Status(ctx)
+	if err != nil || status.AgentActorCount != 3 || status.ProjectConnectionCount != 1 ||
+		status.ActiveConnectionCount != 0 || status.ArchivedConnectionCount != 1 {
+		t.Fatalf("status=%+v err=%v", status, err)
+	}
+}
+
+func TestProjectConnectionReupgradeRestoreAndSchemaMarkerAreAtomic(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 11, 13, 0, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "state", "agent.sqlite")
+	store, err := Open(path, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	seedScopedContexts(t, store, ctx, now)
+	digest := strings.Repeat("8", 64)
+	if _, err := store.BindProjectConnection(ctx, digest, ScopedContext{
+		ScopeID: "scope-a", LensID: "lens-one", AgentID: "agent-a",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `DROP TABLE project_connections`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `DROP TABLE project_connection_meta`); err != nil {
+		t.Fatal(err)
+	}
+	store.projectConnectionInitHook = func() error { return errors.New("injected initialization interruption") }
+	if err := store.initializeProjectConnections(ctx); err == nil {
+		t.Fatal("interrupted project connection initialization succeeded")
+	}
+	for _, table := range []string{"project_connections", "project_connection_meta"} {
+		exists, err := store.projectConnectionTableExists(ctx, table)
+		if err != nil || exists {
+			t.Fatalf("transaction left partial table %s: exists=%v err=%v", table, exists, err)
+		}
+	}
+	store.projectConnectionInitHook = nil
+	if err := store.initializeProjectConnections(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, actor, err := store.ResolveProjectConnection(ctx, digest); err != nil || actor.ID != "agent-a" {
+		t.Fatalf("atomic retry actor=%+v err=%v", actor, err)
+	}
+}

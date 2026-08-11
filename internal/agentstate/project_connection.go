@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -23,9 +24,10 @@ const (
 )
 
 var (
-	ErrProjectConnectionNotFound = errors.New("project connection not found")
-	ErrProjectConnectionConflict = errors.New("project connection conflicts with existing binding")
-	ErrProjectConnectionArchived = errors.New("project connection is archived")
+	ErrProjectConnectionNotFound       = errors.New("project connection not found")
+	ErrProjectConnectionConflict       = errors.New("project connection conflicts with existing binding")
+	ErrProjectConnectionArchived       = errors.New("project connection is archived")
+	ErrProjectConnectionOutcomeUnknown = errors.New("project connection outcome requires identical retry")
 )
 
 type projectConnectionRecoverySnapshot struct {
@@ -38,6 +40,57 @@ func projectConnectionRecoveryPath(databasePath string) string {
 }
 
 func (store *Store) initializeProjectConnections(ctx context.Context) error {
+	metaExists, err := store.projectConnectionTableExists(ctx, "project_connection_meta")
+	if err != nil {
+		return err
+	}
+	connectionsExist, err := store.projectConnectionTableExists(ctx, "project_connections")
+	if err != nil {
+		return err
+	}
+	if metaExists {
+		if !connectionsExist {
+			return fmt.Errorf("%w: incomplete project connection schema", ErrCorrupt)
+		}
+		var version string
+		if err := store.db.QueryRowContext(ctx,
+			`SELECT value FROM project_connection_meta WHERE key='schema_version'`).Scan(&version); err != nil {
+			return errors.New("read project connection schema")
+		}
+		if version != ProjectConnectionSchemaVersion {
+			return errors.New("unsupported project connection schema")
+		}
+		expected, present, err := readProjectConnectionRecoverySnapshot(store.path)
+		if err != nil {
+			return err
+		}
+		actual, buildErr := store.buildProjectConnectionRecoverySnapshot(ctx)
+		if buildErr != nil || !present || !reflect.DeepEqual(actual, expected) {
+			return fmt.Errorf("%w: project connections differ from acknowledged recovery", ErrCorrupt)
+		}
+		return nil
+	}
+	if connectionsExist {
+		var count int
+		if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM project_connections`).Scan(&count); err != nil || count != 0 {
+			return errors.New("restore project connections into non-empty state")
+		}
+	}
+	snapshot, present, err := readProjectConnectionRecoverySnapshot(store.path)
+	if err != nil {
+		return err
+	}
+	if !present {
+		snapshot = projectConnectionRecoverySnapshot{
+			SchemaVersion: ProjectConnectionSchemaVersion,
+			Connections:   []ProjectConnection{},
+		}
+	}
+	tx, err := store.db.BeginTx(ctx, nil)
+	if err != nil {
+		return errors.New("initialize project connections")
+	}
+	defer tx.Rollback()
 	statements := []string{
 		`CREATE TABLE IF NOT EXISTS project_connection_meta (
 			key TEXT PRIMARY KEY NOT NULL,
@@ -56,41 +109,50 @@ func (store *Store) initializeProjectConnections(ctx context.Context) error {
 		)`,
 	}
 	for _, statement := range statements {
-		if _, err := store.db.ExecContext(ctx, statement); err != nil {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
 			return errors.New("initialize project connections")
 		}
 	}
-	var version string
-	err := store.db.QueryRowContext(ctx,
-		`SELECT value FROM project_connection_meta WHERE key='schema_version'`).Scan(&version)
-	if err == nil {
-		if version != ProjectConnectionSchemaVersion {
-			return errors.New("unsupported project connection schema")
-		}
-		return nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return errors.New("read project connection schema")
-	}
 	var count int
-	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM project_connections`).Scan(&count); err != nil || count != 0 {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM project_connections`).Scan(&count); err != nil || count != 0 {
 		return errors.New("restore project connections into non-empty state")
 	}
-	snapshot, present, err := readProjectConnectionRecoverySnapshot(store.path)
-	if err != nil {
-		return err
+	for _, connection := range snapshot.Connections {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO project_connections(
+			digest, scope_id, lens_id, agent_id, status, created_at, updated_at
+		) VALUES(?, ?, ?, ?, ?, ?, ?)`, connection.Digest, connection.ScopeID,
+			connection.LensID, connection.AgentID, connection.Status,
+			connection.CreatedAt, connection.UpdatedAt); err != nil {
+			return errors.New("restore project connection recovery snapshot")
+		}
 	}
-	if present {
-		if err := store.restoreProjectConnectionSnapshot(ctx, snapshot); err != nil {
+	if store.projectConnectionInitHook != nil {
+		if err := store.projectConnectionInitHook(); err != nil {
+			return errors.New("initialize project connection schema")
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO project_connection_meta(key, value)
+		VALUES('schema_version', ?)`, ProjectConnectionSchemaVersion); err != nil {
+		return errors.New("initialize project connection schema")
+	}
+	if err := tx.Commit(); err != nil {
+		return errors.New("initialize project connection schema")
+	}
+	if !present {
+		if err := store.writeProjectConnectionRecoverySnapshot(ctx); err != nil {
 			return err
 		}
 	}
-	_, err = store.db.ExecContext(ctx, `INSERT INTO project_connection_meta(key, value)
-		VALUES('schema_version', ?)`, ProjectConnectionSchemaVersion)
-	if err != nil {
-		return errors.New("initialize project connection schema")
-	}
 	return nil
+}
+
+func (store *Store) projectConnectionTableExists(ctx context.Context, name string) (bool, error) {
+	var count int
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, name).Scan(&count); err != nil {
+		return false, errors.New("inspect project connection schema")
+	}
+	return count == 1, nil
 }
 
 func (store *Store) BindProjectConnection(
@@ -116,7 +178,7 @@ func (store *Store) BindProjectConnection(
 			return ProjectConnection{}, ErrProjectConnectionConflict
 		}
 		if err := store.writeProjectConnectionRecoverySnapshot(ctx); err != nil {
-			return ProjectConnection{}, err
+			return ProjectConnection{}, ErrProjectConnectionOutcomeUnknown
 		}
 		existing.Replayed = true
 		return existing, nil
@@ -145,7 +207,7 @@ func (store *Store) BindProjectConnection(
 		return ProjectConnection{}, errors.New("save project connection")
 	}
 	if err := store.writeProjectConnectionRecoverySnapshot(ctx); err != nil {
-		return ProjectConnection{}, err
+		return ProjectConnection{}, ErrProjectConnectionOutcomeUnknown
 	}
 	return connection, nil
 }
@@ -192,7 +254,7 @@ func (store *Store) ArchiveProjectConnection(ctx context.Context, digest string)
 	}
 	if connection.Status == StatusArchived {
 		if err := store.writeProjectConnectionRecoverySnapshot(ctx); err != nil {
-			return ProjectConnection{}, err
+			return ProjectConnection{}, ErrProjectConnectionOutcomeUnknown
 		}
 		connection.Replayed = true
 		return connection, nil
@@ -211,7 +273,7 @@ func (store *Store) ArchiveProjectConnection(ctx context.Context, digest string)
 		return ProjectConnection{}, errors.New("archive project connection")
 	}
 	if err := store.writeProjectConnectionRecoverySnapshot(ctx); err != nil {
-		return ProjectConnection{}, err
+		return ProjectConnection{}, ErrProjectConnectionOutcomeUnknown
 	}
 	return connection, nil
 }
@@ -316,8 +378,17 @@ func (store *Store) writeProjectConnectionRecoverySnapshot(ctx context.Context) 
 	if err != nil {
 		return err
 	}
+	if store.projectConnectionWriteHook != nil {
+		if err := store.projectConnectionWriteHook(); err != nil {
+			return errors.New("write project connection recovery snapshot")
+		}
+	}
 	if err := privateio.WriteFile(projectConnectionRecoveryPath(store.path), data, false); err != nil {
 		return errors.New("write project connection recovery snapshot")
+	}
+	written, present, err := readProjectConnectionRecoverySnapshot(store.path)
+	if err != nil || !present || !reflect.DeepEqual(written, snapshot) {
+		return errors.New("verify project connection recovery snapshot")
 	}
 	return nil
 }
@@ -377,31 +448,6 @@ func validateProjectConnectionRecoverySnapshot(snapshot projectConnectionRecover
 func validProjectConnectionTime(value string) bool {
 	parsed, err := time.Parse(time.RFC3339Nano, value)
 	return err == nil && value == parsed.Format(time.RFC3339Nano)
-}
-
-func (store *Store) restoreProjectConnectionSnapshot(ctx context.Context, snapshot projectConnectionRecoverySnapshot) error {
-	if validateProjectConnectionRecoverySnapshot(snapshot) != nil {
-		return errors.New("restore project connection recovery snapshot")
-	}
-	var count int
-	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM project_connections`).Scan(&count); err != nil || count != 0 {
-		return errors.New("restore project connections into non-empty state")
-	}
-	tx, err := store.db.BeginTx(ctx, nil)
-	if err != nil {
-		return errors.New("restore project connection recovery snapshot")
-	}
-	defer tx.Rollback()
-	for _, connection := range snapshot.Connections {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO project_connections(
-			digest, scope_id, lens_id, agent_id, status, created_at, updated_at
-		) VALUES(?, ?, ?, ?, ?, ?, ?)`, connection.Digest, connection.ScopeID,
-			connection.LensID, connection.AgentID, connection.Status,
-			connection.CreatedAt, connection.UpdatedAt); err != nil {
-			return errors.New("restore project connection recovery snapshot")
-		}
-	}
-	return tx.Commit()
 }
 
 func projectConnectionRecoverySnapshotMatches(

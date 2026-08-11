@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"net/http"
 	"strings"
 
 	"github.com/synergyai-os/Mindline/internal/localservice"
@@ -49,6 +50,9 @@ func (r Runner) runAgentConnectionBind(args []string, stdout, stderr io.Writer) 
 		Digest: digest, ScopeID: options.values["scope"], LensID: options.values["lens"], AgentID: options.values["agent"],
 	})
 	if err != nil {
+		if status, known := localservice.APIStatusCode(err); known && status == http.StatusServiceUnavailable {
+			return writeAgentContractError(stderr, "connection_bind", "connection_outcome_unknown", true, "retry_same_connection_bind")
+		}
 		return writeAgentContractError(stderr, "connection_bind", "connection_rejected", false, "inspect_owner_binding")
 	}
 	return encodePersonalMemoryJSON(stdout, stderr, receipt)
@@ -70,6 +74,9 @@ func (r Runner) runAgentConnectionArchive(args []string, stdout, stderr io.Write
 	}
 	receipt, err := client.ArchiveProjectConnection(context.Background(), digest)
 	if err != nil {
+		if status, known := localservice.APIStatusCode(err); known && status == http.StatusServiceUnavailable {
+			return writeAgentContractError(stderr, "connection_archive", "connection_outcome_unknown", true, "retry_same_connection_archive")
+		}
 		return writeAgentContractError(stderr, "connection_archive", "connection_unavailable", false, "inspect_owner_binding")
 	}
 	return encodePersonalMemoryJSON(stdout, stderr, receipt)

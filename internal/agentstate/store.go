@@ -28,11 +28,13 @@ var (
 )
 
 type Store struct {
-	db                      *sql.DB
-	path                    string
-	now                     Clock
-	mutationMu              sync.Mutex
-	scopedRecoveryByteLimit int64
+	db                         *sql.DB
+	path                       string
+	now                        Clock
+	mutationMu                 sync.Mutex
+	scopedRecoveryByteLimit    int64
+	projectConnectionInitHook  func() error
+	projectConnectionWriteHook func() error
 }
 
 func Open(path string, now Clock) (*Store, error) {

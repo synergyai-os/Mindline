@@ -164,7 +164,7 @@ func (store *Store) writeRecoverySnapshot(ctx context.Context) error {
 	if err := store.writeScopedRecoverySnapshot(ctx); err != nil {
 		return err
 	}
-	return store.writeProjectConnectionRecoverySnapshot(ctx)
+	return nil
 }
 
 func OpenRecovering(path string, now Clock) (*Store, string, error) {

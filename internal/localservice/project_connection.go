@@ -17,7 +17,9 @@ func (server *Server) handleBindProjectConnection(writer http.ResponseWriter, re
 		agentstate.ScopedContext{ScopeID: input.ScopeID, LensID: input.LensID, AgentID: input.AgentID})
 	if err != nil {
 		status := http.StatusBadRequest
-		if errors.Is(err, agentstate.ErrProjectConnectionConflict) ||
+		if errors.Is(err, agentstate.ErrProjectConnectionOutcomeUnknown) {
+			status = http.StatusServiceUnavailable
+		} else if errors.Is(err, agentstate.ErrProjectConnectionConflict) ||
 			errors.Is(err, agentstate.ErrProjectConnectionArchived) {
 			status = http.StatusConflict
 		}
@@ -56,7 +58,11 @@ func (server *Server) handleArchiveProjectConnection(writer http.ResponseWriter,
 	}
 	connection, err := server.state.ArchiveProjectConnection(request.Context(), input.Digest)
 	if err != nil {
-		writeError(writer, http.StatusNotFound, err)
+		status := http.StatusNotFound
+		if errors.Is(err, agentstate.ErrProjectConnectionOutcomeUnknown) {
+			status = http.StatusServiceUnavailable
+		}
+		writeError(writer, status, err)
 		return
 	}
 	writeJSON(writer, http.StatusOK, ProjectConnectionReceipt{
