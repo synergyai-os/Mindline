@@ -141,6 +141,13 @@ func TestOpenRecoveringQuarantinesCorruptDatabase(t *testing.T) {
 	if err := os.WriteFile(path, []byte("not sqlite"), privateio.FileMode); err != nil {
 		t.Fatal(err)
 	}
+	if err := privateio.WriteJSON(recoveryPath(path), recoverySnapshot{
+		SchemaVersion: recoverySchemaVersion,
+		Lenses:        []Lens{},
+		Judgments:     []Judgment{},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	now := time.Date(2026, 7, 26, 13, 0, 0, 0, time.UTC)
 	store, quarantine, err := OpenRecovering(path, func() time.Time { return now })
 	if err != nil {
@@ -156,6 +163,9 @@ func TestOpenRecoveringQuarantinesCorruptDatabase(t *testing.T) {
 	info, err := os.Stat(path)
 	if err != nil || info.Mode().Perm() != privateio.FileMode {
 		t.Fatalf("rebuilt state mode=%v err=%v", info.Mode().Perm(), err)
+	}
+	if adopted, err := readProjectConnectionAdoptionMarker(path); err != nil || !adopted {
+		t.Fatalf("legacy recovery did not adopt project connections: adopted=%v err=%v", adopted, err)
 	}
 }
 

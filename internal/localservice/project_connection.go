@@ -40,7 +40,11 @@ func (server *Server) handleResolveProjectConnection(writer http.ResponseWriter,
 	}
 	_, scope, lens, actor, err := server.state.ResolveProjectConnection(request.Context(), input.Digest)
 	if err != nil {
-		writeError(writer, http.StatusNotFound, err)
+		status := http.StatusNotFound
+		if errors.Is(err, agentstate.ErrProjectConnectionOutcomeUnknown) {
+			status = http.StatusServiceUnavailable
+		}
+		writeError(writer, status, err)
 		return
 	}
 	writeJSON(writer, http.StatusOK, ProjectConnectionResolution{

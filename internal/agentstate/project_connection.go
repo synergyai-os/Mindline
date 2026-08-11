@@ -18,9 +18,12 @@ import (
 )
 
 const (
-	maximumProjectConnections       = 256
-	maximumProjectConnectionBytes   = 256 << 10
-	projectConnectionRecoverySuffix = ".project-connections-recovery.json"
+	maximumProjectConnections        = 256
+	maximumProjectConnectionBytes    = 256 << 10
+	maximumProjectAdoptionBytes      = 4 << 10
+	projectConnectionRecoverySuffix  = ".project-connections-recovery.json"
+	projectConnectionAdoptionSuffix  = ".project-connections-adopted.json"
+	projectConnectionAdoptionVersion = "mindline-project-connection-adoption/v0.1"
 )
 
 var (
@@ -35,8 +38,16 @@ type projectConnectionRecoverySnapshot struct {
 	Connections   []ProjectConnection `json:"connections"`
 }
 
+type projectConnectionAdoption struct {
+	SchemaVersion string `json:"schema_version"`
+}
+
 func projectConnectionRecoveryPath(databasePath string) string {
 	return databasePath + projectConnectionRecoverySuffix
+}
+
+func projectConnectionAdoptionPath(databasePath string) string {
+	return databasePath + projectConnectionAdoptionSuffix
 }
 
 func (store *Store) initializeProjectConnections(ctx context.Context) error {
@@ -68,7 +79,7 @@ func (store *Store) initializeProjectConnections(ctx context.Context) error {
 		if buildErr != nil || !present || !reflect.DeepEqual(actual, expected) {
 			return fmt.Errorf("%w: project connections differ from acknowledged recovery", ErrCorrupt)
 		}
-		return nil
+		return ensureProjectConnectionAdoptionMarker(store.path)
 	}
 	if connectionsExist {
 		var count int
@@ -143,7 +154,7 @@ func (store *Store) initializeProjectConnections(ctx context.Context) error {
 			return err
 		}
 	}
-	return nil
+	return ensureProjectConnectionAdoptionMarker(store.path)
 }
 
 func (store *Store) projectConnectionTableExists(ctx context.Context, name string) (bool, error) {
@@ -236,6 +247,13 @@ func (store *Store) ResolveProjectConnection(
 	defer store.mutationMu.Unlock()
 	if !validProjectConnectionDigest(digest) {
 		return ProjectConnection{}, Scope{}, ScopedLens{}, AgentActor{}, errors.New("invalid project connection")
+	}
+	_, _, pending, err := store.projectConnectionRecoveryState(ctx)
+	if err != nil {
+		return ProjectConnection{}, Scope{}, ScopedLens{}, AgentActor{}, err
+	}
+	if pending {
+		return ProjectConnection{}, Scope{}, ScopedLens{}, AgentActor{}, ErrProjectConnectionOutcomeUnknown
 	}
 	connection, found, err := store.projectConnectionByDigest(ctx, digest)
 	if err != nil {
@@ -466,6 +484,39 @@ func readProjectConnectionRecoverySnapshot(databasePath string) (projectConnecti
 		return projectConnectionRecoverySnapshot{}, false, errors.New("read project connection recovery snapshot")
 	}
 	return snapshot, true, nil
+}
+
+func readProjectConnectionAdoptionMarker(databasePath string) (bool, error) {
+	path := projectConnectionAdoptionPath(databasePath)
+	if _, err := os.Lstat(path); os.IsNotExist(err) {
+		return false, nil
+	} else if err != nil {
+		return false, errors.New("read project connection adoption marker")
+	}
+	var marker projectConnectionAdoption
+	if err := privateio.ReadJSONStrictBounded(filepath.Dir(path), path,
+		maximumProjectAdoptionBytes, &marker); err != nil ||
+		marker.SchemaVersion != projectConnectionAdoptionVersion {
+		return false, errors.New("read project connection adoption marker")
+	}
+	return true, nil
+}
+
+func ensureProjectConnectionAdoptionMarker(databasePath string) error {
+	present, err := readProjectConnectionAdoptionMarker(databasePath)
+	if err != nil {
+		return err
+	}
+	if present {
+		return nil
+	}
+	if err := privateio.WriteJSONNoReplace(projectConnectionAdoptionPath(databasePath),
+		projectConnectionAdoption{SchemaVersion: projectConnectionAdoptionVersion}); err != nil {
+		if present, readErr := readProjectConnectionAdoptionMarker(databasePath); readErr != nil || !present {
+			return errors.New("write project connection adoption marker")
+		}
+	}
+	return nil
 }
 
 func encodeProjectConnectionRecoverySnapshot(snapshot projectConnectionRecoverySnapshot) ([]byte, error) {

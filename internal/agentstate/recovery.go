@@ -2,7 +2,8 @@ package agentstate
 
 import (
 	"context"
-	"database/sql"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -16,7 +17,7 @@ import (
 
 const (
 	recoverySchemaVersion       = "mindline-agent-recovery/v0.1"
-	recoveryMarkerSchemaVersion = "mindline-agent-recovery-marker/v0.1"
+	recoveryMarkerSchemaVersion = "mindline-agent-recovery-marker/v0.2"
 	maximumRecoveryBytes        = 128 << 20
 	maximumRecoveryMarkerBytes  = 64 << 10
 )
@@ -28,10 +29,13 @@ type recoverySnapshot struct {
 }
 
 type recoveryMarker struct {
-	SchemaVersion   string `json:"schema_version"`
-	QuarantineBase  string `json:"quarantine_base"`
-	StagePath       string `json:"stage_path"`
-	SnapshotPresent bool   `json:"snapshot_present"`
+	SchemaVersion              string `json:"schema_version"`
+	QuarantineBase             string `json:"quarantine_base"`
+	StagePath                  string `json:"stage_path"`
+	SnapshotPresent            bool   `json:"snapshot_present"`
+	ProjectConnectionsAdopted  bool   `json:"project_connections_adopted"`
+	ProjectSnapshotPresent     bool   `json:"project_snapshot_present"`
+	ProjectSnapshotFingerprint string `json:"project_snapshot_fingerprint"`
 }
 
 type recoveryHooks struct {
@@ -204,13 +208,22 @@ func openRecovering(path string, now Clock, hooks recoveryHooks) (*Store, string
 		if projectErr != nil {
 			return nil, "", projectErr
 		}
-		if !projectPresent {
-			hasSchema, inspectErr := databaseHasProjectConnectionSchema(path)
-			if hasSchema || (inspectErr != nil && (present || scopedPresent)) {
-				return nil, "", errors.New("project connection recovery snapshot unavailable")
-			}
+		projectAdopted, adoptionErr := readProjectConnectionAdoptionMarker(path)
+		if adoptionErr != nil {
+			return nil, "", adoptionErr
 		}
-		marker, markerErr := createRecoveryMarker(path, present, now)
+		if projectPresent && !projectAdopted {
+			if err := ensureProjectConnectionAdoptionMarker(path); err != nil {
+				return nil, "", err
+			}
+			projectAdopted = true
+		}
+		if projectAdopted && !projectPresent {
+			return nil, "", errors.New("project connection recovery snapshot unavailable")
+		}
+		marker, markerErr := createRecoveryMarker(
+			path, present, projectAdopted, projectSnapshot, projectPresent, now,
+		)
 		if markerErr != nil {
 			return nil, "", markerErr
 		}
@@ -226,31 +239,32 @@ func openRecovering(path string, now Clock, hooks recoveryHooks) (*Store, string
 	}
 }
 
-func databaseHasProjectConnectionSchema(path string) (bool, error) {
-	database, err := sql.Open("sqlite", path)
-	if err != nil {
-		return false, errors.New("inspect project connection schema")
-	}
-	defer database.Close()
-	var count int
-	err = database.QueryRow(`SELECT COUNT(*) FROM sqlite_master
-		WHERE type='table' AND name IN ('project_connections', 'project_connection_meta')`).Scan(&count)
-	if err != nil {
-		return false, errors.New("inspect project connection schema")
-	}
-	return count > 0, nil
-}
-
-func createRecoveryMarker(databasePath string, snapshotPresent bool, now Clock) (recoveryMarker, error) {
+func createRecoveryMarker(
+	databasePath string,
+	snapshotPresent bool,
+	projectAdopted bool,
+	projectSnapshot projectConnectionRecoverySnapshot,
+	projectSnapshotPresent bool,
+	now Clock,
+) (recoveryMarker, error) {
 	if now == nil {
 		now = time.Now
 	}
+	projectFingerprint, err := projectConnectionSnapshotFingerprint(
+		projectSnapshot, projectSnapshotPresent,
+	)
+	if err != nil {
+		return recoveryMarker{}, err
+	}
 	timestamp := now().UTC().Format("20060102T150405.000000000Z")
 	marker := recoveryMarker{
-		SchemaVersion:   recoveryMarkerSchemaVersion,
-		QuarantineBase:  databasePath + ".corrupt-" + timestamp,
-		StagePath:       databasePath + ".recovery-stage",
-		SnapshotPresent: snapshotPresent,
+		SchemaVersion:              recoveryMarkerSchemaVersion,
+		QuarantineBase:             databasePath + ".corrupt-" + timestamp,
+		StagePath:                  databasePath + ".recovery-stage",
+		SnapshotPresent:            snapshotPresent,
+		ProjectConnectionsAdopted:  projectAdopted,
+		ProjectSnapshotPresent:     projectSnapshotPresent,
+		ProjectSnapshotFingerprint: projectFingerprint,
 	}
 	if err := validateRecoveryMarker(databasePath, marker); err != nil {
 		return recoveryMarker{}, err
@@ -285,7 +299,9 @@ func validateRecoveryMarker(databasePath string, marker recoveryMarker) error {
 	if marker.SchemaVersion != recoveryMarkerSchemaVersion ||
 		marker.StagePath != databasePath+".recovery-stage" ||
 		!strings.HasPrefix(marker.QuarantineBase, databasePath+".corrupt-") ||
-		filepath.Dir(marker.QuarantineBase) != root {
+		filepath.Dir(marker.QuarantineBase) != root ||
+		marker.ProjectConnectionsAdopted != marker.ProjectSnapshotPresent ||
+		!validProjectSnapshotFingerprint(marker.ProjectSnapshotFingerprint, marker.ProjectSnapshotPresent) {
 		return errors.New("invalid agent recovery marker")
 	}
 	return privateio.ValidateContained(
@@ -293,6 +309,7 @@ func validateRecoveryMarker(databasePath string, marker recoveryMarker) error {
 		recoveryMarkerPath(databasePath), recoveryPath(databasePath),
 		scopedRecoveryPath(databasePath),
 		projectConnectionRecoveryPath(databasePath),
+		projectConnectionAdoptionPath(databasePath),
 	)
 }
 
@@ -317,10 +334,63 @@ func resumeRecovery(
 	if err != nil {
 		return nil, "", err
 	}
+	if err := verifyRecoveryMarkerProjectSnapshot(marker, projectSnapshot, projectPresent); err != nil {
+		return nil, "", err
+	}
 	return resumeRecoveryWithSnapshot(
 		databasePath, marker, snapshot, present, scopedSnapshot, scopedPresent,
 		projectSnapshot, projectPresent, now, hooks,
 	)
+}
+
+func projectConnectionSnapshotFingerprint(
+	snapshot projectConnectionRecoverySnapshot, present bool,
+) (string, error) {
+	if !present {
+		return "", nil
+	}
+	data, err := encodeProjectConnectionRecoverySnapshot(snapshot)
+	if err != nil {
+		return "", errors.New("fingerprint project connection recovery snapshot")
+	}
+	digest := sha256.Sum256(data)
+	return hex.EncodeToString(digest[:]), nil
+}
+
+func validProjectSnapshotFingerprint(value string, present bool) bool {
+	if !present {
+		return value == ""
+	}
+	if len(value) != 64 || value != strings.ToLower(value) {
+		return false
+	}
+	decoded, err := hex.DecodeString(value)
+	return err == nil && len(decoded) == sha256.Size
+}
+
+func verifyRecoveryMarkerProjectSnapshot(
+	marker recoveryMarker,
+	snapshot projectConnectionRecoverySnapshot,
+	present bool,
+) error {
+	if marker.ProjectConnectionsAdopted {
+		fingerprint, err := projectConnectionSnapshotFingerprint(snapshot, present)
+		if err != nil || !present || fingerprint != marker.ProjectSnapshotFingerprint {
+			return errors.New("resume agent state recovery: project connection recovery snapshot changed")
+		}
+		return nil
+	}
+	if !present {
+		return nil
+	}
+	empty := projectConnectionRecoverySnapshot{
+		SchemaVersion: ProjectConnectionSchemaVersion,
+		Connections:   []ProjectConnection{},
+	}
+	if !reflect.DeepEqual(snapshot, empty) {
+		return errors.New("resume agent state recovery: project connection recovery snapshot changed")
+	}
+	return nil
 }
 
 func resumeRecoveryWithSnapshot(
@@ -358,6 +428,9 @@ func resumeRecoveryWithSnapshot(
 		return nil, "", err
 	}
 	if err := removeProjectConnectionRecoveryStage(marker.StagePath); err != nil {
+		return nil, "", err
+	}
+	if err := removeProjectConnectionAdoptionStage(marker.StagePath); err != nil {
 		return nil, "", err
 	}
 	if scopedSnapshotPresent {
@@ -441,6 +514,9 @@ func resumeRecoveryWithSnapshot(
 		return nil, "", err
 	}
 	if err := removeProjectConnectionRecoveryStage(marker.StagePath); err != nil {
+		return nil, "", err
+	}
+	if err := removeProjectConnectionAdoptionStage(marker.StagePath); err != nil {
 		return nil, "", err
 	}
 	// Persist the reconciled projection before promotion so an interruption
@@ -664,6 +740,24 @@ func removeProjectConnectionRecoveryStage(stagePath string) error {
 	}
 	if err := syncDirectory(filepath.Dir(stagePath)); err != nil {
 		return errors.New("clear project connection recovery stage")
+	}
+	return nil
+}
+
+func removeProjectConnectionAdoptionStage(stagePath string) error {
+	path := projectConnectionAdoptionPath(stagePath)
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != privateio.FileMode {
+		return errors.New("clear project connection adoption stage")
+	}
+	if err := os.Remove(path); err != nil {
+		return errors.New("clear project connection adoption stage")
+	}
+	if err := syncDirectory(filepath.Dir(stagePath)); err != nil {
+		return errors.New("clear project connection adoption stage")
 	}
 	return nil
 }

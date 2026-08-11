@@ -270,6 +270,9 @@ func TestProjectConnectionPostCommitFailureRequiresRetryAndRestartKeepsAcknowled
 	if err != nil || !bytes.Equal(before, afterFailure) {
 		t.Fatalf("failed bind changed acknowledged recovery: err=%v", err)
 	}
+	if _, _, _, _, err := store.ResolveProjectConnection(ctx, digest); !errors.Is(err, ErrProjectConnectionOutcomeUnknown) {
+		t.Fatalf("unacknowledged bind resolved before identical retry: %v", err)
+	}
 	if _, err := store.BindProjectConnection(ctx, secondDigest, binding); !errors.Is(err, ErrProjectConnectionOutcomeUnknown) {
 		t.Fatalf("different bind was allowed while an outcome was pending: %v", err)
 	}
@@ -280,6 +283,9 @@ func TestProjectConnectionPostCommitFailureRequiresRetryAndRestartKeepsAcknowled
 	replayed, err := store.BindProjectConnection(ctx, digest, binding)
 	if err != nil || !replayed.Replayed {
 		t.Fatalf("identical bind retry failed: connection=%+v err=%v", replayed, err)
+	}
+	if _, _, _, actor, err := store.ResolveProjectConnection(ctx, digest); err != nil || actor.ID != binding.AgentID {
+		t.Fatalf("acknowledged bind did not resolve: actor=%+v err=%v", actor, err)
 	}
 	store.projectConnectionWriteHook = func() error { return errors.New("injected second bind failure") }
 	if _, err := store.BindProjectConnection(ctx, secondDigest, binding); !errors.Is(err, ErrProjectConnectionOutcomeUnknown) {
@@ -301,6 +307,9 @@ func TestProjectConnectionPostCommitFailureRequiresRetryAndRestartKeepsAcknowled
 	recovered.projectConnectionWriteHook = func() error { return errors.New("injected archive failure") }
 	if _, err := recovered.ArchiveProjectConnection(ctx, digest); !errors.Is(err, ErrProjectConnectionOutcomeUnknown) {
 		t.Fatalf("archive outcome err=%v", err)
+	}
+	if _, _, _, _, err := recovered.ResolveProjectConnection(ctx, digest); !errors.Is(err, ErrProjectConnectionOutcomeUnknown) {
+		t.Fatalf("unacknowledged archive resolved before repair: %v", err)
 	}
 	if _, err := recovered.BindProjectConnection(ctx, thirdDigest, binding); !errors.Is(err, ErrProjectConnectionOutcomeUnknown) {
 		t.Fatalf("different mutation was allowed while archive outcome was pending: %v", err)
@@ -364,6 +373,9 @@ func TestProjectConnectionMissingRecoverySnapshotFailsClosedWithoutMutation(t *t
 	if err := os.Remove(projectConnectionRecoveryPath(path)); err != nil {
 		t.Fatal(err)
 	}
+	if adopted, err := readProjectConnectionAdoptionMarker(path); err != nil || !adopted {
+		t.Fatalf("project connection adoption was not durably marked: adopted=%v err=%v", adopted, err)
+	}
 	if recovered, quarantine, err := OpenRecovering(path, func() time.Time { return now.Add(time.Minute) }); err == nil {
 		if recovered != nil {
 			recovered.Close()
@@ -382,6 +394,65 @@ func TestProjectConnectionMissingRecoverySnapshotFailsClosedWithoutMutation(t *t
 	}
 	if _, err := os.Lstat(projectConnectionRecoveryPath(path)); !os.IsNotExist(err) {
 		t.Fatalf("failed-closed recovery recreated missing snapshot: %v", err)
+	}
+}
+
+func TestProjectConnectionRecoveryResumeRejectsMissingBoundSnapshot(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 11, 15, 0, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "state", "agent.sqlite")
+	ctx := context.Background()
+	store, err := Open(path, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedScopedContexts(t, store, ctx, now)
+	if _, err := store.BindProjectConnection(ctx, strings.Repeat("3", 64), ScopedContext{
+		ScopeID: "scope-a", LensID: "lens-one", AgentID: "agent-a",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("corrupt-agent-state"), privateio.FileMode); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := openRecovering(path, func() time.Time { return now.Add(time.Minute) }, recoveryHooks{
+		rename: os.Rename,
+		beforeRestore: func() error {
+			return errors.New("injected recovery interruption")
+		},
+	}); err == nil {
+		t.Fatal("injected recovery interruption was accepted")
+	}
+	marker, err := readRecoveryMarker(path)
+	if err != nil || !marker.ProjectConnectionsAdopted || !marker.ProjectSnapshotPresent ||
+		marker.ProjectSnapshotFingerprint == "" {
+		t.Fatalf("marker=%+v err=%v", marker, err)
+	}
+	quarantineBefore, err := os.ReadFile(marker.QuarantineBase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(projectConnectionRecoveryPath(path)); err != nil {
+		t.Fatal(err)
+	}
+	if recovered, _, err := OpenRecovering(path, func() time.Time { return now.Add(2 * time.Minute) }); err == nil {
+		if recovered != nil {
+			recovered.Close()
+		}
+		t.Fatal("resume accepted a missing marker-bound project snapshot")
+	}
+	quarantineAfter, err := os.ReadFile(marker.QuarantineBase)
+	if err != nil || !bytes.Equal(quarantineBefore, quarantineAfter) {
+		t.Fatalf("failed resume changed quarantine: err=%v", err)
+	}
+	if _, err := os.Lstat(recoveryMarkerPath(path)); err != nil {
+		t.Fatalf("failed resume removed recovery marker: %v", err)
+	}
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		t.Fatalf("failed resume promoted a canonical database: %v", err)
 	}
 }
 
