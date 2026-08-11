@@ -161,7 +161,10 @@ func (store *Store) writeRecoverySnapshot(ctx context.Context) error {
 	if err := privateio.WriteJSON(recoveryPath(store.path), snapshot); err != nil {
 		return errors.New("write agent recovery snapshot")
 	}
-	return store.writeScopedRecoverySnapshot(ctx)
+	if err := store.writeScopedRecoverySnapshot(ctx); err != nil {
+		return err
+	}
+	return store.writeProjectConnectionRecoverySnapshot(ctx)
 }
 
 func OpenRecovering(path string, now Clock) (*Store, string, error) {
@@ -196,6 +199,10 @@ func openRecovering(path string, now Clock, hooks recoveryHooks) (*Store, string
 		if scopedErr != nil {
 			return nil, "", scopedErr
 		}
+		projectSnapshot, projectPresent, projectErr := readProjectConnectionRecoverySnapshot(path)
+		if projectErr != nil {
+			return nil, "", projectErr
+		}
 		marker, markerErr := createRecoveryMarker(path, present, now)
 		if markerErr != nil {
 			return nil, "", markerErr
@@ -204,7 +211,8 @@ func openRecovering(path string, now Clock, hooks recoveryHooks) (*Store, string
 			return nil, "", errors.New("start agent state recovery")
 		}
 		return resumeRecoveryWithSnapshot(
-			path, marker, snapshot, present, scopedSnapshot, scopedPresent, now, hooks,
+			path, marker, snapshot, present, scopedSnapshot, scopedPresent,
+			projectSnapshot, projectPresent, now, hooks,
 		)
 	default:
 		return nil, "", err
@@ -261,6 +269,8 @@ func validateRecoveryMarker(databasePath string, marker recoveryMarker) error {
 	return privateio.ValidateContained(
 		root, databasePath, marker.StagePath, marker.QuarantineBase,
 		recoveryMarkerPath(databasePath), recoveryPath(databasePath),
+		scopedRecoveryPath(databasePath),
+		projectConnectionRecoveryPath(databasePath),
 	)
 }
 
@@ -281,8 +291,13 @@ func resumeRecovery(
 	if err != nil {
 		return nil, "", err
 	}
+	projectSnapshot, projectPresent, err := readProjectConnectionRecoverySnapshot(databasePath)
+	if err != nil {
+		return nil, "", err
+	}
 	return resumeRecoveryWithSnapshot(
-		databasePath, marker, snapshot, present, scopedSnapshot, scopedPresent, now, hooks,
+		databasePath, marker, snapshot, present, scopedSnapshot, scopedPresent,
+		projectSnapshot, projectPresent, now, hooks,
 	)
 }
 
@@ -293,11 +308,14 @@ func resumeRecoveryWithSnapshot(
 	snapshotPresent bool,
 	scopedSnapshot scopedRecoverySnapshot,
 	scopedSnapshotPresent bool,
+	projectSnapshot projectConnectionRecoverySnapshot,
+	projectSnapshotPresent bool,
 	now Clock,
 	hooks recoveryHooks,
 ) (*Store, string, error) {
 	if store, state, err := inspectRecoveryCanonical(
-		databasePath, snapshot, snapshotPresent, scopedSnapshot, scopedSnapshotPresent, now,
+		databasePath, snapshot, snapshotPresent, scopedSnapshot, scopedSnapshotPresent,
+		projectSnapshot, projectSnapshotPresent, now,
 	); err != nil {
 		return nil, "", err
 	} else if state == "complete" {
@@ -314,9 +332,20 @@ func resumeRecoveryWithSnapshot(
 	if err := removeRecoveryStage(marker.StagePath); err != nil {
 		return nil, "", err
 	}
+	if err := removeScopedRecoveryStage(marker.StagePath); err != nil {
+		return nil, "", err
+	}
+	if err := removeProjectConnectionRecoveryStage(marker.StagePath); err != nil {
+		return nil, "", err
+	}
 	if scopedSnapshotPresent {
 		if err := privateio.WriteJSON(scopedRecoveryPath(marker.StagePath), scopedSnapshot); err != nil {
 			return nil, "", errors.New("prepare scoped agent state recovery stage")
+		}
+	}
+	if projectSnapshotPresent {
+		if err := privateio.WriteJSON(projectConnectionRecoveryPath(marker.StagePath), projectSnapshot); err != nil {
+			return nil, "", errors.New("prepare project connection recovery stage")
 		}
 	}
 	stage, err := openStore(marker.StagePath, now, false)
@@ -333,6 +362,12 @@ func resumeRecoveryWithSnapshot(
 	// projected into the reserved root/legacy context below.
 	if err := scopedRecoverySnapshotMatches(
 		context.Background(), stage, scopedSnapshot, scopedSnapshotPresent,
+	); err != nil {
+		_ = stage.Close()
+		return nil, "", err
+	}
+	if err := projectConnectionRecoverySnapshotMatches(
+		context.Background(), stage, projectSnapshot, projectSnapshotPresent,
 	); err != nil {
 		_ = stage.Close()
 		return nil, "", err
@@ -355,6 +390,12 @@ func resumeRecoveryWithSnapshot(
 		return nil, "", fmt.Errorf("reconcile scoped agent state recovery snapshot: %w", err)
 	}
 	scopedSnapshotPresent = true
+	projectSnapshot, err = stage.buildProjectConnectionRecoverySnapshot(context.Background())
+	if err != nil {
+		_ = stage.Close()
+		return nil, "", fmt.Errorf("reconcile project connection recovery snapshot: %w", err)
+	}
+	projectSnapshotPresent = true
 	if err := recoverySnapshotMatches(context.Background(), stage, snapshot, snapshotPresent); err != nil {
 		_ = stage.Close()
 		return nil, "", err
@@ -365,16 +406,28 @@ func resumeRecoveryWithSnapshot(
 		_ = stage.Close()
 		return nil, "", err
 	}
+	if err := projectConnectionRecoverySnapshotMatches(
+		context.Background(), stage, projectSnapshot, projectSnapshotPresent,
+	); err != nil {
+		_ = stage.Close()
+		return nil, "", err
+	}
 	if err := stage.Close(); err != nil {
 		return nil, "", errors.New("close agent state recovery stage")
 	}
 	if err := removeScopedRecoveryStage(marker.StagePath); err != nil {
 		return nil, "", err
 	}
+	if err := removeProjectConnectionRecoveryStage(marker.StagePath); err != nil {
+		return nil, "", err
+	}
 	// Persist the reconciled projection before promotion so an interruption
 	// after the database rename resumes against the exact promoted state.
 	if err := privateio.WriteJSON(scopedRecoveryPath(databasePath), scopedSnapshot); err != nil {
 		return nil, "", errors.New("persist reconciled scoped recovery snapshot")
+	}
+	if err := privateio.WriteJSON(projectConnectionRecoveryPath(databasePath), projectSnapshot); err != nil {
+		return nil, "", errors.New("persist reconciled project connection recovery snapshot")
 	}
 	if err := hooks.rename(marker.StagePath, databasePath); err != nil {
 		return nil, "", errors.New("promote agent state recovery stage")
@@ -396,6 +449,12 @@ func resumeRecoveryWithSnapshot(
 		_ = recovered.Close()
 		return nil, "", err
 	}
+	if err := projectConnectionRecoverySnapshotMatches(
+		context.Background(), recovered, projectSnapshot, projectSnapshotPresent,
+	); err != nil {
+		_ = recovered.Close()
+		return nil, "", err
+	}
 	if err := finalizeRecovery(databasePath, recovered); err != nil {
 		_ = recovered.Close()
 		return nil, "", err
@@ -409,6 +468,8 @@ func inspectRecoveryCanonical(
 	snapshotPresent bool,
 	scopedSnapshot scopedRecoverySnapshot,
 	scopedSnapshotPresent bool,
+	projectSnapshot projectConnectionRecoverySnapshot,
+	projectSnapshotPresent bool,
 	now Clock,
 ) (*Store, string, error) {
 	if _, err := os.Lstat(databasePath); os.IsNotExist(err) {
@@ -432,6 +493,12 @@ func inspectRecoveryCanonical(
 	); err != nil {
 		_ = store.Close()
 		return nil, "", errors.New("resume agent state recovery: canonical scoped state does not match recovery snapshot")
+	}
+	if err := projectConnectionRecoverySnapshotMatches(
+		context.Background(), store, projectSnapshot, projectSnapshotPresent,
+	); err != nil {
+		_ = store.Close()
+		return nil, "", errors.New("resume agent state recovery: canonical project connections do not match recovery snapshot")
 	}
 	return store, "complete", nil
 }
@@ -557,6 +624,24 @@ func removeScopedRecoveryStage(stagePath string) error {
 	}
 	if err := syncDirectory(filepath.Dir(stagePath)); err != nil {
 		return errors.New("clear scoped agent state recovery stage")
+	}
+	return nil
+}
+
+func removeProjectConnectionRecoveryStage(stagePath string) error {
+	path := projectConnectionRecoveryPath(stagePath)
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != privateio.FileMode {
+		return errors.New("clear project connection recovery stage")
+	}
+	if err := os.Remove(path); err != nil {
+		return errors.New("clear project connection recovery stage")
+	}
+	if err := syncDirectory(filepath.Dir(stagePath)); err != nil {
+		return errors.New("clear project connection recovery stage")
 	}
 	return nil
 }

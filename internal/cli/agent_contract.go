@@ -74,10 +74,13 @@ type discoveryContract struct {
 
 func (r Runner) runAgentDiscover(args []string, stdout, stderr io.Writer) int {
 	options, err := parseAgentOptions(args)
+	direct := options.values["scope"] != "" && options.values["lens"] != "" &&
+		options.values["agent"] != "" && options.values["connection"] == ""
+	connected := options.values["connection"] != "" && options.values["scope"] == "" &&
+		options.values["lens"] == "" && options.values["agent"] == ""
 	if err != nil || len(options.positionals) != 0 ||
-		!onlyAgentKeys(options.values, "scope", "lens", "agent") ||
-		options.values["scope"] == "" || options.values["lens"] == "" ||
-		options.values["agent"] == "" {
+		!onlyAgentKeys(options.values, "scope", "lens", "agent", "connection") ||
+		(!direct && !connected) {
 		return writeAgentContractError(stderr, "discover", "incomplete_binding", false, "request_owner_binding")
 	}
 	timeout := r.agentDiscoveryTimeout
@@ -97,38 +100,59 @@ func (r Runner) runAgentDiscover(args []string, stdout, stderr io.Writer) int {
 	if !supportsSearchFormat(capabilities.Features, localservice.DiscoveryCapability) {
 		return writeAgentContractError(stderr, "discover", "capability_unavailable", false, "upgrade_mindline")
 	}
-	scopes, err := client.ListScopes(ctx)
-	if err != nil {
-		return writeAgentContractError(stderr, "discover", "service_unavailable", true, "retry_service")
-	}
-	actors, err := client.ListActors(ctx)
-	if err != nil {
-		return writeAgentContractError(stderr, "discover", "service_unavailable", true, "retry_service")
-	}
-	lenses, err := client.ListScopedLenses(ctx, options.values["scope"])
-	if err != nil {
-		return writeAgentContractError(stderr, "discover", "service_unavailable", true, "retry_service")
-	}
-	scope, ok := findScope(scopes, options.values["scope"])
-	if !ok {
-		return writeAgentContractError(stderr, "discover", "binding_not_found", false, "request_owner_binding")
-	}
-	if scope.Status != agentstate.StatusActive {
-		return writeAgentContractError(stderr, "discover", "binding_archived", false, "request_owner_binding")
-	}
-	lens, ok := findScopedLens(lenses, options.values["lens"])
-	if !ok {
-		return writeAgentContractError(stderr, "discover", "binding_not_found", false, "request_owner_binding")
-	}
-	if lens.Status != agentstate.StatusActive {
-		return writeAgentContractError(stderr, "discover", "binding_archived", false, "request_owner_binding")
-	}
-	actor, ok := findActor(actors, options.values["agent"])
-	if !ok {
-		return writeAgentContractError(stderr, "discover", "binding_not_found", false, "request_owner_binding")
-	}
-	if actor.Status != agentstate.StatusActive {
-		return writeAgentContractError(stderr, "discover", "binding_archived", false, "request_owner_binding")
+	var binding discoveryBinding
+	if connected {
+		if !supportsSearchFormat(capabilities.Features, localservice.ProjectConnectionCapability) {
+			return writeAgentContractError(stderr, "discover", "capability_unavailable", false, "upgrade_mindline")
+		}
+		digest, digestErr := projectConnectionDigest(options.values["connection"])
+		if digestErr != nil {
+			return writeAgentContractError(stderr, "discover", "invalid_connection", false, "request_owner_binding")
+		}
+		resolution, resolveErr := client.ResolveProjectConnection(ctx, digest)
+		if resolveErr != nil {
+			return writeAgentContractError(stderr, "discover", "connection_unavailable", false, "request_owner_binding")
+		}
+		binding = discoveryBinding{
+			ScopeID: resolution.ScopeID, LensID: resolution.LensID, AgentID: resolution.AgentID,
+			ScopeName: resolution.ScopeName, LensName: resolution.LensName, AgentName: resolution.AgentName,
+		}
+	} else {
+		scopes, err := client.ListScopes(ctx)
+		if err != nil {
+			return writeAgentContractError(stderr, "discover", "service_unavailable", true, "retry_service")
+		}
+		actors, err := client.ListActors(ctx)
+		if err != nil {
+			return writeAgentContractError(stderr, "discover", "service_unavailable", true, "retry_service")
+		}
+		lenses, err := client.ListScopedLenses(ctx, options.values["scope"])
+		if err != nil {
+			return writeAgentContractError(stderr, "discover", "service_unavailable", true, "retry_service")
+		}
+		scope, ok := findScope(scopes, options.values["scope"])
+		if !ok {
+			return writeAgentContractError(stderr, "discover", "binding_not_found", false, "request_owner_binding")
+		}
+		if scope.Status != agentstate.StatusActive {
+			return writeAgentContractError(stderr, "discover", "binding_archived", false, "request_owner_binding")
+		}
+		lens, ok := findScopedLens(lenses, options.values["lens"])
+		if !ok {
+			return writeAgentContractError(stderr, "discover", "binding_not_found", false, "request_owner_binding")
+		}
+		if lens.Status != agentstate.StatusActive {
+			return writeAgentContractError(stderr, "discover", "binding_archived", false, "request_owner_binding")
+		}
+		actor, ok := findActor(actors, options.values["agent"])
+		if !ok {
+			return writeAgentContractError(stderr, "discover", "binding_not_found", false, "request_owner_binding")
+		}
+		if actor.Status != agentstate.StatusActive {
+			return writeAgentContractError(stderr, "discover", "binding_archived", false, "request_owner_binding")
+		}
+		binding = discoveryBinding{ScopeID: scope.ID, LensID: lens.ID, AgentID: actor.ID,
+			ScopeName: scope.Name, LensName: lens.Name, AgentName: actor.Name}
 	}
 	configMode, configPath := "default", ""
 	if strings.TrimSpace(options.configPath) != "" {
@@ -140,8 +164,7 @@ func (r Runner) runAgentDiscover(args []string, stdout, stderr io.Writer) int {
 		SchemaVersion: "mindline-agent-discovery/v0.1", DiscoveryState: "ready",
 		ApprovedRoute: localservice.RecommendedAgentRoute,
 		Config:        map[string]string{"mode": configMode, "propagation": "reuse_discovery_argument_for_every_service_command"},
-		Binding: discoveryBinding{ScopeID: scope.ID, LensID: lens.ID, AgentID: actor.ID,
-			ScopeName: scope.Name, LensName: lens.Name, AgentName: actor.Name},
+		Binding:       binding,
 		Trust: map[string]any{"identity_assurance": agentcontract.IdentityAssurance,
 			"hostile_process_authentication": false, "owner_mutation_enforcement": agentcontract.MutationEnforcement},
 		Workflow: map[string]string{

@@ -110,7 +110,7 @@ func (store *Store) initializeScoped(ctx context.Context) error {
 	if err != nil {
 		return errors.New("initialize scoped agent state schema")
 	}
-	return nil
+	return store.initializeProjectConnections(ctx)
 }
 
 func (store *Store) projectLegacyState(ctx context.Context) error {

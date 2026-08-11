@@ -245,7 +245,7 @@ func TestInstalledCandidateWaitsForRestartedServiceReadiness(t *testing.T) {
 			if capabilityCalls == 1 {
 				return []byte("service restarting"), 2, nil
 			}
-			return []byte(`{"features":["mindline.scoped-recall.v0.4","mindline.agent-registration.v0.1"]}`), 0, nil
+			return []byte(`{"features":["mindline.scoped-recall.v0.4","mindline.agent-registration.v0.1","mindline.project-connection.v0.1"]}`), 0, nil
 		case strings.Contains(joined, "status"):
 			statusCalls++
 			if statusCalls == 1 {
@@ -591,7 +591,7 @@ func TestUpgradeSmokeFailureRestoresFullPriorInstallAndRollbackBundle(t *testing
 		joined := strings.Join(args, " ")
 		switch {
 		case strings.Contains(joined, "capabilities"):
-			return []byte(`{"schema_version":"test","features":["mindline.scoped-recall.v0.4","mindline.agent-registration.v0.1"]}`), 0, nil
+			return []byte(`{"schema_version":"test","features":["mindline.scoped-recall.v0.4","mindline.agent-registration.v0.1","mindline.project-connection.v0.1"]}`), 0, nil
 		case strings.Contains(joined, "status"):
 			return []byte(`{"schema_version":"test","service_state":"ready"}`), 0, nil
 		case strings.Contains(joined, "agent-only help"):
@@ -709,7 +709,7 @@ func TestUpgradeFaultAtEveryMutationAndSmokeRestoresExactPriorInstall(t *testing
 				joined := strings.Join(args, " ")
 				switch {
 				case strings.Contains(joined, "capabilities"):
-					return []byte(`{"features":["mindline.scoped-recall.v0.4","mindline.agent-registration.v0.1"]}`), 0, nil
+					return []byte(`{"features":["mindline.scoped-recall.v0.4","mindline.agent-registration.v0.1","mindline.project-connection.v0.1"]}`), 0, nil
 				case strings.Contains(joined, "status"):
 					return []byte(`{"service_state":"ready"}`), 0, nil
 				case strings.Contains(joined, "agent-only help"):

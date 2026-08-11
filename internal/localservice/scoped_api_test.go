@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -37,6 +38,7 @@ func TestScopedRecallV04RoutesFailClosedAndKeepLegacyCompactUnchanged(t *testing
 	if err != nil || !hasCapability(capabilities.Features, ScopedRecallCapability) ||
 		!hasCapability(capabilities.Features, DiscoveryCapability) ||
 		!hasCapability(capabilities.Features, AgentRegistrationCapability) ||
+		!hasCapability(capabilities.Features, ProjectConnectionCapability) ||
 		capabilities.ScopedSearchEndpoint != "/v1/scoped/search/compact" ||
 		capabilities.ScopedHydrationEndpoint != ScopedHydrationEndpoint ||
 		capabilities.AgentRegistrationEndpoint != "/v1/scoped/actors/register" ||
@@ -119,6 +121,35 @@ func TestScopedRecallV04RoutesFailClosedAndKeepLegacyCompactUnchanged(t *testing
 		ID: "agent-b", Name: "Agent B",
 	}); err != nil {
 		t.Fatal(err)
+	}
+	connectionDigest := strings.Repeat("c", 64)
+	connectionReceipt, err := client.BindProjectConnection(context.Background(), ProjectConnectionInput{
+		Digest: connectionDigest, ScopeID: "project", LensID: "delivery", AgentID: "agent-a",
+	})
+	if err != nil || connectionReceipt.State != agentstate.StatusActive || connectionReceipt.Replayed {
+		t.Fatalf("connection receipt=%+v err=%v", connectionReceipt, err)
+	}
+	connectionReplay, err := client.BindProjectConnection(context.Background(), ProjectConnectionInput{
+		Digest: connectionDigest, ScopeID: "project", LensID: "delivery", AgentID: "agent-a",
+	})
+	if err != nil || !connectionReplay.Replayed {
+		t.Fatalf("connection replay=%+v err=%v", connectionReplay, err)
+	}
+	if _, err := client.BindProjectConnection(context.Background(), ProjectConnectionInput{
+		Digest: connectionDigest, ScopeID: "project", LensID: "delivery", AgentID: "agent-b",
+	}); err == nil {
+		t.Fatal("conflicting project connection bind succeeded")
+	}
+	resolution, err := client.ResolveProjectConnection(context.Background(), connectionDigest)
+	if err != nil || resolution.State != "ready" || resolution.ScopeID != "project" ||
+		resolution.LensID != "delivery" || resolution.AgentID != "agent-a" {
+		t.Fatalf("connection resolution=%+v err=%v", resolution, err)
+	}
+	connectionStatus, err := client.Status(context.Background())
+	if err != nil || connectionStatus.State.ProjectConnectionCount != 1 ||
+		connectionStatus.State.ActiveConnectionCount != 1 ||
+		connectionStatus.State.ArchivedConnectionCount != 0 {
+		t.Fatalf("connection status=%+v err=%v", connectionStatus.State, err)
 	}
 	if lenses, err := client.ListScopedLenses(context.Background(), ""); err != nil || len(lenses) != 3 {
 		t.Fatalf("all scoped lenses=%+v err=%v", lenses, err)
@@ -209,6 +240,17 @@ func TestScopedRecallV04RoutesFailClosedAndKeepLegacyCompactUnchanged(t *testing
 	}
 	if _, err := client.ArchiveActor(context.Background(), "agent-a"); err != nil {
 		t.Fatal(err)
+	}
+	archiveReceipt, err := client.ArchiveProjectConnection(context.Background(), connectionDigest)
+	if err != nil || archiveReceipt.State != agentstate.StatusArchived || archiveReceipt.Replayed {
+		t.Fatalf("archive receipt=%+v err=%v", archiveReceipt, err)
+	}
+	archiveReplay, err := client.ArchiveProjectConnection(context.Background(), connectionDigest)
+	if err != nil || !archiveReplay.Replayed {
+		t.Fatalf("archive replay=%+v err=%v", archiveReplay, err)
+	}
+	if _, err := client.ResolveProjectConnection(context.Background(), connectionDigest); err == nil {
+		t.Fatal("archived project connection resolved")
 	}
 	if _, err := client.SearchScoped(context.Background(), ScopedSearchInput{
 		Query: "product brain citations", ScopeID: "project", LensID: "delivery",

@@ -37,6 +37,101 @@ func TestAgentHelpIsBoundedAndSuccessful(t *testing.T) {
 	}
 }
 
+func TestAgentProjectConnectionHandleAndConnectedDiscovery(t *testing.T) {
+	handle := "mlc1_" + base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
+	expectedDigest, err := projectConnectionDigest(handle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var receivedDigest string
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/capabilities", func(writer http.ResponseWriter, _ *http.Request) {
+		writeLegacyAgentEnvelope(t, writer, localservice.Capabilities{
+			SchemaVersion: localservice.CapabilitiesSchemaVersion,
+			Features: []string{
+				localservice.ScopedRecallCapability,
+				localservice.DiscoveryCapability,
+				localservice.ProjectConnectionCapability,
+			},
+		})
+	})
+	mux.HandleFunc("POST /v1/scoped/connections/resolve", func(writer http.ResponseWriter, request *http.Request) {
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(body), handle) {
+			t.Fatal("plaintext connection handle crossed the service boundary")
+		}
+		var input localservice.ProjectConnectionDigestInput
+		if err := json.Unmarshal(body, &input); err != nil {
+			t.Fatal(err)
+		}
+		receivedDigest = input.Digest
+		writeLegacyAgentEnvelope(t, writer, localservice.ProjectConnectionResolution{
+			SchemaVersion: agentstate.ProjectConnectionSchemaVersion,
+			State:         "ready", ScopeID: "project", ScopeName: "Project",
+			LensID: "product", LensName: "Product", AgentID: "external", AgentName: "External",
+		})
+	})
+	configPath, closeServer := startScopedAgentCLITestServer(t, mux)
+	defer closeServer()
+	runner := NewRunner(NewOSFileSystem())
+	runner.agentExecutable = "/opt/mindline"
+	var stdout, stderr bytes.Buffer
+	if code := runner.Run([]string{"agent-only", "discover", "--connection", handle,
+		"--config", configPath}, &stdout, &stderr); code != ExitOK {
+		t.Fatalf("code=%d stderr=%s", code, stderr.String())
+	}
+	var contract discoveryContract
+	if err := json.Unmarshal(stdout.Bytes(), &contract); err != nil ||
+		contract.DiscoveryState != "ready" || contract.Binding.ScopeID != "project" ||
+		contract.Binding.LensID != "product" || contract.Binding.AgentID != "external" ||
+		!strings.Contains(contract.Workflow["search_command"], "agent-only search") ||
+		receivedDigest != expectedDigest || strings.Contains(stdout.String(), handle) ||
+		strings.Contains(stdout.String(), expectedDigest) || strings.Contains(stdout.String(), configPath) {
+		t.Fatalf("contract=%+v digest=%q err=%v output=%s", contract, receivedDigest, err, stdout.String())
+	}
+
+	for _, invalid := range []string{
+		" " + handle, handle + " ", "https://example.com/" + handle,
+		"../../" + handle, "pb_sk_" + strings.Repeat("a", 64), "mlc1_short",
+	} {
+		stdout.Reset()
+		stderr.Reset()
+		code := runner.Run([]string{"agent-only", "discover", "--connection", invalid,
+			"--config", configPath}, &stdout, &stderr)
+		var failure agentContractError
+		if code != ExitProcess || stdout.Len() != 0 ||
+			json.Unmarshal(stderr.Bytes(), &failure) != nil || failure.ErrorCode != "invalid_connection" ||
+			strings.Contains(stderr.String(), invalid) {
+			t.Fatalf("invalid=%q code=%d stdout=%s stderr=%s", invalid, code, stdout.String(), stderr.String())
+		}
+	}
+}
+
+func TestAgentProjectConnectionHandleHasExactOpaqueGrammar(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := NewRunner(NewMemoryFS()).Run([]string{"agent", "connection-handle"}, &stdout, &stderr); code != ExitOK {
+		t.Fatalf("code=%d stderr=%s", code, stderr.String())
+	}
+	var receipt struct {
+		SchemaVersion string `json:"schema_version"`
+		Connection    string `json:"connection"`
+		Secret        bool   `json:"secret"`
+		Owner         string `json:"owner"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &receipt); err != nil ||
+		receipt.SchemaVersion != "mindline-project-connection-handle/v0.1" ||
+		len(receipt.Connection) != 48 || !strings.HasPrefix(receipt.Connection, "mlc1_") ||
+		receipt.Secret || receipt.Owner != "caller" {
+		t.Fatalf("receipt=%+v err=%v", receipt, err)
+	}
+	if _, err := projectConnectionDigest(receipt.Connection); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestAgentRegisterUsageUsesSharedAgentNamePlaceholder(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := NewRunner(NewMemoryFS()).Run([]string{"agent", "register"}, &stdout, &stderr)

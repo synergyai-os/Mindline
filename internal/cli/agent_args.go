@@ -25,6 +25,12 @@ func parseAgentOptions(args []string) (agentOptions, error) {
 			return agentOptions{}, errors.New("missing option value")
 		}
 		optionValue := strings.TrimSpace(args[index])
+		if name == "connection" {
+			// Connection handles are canonical opaque values. Preserve the
+			// caller's exact bytes so validation rejects whitespace rather than
+			// silently changing the identity before hashing.
+			optionValue = args[index]
+		}
 		if name == "config" {
 			if options.configPath != "" {
 				return agentOptions{}, errors.New("duplicate config")

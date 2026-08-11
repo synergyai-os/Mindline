@@ -334,11 +334,14 @@ func (store *Store) Status(ctx context.Context) (Status, error) {
 		return Status{}, errors.New("read agent state status")
 	}
 	for query, destination := range map[string]*int{
-		`SELECT COUNT(*) FROM scopes`:                &status.ScopeCount,
-		`SELECT COUNT(*) FROM scoped_lenses`:         &status.ScopedLensCount,
-		`SELECT COUNT(*) FROM agent_actors`:          &status.AgentActorCount,
-		`SELECT COUNT(*) FROM scoped_retrieval_runs`: &status.ScopedRetrievalRunCount,
-		`SELECT COUNT(*) FROM scoped_judgments`:      &status.ScopedJudgmentCount,
+		`SELECT COUNT(*) FROM scopes`:                                      &status.ScopeCount,
+		`SELECT COUNT(*) FROM scoped_lenses`:                               &status.ScopedLensCount,
+		`SELECT COUNT(*) FROM agent_actors`:                                &status.AgentActorCount,
+		`SELECT COUNT(*) FROM scoped_retrieval_runs`:                       &status.ScopedRetrievalRunCount,
+		`SELECT COUNT(*) FROM scoped_judgments`:                            &status.ScopedJudgmentCount,
+		`SELECT COUNT(*) FROM project_connections`:                         &status.ProjectConnectionCount,
+		`SELECT COUNT(*) FROM project_connections WHERE status='active'`:   &status.ActiveConnectionCount,
+		`SELECT COUNT(*) FROM project_connections WHERE status='archived'`: &status.ArchivedConnectionCount,
 	} {
 		if err := store.db.QueryRowContext(ctx, query).Scan(destination); err != nil {
 			return Status{}, errors.New("read agent state status")

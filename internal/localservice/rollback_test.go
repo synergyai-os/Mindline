@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -99,16 +100,38 @@ func TestUpgradeBacksUpAndRollbackRestoresOnlyBinaryAndSkill(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := state.PutScope(context.Background(), agentstate.Scope{
+		ID: "project", Name: "Project", Purpose: "rollback proof",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.PutScopedLens(context.Background(), agentstate.ScopedLens{
+		ScopeID: "project", ID: "product", Name: "Product", Query: "strategy",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.PutAgentActor(context.Background(), agentstate.AgentActor{
+		ID: "agent-a", Name: "Agent A",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.BindProjectConnection(context.Background(), strings.Repeat("e", 64), agentstate.ScopedContext{
+		ScopeID: "project", LensID: "product", AgentID: "agent-a",
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if err := state.Close(); err != nil {
 		t.Fatal(err)
 	}
 	stateMarker := config.StatePath + ".recovery.json"
+	connectionMarker := config.StatePath + ".project-connections-recovery.json"
 	originalStop := stopUserService
 	originalRestart := restartUserService
 	originalInspect := inspectUserService
 	originalReadiness := rollbackReadinessCheck
 	readinessChecks := 0
 	var stateAfterStop []byte
+	var connectionsAfterStop []byte
 	stopUserService = func(string) error {
 		store, err := agentstate.Open(config.StatePath, nil)
 		if err != nil {
@@ -122,6 +145,9 @@ func TestUpgradeBacksUpAndRollbackRestoresOnlyBinaryAndSkill(t *testing.T) {
 			return err
 		}
 		stateAfterStop, err = os.ReadFile(stateMarker)
+		if err == nil {
+			connectionsAfterStop, err = os.ReadFile(connectionMarker)
+		}
 		return err
 	}
 	restartUserService = func(string) error { return nil }
@@ -160,6 +186,9 @@ func TestUpgradeBacksUpAndRollbackRestoresOnlyBinaryAndSkill(t *testing.T) {
 	}
 	if value, err := os.ReadFile(stateMarker); err != nil || !bytes.Equal(value, stateAfterStop) {
 		t.Fatalf("rollback changed durable state: %q err=%v", value, err)
+	}
+	if value, err := os.ReadFile(connectionMarker); err != nil || !bytes.Equal(value, connectionsAfterStop) {
+		t.Fatalf("rollback changed durable project connections: %q err=%v", value, err)
 	}
 }
 

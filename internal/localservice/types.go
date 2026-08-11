@@ -43,10 +43,39 @@ const (
 	ScopedRecallCapability      = "mindline.scoped-recall.v0.4"
 	DiscoveryCapability         = agentcontract.DiscoveryCapability
 	AgentRegistrationCapability = agentcontract.AgentRegistrationCapability
+	ProjectConnectionCapability = agentcontract.ProjectConnectionCapability
 	RecommendedAgentRoute       = agentcontract.RecommendedRoute
 	OwnerDebugRouteClass        = agentcontract.OwnerDebugRouteClass
 	ScopedHydrationEndpoint     = agentcontract.ScopedHydrationEndpoint
 )
+
+type ProjectConnectionInput struct {
+	Digest  string `json:"digest"`
+	ScopeID string `json:"scope_id"`
+	LensID  string `json:"lens_id"`
+	AgentID string `json:"agent_id"`
+}
+
+type ProjectConnectionDigestInput struct {
+	Digest string `json:"digest"`
+}
+
+type ProjectConnectionReceipt struct {
+	SchemaVersion string `json:"schema_version"`
+	State         string `json:"state"`
+	Replayed      bool   `json:"replayed"`
+}
+
+type ProjectConnectionResolution struct {
+	SchemaVersion string `json:"schema_version"`
+	State         string `json:"state"`
+	ScopeID       string `json:"scope_id"`
+	ScopeName     string `json:"scope_name"`
+	LensID        string `json:"lens_id"`
+	LensName      string `json:"lens_name"`
+	AgentID       string `json:"agent_id"`
+	AgentName     string `json:"agent_name"`
+}
 
 type Capabilities struct {
 	SchemaVersion                string                                 `json:"schema_version"`
@@ -67,6 +96,8 @@ type Capabilities struct {
 	OwnerMutationEnforcement     string                                 `json:"owner_mutation_enforcement"`
 	FeedbackTokenCommand         string                                 `json:"feedback_token_command"`
 	RegistrationTokenCommand     string                                 `json:"registration_token_command,omitempty"`
+	ConnectionHandleCommand      string                                 `json:"connection_handle_command,omitempty"`
+	ProjectConnectionEndpoint    string                                 `json:"project_connection_endpoint,omitempty"`
 }
 type Status struct {
 	SchemaVersion  string                 `json:"schema_version"`
@@ -96,6 +127,9 @@ type PublicAgentStateStatus struct {
 	AgentActorCount         int    `json:"agent_actor_count"`
 	ScopedRetrievalRunCount int    `json:"scoped_retrieval_run_count"`
 	ScopedJudgmentCount     int    `json:"scoped_judgment_count"`
+	ProjectConnectionCount  int    `json:"project_connection_count"`
+	ActiveConnectionCount   int    `json:"active_project_connection_count"`
+	ArchivedConnectionCount int    `json:"archived_project_connection_count"`
 	EmbeddingCount          int    `json:"embedding_count"`
 	IndexedFingerprint      string `json:"indexed_library_fingerprint,omitempty"`
 	RecoveryState           string `json:"recovery_state,omitempty"`

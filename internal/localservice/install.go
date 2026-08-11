@@ -535,7 +535,8 @@ func smokeInstalledCandidate(binaryPath, configPath string) error {
 		[]string{"agent", "capabilities", "--config", configPath},
 		func(output []byte) (bool, error) {
 			if !jsonContainsString(output, "mindline.scoped-recall.v0.4") ||
-				!jsonContainsString(output, agentcontract.AgentRegistrationCapability) {
+				!jsonContainsString(output, agentcontract.AgentRegistrationCapability) ||
+				!jsonContainsString(output, agentcontract.ProjectConnectionCapability) {
 				return false, errors.New("installed local agent lacks required agent capabilities")
 			}
 			return true, nil

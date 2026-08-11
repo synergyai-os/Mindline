@@ -5,14 +5,26 @@ import "time"
 const SchemaVersion = "mindline-agent-state/v0.1"
 
 const (
-	ScopedSchemaVersion = "mindline-agent-scoped-state/v0.1"
-	OwnerRootScopeID    = "owner_root_scope"
-	LegacyAgentActorID  = "legacy_agent_actor"
-	StatusActive        = "active"
-	StatusArchived      = "archived"
-	FeedbackOwner       = "owner"
-	FeedbackAgent       = "agent"
+	ScopedSchemaVersion            = "mindline-agent-scoped-state/v0.1"
+	ProjectConnectionSchemaVersion = "mindline-project-connections/v0.1"
+	OwnerRootScopeID               = "owner_root_scope"
+	LegacyAgentActorID             = "legacy_agent_actor"
+	StatusActive                   = "active"
+	StatusArchived                 = "archived"
+	FeedbackOwner                  = "owner"
+	FeedbackAgent                  = "agent"
 )
+
+type ProjectConnection struct {
+	Digest    string `json:"digest"`
+	ScopeID   string `json:"scope_id"`
+	LensID    string `json:"lens_id"`
+	AgentID   string `json:"agent_id"`
+	Status    string `json:"status"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+	Replayed  bool   `json:"replayed,omitempty"`
+}
 
 type Scope struct {
 	ID        string `json:"id"`
@@ -166,6 +178,9 @@ type Status struct {
 	AgentActorCount         int    `json:"agent_actor_count"`
 	ScopedRetrievalRunCount int    `json:"scoped_retrieval_run_count"`
 	ScopedJudgmentCount     int    `json:"scoped_judgment_count"`
+	ProjectConnectionCount  int    `json:"project_connection_count"`
+	ActiveConnectionCount   int    `json:"active_project_connection_count"`
+	ArchivedConnectionCount int    `json:"archived_project_connection_count"`
 	EmbeddingCount          int    `json:"embedding_count"`
 	IndexedFingerprint      string `json:"indexed_library_fingerprint,omitempty"`
 	DatabasePath            string `json:"database_path"`
