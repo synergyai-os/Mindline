@@ -477,26 +477,22 @@ func TestProjectConnectionRecoveryResumeRejectsMissingBoundSnapshot(t *testing.T
 	}
 }
 
-func TestProjectConnectionNewBinaryResumesLegacyV01RecoveryMarker(t *testing.T) {
+func TestProjectConnectionNewBinaryResumesProvenPreWP56V01RecoveryMarker(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 11, 16, 0, 0, 0, time.UTC)
-	path := filepath.Join(t.TempDir(), "state", "agent.sqlite")
-	ctx := context.Background()
-	store, err := Open(path, func() time.Time { return now })
-	if err != nil {
+	root := filepath.Join(t.TempDir(), "state")
+	if err := privateio.PrepareDir(root); err != nil {
 		t.Fatal(err)
 	}
-	seedScopedContexts(t, store, ctx, now)
-	digest := strings.Repeat("2", 64)
-	if _, err := store.BindProjectConnection(ctx, digest, ScopedContext{
-		ScopeID: "scope-a", LensID: "lens-one", AgentID: "agent-a",
+	path := filepath.Join(root, "agent.sqlite")
+	if err := os.WriteFile(path, []byte("pre-wp56-corrupt-agent-state"), privateio.FileMode); err != nil {
+		t.Fatal(err)
+	}
+	if err := privateio.WriteJSON(recoveryPath(path), recoverySnapshot{
+		SchemaVersion: recoverySchemaVersion,
+		Lenses:        []Lens{},
+		Judgments:     []Judgment{},
 	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte("corrupt-agent-state"), privateio.FileMode); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := openRecovering(path, func() time.Time { return now.Add(time.Minute) }, recoveryHooks{
@@ -510,13 +506,19 @@ func TestProjectConnectionNewBinaryResumesLegacyV01RecoveryMarker(t *testing.T) 
 	if err := os.Remove(projectRecoveryBindingPath(path)); err != nil {
 		t.Fatal(err)
 	}
+	if adopted, err := readProjectConnectionAdoptionMarker(path); err != nil || adopted {
+		t.Fatalf("test state was not proven pre-WP56: adopted=%v err=%v", adopted, err)
+	}
+	if _, present, err := readProjectConnectionRecoverySnapshot(path); err != nil || present {
+		t.Fatalf("test state unexpectedly had a project snapshot: present=%v err=%v", present, err)
+	}
 	recovered, quarantine, err := OpenRecovering(path, func() time.Time { return now.Add(2 * time.Minute) })
 	if err != nil || quarantine == "" {
 		t.Fatalf("legacy marker resume quarantine=%q err=%v", quarantine, err)
 	}
 	defer recovered.Close()
-	if _, _, _, actor, err := recovered.ResolveProjectConnection(ctx, digest); err != nil || actor.ID != "agent-a" {
-		t.Fatalf("legacy marker resume actor=%+v err=%v", actor, err)
+	if adopted, err := readProjectConnectionAdoptionMarker(path); err != nil || !adopted {
+		t.Fatalf("legacy marker resume did not adopt project connections: adopted=%v err=%v", adopted, err)
 	}
 }
 

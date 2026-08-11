@@ -354,17 +354,11 @@ func resumeRecovery(
 		if adoptionErr != nil {
 			return nil, "", adoptionErr
 		}
-		if projectPresent && !projectAdopted {
-			if err := ensureProjectConnectionAdoptionMarker(databasePath); err != nil {
-				return nil, "", err
-			}
-			projectAdopted = true
-		}
-		if projectAdopted && !projectPresent {
+		if projectAdopted || projectPresent {
 			return nil, "", errors.New("resume agent state recovery: project connection recovery snapshot changed")
 		}
 		binding, err = newProjectRecoveryBinding(
-			projectAdopted, projectSnapshot, projectPresent,
+			false, projectSnapshot, false,
 		)
 		if err != nil {
 			return nil, "", err
