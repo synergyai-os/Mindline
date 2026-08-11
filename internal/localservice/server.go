@@ -222,7 +222,11 @@ func projectAgentStateStatus(state agentstate.Status) PublicAgentStateStatus {
 	return PublicAgentStateStatus{
 		SchemaVersion: state.SchemaVersion, LensCount: state.LensCount,
 		RetrievalRunCount: state.RetrievalRunCount, JudgmentCount: state.JudgmentCount,
-		EmbeddingCount: state.EmbeddingCount, IndexedFingerprint: state.IndexedFingerprint,
+		ScopeCount: state.ScopeCount, ScopedLensCount: state.ScopedLensCount,
+		AgentActorCount:         state.AgentActorCount,
+		ScopedRetrievalRunCount: state.ScopedRetrievalRunCount,
+		ScopedJudgmentCount:     state.ScopedJudgmentCount,
+		EmbeddingCount:          state.EmbeddingCount, IndexedFingerprint: state.IndexedFingerprint,
 		RecoveryState: state.RecoveryState,
 	}
 }
@@ -747,6 +751,9 @@ func (server *Server) handleSearchScoped(writer http.ResponseWriter, request *ht
 		writeError(writer, http.StatusInternalServerError, err)
 		return
 	}
+	// A successful response is now an explicit receipt that the scoped run was
+	// committed, including when retrieval honestly abstained with zero citations.
+	packet.AuditState = "recorded"
 	writeJSON(writer, http.StatusOK, packet)
 }
 

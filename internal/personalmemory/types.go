@@ -274,10 +274,24 @@ type CompactContextPacket struct {
 	LibraryFingerprint          string                 `json:"library_fingerprint"`
 	RouteClass                  string                 `json:"route_class"`
 	AgentRecallApproved         bool                   `json:"agent_recall_approved"`
+	AuditState                  string                 `json:"audit_state,omitempty"`
 	AnswerState                 string                 `json:"answer_state"`
 	AbstentionReason            string                 `json:"abstention_reason,omitempty"`
 	AbstentionDiagnostics       *AbstentionDiagnostics `json:"abstention_diagnostics,omitempty"`
 	Citations                   []CompactCitation      `json:"citations"`
+	NextActions                 *AgentNextActions      `json:"next_actions,omitempty"`
+}
+
+// AgentNextActions makes the permitted continuation explicit without exposing
+// owner/debug routes or any unauthorized candidate identity.
+type AgentNextActions struct {
+	State                  string   `json:"state"`
+	AbstentionTerminal     bool     `json:"abstention_terminal"`
+	NewQueryRule           string   `json:"new_query_rule"`
+	HydrateSelectedCommand string   `json:"hydrate_selected_command,omitempty"`
+	FeedbackTokenCommand   string   `json:"feedback_token_command,omitempty"`
+	FeedbackCommand        string   `json:"feedback_command,omitempty"`
+	ForbiddenFallbacks     []string `json:"forbidden_fallbacks"`
 }
 
 type AbstentionDiagnostics struct {

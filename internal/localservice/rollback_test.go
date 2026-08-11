@@ -163,6 +163,89 @@ func TestUpgradeBacksUpAndRollbackRestoresOnlyBinaryAndSkill(t *testing.T) {
 	}
 }
 
+func TestSkillFreeUpgradeAndRollbackPreserveDeliberatelyAbsentHelperSkill(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("launchd proof is Darwin-specific")
+	}
+	t.Setenv("HOME", t.TempDir())
+	root, err := os.MkdirTemp("/tmp", "mindline-skill-free-rollback-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	config, err := ConfigFromRoots(filepath.Join(root, "runtime"), filepath.Join(root, "memory"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := Install(InstallOptions{
+		Config: config, ConfigPath: filepath.Join(config.RuntimeRoot, "config.json"),
+		SourceBinary: executable, Start: false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Create a complete upgrade first so the skill-free upgrade must also clear
+	// an older rollback skill rather than accidentally reusing it.
+	if _, err := Install(InstallOptions{
+		Config: config, ConfigPath: first.ConfigPath, SourceBinary: executable, Start: false,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(first.SkillPath); err != nil {
+		t.Fatal(err)
+	}
+	priorBinary, err := os.ReadFile(first.InstalledBinary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	successor := filepath.Join(root, "successor")
+	if err := os.WriteFile(successor, []byte("skill-free-successor"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	successorReceipt, err := Install(InstallOptions{
+		Config: config, ConfigPath: first.ConfigPath, SourceBinary: successor, Start: false,
+	})
+	if err != nil || successorReceipt.SkillState != "absent_preserved" {
+		t.Fatalf("receipt=%+v err=%v", successorReceipt, err)
+	}
+	if _, err := os.Lstat(first.SkillPath); !os.IsNotExist(err) {
+		t.Fatalf("skill-free upgrade recreated helper skill: %v", err)
+	}
+	manifest, _, skill, err := readRollbackArtifacts(config)
+	if err != nil || rollbackManifestHasSkill(manifest) || len(skill) != 0 {
+		t.Fatalf("manifest=%+v skill=%q err=%v", manifest, skill, err)
+	}
+	if _, err := os.Lstat(rollbackSkillPath(config)); !os.IsNotExist(err) {
+		t.Fatalf("stale rollback skill survived: %v", err)
+	}
+
+	originalStop, originalRestart := stopUserService, restartUserService
+	originalInspect, originalReadiness := inspectUserService, rollbackReadinessCheck
+	stopUserService = func(string) error { return nil }
+	restartUserService = func(string) error { return nil }
+	inspectUserService = func(string) (bool, error) { return false, nil }
+	rollbackReadinessCheck = func(Config) error { return nil }
+	t.Cleanup(func() {
+		stopUserService, restartUserService = originalStop, originalRestart
+		inspectUserService, rollbackReadinessCheck = originalInspect, originalReadiness
+	})
+	receipt, err := Rollback(first.ConfigPath)
+	if err != nil || receipt.ServiceState != "rolled_back" || receipt.SkillState != "absent_preserved" {
+		t.Fatalf("receipt=%+v err=%v", receipt, err)
+	}
+	restored, err := os.ReadFile(first.InstalledBinary)
+	if err != nil || !bytes.Equal(restored, priorBinary) {
+		t.Fatalf("binary was not restored: err=%v", err)
+	}
+	if _, err := os.Lstat(first.SkillPath); !os.IsNotExist(err) {
+		t.Fatalf("rollback recreated deliberately absent helper skill: %v", err)
+	}
+}
+
 func TestRollbackFailureAfterStopRestoresSuccessorInstallAndService(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("launchd proof is Darwin-specific")

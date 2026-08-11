@@ -134,8 +134,22 @@ func TestScopedRecallV04RoutesFailClosedAndKeepLegacyCompactUnchanged(t *testing
 	})
 	if err != nil || packet.SchemaVersion != personalmemory.ScopedCompactPacketSchemaVersion ||
 		packet.ScopeID != "project" || packet.LensID != "delivery" || packet.AgentID != "agent-a" ||
-		!packet.AgentRecallApproved || len(packet.Citations) == 0 {
+		!packet.AgentRecallApproved || packet.AuditState != "recorded" || len(packet.Citations) == 0 {
 		t.Fatalf("scoped packet=%+v err=%v", packet, err)
+	}
+	beforeAbstention, err := client.Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	abstained, err := client.SearchScoped(context.Background(), ScopedSearchInput{
+		Query: "the and", ScopeID: "project", LensID: "delivery", AgentID: "agent-a", Limit: 1,
+	})
+	afterAbstention, statusErr := client.Status(context.Background())
+	if err != nil || statusErr != nil || abstained.AnswerState != "abstained" ||
+		abstained.AuditState != "recorded" || len(abstained.Citations) != 0 ||
+		afterAbstention.State.ScopedRetrievalRunCount != beforeAbstention.State.ScopedRetrievalRunCount+1 ||
+		afterAbstention.State.ScopedJudgmentCount != beforeAbstention.State.ScopedJudgmentCount {
+		t.Fatalf("abstention=%+v before=%+v after=%+v err=%v statusErr=%v", abstained, beforeAbstention.State, afterAbstention.State, err, statusErr)
 	}
 	citation := packet.Citations[0]
 	beforeGet, err := client.Status(context.Background())
@@ -185,8 +199,8 @@ func TestScopedRecallV04RoutesFailClosedAndKeepLegacyCompactUnchanged(t *testing
 		}
 	}
 	afterGet, err := client.Status(context.Background())
-	if err != nil || beforeGet.State.RetrievalRunCount != afterGet.State.RetrievalRunCount ||
-		beforeGet.State.JudgmentCount != afterGet.State.JudgmentCount {
+	if err != nil || beforeGet.State.ScopedRetrievalRunCount != afterGet.State.ScopedRetrievalRunCount ||
+		beforeGet.State.ScopedJudgmentCount != afterGet.State.ScopedJudgmentCount {
 		t.Fatalf("scoped get matrix mutated state before=%+v after=%+v err=%v", beforeGet.State, afterGet.State, err)
 	}
 	legacyCapture, err := client.Get(context.Background(), citation.RecordID)

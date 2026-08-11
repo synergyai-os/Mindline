@@ -225,7 +225,7 @@ func TestAgentRegistrationCreatesOpaqueIdentityWithoutSendingOrReturningToken(t 
 	configPath, closeServer := startScopedAgentCLITestServer(t, mux)
 	defer closeServer()
 	var stdout, stderr bytes.Buffer
-	code := runner.Run([]string{"agent", "register", "--name", "Fresh Cursor agent",
+	code := runner.Run([]string{"agent-only", "register", "--name", "Fresh Cursor agent",
 		"--retry-token", token["retry_token"], "--config", configPath}, &stdout, &stderr)
 	if code != ExitOK || stderr.Len() != 0 {
 		t.Fatalf("code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
@@ -238,6 +238,7 @@ func TestAgentRegistrationCreatesOpaqueIdentityWithoutSendingOrReturningToken(t 
 		receipt.AgentName != "Fresh Cursor agent" || receipt.AgentStatus != agentstate.StatusActive ||
 		receipt.RetryTokenPersisted || !receipt.ExactReplayOnly ||
 		!strings.Contains(receipt.NextDiscoveryCommand, agentcontract.ShellQuote(receipt.AgentID)) ||
+		!strings.Contains(receipt.NextDiscoveryCommand, "agent-only discover") ||
 		!strings.Contains(receipt.NextDiscoveryCommand, "<same-as-registration>") ||
 		strings.Contains(stdout.String(), token["retry_token"]) ||
 		strings.Contains(seenBody, token["retry_token"]) || strings.Contains(stdout.String(), configPath) {
@@ -449,6 +450,17 @@ func TestAgentDiscoverValidatesExactBindingAndPropagatesExplicitConfig(t *testin
 		!strings.HasPrefix(contract.Workflow["search_command"], "'/opt/mindline' agent search") ||
 		strings.Contains(string(output), configPath) || contract.Policy["authority_class"] != "personal_evidence_non_authoritative" {
 		t.Fatalf("contract=%+v output=%s", contract, output)
+	}
+	var agentOnlyOutput, agentOnlyError bytes.Buffer
+	if code := runner.Run([]string{"agent-only", "discover", "--scope", "project", "--lens", "product",
+		"--agent", "external", "--config", configPath}, &agentOnlyOutput, &agentOnlyError); code != ExitOK {
+		t.Fatalf("agent-only discover code=%d stderr=%s", code, agentOnlyError.String())
+	}
+	var agentOnlyContract discoveryContract
+	if err := json.Unmarshal(agentOnlyOutput.Bytes(), &agentOnlyContract); err != nil ||
+		!strings.HasPrefix(agentOnlyContract.Workflow["search_command"], "'/opt/mindline' agent-only search") ||
+		strings.Contains(agentOnlyOutput.String(), " agent search") {
+		t.Fatalf("agent-only contract=%+v err=%v", agentOnlyContract, err)
 	}
 	otherOutput := runScopedAgentCLI(t, runner, configPath,
 		"discover", "--scope", "other", "--lens", "other-product", "--agent", "external")
@@ -733,14 +745,14 @@ func discoveryStateFingerprint(t *testing.T, client *localservice.Client) []byte
 	value := struct {
 		MemoryRevision    uint64                  `json:"memory_revision"`
 		MemoryFingerprint string                  `json:"memory_fingerprint"`
-		RetrievalRuns     int                     `json:"retrieval_runs"`
-		Judgments         int                     `json:"judgments"`
+		ScopedRuns        int                     `json:"scoped_runs"`
+		ScopedJudgments   int                     `json:"scoped_judgments"`
 		Scopes            []agentstate.Scope      `json:"scopes"`
 		Lenses            []agentstate.ScopedLens `json:"lenses"`
 		Actors            []agentstate.AgentActor `json:"actors"`
 	}{
 		MemoryRevision: status.Memory.Revision, MemoryFingerprint: status.Memory.Fingerprint,
-		RetrievalRuns: status.State.RetrievalRunCount, Judgments: status.State.JudgmentCount,
+		ScopedRuns: status.State.ScopedRetrievalRunCount, ScopedJudgments: status.State.ScopedJudgmentCount,
 		Scopes: scopes, Lenses: lenses, Actors: actors,
 	}
 	data, err := json.Marshal(value)

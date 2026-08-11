@@ -135,7 +135,7 @@ func (r Runner) runAgentDiscover(args []string, stdout, stderr io.Writer) int {
 		configMode = "explicit"
 		configPath = "<same-as-discovery>"
 	}
-	workflow := agentcontract.NewWorkflow(r.agentExecutable, configPath)
+	workflow := r.agentWorkflow(configPath)
 	contract := discoveryContract{
 		SchemaVersion: "mindline-agent-discovery/v0.1", DiscoveryState: "ready",
 		ApprovedRoute: localservice.RecommendedAgentRoute,
@@ -259,7 +259,7 @@ func (r Runner) runAgentRegister(args []string, stdout, stderr io.Writer) int {
 	if strings.TrimSpace(options.configPath) != "" {
 		configPath = "<same-as-registration>"
 	}
-	next := agentcontract.NewWorkflow(r.agentExecutable, configPath).Discover
+	next := r.agentWorkflow(configPath).Discover
 	next = strings.Replace(next, "<actor>", agentcontract.ShellQuote(actor.ID), 1)
 	return encodePersonalMemoryJSON(stdout, stderr, agentRegistrationReceipt{
 		SchemaVersion: "mindline-agent-registration/v0.1", RegistrationState: "ready",
@@ -282,6 +282,10 @@ func registeredAgentID(token string) (string, error) {
 }
 
 func (r Runner) writeAgentHelp(stdout io.Writer) int {
-	_, _ = io.WriteString(stdout, agentcontract.HelpText(r.agentExecutable))
+	_, _ = io.WriteString(stdout, agentcontract.NamespacedHelpText(r.agentExecutable, r.agentNamespace))
 	return ExitOK
+}
+
+func (r Runner) agentWorkflow(configPath string) agentcontract.Workflow {
+	return agentcontract.NewNamespacedWorkflow(r.agentExecutable, r.agentNamespace, configPath)
 }
