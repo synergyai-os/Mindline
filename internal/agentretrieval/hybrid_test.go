@@ -388,7 +388,7 @@ func TestScopedContextRankCapCannotDropAuthorizedSemanticOnlyItem(t *testing.T) 
 			RawText:   "contextual noise", ContentHash: strings.Repeat("b", 64),
 		})
 	}
-	request.Query = "semantic-only-query"
+	request.Query = "semantic only query"
 	request.LexicalQuery = request.Query
 	request.Limit = 1
 	request.QueryAuthorizedLimit = 1
@@ -638,7 +638,7 @@ func TestHybridBackendUsesAsymmetricChunkEmbeddingsForLateEvidence(t *testing.T)
 		t.Fatalf("asymmetric inputs not used: docs=%d queries=%v",
 			len(embedder.documentInputs), embedder.queryInputs)
 	}
-	if backend.MethodID() != "mindline_hybrid_local/v0.18" {
+	if backend.MethodID() != "mindline_hybrid_local/v0.19" {
 		t.Fatalf("semantic authorization policy change kept stale method identity: %s",
 			backend.MethodID())
 	}
@@ -847,7 +847,7 @@ func TestHybridCompactSearchWiresCorroboratedResourceRecoveryEndToEnd(t *testing
 		components["semantic_distinct_evidence_margin"] < personalmemory.DefaultCompactMinimumSemanticMargin ||
 		components["lexical_idf_coverage"] < personalmemory.DefaultCompactMinimumSemanticLexicalCover ||
 		components["semantic_distinct_evidence_valid"] != 1 ||
-		backend.MethodID() != "mindline_hybrid_local/v0.18" {
+		backend.MethodID() != "mindline_hybrid_local/v0.19" {
 		t.Fatalf("hybrid recovery evidence was not wired conservatively: %+v method=%s",
 			components, backend.MethodID())
 	}

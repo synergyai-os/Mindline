@@ -40,8 +40,11 @@ func (backend compactHitsBackend) MethodID() string {
 	return "compact-hits-fixture/v0.1"
 }
 
-func (backend compactHitsBackend) Rank(SearchRequest, []IndexDocument) ([]RankedHit, error) {
-	return append([]RankedHit(nil), backend.hits...), nil
+func (backend compactHitsBackend) Rank(
+	request SearchRequest,
+	documents []IndexDocument,
+) ([]RankedHit, error) {
+	return sealIdentifierEvidence(request, documents, backend.hits), nil
 }
 
 func (backend compactHitsBackend) CompactSemanticCalibrationID() string {
@@ -54,10 +57,28 @@ func (backend *compactQueryCaptureBackend) MethodID() string {
 
 func (backend *compactQueryCaptureBackend) Rank(
 	request SearchRequest,
-	_ []IndexDocument,
+	documents []IndexDocument,
 ) ([]RankedHit, error) {
 	backend.request = request
-	return append([]RankedHit(nil), backend.hits...), nil
+	return sealIdentifierEvidence(request, documents, backend.hits), nil
+}
+
+func sealIdentifierEvidence(
+	request SearchRequest,
+	documents []IndexDocument,
+	hits []RankedHit,
+) []RankedHit {
+	textByID := make(map[string]string, len(documents))
+	for _, document := range documents {
+		textByID[document.DocumentID] = document.Text
+	}
+	sealed := append([]RankedHit(nil), hits...)
+	for index := range sealed {
+		sealed[index].IdentifierEvidence = QueryIdentifierEvidenceForDocument(
+			request.QueryIdentifierAuthority, textByID[sealed[index].DocumentID],
+		)
+	}
+	return sealed
 }
 
 func (repository *compactRepository) Load() (Library, error) {
@@ -516,7 +537,7 @@ func TestCompactSemanticAbstentionThresholdIsFrozenAndBoundToPacket(t *testing.T
 		policy.MinimumScopedCandidateCosine != DefaultCompactMinimumScopedCandidate ||
 		policy.MinimumScopedSemanticMargin != DefaultCompactMinimumScopedSemanticMargin ||
 		policy.MaximumScopedSemanticRank != DefaultCompactMaximumScopedSemanticRank ||
-		policy.Fingerprint != "d20161300920426b249bb9147664e9f06b5e94b94a38694a2f31c1ef21e0ef3e" {
+		policy.Fingerprint != "dd39d23ad0cc6af21ec6991907413c0090a2b0c40dfc249b4fc961738d64697e" {
 		t.Fatalf("compact abstention policy is not deterministic: %+v", policy)
 	}
 	repository := &compactRepository{library: Library{
@@ -741,7 +762,7 @@ func TestCompactSemanticV07ExpandsCalibratedAuthorizationWithoutWeakeningAbsentG
 		t.Run(test.name, func(t *testing.T) {
 			packet, err := NewRetriever(repository, compactHitsBackend{
 				calibrationID: test.calibrationID, hits: test.hits,
-			}).SearchCompact(SearchRequest{Query: "v07 calibration boundary", Limit: 3})
+			}).SearchCompact(SearchRequest{Query: "calibration boundary", Limit: 3})
 			if err != nil {
 				t.Fatal(err)
 			}

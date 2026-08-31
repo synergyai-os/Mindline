@@ -18,11 +18,11 @@ func (*compactProjectionBackend) MethodID() string {
 }
 
 func (backend *compactProjectionBackend) Rank(
-	_ SearchRequest,
+	request SearchRequest,
 	documents []IndexDocument,
 ) ([]RankedHit, error) {
 	backend.documents = append([]IndexDocument(nil), documents...)
-	return append([]RankedHit(nil), backend.hits...), nil
+	return sealIdentifierEvidence(request, documents, backend.hits), nil
 }
 
 func (backend *compactProjectionBackend) CompactSemanticCalibrationID() string {

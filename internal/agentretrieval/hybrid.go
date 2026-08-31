@@ -61,7 +61,7 @@ func NewHybridBackend(ctx context.Context, state *agentstate.Store, embedder emb
 	}
 	return &HybridBackend{
 		context: ctx, state: state, embedder: embedder,
-		method: "mindline_hybrid_local/v0.18", retrievalState: "hybrid",
+		method: "mindline_hybrid_local/v0.19", retrievalState: "hybrid",
 	}
 }
 
@@ -185,16 +185,12 @@ func (backend *HybridBackend) Rank(request personalmemory.SearchRequest, documen
 	lexicalComponents := make(map[string]map[string]float64, len(lexicalHits))
 	matchedTerms := make(map[string][]string, len(lexicalHits))
 	lexicalQueryTerms := 0.0
-	lexicalRequiredAnchors := 0.0
 	for index, hit := range lexicalHits {
 		lexicalRanks[hit.DocumentID] = index + 1
 		lexicalComponents[hit.DocumentID] = hit.Components
 		matchedTerms[hit.DocumentID] = hit.MatchedTerms
 		if hit.Components["lexical_query_terms"] > lexicalQueryTerms {
 			lexicalQueryTerms = hit.Components["lexical_query_terms"]
-		}
-		if hit.Components["lexical_required_query_anchors"] > lexicalRequiredAnchors {
-			lexicalRequiredAnchors = hit.Components["lexical_required_query_anchors"]
 		}
 	}
 	semanticRanks := rankScores(rankingSemanticScores, maximumSemanticRanks)
@@ -208,14 +204,18 @@ func (backend *HybridBackend) Rank(request personalmemory.SearchRequest, documen
 		authorizationSemanticScores, documents,
 	)
 	type scored struct {
-		id         string
-		score      float64
-		components map[string]float64
+		id                 string
+		score              float64
+		components         map[string]float64
+		identifierEvidence personalmemory.QueryIdentifierEvidence
 	}
 	candidates := []scored{}
 	maximumBase := 0.0
 	maximumAuthorizationBase := 0.0
 	for _, document := range documents {
+		identifierEvidence := personalmemory.QueryIdentifierEvidenceForDocument(
+			request.QueryIdentifierAuthority, document.Text,
+		)
 		lexicalRRF := reciprocalRank(lexicalRanks[document.DocumentID])
 		semanticRRF := reciprocalRank(semanticRanks[document.DocumentID])
 		authorizationSemanticRRF := reciprocalRank(
@@ -249,8 +249,6 @@ func (backend *HybridBackend) Rank(request personalmemory.SearchRequest, documen
 			"lexical_rarest_document_ratio":  lexicalComponents[document.DocumentID]["lexical_rarest_document_ratio"],
 			"lexical_exact_ordered_phrase":   lexicalComponents[document.DocumentID]["lexical_exact_ordered_phrase"],
 			"lexical_winner_relative_margin": lexicalComponents[document.DocumentID]["lexical_winner_relative_margin"],
-			"lexical_required_query_anchors": lexicalRequiredAnchors,
-			"lexical_matched_query_anchors":  lexicalComponents[document.DocumentID]["lexical_matched_query_anchors"],
 			"semantic_cosine":                authorizationSemanticScores[document.DocumentID],
 			"semantic_rank":                  float64(authorizationSemanticRanks[document.DocumentID]),
 			"semantic_top1":                  semanticTop1,
@@ -271,6 +269,7 @@ func (backend *HybridBackend) Rank(request personalmemory.SearchRequest, documen
 		}
 		candidates = append(candidates, scored{
 			id: document.DocumentID, components: components,
+			identifierEvidence: identifierEvidence,
 		})
 	}
 	if scoped {
@@ -316,6 +315,7 @@ func (backend *HybridBackend) Rank(request personalmemory.SearchRequest, documen
 		hits = append(hits, personalmemory.RankedHit{
 			DocumentID: candidate.id, Score: candidate.score,
 			MatchedTerms: matchedTerms[candidate.id], Components: candidate.components,
+			IdentifierEvidence: candidate.identifierEvidence,
 		})
 	}
 	sort.Slice(hits, func(i, j int) bool {
@@ -754,7 +754,7 @@ func (backend *HybridBackend) setMode(semanticErr error) {
 	backend.mu.Lock()
 	defer backend.mu.Unlock()
 	if semanticErr == nil {
-		backend.method = "mindline_hybrid_local/v0.18"
+		backend.method = "mindline_hybrid_local/v0.19"
 		backend.retrievalState = "hybrid"
 		backend.degradedReason = ""
 		return

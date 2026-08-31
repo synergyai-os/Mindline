@@ -206,6 +206,10 @@ type SearchRequest struct {
 	// QueryAuthorizedLimit preserves the caller-visible bound while compact
 	// retrieval asks the ranking backend for its larger internal candidate pool.
 	QueryAuthorizedLimit int `json:"-"`
+	// QueryIdentifierAuthority is derived once by compact retrieval from the raw
+	// user query. Ranking backends may attest matches, but core authorization
+	// independently recomputes them from the canonical evidence projection.
+	QueryIdentifierAuthority *QueryIdentifierAuthority `json:"-"`
 }
 
 type Citation struct {

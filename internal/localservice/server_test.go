@@ -109,7 +109,7 @@ func TestSearchStaysUsefulWhileSemanticIndexBuildsInBackground(t *testing.T) {
 		Query: "product brain citations", Limit: 3,
 	})
 	if err != nil || packet.RetrievalState != "hybrid" ||
-		packet.RetrievalMethod != "mindline_hybrid_local/v0.18" {
+		packet.RetrievalMethod != "mindline_hybrid_local/v0.19" {
 		t.Fatalf("hybrid packet=%+v err=%v", packet, err)
 	}
 

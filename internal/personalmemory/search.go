@@ -52,7 +52,7 @@ const (
 	CompactSemanticCalibrationIdentity         = "ollama/embeddinggemma:latest/retrieval-input-v0.2|query-prompt=search-result-v0.1|query-batch=original+context-only/v0.3|document-prompt=title-none-v0.1|document-projection=record-source+unique-current-resource+authorization-evidence-alias/v0.10|distinct-resource-evidence-margin=v0.1|chunk-runes=2000|chunk-overlap=200|max-chunks=8"
 	compactLexicalEvidenceRule                 = "rank1_full_coverage_or_ordered_phrase_or_rare_idf_coverage_or_broad_query_overlap"
 	compactStopwordPolicy                      = "mindline-english-stopwords/v0.2"
-	compactRankingIdentity                     = "bm25-original-query|authorization-meaningful-query+explicit-query-entity-anchor/v0.2|candidate-pool=100|query-batch=original+context-only/v0.3|documents=record-source+unique-current-resource+authorization-evidence-alias/v0.10|raw-hit-identity=fail-closed/v0.1|authorization=scoped-per-record-top5/v0.1+legacy-full-pool/v0.1+calibrated-broad-query-overlap-top5/v0.3+calibrated-corroborated-resource/v0.1+dominant-dual-signal-support/v0.1+explicit-multi-evidence-intent/v0.1|owner-expansion=individually-authorized-full-membership+context-ordered-caller-limit/v0.3|feedback-alias=observed-owner-mean/v0.1|relevance-lookup-chunk=100000|rrf-k=60|query-semantic-weight=1|context-semantic-weight=1|lens-rerank-only"
+	compactRankingIdentity                     = "bm25-original-query|authorization-meaningful-query+query-identifier-authority/v1|candidate-pool=100|query-batch=original+context-only/v0.3|documents=record-source+unique-current-resource+authorization-evidence-alias/v0.10|raw-hit-identity=fail-closed/v0.1|identifier-authority=per-citation-both-routes+packet-group-union/v1|authorization=scoped-per-record-top5/v0.1+legacy-full-pool/v0.1+calibrated-broad-query-overlap-top5/v0.3+calibrated-corroborated-resource/v0.1+dominant-dual-signal-support/v0.1+explicit-multi-evidence-intent/v0.1|owner-expansion=individually-authorized-full-membership+context-ordered-caller-limit/v0.3|feedback-alias=observed-owner-mean/v0.1|relevance-lookup-chunk=100000|rrf-k=60|query-semantic-weight=1|context-semantic-weight=1|lens-rerank-only"
 	compactChunkingIdentity                    = "document-projection=record-source+unique-current-resource+authorization-evidence-alias-v0.10|chunk-runes=2000|chunk-overlap=200|max-chunks=8"
 	compactResourceDocumentPrefix              = "compact-resource:"
 	maximumCompactDocumentIDRunes              = 128
@@ -99,10 +99,11 @@ type IndexDocument struct {
 }
 
 type RankedHit struct {
-	DocumentID   string
-	Score        float64
-	MatchedTerms []string
-	Components   map[string]float64
+	DocumentID         string
+	Score              float64
+	MatchedTerms       []string
+	Components         map[string]float64
+	IdentifierEvidence QueryIdentifierEvidence
 }
 
 type ContextRetriever struct {
@@ -213,6 +214,10 @@ func (retriever ContextRetriever) SearchCompact(request SearchRequest) (CompactC
 	if callerLimit > MaximumSearchLimit {
 		return CompactContextPacket{}, errors.New("search limit exceeds 100")
 	}
+	identifierAuthority, err := BuildQueryIdentifierAuthority(request.Query)
+	if err != nil {
+		return CompactContextPacket{}, err
+	}
 	queryTerms := meaningfulQueryTerms(request.Query)
 	if len(queryTerms) == 0 {
 		library, err := retriever.repository.Load()
@@ -235,6 +240,8 @@ func (retriever ContextRetriever) SearchCompact(request SearchRequest) (CompactC
 	rankingRequest.LexicalQuery = strings.Join(queryTerms, " ")
 	rankingRequest.QueryAuthorizedLimit = callerLimit
 	rankingRequest.Limit = MaximumSearchLimit
+	providerIdentifierAuthority := cloneQueryIdentifierAuthority(identifierAuthority)
+	rankingRequest.QueryIdentifierAuthority = &providerIdentifierAuthority
 	rawHits, err := retriever.backend.Rank(rankingRequest, projection.indexDocuments)
 	if err != nil {
 		return CompactContextPacket{}, err
@@ -257,6 +264,7 @@ func (retriever ContextRetriever) SearchCompact(request SearchRequest) (CompactC
 	var rankedCandidateCount int
 	rawHits, rankedCandidateCount = usableCompactHits(
 		rawHits, policy, calibrationID, projection, freezeScopedMembership,
+		identifierAuthority,
 	)
 	if freezeScopedMembership {
 		rawHits = compactQueryOnlySupportSet(request.Query, rawHits)
@@ -266,6 +274,10 @@ func (retriever ContextRetriever) SearchCompact(request SearchRequest) (CompactC
 	)
 	if err != nil {
 		return CompactContextPacket{}, err
+	}
+	if !queryIdentifierPacketComplete(identifierAuthority, hits) {
+		hits = nil
+		selectedResources = map[string]string{}
 	}
 	documents, err := retriever.hydrateCompactRecords(
 		hits, selectedResources, &projection,
@@ -834,7 +846,6 @@ func (LexicalBM25Backend) Rank(request SearchRequest, documents []IndexDocument)
 		authorizationTerms = uniqueSorted(tokenize(request.LexicalQuery))
 	}
 	orderedAuthorizationTerms := uniqueInOrder(meaningfulQueryTermsInOrder(request.Query))
-	requiredQueryAnchors := explicitQueryEntityAnchors(request.Query)
 	if len(rankingTerms) == 0 {
 		return nil, errors.New("search query is empty")
 	}
@@ -875,7 +886,6 @@ func (LexicalBM25Backend) Rank(request SearchRequest, documents []IndexDocument)
 	for _, document := range preparedDocuments {
 		score := 0.0
 		matchedAuthorizationTerms := []string{}
-		matchedQueryAnchors := 0
 		rarestDocumentRatio := 1.0
 		for _, term := range rankingTerms {
 			tf := document.counts[term]
@@ -886,11 +896,6 @@ func (LexicalBM25Backend) Rank(request SearchRequest, documents []IndexDocument)
 			numerator := float64(tf) * 2.2
 			denominator := float64(tf) + 1.2*(0.25+0.75*float64(len(document.terms))/averageLength)
 			score += idf * numerator / denominator
-		}
-		for _, anchor := range requiredQueryAnchors {
-			if document.counts[anchor] > 0 {
-				matchedQueryAnchors++
-			}
 		}
 		if score == 0 {
 			continue
@@ -917,9 +922,13 @@ func (LexicalBM25Backend) Rank(request SearchRequest, documents []IndexDocument)
 		}
 		exactPhrase := len(orderedAuthorizationTerms) >= 2 &&
 			containsTermSequence(document.terms, orderedAuthorizationTerms)
+		identifierEvidence := QueryIdentifierEvidenceForDocument(
+			request.QueryIdentifierAuthority, document.document.Text,
+		)
 		hits = append(hits, RankedHit{
 			DocumentID: document.document.DocumentID, Score: score,
-			MatchedTerms: uniqueSorted(matchedAuthorizationTerms),
+			MatchedTerms:       uniqueSorted(matchedAuthorizationTerms),
+			IdentifierEvidence: identifierEvidence,
 			Components: map[string]float64{
 				"lexical_raw":                    score,
 				"lexical_query_terms":            float64(len(authorizationTerms)),
@@ -928,8 +937,6 @@ func (LexicalBM25Backend) Rank(request SearchRequest, documents []IndexDocument)
 				"lexical_rarest_document_ratio":  rarestDocumentRatio,
 				"lexical_exact_ordered_phrase":   boolScore(exactPhrase),
 				"lexical_winner_relative_margin": 0,
-				"lexical_required_query_anchors": float64(len(requiredQueryAnchors)),
-				"lexical_matched_query_anchors":  float64(matchedQueryAnchors),
 			},
 		})
 	}
@@ -954,100 +961,6 @@ func (LexicalBM25Backend) Rank(request SearchRequest, documents []IndexDocument)
 		hits = hits[:limit]
 	}
 	return hits, nil
-}
-
-// explicitQueryEntityAnchors keeps clearly named entities from being replaced
-// by merely similar evidence. It uses only the user's query, never context or
-// feedback, so it cannot widen authorized membership.
-func explicitQueryEntityAnchors(query string) []string {
-	ignored := map[string]bool{
-		"a": true, "ai": true, "an": true, "are": true, "can": true, "did": true,
-		"do": true, "does": true, "how": true, "if": true, "in": true,
-		"is": true, "should": true, "the": true, "these": true, "this": true,
-		"what": true, "when": true, "where": true, "which": true, "who": true,
-		"why": true,
-	}
-	queryLead := map[string]bool{
-		"answer": true, "check": true, "compare": true, "describe": true,
-		"explain": true, "find": true, "give": true, "help": true,
-		"highlight": true, "identify": true, "list": true, "name": true,
-		"outline": true, "please": true, "provide": true, "recall": true,
-		"report": true, "retrieve": true, "review": true, "search": true,
-		"share": true, "show": true, "state": true, "summarize": true,
-		"surface": true, "tell": true,
-	}
-	type token struct {
-		value             string
-		strong, titleCase bool
-	}
-	tokens := []token{}
-	flush := func(runes []rune) {
-		if len(runes) < 2 {
-			tokens = append(tokens, token{})
-			return
-		}
-		value := strings.ToLower(string(runes))
-		if ignored[value] {
-			tokens = append(tokens, token{})
-			return
-		}
-		upper, lower := 0, 0
-		for _, character := range runes {
-			if unicode.IsUpper(character) {
-				upper++
-			} else if unicode.IsLower(character) {
-				lower++
-			}
-		}
-		tokens = append(tokens, token{
-			value: value, strong: upper >= 2,
-			titleCase: unicode.IsUpper(runes[0]) && upper == 1 && lower > 0,
-		})
-	}
-	current := []rune{}
-	for _, character := range query {
-		if unicode.IsLetter(character) || unicode.IsNumber(character) {
-			current = append(current, character)
-			continue
-		}
-		if len(current) > 0 {
-			flush(current)
-			current = nil
-		}
-	}
-	if len(current) > 0 {
-		flush(current)
-	}
-	seen := map[string]bool{}
-	anchors := []string{}
-	add := func(value string) {
-		if value != "" && !seen[value] {
-			seen[value] = true
-			anchors = append(anchors, value)
-		}
-	}
-	for _, candidate := range tokens {
-		if candidate.strong {
-			add(candidate.value)
-		}
-	}
-	for index := 0; index < len(tokens); {
-		if !tokens[index].titleCase || queryLead[tokens[index].value] {
-			index++
-			continue
-		}
-		end := index
-		for end < len(tokens) && tokens[end].titleCase && !queryLead[tokens[end].value] {
-			end++
-		}
-		if end-index >= 2 {
-			for _, candidate := range tokens[index:end] {
-				add(candidate.value)
-			}
-		}
-		index = end
-	}
-	return anchors
 }
 
 func assembleContextPacket(request SearchRequest, library Library, hits []RankedHit, documents map[string]evidenceDocument, retrievalMethod string) ContextPacket {
@@ -1366,8 +1279,9 @@ func usableCompactHits(
 	calibrationID string,
 	projection compactRetrievalProjection,
 	preserveScopedMembership bool,
+	identifierAuthority QueryIdentifierAuthority,
 ) ([]RankedHit, int) {
-	valid := make([]RankedHit, 0, len(hits))
+	basicValid := make([]RankedHit, 0, len(hits))
 	seen := map[string]bool{}
 	for _, hit := range hits {
 		if strings.TrimSpace(hit.DocumentID) == "" || seen[hit.DocumentID] ||
@@ -1376,6 +1290,18 @@ func usableCompactHits(
 			continue
 		}
 		seen[hit.DocumentID] = true
+		basicValid = append(basicValid, hit)
+	}
+	valid := make([]RankedHit, 0, len(basicValid))
+	for _, hit := range basicValid {
+		document, exists := compactIndexDocumentByID(
+			projection.indexDocuments, hit.DocumentID,
+		)
+		if !exists || !validQueryIdentifierEvidence(
+			identifierAuthority, document.Text, hit.IdentifierEvidence,
+		) {
+			continue
+		}
 		valid = append(valid, hit)
 	}
 	lexicalRanks := compactRankCounts(valid, "lexical_rank")
@@ -1383,9 +1309,12 @@ func usableCompactHits(
 	if !preserveScopedMembership {
 		if compactQueryAuthorized(valid, policy, calibrationID) ||
 			compactCorroboratedResourceAuthorized(valid, policy, calibrationID, projection) {
-			return valid, len(valid)
+			// The pre-existing packet threshold admits the query-only pool. The
+			// identifier validator above has independently required every citation
+			// in that pool to match at least one query identifier group.
+			return valid, len(basicValid)
 		}
-		return nil, len(valid)
+		return nil, len(basicValid)
 	}
 	authorized := make([]RankedHit, 0, len(valid))
 	for _, hit := range valid {
@@ -1396,7 +1325,7 @@ func usableCompactHits(
 			authorized = append(authorized, hit)
 		}
 	}
-	return authorized, len(valid)
+	return authorized, len(basicValid)
 }
 
 func compactHitCorroboratedResourceAuthorized(
@@ -1406,7 +1335,10 @@ func compactHitCorroboratedResourceAuthorized(
 	projection compactRetrievalProjection,
 	semanticRanks map[int]int,
 ) bool {
-	if !compactHitQueryAnchorsAuthorized(hit) || calibrationID != policy.SemanticCalibrationIdentity {
+	// The caller has already recomputed and validated the typed identifier
+	// evidence for this exact citation. This gate only evaluates the existing
+	// calibrated corroboration signals.
+	if calibrationID != policy.SemanticCalibrationIdentity {
 		return false
 	}
 	rank, ok := finiteComponent(hit, "semantic_rank")
@@ -1437,9 +1369,8 @@ func compactHitQueryAuthorized(
 	lexicalRanks, semanticRanks map[int]int,
 	scoped bool,
 ) bool {
-	if !compactHitQueryAnchorsAuthorized(hit) {
-		return false
-	}
+	// Identifier authority is enforced centrally for this exact citation before
+	// any lexical or semantic authorization rule is evaluated here.
 	if calibrationID == policy.SemanticCalibrationIdentity {
 		semanticRank, rankOK := finiteComponent(hit, "semantic_rank")
 		cosine, cosineOK := finiteComponent(hit, "semantic_cosine")
@@ -1508,17 +1439,6 @@ func compactHitQueryAuthorized(
 	return lexicalOK && cosine >= policy.MinimumSemanticCosine &&
 		margin >= policy.MinimumSemanticMargin &&
 		lexicalCoverage >= policy.MinimumSemanticLexicalCoverage
-}
-
-func compactHitQueryAnchorsAuthorized(hit RankedHit) bool {
-	required, requiredOK := finiteComponent(hit, "lexical_required_query_anchors")
-	matched, matchedOK := finiteComponent(hit, "lexical_matched_query_anchors")
-	_, requiredPresent := hit.Components["lexical_required_query_anchors"]
-	_, matchedPresent := hit.Components["lexical_matched_query_anchors"]
-	if !requiredPresent && !matchedPresent {
-		return true
-	}
-	return requiredOK && matchedOK && required >= 0 && matched >= required
 }
 
 // compactQueryOnlySupportSet removes supplementary candidates when the exact
