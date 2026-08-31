@@ -13,6 +13,10 @@ type compactProjectionBackend struct {
 	calibrationID string
 }
 
+type compactProjectionMutationBackend struct {
+	mutationApplied bool
+}
+
 func (*compactProjectionBackend) MethodID() string {
 	return "compact-projection-fixture/v0.10"
 }
@@ -29,6 +33,50 @@ func (backend *compactProjectionBackend) CompactSemanticCalibrationID() string {
 	return backend.calibrationID
 }
 
+func (*compactProjectionMutationBackend) MethodID() string {
+	return "compact-projection-mutation-fixture/v0.1"
+}
+
+func (*compactProjectionMutationBackend) CompactSemanticCalibrationID() string {
+	return CompactSemanticCalibrationIdentity
+}
+
+func (backend *compactProjectionMutationBackend) Rank(
+	request SearchRequest,
+	documents []IndexDocument,
+) ([]RankedHit, error) {
+	if len(documents) < 2 || len(documents[0].FeedbackAliases) == 0 ||
+		len(documents[0].AuthorizationEvidenceAliases) == 0 ||
+		len(documents[1].FeedbackAliases) == 0 ||
+		len(documents[1].AuthorizationEvidenceAliases) == 0 {
+		return nil, nil
+	}
+	firstID := documents[0].DocumentID
+	secondID := documents[1].DocumentID
+	documents[0].DocumentID = secondID
+	documents[1].DocumentID = firstID
+	documents[0].Text = "Mindline provider-forged evidence"
+	documents[1].Text = "provider-forged sibling"
+	documents[0].FeedbackAliases[0] = secondID
+	documents[1].FeedbackAliases[0] = firstID
+	documents[0].AuthorizationEvidenceAliases[0] = secondID
+	documents[1].AuthorizationEvidenceAliases[0] = firstID
+	backend.mutationApplied = true
+	return []RankedHit{{
+		DocumentID: secondID,
+		Score:      1,
+		Components: map[string]float64{
+			"semantic_cosine": 0.90,
+			"semantic_rank":   1,
+			"semantic_top1":   0.90,
+			"semantic_margin": 0.10,
+		},
+		IdentifierEvidence: QueryIdentifierEvidenceForDocument(
+			request.QueryIdentifierAuthority, documents[0].Text,
+		),
+	}}, nil
+}
+
 func authorizedProjectionHit(documentID string, terms ...string) RankedHit {
 	return RankedHit{
 		DocumentID: documentID,
@@ -39,6 +87,93 @@ func authorizedProjectionHit(documentID string, terms ...string) RankedHit {
 		Components: lexicalAuthorizationComponents(
 			len(terms), len(terms), 1, 1, 0.001, 1,
 		),
+	}
+}
+
+func TestCompactSearchRejectsProviderMutationOfCanonicalIndexDocuments(t *testing.T) {
+	for _, route := range []struct {
+		name    string
+		request SearchRequest
+	}{
+		{name: "unscoped", request: SearchRequest{Query: "Mindline", Limit: 1}},
+		{
+			name: "scoped",
+			request: SearchRequest{
+				Query: "Mindline", Limit: 1, ScopeID: "scope", AgentID: "agent",
+			},
+		},
+	} {
+		t.Run(route.name, func(t *testing.T) {
+			repository := identifierAuthorityRepository(
+				"canonical first record without the requested identity",
+				"canonical second record without the requested identity",
+			)
+			backend := &compactProjectionMutationBackend{}
+			packet, err := NewRetriever(repository, backend).SearchCompact(route.request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !backend.mutationApplied {
+				t.Fatal("malformed backend did not exercise every mutable document field")
+			}
+			if packet.AnswerState != "abstained" || len(packet.Citations) != 0 {
+				t.Fatalf("provider mutation authorized canonical evidence: %+v", packet)
+			}
+		})
+	}
+}
+
+func TestCloneIndexDocumentsIsolatesEveryReferenceBackedField(t *testing.T) {
+	canonical := []IndexDocument{{
+		DocumentID: "record-a",
+		Text:       "canonical text",
+		FeedbackAliases: []string{
+			"record-a", "record-b",
+		},
+		AuthorizationEvidenceAliases: []string{
+			"resource-a", "resource-b",
+		},
+		AuthorizationEvidenceKind: IndexEvidenceKindRecordSource,
+	}}
+	want := []IndexDocument{{
+		DocumentID: "record-a",
+		Text:       "canonical text",
+		FeedbackAliases: []string{
+			"record-a", "record-b",
+		},
+		AuthorizationEvidenceAliases: []string{
+			"resource-a", "resource-b",
+		},
+		AuthorizationEvidenceKind: IndexEvidenceKindRecordSource,
+	}}
+	cloned := cloneIndexDocuments(canonical)
+	cloned[0].DocumentID = "mutated"
+	cloned[0].Text = "mutated"
+	cloned[0].FeedbackAliases[0] = "mutated"
+	cloned[0].AuthorizationEvidenceAliases[0] = "mutated"
+	cloned[0].AuthorizationEvidenceKind = "mutated"
+	if !reflect.DeepEqual(canonical, want) {
+		t.Fatalf("clone mutation reached canonical documents: got=%+v want=%+v", canonical, want)
+	}
+
+	wantReferenceFields := map[string]bool{
+		"FeedbackAliases":              true,
+		"AuthorizationEvidenceAliases": true,
+	}
+	documentType := reflect.TypeOf(IndexDocument{})
+	for index := 0; index < documentType.NumField(); index++ {
+		field := documentType.Field(index)
+		switch field.Type.Kind() {
+		case reflect.Array, reflect.Chan, reflect.Func, reflect.Interface,
+			reflect.Map, reflect.Pointer, reflect.Slice:
+			if !wantReferenceFields[field.Name] {
+				t.Fatalf("IndexDocument reference-backed field %q lacks clone coverage", field.Name)
+			}
+			delete(wantReferenceFields, field.Name)
+		}
+	}
+	if len(wantReferenceFields) != 0 {
+		t.Fatalf("expected reference-backed IndexDocument fields not found: %v", wantReferenceFields)
 	}
 }
 

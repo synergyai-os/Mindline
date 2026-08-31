@@ -98,6 +98,30 @@ type IndexDocument struct {
 	AuthorizationEvidenceKind    string
 }
 
+func cloneIndexDocuments(documents []IndexDocument) []IndexDocument {
+	if documents == nil {
+		return nil
+	}
+	clones := make([]IndexDocument, len(documents))
+	for index := range documents {
+		clones[index] = documents[index]
+		if documents[index].FeedbackAliases != nil {
+			clones[index].FeedbackAliases = make([]string, len(documents[index].FeedbackAliases))
+			copy(clones[index].FeedbackAliases, documents[index].FeedbackAliases)
+		}
+		if documents[index].AuthorizationEvidenceAliases != nil {
+			clones[index].AuthorizationEvidenceAliases = make(
+				[]string, len(documents[index].AuthorizationEvidenceAliases),
+			)
+			copy(
+				clones[index].AuthorizationEvidenceAliases,
+				documents[index].AuthorizationEvidenceAliases,
+			)
+		}
+	}
+	return clones
+}
+
 type RankedHit struct {
 	DocumentID         string
 	Score              float64
@@ -138,11 +162,9 @@ func (retriever ContextRetriever) PrepareCompactIndex() (CompactIndexSnapshot, e
 	if err != nil {
 		return CompactIndexSnapshot{}, err
 	}
-	documents := make([]IndexDocument, len(projection.indexDocuments))
-	copy(documents, projection.indexDocuments)
 	return CompactIndexSnapshot{
 		LibraryFingerprint: projection.library.Fingerprint,
-		Documents:          documents,
+		Documents:          cloneIndexDocuments(projection.indexDocuments),
 	}, nil
 }
 
@@ -242,7 +264,9 @@ func (retriever ContextRetriever) SearchCompact(request SearchRequest) (CompactC
 	rankingRequest.Limit = MaximumSearchLimit
 	providerIdentifierAuthority := cloneQueryIdentifierAuthority(identifierAuthority)
 	rankingRequest.QueryIdentifierAuthority = &providerIdentifierAuthority
-	rawHits, err := retriever.backend.Rank(rankingRequest, projection.indexDocuments)
+	rawHits, err := retriever.backend.Rank(
+		rankingRequest, cloneIndexDocuments(projection.indexDocuments),
+	)
 	if err != nil {
 		return CompactContextPacket{}, err
 	}
