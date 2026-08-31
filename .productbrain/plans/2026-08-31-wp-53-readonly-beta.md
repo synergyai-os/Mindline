@@ -5,8 +5,8 @@ Status: proposed
 Authority:
 
 - DEC-468
-- Spec SHA-256 `e1b836f0054da142d0965d0707e27823fd62d6ace9cec02daeb9b3461aaedc88`
-- Scorecard SHA-256 `8bea01faad9b94d66eeec9327dba401db20dcbc5b31f28990759e98684247ac5`
+- Spec SHA-256 `d111240d62d43314df221f87b1878c7baa4b9153c31cfb50b17cfd51e0f9185f`
+- Scorecard SHA-256 `3694ecc6e7006a141b459ea2e76cc787b1ea6c81a0064eb95d0cda2c1475a7df`
 - Base `origin/main` commit `bf49078a6c1317b6d383285f52ab6e2a51ee2738`
 
 ## Delivery sequence
@@ -20,8 +20,8 @@ Authority:
    - hydrate only that current record source or current resource;
    - let scope, lens, and agent feedback reorder only the unchanged eligible set;
    - improve paraphrased recall through the existing exact-word and local-meaning ports, with no new provider, database, evaluator, or audit route.
-4. Add focused tests for qualifying-resource hydration, hidden sibling/history, absent queries, fixed eligible membership, lens-specific ordering, context-isolated feedback, downgrade-safe old receipts, privacy sentinel, and the exact main→candidate→main→candidate upgrade lifecycle.
-5. Run the candidate scorecard. It must meet every signed accuracy, abstention, source, isolation, digest, and latency gate before broader validation.
+4. Add focused tests for qualifying-resource search and hydration projection, hidden sibling/history IDs/URLs/hashes/content, follow-up-resource search→get parity, absent queries, fixed eligible membership, lens-specific ordering, context-isolated feedback, downgrade-safe old receipts, privacy sentinel, and the exact main→candidate→main→candidate upgrade lifecycle. The test-only answer keys may never enter production ranking or authorization.
+5. Regenerate the retrieval-neutral exact-main report under the corrected scorecard hash, then run the candidate scorecard. Every returned citation must be independently query-authorized, frozen as supporting evidence, and exactly hydratable; every other signed accuracy, abstention, source, isolation, digest, and latency gate must pass before broader validation.
 6. Freeze one candidate commit and run: full tests, vet, bounded race, branch-wide diff check, exact scanner, upgrade/rollback/roll-forward proof, audit-import/diff guard, and installed binary/source identity checks. No private proof or destination write is permitted.
 7. Run the independent five-role review on that exact commit. One in-scope correction attempt is allowed. Every changed commit gets the same clean rereview; any remaining material blocker stops merge.
 8. Push the exact reviewed commit, open a bounded PR, resolve only current-head material findings through the repository PR-review process, and merge only if the PR head tree equals the reviewed tree.
