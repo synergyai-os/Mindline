@@ -307,9 +307,11 @@ func TestScopedRankFreezesCallerBoundBeforeContextRerank(t *testing.T) {
 	}
 	alpha := rank("alpha", "prefer-alpha")
 	beta := rank("beta", "prefer-beta")
-	if len(alpha) != 2 || len(beta) != 2 ||
+	if len(alpha) != 4 || len(beta) != 4 ||
 		alpha[0].DocumentID != "a" || alpha[1].DocumentID != "b" ||
-		beta[0].DocumentID != "b" || beta[1].DocumentID != "a" {
+		beta[0].DocumentID != "b" || beta[1].DocumentID != "a" ||
+		alpha[2].DocumentID != "c" || alpha[3].DocumentID != "d" ||
+		beta[2].DocumentID != "c" || beta[3].DocumentID != "d" {
 		t.Fatalf("context changed authorized membership or did not rerank: alpha=%+v beta=%+v", alpha, beta)
 	}
 
@@ -340,9 +342,11 @@ func TestScopedRankFreezesCallerBoundBeforeContextRerank(t *testing.T) {
 	}
 	scopeAlpha := rankScope("scope-alpha", "prefer-alpha")
 	scopeBeta := rankScope("scope-beta", "prefer-beta")
-	if len(scopeAlpha) != 2 || len(scopeBeta) != 2 ||
+	if len(scopeAlpha) != 4 || len(scopeBeta) != 4 ||
 		scopeAlpha[0].DocumentID != "a" || scopeAlpha[1].DocumentID != "b" ||
-		scopeBeta[0].DocumentID != "b" || scopeBeta[1].DocumentID != "a" {
+		scopeBeta[0].DocumentID != "b" || scopeBeta[1].DocumentID != "a" ||
+		scopeAlpha[2].DocumentID != "c" || scopeAlpha[3].DocumentID != "d" ||
+		scopeBeta[2].DocumentID != "c" || scopeBeta[3].DocumentID != "d" {
 		t.Fatalf("scope changed authorized membership or did not rerank: alpha=%+v beta=%+v", scopeAlpha, scopeBeta)
 	}
 }
@@ -364,7 +368,7 @@ func TestScopedCombinedEmbeddingFailureFallsBackToQueryLexicalMembership(t *test
 	request.QueryAuthorizedLimit = 1
 	backend := NewHybridBackend(context.Background(), state, contextFailureEmbedder{})
 	hits, err := backend.Rank(request, documents)
-	if err != nil || len(hits) != 1 || hits[0].DocumentID != "a" ||
+	if err != nil || len(hits) != 2 || hits[0].DocumentID != "a" || hits[1].DocumentID != "b" ||
 		backend.MethodID() != "mindline_lexical_degraded/v0.2" {
 		t.Fatalf("combined embedding failure did not fail closed to lexical membership: hits=%+v err=%v", hits, err)
 	}
@@ -384,7 +388,7 @@ func TestScopedContextRankCapCannotDropAuthorizedSemanticOnlyItem(t *testing.T) 
 			RawText:   "contextual noise", ContentHash: strings.Repeat("b", 64),
 		})
 	}
-	request.Query = "semantic-only-query"
+	request.Query = "semantic only query"
 	request.LexicalQuery = request.Query
 	request.Limit = 1
 	request.QueryAuthorizedLimit = 1
@@ -409,6 +413,12 @@ func TestScopedContextRankCapCannotDropAuthorizedSemanticOnlyItem(t *testing.T) 
 		CreatedAt: "2026-08-08T12:00:00Z", Candidates: []agentstate.ScopedCandidateTrace{{
 			RecordID: "target", Rank: 1, FinalScore: beforeScore,
 			ComponentScore: packet.Citations[0].ComponentScores,
+			SourceBinding: agentstate.ScopedSourceBinding{
+				SchemaVersion: packet.Citations[0].QualifyingSource.SchemaVersion,
+				SourceKind:    packet.Citations[0].QualifyingSource.SourceKind,
+				SourceID:      packet.Citations[0].QualifyingSource.SourceID,
+				ContentHash:   packet.Citations[0].QualifyingSource.ContentHash,
+			},
 		}},
 	}); err != nil {
 		t.Fatal(err)
@@ -628,7 +638,7 @@ func TestHybridBackendUsesAsymmetricChunkEmbeddingsForLateEvidence(t *testing.T)
 		t.Fatalf("asymmetric inputs not used: docs=%d queries=%v",
 			len(embedder.documentInputs), embedder.queryInputs)
 	}
-	if backend.MethodID() != "mindline_hybrid_local/v0.17" {
+	if backend.MethodID() != "mindline_hybrid_local/v0.19" {
 		t.Fatalf("semantic authorization policy change kept stale method identity: %s",
 			backend.MethodID())
 	}
@@ -837,7 +847,7 @@ func TestHybridCompactSearchWiresCorroboratedResourceRecoveryEndToEnd(t *testing
 		components["semantic_distinct_evidence_margin"] < personalmemory.DefaultCompactMinimumSemanticMargin ||
 		components["lexical_idf_coverage"] < personalmemory.DefaultCompactMinimumSemanticLexicalCover ||
 		components["semantic_distinct_evidence_valid"] != 1 ||
-		backend.MethodID() != "mindline_hybrid_local/v0.17" {
+		backend.MethodID() != "mindline_hybrid_local/v0.19" {
 		t.Fatalf("hybrid recovery evidence was not wired conservatively: %+v method=%s",
 			components, backend.MethodID())
 	}

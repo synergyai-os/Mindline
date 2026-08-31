@@ -13,20 +13,68 @@ type compactProjectionBackend struct {
 	calibrationID string
 }
 
+type compactProjectionMutationBackend struct {
+	mutationApplied bool
+}
+
 func (*compactProjectionBackend) MethodID() string {
 	return "compact-projection-fixture/v0.10"
 }
 
 func (backend *compactProjectionBackend) Rank(
-	_ SearchRequest,
+	request SearchRequest,
 	documents []IndexDocument,
 ) ([]RankedHit, error) {
 	backend.documents = append([]IndexDocument(nil), documents...)
-	return append([]RankedHit(nil), backend.hits...), nil
+	return sealIdentifierEvidence(request, documents, backend.hits), nil
 }
 
 func (backend *compactProjectionBackend) CompactSemanticCalibrationID() string {
 	return backend.calibrationID
+}
+
+func (*compactProjectionMutationBackend) MethodID() string {
+	return "compact-projection-mutation-fixture/v0.1"
+}
+
+func (*compactProjectionMutationBackend) CompactSemanticCalibrationID() string {
+	return CompactSemanticCalibrationIdentity
+}
+
+func (backend *compactProjectionMutationBackend) Rank(
+	request SearchRequest,
+	documents []IndexDocument,
+) ([]RankedHit, error) {
+	if len(documents) < 2 || len(documents[0].FeedbackAliases) == 0 ||
+		len(documents[0].AuthorizationEvidenceAliases) == 0 ||
+		len(documents[1].FeedbackAliases) == 0 ||
+		len(documents[1].AuthorizationEvidenceAliases) == 0 {
+		return nil, nil
+	}
+	firstID := documents[0].DocumentID
+	secondID := documents[1].DocumentID
+	documents[0].DocumentID = secondID
+	documents[1].DocumentID = firstID
+	documents[0].Text = "Mindline provider-forged evidence"
+	documents[1].Text = "provider-forged sibling"
+	documents[0].FeedbackAliases[0] = secondID
+	documents[1].FeedbackAliases[0] = firstID
+	documents[0].AuthorizationEvidenceAliases[0] = secondID
+	documents[1].AuthorizationEvidenceAliases[0] = firstID
+	backend.mutationApplied = true
+	return []RankedHit{{
+		DocumentID: secondID,
+		Score:      1,
+		Components: map[string]float64{
+			"semantic_cosine": 0.90,
+			"semantic_rank":   1,
+			"semantic_top1":   0.90,
+			"semantic_margin": 0.10,
+		},
+		IdentifierEvidence: QueryIdentifierEvidenceForDocument(
+			request.QueryIdentifierAuthority, documents[0].Text,
+		),
+	}}, nil
 }
 
 func authorizedProjectionHit(documentID string, terms ...string) RankedHit {
@@ -39,6 +87,93 @@ func authorizedProjectionHit(documentID string, terms ...string) RankedHit {
 		Components: lexicalAuthorizationComponents(
 			len(terms), len(terms), 1, 1, 0.001, 1,
 		),
+	}
+}
+
+func TestCompactSearchRejectsProviderMutationOfCanonicalIndexDocuments(t *testing.T) {
+	for _, route := range []struct {
+		name    string
+		request SearchRequest
+	}{
+		{name: "unscoped", request: SearchRequest{Query: "Mindline", Limit: 1}},
+		{
+			name: "scoped",
+			request: SearchRequest{
+				Query: "Mindline", Limit: 1, ScopeID: "scope", AgentID: "agent",
+			},
+		},
+	} {
+		t.Run(route.name, func(t *testing.T) {
+			repository := identifierAuthorityRepository(
+				"canonical first record without the requested identity",
+				"canonical second record without the requested identity",
+			)
+			backend := &compactProjectionMutationBackend{}
+			packet, err := NewRetriever(repository, backend).SearchCompact(route.request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !backend.mutationApplied {
+				t.Fatal("malformed backend did not exercise every mutable document field")
+			}
+			if packet.AnswerState != "abstained" || len(packet.Citations) != 0 {
+				t.Fatalf("provider mutation authorized canonical evidence: %+v", packet)
+			}
+		})
+	}
+}
+
+func TestCloneIndexDocumentsIsolatesEveryReferenceBackedField(t *testing.T) {
+	canonical := []IndexDocument{{
+		DocumentID: "record-a",
+		Text:       "canonical text",
+		FeedbackAliases: []string{
+			"record-a", "record-b",
+		},
+		AuthorizationEvidenceAliases: []string{
+			"resource-a", "resource-b",
+		},
+		AuthorizationEvidenceKind: IndexEvidenceKindRecordSource,
+	}}
+	want := []IndexDocument{{
+		DocumentID: "record-a",
+		Text:       "canonical text",
+		FeedbackAliases: []string{
+			"record-a", "record-b",
+		},
+		AuthorizationEvidenceAliases: []string{
+			"resource-a", "resource-b",
+		},
+		AuthorizationEvidenceKind: IndexEvidenceKindRecordSource,
+	}}
+	cloned := cloneIndexDocuments(canonical)
+	cloned[0].DocumentID = "mutated"
+	cloned[0].Text = "mutated"
+	cloned[0].FeedbackAliases[0] = "mutated"
+	cloned[0].AuthorizationEvidenceAliases[0] = "mutated"
+	cloned[0].AuthorizationEvidenceKind = "mutated"
+	if !reflect.DeepEqual(canonical, want) {
+		t.Fatalf("clone mutation reached canonical documents: got=%+v want=%+v", canonical, want)
+	}
+
+	wantReferenceFields := map[string]bool{
+		"FeedbackAliases":              true,
+		"AuthorizationEvidenceAliases": true,
+	}
+	documentType := reflect.TypeOf(IndexDocument{})
+	for index := 0; index < documentType.NumField(); index++ {
+		field := documentType.Field(index)
+		switch field.Type.Kind() {
+		case reflect.Array, reflect.Chan, reflect.Func, reflect.Interface,
+			reflect.Map, reflect.Pointer, reflect.Slice:
+			if !wantReferenceFields[field.Name] {
+				t.Fatalf("IndexDocument reference-backed field %q lacks clone coverage", field.Name)
+			}
+			delete(wantReferenceFields, field.Name)
+		}
+	}
+	if len(wantReferenceFields) != 0 {
+		t.Fatalf("expected reference-backed IndexDocument fields not found: %v", wantReferenceFields)
 	}
 }
 
@@ -319,6 +454,122 @@ func TestCompactResourceHitSupportsExactCanonicalGet(t *testing.T) {
 	if hydrated.RecordID != "record-exact-get" ||
 		hydrated.Record.RecordID != "record-exact-get" {
 		t.Fatalf("canonical get returned the wrong record: %+v", hydrated)
+	}
+}
+
+func TestScopedQualifyingProjectionUsesFollowUpReachabilityAndHidesEveryOtherSource(t *testing.T) {
+	parentURL := "https://example.invalid/parent-source"
+	followUpURL := "https://example.invalid/follow-up-source"
+	siblingURL := "https://example.invalid/hidden-sibling-source"
+	parentID := stableResourceID(parentURL)
+	followUpID := stableResourceID(followUpURL)
+	siblingID := stableResourceID(siblingURL)
+	followUpDocumentID, err := compactResourceDocumentID(followUpID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := CaptureRecord{
+		RecordID: "record-follow-up", SourceRef: "slack://fixture/PARENT-SOURCE-REF",
+		RawText: "PARENT-RAW-MARKER", URLs: []string{parentURL, siblingURL},
+		ResourceIDs: []string{parentID, siblingID}, ContentHash: strings.Repeat("a", 64),
+		Missingness: []string{"PARENT-MISSINGNESS"},
+	}
+	selectedHash := strings.Repeat("b", 64)
+	siblingHash := strings.Repeat("c", 64)
+	repository := &compactRepository{library: Library{
+		SchemaVersion: LibrarySchemaVersion,
+		Revision:      15,
+		Fingerprint:   strings.Repeat("d", 64),
+		Records:       []CaptureRecord{record},
+		Resources: []ResourceContext{
+			{
+				ResourceID: parentID, CanonicalURL: parentURL,
+				Metadata: ResourceMetadata{Title: "PARENT-TITLE-MARKER"},
+				Excerpts: []ResourceExcerpt{{
+					ExcerptID: "curated-follow-up", Text: followUpURL, Locator: "outbound",
+				}},
+				RelatedURLs: []RelatedResource{{
+					URL: followUpURL, Relation: "source_links_to",
+					DiscoveryEvidenceRef: "curated-follow-up", SemanticallyRelevant: true,
+				}},
+				ContentHash: strings.Repeat("e", 64),
+			},
+			{
+				ResourceID: followUpID, CanonicalURL: followUpURL,
+				Metadata: ResourceMetadata{Title: "SELECTED-FOLLOW-UP-TITLE"},
+				Excerpts: []ResourceExcerpt{
+					{ExcerptID: "selected", Text: "selected follow up evidence marker", Locator: "body"},
+					{ExcerptID: "curated-sibling", Text: siblingURL, Locator: "outbound"},
+				},
+				RelatedURLs: []RelatedResource{{
+					URL: siblingURL, Relation: "source_links_to",
+					DiscoveryEvidenceRef: "curated-sibling", SemanticallyRelevant: true,
+				}},
+				Missingness: []string{"SELECTED-MISSINGNESS"},
+				ContentHash: selectedHash, AuthorityClass: AuthorityClass,
+			},
+			{
+				ResourceID: siblingID, CanonicalURL: siblingURL,
+				Metadata:    ResourceMetadata{Title: "FORBIDDEN-SIBLING-TITLE"},
+				Excerpts:    []ResourceExcerpt{{ExcerptID: "sibling", Text: "FORBIDDEN-SIBLING-MARKER"}},
+				ContentHash: siblingHash,
+			},
+		},
+		ResourceRevisions: []ResourceRevision{{
+			RevisionID: "FORBIDDEN-HISTORY-ID",
+			Resource: ResourceContext{
+				ResourceID: followUpID, CanonicalURL: followUpURL,
+				Metadata:    ResourceMetadata{Title: "FORBIDDEN-HISTORY-MARKER"},
+				ContentHash: strings.Repeat("f", 64),
+			},
+		}},
+	}}
+	backend := &compactProjectionBackend{hits: []RankedHit{
+		authorizedProjectionHit(followUpDocumentID, "selected", "follow", "evidence"),
+	}}
+	retriever := NewRetriever(repository, backend)
+	packet, err := retriever.SearchCompact(SearchRequest{
+		Query: "selected follow evidence", Limit: 1, ScopeID: "scope",
+		LensID: "lens", AgentID: "agent",
+	})
+	if err != nil || len(packet.Citations) != 1 {
+		t.Fatalf("follow-up search packet=%+v err=%v", packet, err)
+	}
+	citation := packet.Citations[0]
+	if citation.QualifyingSource.SourceKind != "current_resource" ||
+		citation.QualifyingSource.SourceID != followUpID ||
+		citation.QualifyingSource.ContentHash != selectedHash ||
+		citation.SourceRef != followUpURL || len(citation.ResourceStates) != 1 ||
+		citation.ResourceStates[0].ResourceID != followUpID {
+		t.Fatalf("follow-up qualifying projection=%+v", citation)
+	}
+	capture, err := retriever.GetScopedAtLibraryFingerprint(
+		record.RecordID, repository.library.Fingerprint, citation.QualifyingSource,
+	)
+	if err != nil || len(capture.Resources) != 1 ||
+		capture.Resources[0].ResourceID != followUpID || len(capture.ResourceRevisions) != 0 ||
+		capture.Record.RawText != "" || capture.Record.SourceRef != "" ||
+		len(capture.Record.ResourceIDs) != 1 || capture.Record.ResourceIDs[0] != followUpID {
+		t.Fatalf("follow-up scoped hydration=%+v err=%v", capture, err)
+	}
+	packetJSON, err := json.Marshal(packet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	captureJSON, err := json.Marshal(capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for surface, data := range map[string][]byte{"search": packetJSON, "get": captureJSON} {
+		for _, forbidden := range []string{
+			"PARENT-RAW-MARKER", "PARENT-SOURCE-REF", "PARENT-TITLE-MARKER",
+			siblingURL, siblingID, siblingHash, "FORBIDDEN-SIBLING-MARKER",
+			"FORBIDDEN-SIBLING-TITLE", "FORBIDDEN-HISTORY-ID", "FORBIDDEN-HISTORY-MARKER",
+		} {
+			if strings.Contains(string(data), forbidden) {
+				t.Fatalf("%s projection exposed %q: %s", surface, forbidden, data)
+			}
+		}
 	}
 }
 

@@ -206,6 +206,10 @@ type SearchRequest struct {
 	// QueryAuthorizedLimit preserves the caller-visible bound while compact
 	// retrieval asks the ranking backend for its larger internal candidate pool.
 	QueryAuthorizedLimit int `json:"-"`
+	// QueryIdentifierAuthority is derived once by compact retrieval from the raw
+	// user query. Ranking backends may attest matches, but core authorization
+	// independently recomputes them from the canonical evidence projection.
+	QueryIdentifierAuthority *QueryIdentifierAuthority `json:"-"`
 }
 
 type Citation struct {
@@ -318,6 +322,10 @@ type CompactAbstentionPolicy struct {
 	MinimumBroadQueryIDFCoverage   float64 `json:"minimum_broad_query_idf_coverage"`
 	MaximumBroadQueryRank          int     `json:"maximum_broad_query_rank"`
 	MinimumBroadSemanticCosine     float64 `json:"minimum_broad_semantic_cosine"`
+	MinimumScopedSemanticTopCosine float64 `json:"minimum_scoped_semantic_top_cosine"`
+	MinimumScopedCandidateCosine   float64 `json:"minimum_scoped_candidate_cosine"`
+	MinimumScopedSemanticMargin    float64 `json:"minimum_scoped_semantic_margin"`
+	MaximumScopedSemanticRank      int     `json:"maximum_scoped_semantic_rank"`
 	LexicalEvidenceRule            string  `json:"lexical_evidence_rule"`
 	StopwordPolicy                 string  `json:"stopword_policy"`
 	SemanticCalibrationIdentity    string  `json:"semantic_calibration_identity"`
@@ -343,7 +351,19 @@ type CompactCitation struct {
 	EvidenceRefs            []CompactEvidenceReference `json:"evidence_refs"`
 	ResourceStates          []ResourceStateSummary     `json:"resource_states"`
 	ResourceStatesTruncated bool                       `json:"resource_states_truncated,omitempty"`
+	QualifyingSource        CompactSourceBinding       `json:"qualifying_source"`
 	AuthorityClass          string                     `json:"authority_class"`
+}
+
+const CompactSourceBindingSchemaVersion = "mindline-compact-source-binding/v0.1"
+
+// CompactSourceBinding names the one current source that independently
+// qualified a citation. It is query authority, not a score explanation.
+type CompactSourceBinding struct {
+	SchemaVersion string `json:"schema_version"`
+	SourceKind    string `json:"source_kind"`
+	SourceID      string `json:"source_id"`
+	ContentHash   string `json:"content_hash"`
 }
 
 type CompactEvidenceReference struct {

@@ -2,6 +2,7 @@ package personalmemory
 
 import (
 	"encoding/json"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -39,8 +40,11 @@ func (backend compactHitsBackend) MethodID() string {
 	return "compact-hits-fixture/v0.1"
 }
 
-func (backend compactHitsBackend) Rank(SearchRequest, []IndexDocument) ([]RankedHit, error) {
-	return append([]RankedHit(nil), backend.hits...), nil
+func (backend compactHitsBackend) Rank(
+	request SearchRequest,
+	documents []IndexDocument,
+) ([]RankedHit, error) {
+	return sealIdentifierEvidence(request, documents, backend.hits), nil
 }
 
 func (backend compactHitsBackend) CompactSemanticCalibrationID() string {
@@ -53,10 +57,28 @@ func (backend *compactQueryCaptureBackend) MethodID() string {
 
 func (backend *compactQueryCaptureBackend) Rank(
 	request SearchRequest,
-	_ []IndexDocument,
+	documents []IndexDocument,
 ) ([]RankedHit, error) {
 	backend.request = request
-	return append([]RankedHit(nil), backend.hits...), nil
+	return sealIdentifierEvidence(request, documents, backend.hits), nil
+}
+
+func sealIdentifierEvidence(
+	request SearchRequest,
+	documents []IndexDocument,
+	hits []RankedHit,
+) []RankedHit {
+	textByID := make(map[string]string, len(documents))
+	for _, document := range documents {
+		textByID[document.DocumentID] = document.Text
+	}
+	sealed := append([]RankedHit(nil), hits...)
+	for index := range sealed {
+		sealed[index].IdentifierEvidence = QueryIdentifierEvidenceForDocument(
+			request.QueryIdentifierAuthority, textByID[sealed[index].DocumentID],
+		)
+	}
+	return sealed
 }
 
 func (repository *compactRepository) Load() (Library, error) {
@@ -122,9 +144,13 @@ func TestCompactSearchIndexesContentPrivatelyAndOmitsHistoricalMissingnessAndPat
 	}
 	citation := packet.Citations[0]
 	if !containsString(citation.Missingness, "current_capture_gap") ||
-		!containsString(citation.Missingness, "current_resource_gap") ||
+		containsString(citation.Missingness, "current_resource_gap") ||
 		containsString(citation.Missingness, "historical_gap") {
-		t.Fatalf("compact current missingness=%v", citation.Missingness)
+		t.Fatalf("record-source projection exposed non-record missingness=%v", citation.Missingness)
+	}
+	if citation.QualifyingSource.SourceKind != "record_source" ||
+		len(citation.EvidenceRefs) != 0 || len(citation.ResourceStates) != 0 {
+		t.Fatalf("record-source projection exposed resource data: %+v", citation)
 	}
 	evidenceIdentities := map[string]bool{}
 	for _, reference := range citation.EvidenceRefs {
@@ -507,7 +533,11 @@ func TestCompactSemanticAbstentionThresholdIsFrozenAndBoundToPacket(t *testing.T
 		policy.MinimumBroadQueryIDFCoverage != DefaultCompactMinimumBroadQueryIDFCoverage ||
 		policy.MaximumBroadQueryRank != DefaultCompactMaximumBroadQueryRank ||
 		policy.MinimumBroadSemanticCosine != DefaultCompactMinimumBroadSemanticCosine ||
-		policy.Fingerprint != "dfd4db736ebb030dea5972c9e917a4e757c165cd36db42f8308f592d5553cb92" {
+		policy.MinimumScopedSemanticTopCosine != DefaultCompactMinimumScopedSemanticTop ||
+		policy.MinimumScopedCandidateCosine != DefaultCompactMinimumScopedCandidate ||
+		policy.MinimumScopedSemanticMargin != DefaultCompactMinimumScopedSemanticMargin ||
+		policy.MaximumScopedSemanticRank != DefaultCompactMaximumScopedSemanticRank ||
+		policy.Fingerprint != "dd39d23ad0cc6af21ec6991907413c0090a2b0c40dfc249b4fc961738d64697e" {
 		t.Fatalf("compact abstention policy is not deterministic: %+v", policy)
 	}
 	repository := &compactRepository{library: Library{
@@ -732,7 +762,7 @@ func TestCompactSemanticV07ExpandsCalibratedAuthorizationWithoutWeakeningAbsentG
 		t.Run(test.name, func(t *testing.T) {
 			packet, err := NewRetriever(repository, compactHitsBackend{
 				calibrationID: test.calibrationID, hits: test.hits,
-			}).SearchCompact(SearchRequest{Query: "v07 calibration boundary", Limit: 3})
+			}).SearchCompact(SearchRequest{Query: "calibration boundary", Limit: 3})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -776,6 +806,40 @@ func TestCompactSearchAuthorizesFromFullPoolThenReturnsCallerLimit(t *testing.T)
 		packet.Citations[0].RecordID != "record-0" {
 		t.Fatalf("compact pool/backfill contract failed: request=%+v packet=%+v",
 			backend.request, packet)
+	}
+}
+
+func TestCompactQueryOnlySupportSetKeepsSynthesisAndNarrowsDualSignalWinner(t *testing.T) {
+	hits := []RankedHit{
+		{DocumentID: "supplement", Components: map[string]float64{
+			"semantic_rank": 2, "lexical_rank": 2,
+		}},
+		{DocumentID: "winner", Components: map[string]float64{
+			"semantic_rank": 1, "lexical_rank": 1,
+		}},
+	}
+	narrowed := compactQueryOnlySupportSet(
+		"How can technical ideas become understandable to ordinary people?", hits,
+	)
+	if len(narrowed) != 1 || narrowed[0].DocumentID != "winner" {
+		t.Fatalf("dual-signal query-only winner was not isolated: %+v", narrowed)
+	}
+	for _, query := range []string{
+		"How should a team balance speed with accountability?",
+		"Compare speed versus accountability",
+		"What are the pros and cons of these governance trade-offs?",
+	} {
+		retained := compactQueryOnlySupportSet(query, hits)
+		if !reflect.DeepEqual(retained, hits) {
+			t.Fatalf("multi-evidence query %q lost eligible support: %+v", query, retained)
+		}
+	}
+	withoutAgreement := append([]RankedHit(nil), hits...)
+	withoutAgreement[1].Components = map[string]float64{
+		"semantic_rank": 1, "lexical_rank": 3,
+	}
+	if retained := compactQueryOnlySupportSet("Explain the evidence", withoutAgreement); !reflect.DeepEqual(retained, withoutAgreement) {
+		t.Fatalf("non-agreeing query signals narrowed eligibility: %+v", retained)
 	}
 }
 

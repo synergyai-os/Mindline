@@ -1,0 +1,93 @@
+{
+  "schema_version": "mindline-wp53-readonly-beta-scorecard/v0.1",
+  "records": [
+    {"record_id": "rec-governance-001", "text": "Push authority to the smallest accountable unit. Escalate only irreversible bets; record the owner, evidence, and reversal cost."},
+    {"record_id": "rec-governance-002", "text": "AI-native teams work best as small stable groups with end-to-end outcomes instead of functional handoffs and approval queues."},
+    {"record_id": "rec-governance-003", "text": "Governance should separate reversible experiments from high-consequence commitments. Fast local moves need clear rollback and decision logs."},
+    {"record_id": "rec-governance-004", "text": "Agents can propose and execute bounded work, while people own purpose, risk tolerance, and irreversible commitments."},
+    {"record_id": "rec-learning-001", "text": "The first learning session should deliver a small visible success before setup or curriculum depth, so beginners feel capable immediately."},
+    {"record_id": "rec-learning-002", "text": "A progressive curriculum should unlock the next challenge after demonstrated confidence, not expose the full map up front."},
+    {"record_id": "rec-learning-003", "text": "Explain agent systems through outcomes, examples, and plain language before introducing architecture vocabulary."},
+    {"record_id": "rec-learning-004", "text": "Healthy learning communities show returning participation, peer help, completed experiments, and members sharing what they built."},
+    {"record_id": "rec-mixed-001", "text": "A saved source bundle containing independent resources for later recall."}
+  ],
+  "resources": [
+    {
+      "resource_id": "resource-delegation",
+      "owner_record_id": "rec-mixed-001",
+      "version_state": "current",
+      "title": "Delegation playbook",
+      "content": "Reversible decisions should stay with the closest accountable team; escalation is reserved for irreversible commitments. VISIBLE-DELEGATION-MARKER"
+    },
+    {
+      "resource_id": "resource-personal-logistics",
+      "owner_record_id": "rec-mixed-001",
+      "version_state": "current",
+      "title": "Personal travel logistics",
+      "content": "Private itinerary notes for an unrelated family trip. FORBIDDEN-SIBLING-MARKER"
+    }
+  ],
+  "resource_revisions": [
+    {
+      "revision_id": "resource-delegation-revision-old",
+      "resource_id": "resource-delegation",
+      "owner_record_id": "rec-mixed-001",
+      "version_state": "historical",
+      "content": "Obsolete approval ladder retained only as history. FORBIDDEN-HISTORY-MARKER"
+    }
+  ],
+  "contexts": [
+    {"scope_id": "scope-org-design", "lens_id": "lens-governance", "lens_query": "authority decision rights accountability governance"},
+    {"scope_id": "scope-org-design", "lens_id": "lens-team-design", "lens_query": "small autonomous teams ownership flow"},
+    {"scope_id": "scope-learning-product", "lens_id": "lens-activation", "lens_query": "beginner activation first successful session"},
+    {"scope_id": "scope-learning-product", "lens_id": "lens-content", "lens_query": "plain language progressive curriculum community"}
+  ],
+  "answerable_cases": [
+    {"case_id": "A1", "scope_id": "scope-org-design", "lens_id": "lens-governance", "query": "Where should choices live so AI-heavy organizations avoid approval bottlenecks?", "expected_record_id": "rec-governance-002", "allowed_supporting_record_ids": ["rec-governance-001", "rec-governance-002", "rec-governance-003", "rec-governance-004"]},
+    {"case_id": "A2", "scope_id": "scope-org-design", "lens_id": "lens-governance", "query": "When should a decision move upward instead of staying with the delivery team?", "expected_record_id": "rec-governance-001", "allowed_supporting_record_ids": ["rec-governance-001", "rec-governance-002", "rec-governance-003"]},
+    {"case_id": "A3", "scope_id": "scope-org-design", "lens_id": "lens-team-design", "query": "How do autonomous groups keep responsibility clear while moving quickly?", "expected_record_id": "rec-governance-002", "allowed_supporting_record_ids": ["rec-governance-001", "rec-governance-002", "rec-governance-003", "rec-governance-004"]},
+    {"case_id": "A4", "scope_id": "scope-org-design", "lens_id": "lens-governance", "query": "What separates a safe experiment from a commitment needing extra oversight?", "expected_record_id": "rec-governance-003", "allowed_supporting_record_ids": ["rec-governance-001", "rec-governance-003", "rec-governance-004"]},
+    {"case_id": "A5", "scope_id": "scope-learning-product", "lens_id": "lens-activation", "query": "How can a beginner feel useful during their first encounter with the product?", "expected_record_id": "rec-learning-001", "allowed_supporting_record_ids": ["rec-learning-001"]},
+    {"case_id": "A6", "scope_id": "scope-learning-product", "lens_id": "lens-content", "query": "When should later educational challenges become available?", "expected_record_id": "rec-learning-002", "allowed_supporting_record_ids": ["rec-learning-001", "rec-learning-002"]},
+    {"case_id": "A7", "scope_id": "scope-learning-product", "lens_id": "lens-content", "query": "How do we make technical agent ideas understandable to ordinary people?", "expected_record_id": "rec-learning-003", "allowed_supporting_record_ids": ["rec-learning-001", "rec-learning-002", "rec-learning-003"]},
+    {"case_id": "A8", "scope_id": "scope-learning-product", "lens_id": "lens-content", "query": "Which behaviors show that a maker community is becoming healthy?", "expected_record_id": "rec-learning-004", "allowed_supporting_record_ids": ["rec-learning-004"]}
+  ],
+  "absent_cases": [
+    {"case_id": "N1", "scope_id": "scope-org-design", "lens_id": "lens-governance", "query": "Which deductions apply to a quarterly tax filing?"},
+    {"case_id": "N2", "scope_id": "scope-org-design", "lens_id": "lens-team-design", "query": "What nutrition plan improves marathon recovery?"},
+    {"case_id": "N3", "scope_id": "scope-learning-product", "lens_id": "lens-activation", "query": "How should a wedding seating chart be arranged?"},
+    {"case_id": "N4", "scope_id": "scope-learning-product", "lens_id": "lens-content", "query": "What coverage belongs in commercial property insurance?"}
+  ],
+  "shared_membership_case": {
+    "query": "How should an AI-native team balance decision speed with accountability?",
+    "scope_id": "scope-org-design",
+    "lens_ids": ["lens-governance", "lens-team-design"],
+    "expected_eligible_record_ids": ["rec-governance-001", "rec-governance-002", "rec-governance-003", "rec-governance-004"],
+    "expected_top_three_by_lens": {
+      "lens-governance": ["rec-governance-001", "rec-governance-003", "rec-governance-002"],
+      "lens-team-design": ["rec-governance-002", "rec-governance-001", "rec-governance-003"]
+    }
+  },
+  "qualifying_source_case": {
+    "record_id": "rec-mixed-001",
+    "query": "How should teams delegate reversible decisions?",
+    "qualifying_resource_id": "resource-delegation",
+    "hidden_sibling_resource_id": "resource-personal-logistics",
+    "historical_revision_id": "resource-delegation-revision-old",
+    "required_visible_marker": "VISIBLE-DELEGATION-MARKER",
+    "forbidden_markers": ["FORBIDDEN-SIBLING-MARKER", "FORBIDDEN-HISTORY-MARKER"]
+  },
+  "measurement_profile": {
+    "route": "normal governed localservice scoped search and scoped hydration",
+    "semantic_provider": "ollama",
+    "semantic_model": "embeddinggemma:latest",
+    "semantic_model_digest": "sha256:85462619ee721b466c5927d109d4cb765861907d5417b9109caebc4e614679f1",
+    "calibration_identity": "ollama/embeddinggemma:latest/retrieval-input-v0.2",
+    "degraded_fallback_allowed": false,
+    "warmup_complete_scorecard_runs": 2,
+    "measured_complete_scorecard_runs": 5,
+    "latency_boundary": "client request start through fully decoded scoped response",
+    "p95_method": "nearest-rank over all 60 measured answerable and absent requests using ceil(0.95*N)-1",
+    "maximum_warm_p95_seconds": 10
+  }
+}

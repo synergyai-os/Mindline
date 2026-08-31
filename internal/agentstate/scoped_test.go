@@ -433,6 +433,7 @@ func TestScopedRetrievalPreflightsRecoveryCapacityBeforeCommit(t *testing.T) {
 		Candidates: []ScopedCandidateTrace{{
 			RecordID: "capacity-record", Rank: 1, FinalScore: 1,
 			ComponentScore: map[string]float64{"final": 1},
+			SourceBinding:  testScopedSourceBinding("capacity-record"),
 		}},
 	}
 	if err := store.SaveScopedRetrieval(ctx, trace); err == nil {
@@ -845,6 +846,36 @@ func TestScopedFeedbackRejectsCredentialShapedReasonBeforePersistence(t *testing
 	}
 }
 
+func TestScopedHydrationRequiresDurableQualifyingSourceBinding(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
+	store, err := Open(filepath.Join(t.TempDir(), "state", "agent.sqlite"), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	seedScopedContexts(t, store, ctx, now)
+
+	authority, err := store.RequireScopedCandidate(
+		ctx, "run-scope-a-agent-a", "scope-a", "lens-one", "agent-a", "record-one",
+	)
+	if err != nil || authority.SourceBinding.SourceID != "record-one" {
+		t.Fatalf("hydration authority=%+v err=%v", authority, err)
+	}
+	if _, err := store.db.ExecContext(ctx,
+		`DELETE FROM scoped_candidate_sources WHERE run_id = ? AND record_id = ?`,
+		"run-scope-a-agent-a", "record-one",
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RequireScopedCandidate(
+		ctx, "run-scope-a-agent-a", "scope-a", "lens-one", "agent-a", "record-one",
+	); err == nil {
+		t.Fatal("retrieval receipt without a durable qualifying-source binding authorized hydration")
+	}
+}
+
 func seedScopedContexts(t *testing.T, store *Store, ctx context.Context, now time.Time) {
 	t.Helper()
 	for _, scope := range []Scope{
@@ -882,6 +913,7 @@ func seedScopedContexts(t *testing.T, store *Store, ctx context.Context, now tim
 		trace.Candidates = []ScopedCandidateTrace{{
 			RecordID: "record-one", Rank: 1, FinalScore: 1,
 			ComponentScore: map[string]float64{"final": 1},
+			SourceBinding:  testScopedSourceBinding("record-one"),
 		}}
 		if err := store.SaveScopedRetrieval(ctx, trace); err != nil {
 			t.Fatal(err)
@@ -1015,6 +1047,7 @@ func TestRegisteredActorsKeepFeedbackIsolated(t *testing.T) {
 			CreatedAt: now.Format(time.RFC3339Nano), Candidates: []ScopedCandidateTrace{{
 				RecordID: "record-one", Rank: 1, FinalScore: 1,
 				ComponentScore: map[string]float64{"final": 1},
+				SourceBinding:  testScopedSourceBinding("record-one"),
 			}},
 		}); err != nil {
 			t.Fatal(err)
@@ -1033,6 +1066,14 @@ func TestRegisteredActorsKeepFeedbackIsolated(t *testing.T) {
 	assertScopedRelevance(t, store, ctx, ScopedContext{
 		ScopeID: "project", LensID: "product", AgentID: agentB,
 	}, 0)
+}
+
+func testScopedSourceBinding(recordID string) ScopedSourceBinding {
+	return ScopedSourceBinding{
+		SchemaVersion: "mindline-compact-source-binding/v0.1",
+		SourceKind:    "record_source", SourceID: recordID,
+		ContentHash: strings.Repeat("a", 64),
+	}
 }
 
 func assertScopedRelevance(

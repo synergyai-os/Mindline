@@ -60,10 +60,23 @@ type ScopedContext struct {
 }
 
 type ScopedCandidateTrace struct {
-	RecordID       string             `json:"record_id"`
-	Rank           int                `json:"rank"`
-	FinalScore     float64            `json:"final_score"`
-	ComponentScore map[string]float64 `json:"component_scores"`
+	RecordID       string              `json:"record_id"`
+	Rank           int                 `json:"rank"`
+	FinalScore     float64             `json:"final_score"`
+	ComponentScore map[string]float64  `json:"component_scores"`
+	SourceBinding  ScopedSourceBinding `json:"-"`
+}
+
+type ScopedSourceBinding struct {
+	SchemaVersion string
+	SourceKind    string
+	SourceID      string
+	ContentHash   string
+}
+
+type ScopedHydrationAuthority struct {
+	LibraryFingerprint string
+	SourceBinding      ScopedSourceBinding
 }
 
 type ScopedRetrievalTrace struct {
