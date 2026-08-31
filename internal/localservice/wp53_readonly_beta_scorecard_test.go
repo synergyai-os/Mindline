@@ -172,9 +172,6 @@ func TestWP53ReadonlyBetaScorecard(t *testing.T) {
 	})
 	wp53WaitForSemanticIndex(t, client)
 	wp53SeedContexts(t, client, manifest)
-	if os.Getenv("MINDLINE_WP53_SCORECARD_DEBUG") == "1" {
-		wp53LogScorecardCandidates(t, server, manifest, aliasByRecordID)
-	}
 
 	for range manifest.MeasurementProfile.WarmupCompleteScorecardRuns {
 		wp53RunCases(t, client, manifest.AnswerableCases, aliasByRecordID, false)
@@ -350,58 +347,6 @@ func wp53SeedContexts(t *testing.T, client *Client, manifest wp53ScorecardManife
 	}
 	if _, err := client.PutActor(context.Background(), agentstate.AgentActor{ID: "agent-wp53-scorecard", Name: "WP-53 scorecard"}); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func wp53LogScorecardCandidates(t *testing.T, server *Server, manifest wp53ScorecardManifest, aliases map[string]string) {
-	t.Helper()
-	snapshot, err := personalmemory.NewLexicalRetriever(server.repository).PrepareCompactIndex()
-	if err != nil {
-		t.Fatal(err)
-	}
-	contexts := map[string]struct{ purpose, query string }{}
-	for _, item := range manifest.Contexts {
-		contexts[item.ScopeID+"\x00"+item.LensID] = struct{ purpose, query string }{item.ScopeID, item.LensQuery}
-	}
-	allCases := append(append([]wp53ScorecardCase(nil), manifest.AnswerableCases...), manifest.AbsentCases...)
-	for _, item := range allCases {
-		binding := contexts[item.ScopeID+"\x00"+item.LensID]
-		hits, err := server.retrievalBackend(context.Background()).Rank(personalmemory.SearchRequest{
-			Query: item.Query, LexicalQuery: item.Query, Limit: 100,
-			ScopeID: item.ScopeID, ScopePurpose: binding.purpose,
-			LensID: item.LensID, LensQuery: binding.query, AgentID: "agent-wp53-scorecard",
-		}, snapshot.Documents)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for index, hit := range hits {
-			if index == 5 {
-				break
-			}
-			t.Logf("%s candidate %d alias=%s document=%s components=%+v", item.CaseID, index+1, aliases[hit.DocumentID], hit.DocumentID, hit.Components)
-		}
-	}
-	for _, lensID := range manifest.SharedMembershipCase.LensIDs {
-		binding := contexts[manifest.SharedMembershipCase.ScopeID+"\x00"+lensID]
-		hits, err := server.retrievalBackend(context.Background()).Rank(personalmemory.SearchRequest{
-			Query:        manifest.SharedMembershipCase.Query,
-			LexicalQuery: manifest.SharedMembershipCase.Query,
-			Limit:        100,
-			ScopeID:      manifest.SharedMembershipCase.ScopeID,
-			ScopePurpose: binding.purpose,
-			LensID:       lensID,
-			LensQuery:    binding.query,
-			AgentID:      "agent-wp53-scorecard",
-		}, snapshot.Documents)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for index, hit := range hits {
-			if index == 8 {
-				break
-			}
-			t.Logf("shared/%s candidate %d alias=%s document=%s components=%+v", lensID, index+1, aliases[hit.DocumentID], hit.DocumentID, hit.Components)
-		}
 	}
 }
 

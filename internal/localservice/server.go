@@ -753,6 +753,12 @@ func (server *Server) handleSearchScoped(writer http.ResponseWriter, request *ht
 		trace.Candidates = append(trace.Candidates, agentstate.ScopedCandidateTrace{
 			RecordID: citation.RecordID, Rank: rank + 1, FinalScore: citation.Score,
 			ComponentScore: citation.ComponentScores,
+			SourceBinding: agentstate.ScopedSourceBinding{
+				SchemaVersion: citation.QualifyingSource.SchemaVersion,
+				SourceKind:    citation.QualifyingSource.SourceKind,
+				SourceID:      citation.QualifyingSource.SourceID,
+				ContentHash:   citation.QualifyingSource.ContentHash,
+			},
 		})
 	}
 	if err := server.state.SaveScopedRetrieval(request.Context(), trace); err != nil {

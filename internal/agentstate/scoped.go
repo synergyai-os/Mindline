@@ -71,6 +71,16 @@ func (store *Store) initializeScoped(ctx context.Context) error {
 			PRIMARY KEY(run_id, record_id),
 			UNIQUE(run_id, rank)
 		)`,
+		`CREATE TABLE IF NOT EXISTS scoped_candidate_sources (
+			run_id TEXT NOT NULL,
+			record_id TEXT NOT NULL,
+			schema_version TEXT NOT NULL,
+			source_kind TEXT NOT NULL CHECK(source_kind IN ('record_source', 'current_resource')),
+			source_id TEXT NOT NULL,
+			content_hash TEXT NOT NULL,
+			PRIMARY KEY(run_id, record_id),
+			FOREIGN KEY(run_id, record_id) REFERENCES scoped_retrieval_candidates(run_id, record_id) ON DELETE CASCADE
+		)`,
 		`CREATE TABLE IF NOT EXISTS scoped_judgments (
 			judgment_id TEXT PRIMARY KEY NOT NULL,
 			idempotency_key TEXT UNIQUE NOT NULL,
@@ -671,6 +681,13 @@ func (store *Store) SaveScopedRetrieval(ctx context.Context, trace ScopedRetriev
 				return errors.New("invalid scoped retrieval candidate")
 			}
 		}
+		binding := candidate.SourceBinding
+		if binding.SchemaVersion != "mindline-compact-source-binding/v0.1" ||
+			(binding.SourceKind != "record_source" && binding.SourceKind != "current_resource") ||
+			!validBounded(binding.SourceID, 1024) || !validProjectSnapshotFingerprint(binding.ContentHash, true) ||
+			contentguard.ContainsSecretLike(binding.SourceID) {
+			return errors.New("invalid scoped retrieval source binding")
+		}
 		seenRecords[candidate.RecordID] = true
 		seenRanks[candidate.Rank] = true
 	}
@@ -701,6 +718,13 @@ func (store *Store) SaveScopedRetrieval(ctx context.Context, trace ScopedRetriev
 			candidate.FinalScore, components); err != nil {
 			return errors.New("save scoped retrieval candidate")
 		}
+		binding := candidate.SourceBinding
+		if _, err := tx.ExecContext(ctx, `INSERT INTO scoped_candidate_sources(
+			run_id, record_id, schema_version, source_kind, source_id, content_hash
+		) VALUES(?, ?, ?, ?, ?, ?)`, trace.RunID, candidate.RecordID,
+			binding.SchemaVersion, binding.SourceKind, binding.SourceID, binding.ContentHash); err != nil {
+			return errors.New("save scoped retrieval source binding")
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return errors.New("save scoped retrieval trace")
@@ -713,7 +737,7 @@ func (store *Store) SaveScopedRetrieval(ctx context.Context, trace ScopedRetriev
 func (store *Store) RequireScopedCandidate(
 	ctx context.Context,
 	runID, scopeID, lensID, agentID, recordID string,
-) (string, error) {
+) (ScopedHydrationAuthority, error) {
 	store.mutationMu.Lock()
 	defer store.mutationMu.Unlock()
 	runID, scopeID, lensID = strings.TrimSpace(runID), strings.TrimSpace(scopeID), strings.TrimSpace(lensID)
@@ -721,27 +745,34 @@ func (store *Store) RequireScopedCandidate(
 	if !validBounded(runID, 256) || !validBounded(scopeID, 256) ||
 		!validBounded(lensID, 256) || !validBounded(agentID, 256) ||
 		!validBounded(recordID, 1024) {
-		return "", errors.New("invalid scoped hydration request")
+		return ScopedHydrationAuthority{}, errors.New("invalid scoped hydration request")
 	}
 	if _, _, _, err := store.resolveScopedContext(ctx, ScopedContext{
 		ScopeID: scopeID, LensID: lensID, AgentID: agentID,
 	}); err != nil {
-		return "", err
+		return ScopedHydrationAuthority{}, err
 	}
-	var libraryFingerprint string
-	err := store.db.QueryRowContext(ctx, `SELECT r.library_fingerprint
+	var authority ScopedHydrationAuthority
+	err := store.db.QueryRowContext(ctx, `SELECT r.library_fingerprint,
+		s.schema_version, s.source_kind, s.source_id, s.content_hash
 		FROM scoped_retrieval_runs r
 		JOIN scoped_retrieval_candidates c ON c.run_id=r.run_id
+		JOIN scoped_candidate_sources s ON s.run_id=c.run_id AND s.record_id=c.record_id
 		WHERE r.run_id=? AND r.scope_id=? AND r.lens_id=? AND r.agent_id=? AND c.record_id=?`,
-		runID, scopeID, lensID, agentID, recordID).Scan(&libraryFingerprint)
+		runID, scopeID, lensID, agentID, recordID).Scan(&authority.LibraryFingerprint,
+		&authority.SourceBinding.SchemaVersion, &authority.SourceBinding.SourceKind,
+		&authority.SourceBinding.SourceID, &authority.SourceBinding.ContentHash)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", errors.New("scoped hydration candidate not found")
+		return ScopedHydrationAuthority{}, errors.New("scoped hydration candidate not found")
 	}
 	if err != nil {
-		return "", errors.New("read scoped hydration candidate")
+		return ScopedHydrationAuthority{}, errors.New("read scoped hydration candidate")
 	}
-	if !validBounded(libraryFingerprint, 256) {
-		return "", errors.New("scoped hydration run has invalid library binding")
+	if !validBounded(authority.LibraryFingerprint, 256) ||
+		authority.SourceBinding.SchemaVersion != "mindline-compact-source-binding/v0.1" ||
+		(authority.SourceBinding.SourceKind != "record_source" && authority.SourceBinding.SourceKind != "current_resource") ||
+		!validBounded(authority.SourceBinding.SourceID, 1024) || !validProjectSnapshotFingerprint(authority.SourceBinding.ContentHash, true) {
+		return ScopedHydrationAuthority{}, errors.New("scoped hydration run has invalid source binding")
 	}
-	return libraryFingerprint, nil
+	return authority, nil
 }

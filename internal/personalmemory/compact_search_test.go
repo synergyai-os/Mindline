@@ -507,7 +507,11 @@ func TestCompactSemanticAbstentionThresholdIsFrozenAndBoundToPacket(t *testing.T
 		policy.MinimumBroadQueryIDFCoverage != DefaultCompactMinimumBroadQueryIDFCoverage ||
 		policy.MaximumBroadQueryRank != DefaultCompactMaximumBroadQueryRank ||
 		policy.MinimumBroadSemanticCosine != DefaultCompactMinimumBroadSemanticCosine ||
-		policy.Fingerprint != "dfd4db736ebb030dea5972c9e917a4e757c165cd36db42f8308f592d5553cb92" {
+		policy.MinimumScopedSemanticTopCosine != DefaultCompactMinimumScopedSemanticTop ||
+		policy.MinimumScopedCandidateCosine != DefaultCompactMinimumScopedCandidate ||
+		policy.MinimumScopedSemanticMargin != DefaultCompactMinimumScopedSemanticMargin ||
+		policy.MaximumScopedSemanticRank != DefaultCompactMaximumScopedSemanticRank ||
+		policy.Fingerprint != "eb866c27d7122b963624de2d846fca047776bef3059a2643a0e15b1dce48c915" {
 		t.Fatalf("compact abstention policy is not deterministic: %+v", policy)
 	}
 	repository := &compactRepository{library: Library{
