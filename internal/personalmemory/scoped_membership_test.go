@@ -2,10 +2,11 @@ package personalmemory
 
 import (
 	"reflect"
+	"sort"
 	"testing"
 )
 
-func TestCompactExpansionFreezesRecordMembershipBeforeContextOrder(t *testing.T) {
+func TestCompactExpansionFreezesCompleteEligibilityBeforeContextLimit(t *testing.T) {
 	projection := compactRetrievalProjection{
 		ownersByDocumentID: map[string][]string{
 			"resource": {"record-a", "record-b"},
@@ -23,15 +24,17 @@ func TestCompactExpansionFreezesRecordMembershipBeforeContextOrder(t *testing.T)
 			"authorization_base_raw": authorization,
 		}}
 	}
-	first, firstResources, err := expandCompactHits([]RankedHit{
+	firstOrder := []RankedHit{
 		hit("resource", 2, 2), hit("record-c", 1, 1),
-	}, projection, 2, true)
+	}
+	secondOrder := []RankedHit{
+		hit("record-c", 2, 1), hit("resource", 1, 2),
+	}
+	first, firstResources, err := expandCompactHits(firstOrder, projection, 2, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, secondResources, err := expandCompactHits([]RankedHit{
-		hit("record-c", 2, 1), hit("resource", 1, 2),
-	}, projection, 2, true)
+	second, secondResources, err := expandCompactHits(secondOrder, projection, 2, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,12 +45,27 @@ func TestCompactExpansionFreezesRecordMembershipBeforeContextOrder(t *testing.T)
 		}
 		return result
 	}
-	want := []string{"record-a", "record-b"}
-	if !reflect.DeepEqual(ids(first), want) || !reflect.DeepEqual(ids(second), want) ||
+	if !reflect.DeepEqual(ids(first), []string{"record-a", "record-b"}) ||
+		!reflect.DeepEqual(ids(second), []string{"record-c", "record-a"}) ||
 		firstResources["record-a"] != "shared-resource" ||
 		firstResources["record-b"] != "shared-resource" ||
-		!reflect.DeepEqual(firstResources, secondResources) {
-		t.Fatalf("record membership changed: first=%v second=%v first_resources=%v second_resources=%v",
+		secondResources["record-a"] != "shared-resource" || len(secondResources) != 1 {
+		t.Fatalf("context was not applied after eligibility: first=%v second=%v first_resources=%v second_resources=%v",
 			ids(first), ids(second), firstResources, secondResources)
+	}
+	firstPool, _, err := expandCompactHits(firstOrder, projection, 3, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondPool, _, err := expandCompactHits(secondOrder, projection, 3, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstIDs, secondIDs := ids(firstPool), ids(secondPool)
+	sort.Strings(firstIDs)
+	sort.Strings(secondIDs)
+	if !reflect.DeepEqual(firstIDs, []string{"record-a", "record-b", "record-c"}) ||
+		!reflect.DeepEqual(firstIDs, secondIDs) {
+		t.Fatalf("query-only eligible pool changed: first=%v second=%v", firstIDs, secondIDs)
 	}
 }

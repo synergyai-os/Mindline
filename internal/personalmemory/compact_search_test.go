@@ -2,6 +2,7 @@ package personalmemory
 
 import (
 	"encoding/json"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -122,9 +123,13 @@ func TestCompactSearchIndexesContentPrivatelyAndOmitsHistoricalMissingnessAndPat
 	}
 	citation := packet.Citations[0]
 	if !containsString(citation.Missingness, "current_capture_gap") ||
-		!containsString(citation.Missingness, "current_resource_gap") ||
+		containsString(citation.Missingness, "current_resource_gap") ||
 		containsString(citation.Missingness, "historical_gap") {
-		t.Fatalf("compact current missingness=%v", citation.Missingness)
+		t.Fatalf("record-source projection exposed non-record missingness=%v", citation.Missingness)
+	}
+	if citation.QualifyingSource.SourceKind != "record_source" ||
+		len(citation.EvidenceRefs) != 0 || len(citation.ResourceStates) != 0 {
+		t.Fatalf("record-source projection exposed resource data: %+v", citation)
 	}
 	evidenceIdentities := map[string]bool{}
 	for _, reference := range citation.EvidenceRefs {
@@ -511,7 +516,7 @@ func TestCompactSemanticAbstentionThresholdIsFrozenAndBoundToPacket(t *testing.T
 		policy.MinimumScopedCandidateCosine != DefaultCompactMinimumScopedCandidate ||
 		policy.MinimumScopedSemanticMargin != DefaultCompactMinimumScopedSemanticMargin ||
 		policy.MaximumScopedSemanticRank != DefaultCompactMaximumScopedSemanticRank ||
-		policy.Fingerprint != "eb866c27d7122b963624de2d846fca047776bef3059a2643a0e15b1dce48c915" {
+		policy.Fingerprint != "d20161300920426b249bb9147664e9f06b5e94b94a38694a2f31c1ef21e0ef3e" {
 		t.Fatalf("compact abstention policy is not deterministic: %+v", policy)
 	}
 	repository := &compactRepository{library: Library{
@@ -780,6 +785,40 @@ func TestCompactSearchAuthorizesFromFullPoolThenReturnsCallerLimit(t *testing.T)
 		packet.Citations[0].RecordID != "record-0" {
 		t.Fatalf("compact pool/backfill contract failed: request=%+v packet=%+v",
 			backend.request, packet)
+	}
+}
+
+func TestCompactQueryOnlySupportSetKeepsSynthesisAndNarrowsDualSignalWinner(t *testing.T) {
+	hits := []RankedHit{
+		{DocumentID: "supplement", Components: map[string]float64{
+			"semantic_rank": 2, "lexical_rank": 2,
+		}},
+		{DocumentID: "winner", Components: map[string]float64{
+			"semantic_rank": 1, "lexical_rank": 1,
+		}},
+	}
+	narrowed := compactQueryOnlySupportSet(
+		"How can technical ideas become understandable to ordinary people?", hits,
+	)
+	if len(narrowed) != 1 || narrowed[0].DocumentID != "winner" {
+		t.Fatalf("dual-signal query-only winner was not isolated: %+v", narrowed)
+	}
+	for _, query := range []string{
+		"How should a team balance speed with accountability?",
+		"Compare speed versus accountability",
+		"What are the pros and cons of these governance trade-offs?",
+	} {
+		retained := compactQueryOnlySupportSet(query, hits)
+		if !reflect.DeepEqual(retained, hits) {
+			t.Fatalf("multi-evidence query %q lost eligible support: %+v", query, retained)
+		}
+	}
+	withoutAgreement := append([]RankedHit(nil), hits...)
+	withoutAgreement[1].Components = map[string]float64{
+		"semantic_rank": 1, "lexical_rank": 3,
+	}
+	if retained := compactQueryOnlySupportSet("Explain the evidence", withoutAgreement); !reflect.DeepEqual(retained, withoutAgreement) {
+		t.Fatalf("non-agreeing query signals narrowed eligibility: %+v", retained)
 	}
 }
 

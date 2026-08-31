@@ -79,44 +79,61 @@ type wp53ScorecardManifest struct {
 }
 
 type wp53ScorecardCase struct {
-	CaseID           string `json:"case_id"`
-	ScopeID          string `json:"scope_id"`
-	LensID           string `json:"lens_id"`
-	Query            string `json:"query"`
-	ExpectedRecordID string `json:"expected_record_id,omitempty"`
+	CaseID                     string   `json:"case_id"`
+	ScopeID                    string   `json:"scope_id"`
+	LensID                     string   `json:"lens_id"`
+	Query                      string   `json:"query"`
+	ExpectedRecordID           string   `json:"expected_record_id,omitempty"`
+	AllowedSupportingRecordIDs []string `json:"allowed_supporting_record_ids,omitempty"`
+}
+
+type wp53SourceIsolationIdentities struct {
+	ParentSourceRef         string
+	ParentRawText           string
+	QualifyingResourceID    string
+	HiddenSiblingResourceID string
+	HiddenSiblingURL        string
+	HiddenSiblingHash       string
+	HistoricalRevisionID    string
+	HistoricalResourceHash  string
 }
 
 type wp53CaseResult struct {
-	CaseID        string   `json:"case_id"`
-	AnswerState   string   `json:"answer_state"`
-	RankedRecords []string `json:"ranked_record_ids"`
-	ExpectedRank  int      `json:"expected_rank,omitempty"`
-	Passed        bool     `json:"passed"`
+	CaseID                  string   `json:"case_id"`
+	AnswerState             string   `json:"answer_state"`
+	RankedRecords           []string `json:"ranked_record_ids"`
+	WrongEvidenceRecordIDs  []string `json:"wrong_evidence_record_ids"`
+	ExpectedRank            int      `json:"expected_rank,omitempty"`
+	AllCitationsHydrate     bool     `json:"all_citations_hydrate"`
+	AllCitationsSupportCase bool     `json:"all_citations_support_case"`
+	Passed                  bool     `json:"passed"`
 }
 
 type wp53ScorecardReport struct {
-	SchemaVersion        string              `json:"schema_version"`
-	Mode                 string              `json:"mode"`
-	SourceCommit         string              `json:"source_commit"`
-	ManifestSHA256       string              `json:"manifest_sha256"`
-	SemanticModel        string              `json:"semantic_model"`
-	SemanticModelDigest  string              `json:"semantic_model_digest"`
-	CalibrationIdentity  string              `json:"calibration_identity"`
-	Answerable           []wp53CaseResult    `json:"answerable_cases"`
-	Absent               []wp53CaseResult    `json:"absent_cases"`
-	AnswerableTopThree   int                 `json:"answerable_top_three"`
-	AbsentAbstentions    int                 `json:"absent_abstentions"`
-	SharedMembership     map[string][]string `json:"shared_membership_by_lens"`
-	SharedTopThree       map[string][]string `json:"shared_top_three_by_lens"`
-	SharedMembershipPass bool                `json:"shared_membership_pass"`
-	SharedOrderingPass   bool                `json:"shared_ordering_pass"`
-	SourceIsolationPass  bool                `json:"source_isolation_pass"`
-	VisibleMarkerFound   bool                `json:"visible_marker_found"`
-	ForbiddenMarkersSeen []string            `json:"forbidden_markers_seen"`
-	MeasuredSamples      int                 `json:"measured_samples"`
-	WarmP95Milliseconds  int64               `json:"warm_p95_milliseconds"`
-	Checks               map[string]bool     `json:"checks"`
-	Passed               bool                `json:"passed"`
+	SchemaVersion                 string              `json:"schema_version"`
+	Mode                          string              `json:"mode"`
+	SourceCommit                  string              `json:"source_commit"`
+	ManifestSHA256                string              `json:"manifest_sha256"`
+	SemanticModel                 string              `json:"semantic_model"`
+	SemanticModelDigest           string              `json:"semantic_model_digest"`
+	CalibrationIdentity           string              `json:"calibration_identity"`
+	Answerable                    []wp53CaseResult    `json:"answerable_cases"`
+	Absent                        []wp53CaseResult    `json:"absent_cases"`
+	AnswerableTopThree            int                 `json:"answerable_top_three"`
+	AbsentAbstentions             int                 `json:"absent_abstentions"`
+	SharedMembership              map[string][]string `json:"shared_membership_by_lens"`
+	SharedTopThree                map[string][]string `json:"shared_top_three_by_lens"`
+	SharedMembershipPass          bool                `json:"shared_membership_pass"`
+	SharedOrderingPass            bool                `json:"shared_ordering_pass"`
+	SourceIsolationPass           bool                `json:"source_isolation_pass"`
+	VisibleMarkerFound            bool                `json:"visible_marker_found"`
+	ForbiddenMarkersSeen          []string            `json:"forbidden_markers_seen"`
+	ZeroWrongEvidence             bool                `json:"zero_wrong_evidence"`
+	AllCitationsHydrateAndSupport bool                `json:"all_citations_hydrate_and_support"`
+	MeasuredSamples               int                 `json:"measured_samples"`
+	WarmP95Milliseconds           int64               `json:"warm_p95_milliseconds"`
+	Checks                        map[string]bool     `json:"checks"`
+	Passed                        bool                `json:"passed"`
 }
 
 func TestWP53ReadonlyBetaScorecard(t *testing.T) {
@@ -155,21 +172,39 @@ func TestWP53ReadonlyBetaScorecard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	aliasByRecordID, resourceAliasByID := wp53SeedScorecard(t, config.MemoryRoot, manifest)
-	server, err := NewServer(config, nil, nil)
-	if err != nil {
-		t.Fatal(err)
+	aliasByRecordID, resourceAliasByID, isolationIdentities := wp53SeedScorecard(t, config.MemoryRoot, manifest)
+	var client *Client
+	if mode == "baseline" {
+		if released := wp53GitCommit(t, repoRoot, mode); released != wp53ReleasedMainCommit {
+			t.Fatalf("released main changed: got %s want %s", released, wp53ReleasedMainCommit)
+		}
+		mainSource := filepath.Join(root, "released-main")
+		wp53ExtractGitTree(t, repoRoot, wp53ReleasedMainCommit, mainSource)
+		mainBinary := filepath.Join(root, "mindline-main")
+		wp53BuildMindline(t, mainSource, mainBinary)
+		configPath := filepath.Join(config.RuntimeRoot, "config.json")
+		if err := SaveConfig(configPath, config); err != nil {
+			t.Fatal(err)
+		}
+		service := wp53StartExternalService(t, mainBinary, configPath, config.SocketPath)
+		client = service.client
+		t.Cleanup(func() { service.stop(t) })
+	} else {
+		server, err := NewServer(config, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		serveResult := make(chan error, 1)
+		go func() { serveResult <- server.Serve() }()
+		client = NewClient(config.SocketPath)
+		waitForService(t, client)
+		t.Cleanup(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = server.Close(ctx)
+			<-serveResult
+		})
 	}
-	serveResult := make(chan error, 1)
-	go func() { serveResult <- server.Serve() }()
-	client := NewClient(config.SocketPath)
-	waitForService(t, client)
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = server.Close(ctx)
-		<-serveResult
-	})
 	wp53WaitForSemanticIndex(t, client)
 	wp53SeedContexts(t, client, manifest)
 
@@ -190,36 +225,48 @@ func TestWP53ReadonlyBetaScorecard(t *testing.T) {
 	}
 
 	report := wp53ScorecardReport{
-		SchemaVersion:       "mindline-wp53-readonly-beta-report/v0.1",
-		Mode:                mode,
-		SourceCommit:        wp53GitCommit(t, repoRoot, mode),
-		ManifestSHA256:      hex.EncodeToString(manifestSum[:]),
-		SemanticModel:       manifest.MeasurementProfile.SemanticModel,
-		SemanticModelDigest: "sha256:" + modelDigest,
-		CalibrationIdentity: manifest.MeasurementProfile.CalibrationIdentity,
-		Answerable:          answerable,
-		Absent:              absent,
-		MeasuredSamples:     len(samples),
-		WarmP95Milliseconds: wp53NearestRankP95(samples).Milliseconds(),
-		Checks:              map[string]bool{},
+		SchemaVersion:                 "mindline-wp53-readonly-beta-report/v0.1",
+		Mode:                          mode,
+		SourceCommit:                  wp53GitCommit(t, repoRoot, mode),
+		ManifestSHA256:                hex.EncodeToString(manifestSum[:]),
+		SemanticModel:                 manifest.MeasurementProfile.SemanticModel,
+		SemanticModelDigest:           "sha256:" + modelDigest,
+		CalibrationIdentity:           manifest.MeasurementProfile.CalibrationIdentity,
+		Answerable:                    answerable,
+		Absent:                        absent,
+		ZeroWrongEvidence:             true,
+		AllCitationsHydrateAndSupport: true,
+		MeasuredSamples:               len(samples),
+		WarmP95Milliseconds:           wp53NearestRankP95(samples).Milliseconds(),
+		Checks:                        map[string]bool{},
 	}
 	for _, result := range answerable {
 		if result.Passed {
 			report.AnswerableTopThree++
 		}
+		report.ZeroWrongEvidence = report.ZeroWrongEvidence && len(result.WrongEvidenceRecordIDs) == 0
+		report.AllCitationsHydrateAndSupport = report.AllCitationsHydrateAndSupport &&
+			result.AllCitationsHydrate && result.AllCitationsSupportCase
 	}
 	for _, result := range absent {
 		if result.Passed {
 			report.AbsentAbstentions++
 		}
+		report.ZeroWrongEvidence = report.ZeroWrongEvidence && len(result.WrongEvidenceRecordIDs) == 0
+		report.AllCitationsHydrateAndSupport = report.AllCitationsHydrateAndSupport &&
+			result.AllCitationsHydrate && result.AllCitationsSupportCase
 	}
 	wp53EvaluateSharedMembership(t, client, manifest, aliasByRecordID, &report)
-	wp53EvaluateSourceIsolation(t, client, manifest, aliasByRecordID, resourceAliasByID, &report)
+	wp53EvaluateSourceIsolation(
+		t, client, manifest, aliasByRecordID, resourceAliasByID, isolationIdentities, &report,
+	)
 	report.Checks["answerable_at_least_7_of_8"] = report.AnswerableTopThree >= 7
 	report.Checks["absent_4_of_4"] = report.AbsentAbstentions == 4
 	report.Checks["shared_membership"] = report.SharedMembershipPass
 	report.Checks["shared_ordering"] = report.SharedOrderingPass
 	report.Checks["source_isolation"] = report.SourceIsolationPass
+	report.Checks["zero_wrong_evidence"] = report.ZeroWrongEvidence
+	report.Checks["all_citations_hydrate_and_support"] = report.AllCitationsHydrateAndSupport
 	report.Checks["warm_p95_within_budget"] = report.WarmP95Milliseconds <= int64(manifest.MeasurementProfile.MaximumWarmP95Seconds*1000)
 	report.Passed = true
 	for _, passed := range report.Checks {
@@ -228,13 +275,73 @@ func TestWP53ReadonlyBetaScorecard(t *testing.T) {
 
 	if mode == "candidate" {
 		baseline := wp53ReadBaselineReport(t, repoRoot)
+		for check, passed := range wp53BaselineComparisonChecks(baseline, report) {
+			report.Checks[check] = passed
+		}
 		report.Checks["at_least_two_more_hits_than_main"] = report.AnswerableTopThree >= baseline.AnswerableTopThree+2
 		report.Checks["frozen_main_miss_now_found"] = wp53HasMainMissCandidateHit(baseline.Answerable, report.Answerable)
-		report.Passed = report.Passed && report.Checks["at_least_two_more_hits_than_main"] && report.Checks["frozen_main_miss_now_found"]
+		for _, check := range []string{
+			"baseline_source_commit_matches_released_main",
+			"baseline_manifest_matches_candidate",
+			"baseline_model_matches_candidate",
+			"at_least_two_more_hits_than_main",
+			"frozen_main_miss_now_found",
+		} {
+			report.Passed = report.Passed && report.Checks[check]
+		}
 	}
 	wp53WriteReport(t, repoRoot, report)
 	if mode == "candidate" && !report.Passed {
 		t.Fatalf("WP-53 candidate scorecard failed: %+v", report.Checks)
+	}
+}
+
+func wp53BaselineComparisonChecks(baseline, candidate wp53ScorecardReport) map[string]bool {
+	return map[string]bool{
+		"baseline_source_commit_matches_released_main": baseline.SourceCommit == wp53ReleasedMainCommit,
+		"baseline_manifest_matches_candidate":          baseline.ManifestSHA256 == candidate.ManifestSHA256,
+		"baseline_model_matches_candidate": baseline.SemanticModel == candidate.SemanticModel &&
+			baseline.SemanticModelDigest == candidate.SemanticModelDigest &&
+			baseline.CalibrationIdentity == candidate.CalibrationIdentity,
+	}
+}
+
+func TestWP53BaselineComparisonRejectsIdentityMismatch(t *testing.T) {
+	base := wp53ScorecardReport{
+		SourceCommit:        wp53ReleasedMainCommit,
+		ManifestSHA256:      "manifest",
+		SemanticModel:       "model",
+		SemanticModelDigest: "digest",
+		CalibrationIdentity: "calibration",
+	}
+	for check, passed := range wp53BaselineComparisonChecks(base, base) {
+		if !passed {
+			t.Fatalf("matching report failed %s", check)
+		}
+	}
+	wrongBase := base
+	wrongBase.SourceCommit = "other"
+	if wp53BaselineComparisonChecks(wrongBase, base)["baseline_source_commit_matches_released_main"] {
+		t.Fatal("released-main mismatch passed baseline_source_commit_matches_released_main")
+	}
+	tests := []struct {
+		name   string
+		mutate func(*wp53ScorecardReport)
+		check  string
+	}{
+		{name: "manifest", mutate: func(report *wp53ScorecardReport) { report.ManifestSHA256 = "other" }, check: "baseline_manifest_matches_candidate"},
+		{name: "model", mutate: func(report *wp53ScorecardReport) { report.SemanticModel = "other" }, check: "baseline_model_matches_candidate"},
+		{name: "model digest", mutate: func(report *wp53ScorecardReport) { report.SemanticModelDigest = "other" }, check: "baseline_model_matches_candidate"},
+		{name: "calibration", mutate: func(report *wp53ScorecardReport) { report.CalibrationIdentity = "other" }, check: "baseline_model_matches_candidate"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := base
+			test.mutate(&candidate)
+			if wp53BaselineComparisonChecks(base, candidate)[test.check] {
+				t.Fatalf("identity mismatch passed %s", test.check)
+			}
+		})
 	}
 }
 
@@ -248,7 +355,11 @@ func wp53ScorecardPaths(t *testing.T) (string, string) {
 	return repoRoot, filepath.Join(repoRoot, ".productbrain", "specs", "fixtures", "wp53-readonly-beta-scorecard-v1.json")
 }
 
-func wp53SeedScorecard(t *testing.T, memoryRoot string, manifest wp53ScorecardManifest) (map[string]string, map[string]string) {
+func wp53SeedScorecard(
+	t *testing.T,
+	memoryRoot string,
+	manifest wp53ScorecardManifest,
+) (map[string]string, map[string]string, wp53SourceIsolationIdentities) {
 	t.Helper()
 	repository, err := personalmemory.NewFileRepository(memoryRoot, time.Now)
 	if err != nil {
@@ -290,15 +401,32 @@ func wp53SeedScorecard(t *testing.T, memoryRoot string, manifest wp53ScorecardMa
 		t.Fatal(err)
 	}
 	resourceAliases := map[string]string{}
+	isolation := wp53SourceIsolationIdentities{}
+	for _, record := range library.Records {
+		if aliases[record.RecordID] == manifest.QualifyingSourceCase.RecordID {
+			isolation.ParentSourceRef = record.SourceRef
+			isolation.ParentRawText = record.RawText
+		}
+	}
 	for _, resource := range library.Resources {
 		switch resource.CanonicalURL {
 		case "https://wp53-fixture.invalid/delegation":
 			resourceAliases[resource.ResourceID] = manifest.Resources[0].ResourceID
+			isolation.QualifyingResourceID = resource.ResourceID
 		case "https://wp53-fixture.invalid/personal-logistics":
 			resourceAliases[resource.ResourceID] = manifest.Resources[1].ResourceID
+			isolation.HiddenSiblingResourceID = resource.ResourceID
+			isolation.HiddenSiblingURL = resource.CanonicalURL
+			isolation.HiddenSiblingHash = resource.ContentHash
 		}
 	}
-	return aliases, resourceAliases
+	for _, revision := range library.ResourceRevisions {
+		if revision.Resource.ResourceID == isolation.QualifyingResourceID {
+			isolation.HistoricalRevisionID = revision.RevisionID
+			isolation.HistoricalResourceHash = revision.Resource.ContentHash
+		}
+	}
+	return aliases, resourceAliases, isolation
 }
 
 func wp53MergeResourceFixtures(t *testing.T, repository *personalmemory.FileRepository, manifest wp53ScorecardManifest, delegationContent string) {
@@ -388,16 +516,44 @@ func wp53RunCases(t *testing.T, client *Client, cases []wp53ScorecardCase, alias
 		for _, citation := range packet.Citations {
 			ranked = append(ranked, aliases[citation.RecordID])
 		}
-		result := wp53CaseResult{CaseID: fixture.CaseID, AnswerState: packet.AnswerState, RankedRecords: ranked}
+		result := wp53CaseResult{
+			CaseID: fixture.CaseID, AnswerState: packet.AnswerState, RankedRecords: ranked,
+			WrongEvidenceRecordIDs: []string{}, AllCitationsHydrate: true,
+			AllCitationsSupportCase: true,
+		}
 		if fixture.ExpectedRecordID == "" {
+			for _, recordID := range ranked {
+				result.WrongEvidenceRecordIDs = append(result.WrongEvidenceRecordIDs, recordID)
+			}
+			result.AllCitationsSupportCase = len(packet.Citations) == 0
 			result.Passed = packet.AnswerState == "abstained" && len(packet.Citations) == 0
 		} else {
-			for index, recordID := range ranked {
+			allowed := map[string]bool{}
+			for _, recordID := range fixture.AllowedSupportingRecordIDs {
+				allowed[recordID] = true
+			}
+			seen := map[string]bool{}
+			for index, citation := range packet.Citations {
+				recordID := ranked[index]
 				if recordID == fixture.ExpectedRecordID {
 					result.ExpectedRank = index + 1
-					result.Passed = index < 3
+				}
+				if recordID == "" || !allowed[recordID] || seen[recordID] {
+					result.WrongEvidenceRecordIDs = append(result.WrongEvidenceRecordIDs, recordID)
+					result.AllCitationsSupportCase = false
+				}
+				seen[recordID] = true
+				if _, err := client.GetScoped(context.Background(), ScopedGetInput{
+					RunID: packet.RunID, ScopeID: fixture.ScopeID, LensID: fixture.LensID,
+					AgentID: "agent-wp53-scorecard", RecordID: citation.RecordID,
+				}); err != nil {
+					result.AllCitationsHydrate = false
 				}
 			}
+			result.Passed = packet.AnswerState == "answered" &&
+				result.ExpectedRank >= 1 && result.ExpectedRank <= 3 &&
+				len(packet.Citations) > 0 &&
+				result.AllCitationsHydrate && result.AllCitationsSupportCase
 		}
 		results = append(results, result)
 		if measured {
@@ -421,8 +577,23 @@ func wp53EvaluateSharedMembership(t *testing.T, client *Client, manifest wp53Sco
 			t.Fatalf("shared membership %s: packet=%+v err=%v", lensID, packet, err)
 		}
 		ordered := make([]string, 0, len(packet.Citations))
+		allowed := map[string]bool{}
+		for _, recordID := range manifest.SharedMembershipCase.ExpectedEligibleRecordIDs {
+			allowed[recordID] = true
+		}
 		for _, citation := range packet.Citations {
-			ordered = append(ordered, aliases[citation.RecordID])
+			recordID := aliases[citation.RecordID]
+			ordered = append(ordered, recordID)
+			if !allowed[recordID] {
+				report.ZeroWrongEvidence = false
+				report.AllCitationsHydrateAndSupport = false
+			}
+			if _, err := client.GetScoped(context.Background(), ScopedGetInput{
+				RunID: packet.RunID, ScopeID: manifest.SharedMembershipCase.ScopeID,
+				LensID: lensID, AgentID: "agent-wp53-scorecard", RecordID: citation.RecordID,
+			}); err != nil {
+				report.AllCitationsHydrateAndSupport = false
+			}
 		}
 		report.SharedMembership[lensID] = wp53Sorted(ordered)
 		top := ordered
@@ -435,48 +606,78 @@ func wp53EvaluateSharedMembership(t *testing.T, client *Client, manifest wp53Sco
 	}
 }
 
-func wp53EvaluateSourceIsolation(t *testing.T, client *Client, manifest wp53ScorecardManifest, aliases, resourceAliases map[string]string, report *wp53ScorecardReport) {
+func wp53EvaluateSourceIsolation(
+	t *testing.T,
+	client *Client,
+	manifest wp53ScorecardManifest,
+	aliases, resourceAliases map[string]string,
+	identities wp53SourceIsolationIdentities,
+	report *wp53ScorecardReport,
+) {
 	t.Helper()
 	fixture := manifest.QualifyingSourceCase
 	contextFixture := manifest.Contexts[0]
 	packet, err := client.SearchScoped(context.Background(), ScopedSearchInput{
 		Query: fixture.Query, ScopeID: contextFixture.ScopeID, LensID: contextFixture.LensID,
-		AgentID: "agent-wp53-scorecard", Limit: 4,
+		AgentID: "agent-wp53-scorecard", Limit: 3,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var actualRecordID string
+	var targetCitation personalmemory.CompactCitation
+	var targetCapture personalmemory.HydratedCapture
+	allHydrated := true
 	for _, citation := range packet.Citations {
+		capture, hydrateErr := client.GetScoped(context.Background(), ScopedGetInput{
+			RunID: packet.RunID, ScopeID: contextFixture.ScopeID, LensID: contextFixture.LensID,
+			AgentID: "agent-wp53-scorecard", RecordID: citation.RecordID,
+		})
+		if hydrateErr != nil {
+			allHydrated = false
+			continue
+		}
 		if aliases[citation.RecordID] == fixture.RecordID {
 			actualRecordID = citation.RecordID
-			break
+			targetCitation = citation
+			targetCapture = capture
 		}
 	}
-	if actualRecordID == "" {
+	report.AllCitationsHydrateAndSupport = report.AllCitationsHydrateAndSupport && allHydrated
+	if actualRecordID == "" || !allHydrated {
 		return
 	}
-	capture, err := client.GetScoped(context.Background(), ScopedGetInput{
-		RunID: packet.RunID, ScopeID: contextFixture.ScopeID, LensID: contextFixture.LensID,
-		AgentID: "agent-wp53-scorecard", RecordID: actualRecordID,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	encoded, _ := json.Marshal(capture)
-	text := string(encoded)
-	report.VisibleMarkerFound = strings.Contains(text, fixture.RequiredVisibleMarker)
+	searchEncoded, _ := json.Marshal(packet)
+	encoded, _ := json.Marshal(targetCapture)
+	searchText, hydrationText := string(searchEncoded), string(encoded)
+	report.VisibleMarkerFound = strings.Contains(searchText, fixture.RequiredVisibleMarker) &&
+		strings.Contains(hydrationText, fixture.RequiredVisibleMarker)
 	for _, marker := range fixture.ForbiddenMarkers {
-		if strings.Contains(text, marker) {
+		if strings.Contains(searchText, marker) || strings.Contains(hydrationText, marker) {
 			report.ForbiddenMarkersSeen = append(report.ForbiddenMarkersSeen, marker)
 		}
 	}
+	for _, forbidden := range []string{
+		identities.ParentSourceRef, identities.ParentRawText,
+		identities.HiddenSiblingResourceID, identities.HiddenSiblingURL,
+		identities.HiddenSiblingHash, identities.HistoricalRevisionID,
+		identities.HistoricalResourceHash,
+	} {
+		if forbidden != "" && (strings.Contains(searchText, forbidden) ||
+			strings.Contains(hydrationText, forbidden)) {
+			report.ForbiddenMarkersSeen = append(report.ForbiddenMarkersSeen, forbidden)
+		}
+	}
 	qualifiedResources := []string{}
-	for _, resource := range capture.Resources {
+	for _, resource := range targetCapture.Resources {
 		qualifiedResources = append(qualifiedResources, resourceAliases[resource.ResourceID])
 	}
 	report.SourceIsolationPass = report.VisibleMarkerFound && len(report.ForbiddenMarkersSeen) == 0 &&
-		wp53Equal(qualifiedResources, []string{fixture.QualifyingResourceID}) && len(capture.ResourceRevisions) == 0
+		wp53Equal(qualifiedResources, []string{fixture.QualifyingResourceID}) &&
+		len(targetCapture.ResourceRevisions) == 0 && targetCitation.QualifyingSource.SourceKind == "current_resource" &&
+		targetCitation.QualifyingSource.SourceID == identities.QualifyingResourceID &&
+		targetCapture.Record.RawText == "" && targetCapture.Record.SourceRef == ""
+	report.AllCitationsHydrateAndSupport = report.AllCitationsHydrateAndSupport && report.SourceIsolationPass
 }
 
 func wp53ResolveOllamaDigest(t *testing.T, model string) string {

@@ -102,6 +102,7 @@ type wp53ExternalService struct {
 	client *Client
 	cmd    *exec.Cmd
 	done   chan error
+	stdout *bytes.Buffer
 	stderr *bytes.Buffer
 }
 
@@ -114,7 +115,8 @@ func wp53StartExternalService(t *testing.T, binary, configPath, socketPath strin
 		t.Fatal(err)
 	}
 	service := &wp53ExternalService{
-		client: NewClient(socketPath), cmd: command, done: make(chan error, 1), stderr: &stderr,
+		client: NewClient(socketPath), cmd: command, done: make(chan error, 1),
+		stdout: &stdout, stderr: &stderr,
 	}
 	go func() { service.done <- command.Wait() }()
 	deadline := time.Now().Add(15 * time.Second)

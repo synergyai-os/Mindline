@@ -52,7 +52,7 @@ const (
 	CompactSemanticCalibrationIdentity         = "ollama/embeddinggemma:latest/retrieval-input-v0.2|query-prompt=search-result-v0.1|query-batch=original+context-only/v0.3|document-prompt=title-none-v0.1|document-projection=record-source+unique-current-resource+authorization-evidence-alias/v0.10|distinct-resource-evidence-margin=v0.1|chunk-runes=2000|chunk-overlap=200|max-chunks=8"
 	compactLexicalEvidenceRule                 = "rank1_full_coverage_or_ordered_phrase_or_rare_idf_coverage_or_broad_query_overlap"
 	compactStopwordPolicy                      = "mindline-english-stopwords/v0.2"
-	compactRankingIdentity                     = "bm25-original-query|authorization-meaningful-query+explicit-query-entity-anchor/v0.2|candidate-pool=100|query-batch=original+context-only/v0.3|documents=record-source+unique-current-resource+authorization-evidence-alias/v0.10|raw-hit-identity=fail-closed/v0.1|authorization=scoped-per-record-top5/v0.1+legacy-full-pool/v0.1+calibrated-broad-query-overlap-top5/v0.3+calibrated-corroborated-resource/v0.1|owner-expansion=individually-authorized-full-membership+context-ordered-caller-limit/v0.3|feedback-alias=observed-owner-mean/v0.1|relevance-lookup-chunk=100000|rrf-k=60|query-semantic-weight=1|context-semantic-weight=1|lens-rerank-only"
+	compactRankingIdentity                     = "bm25-original-query|authorization-meaningful-query+explicit-query-entity-anchor/v0.2|candidate-pool=100|query-batch=original+context-only/v0.3|documents=record-source+unique-current-resource+authorization-evidence-alias/v0.10|raw-hit-identity=fail-closed/v0.1|authorization=scoped-per-record-top5/v0.1+legacy-full-pool/v0.1+calibrated-broad-query-overlap-top5/v0.3+calibrated-corroborated-resource/v0.1+dominant-dual-signal-support/v0.1+explicit-multi-evidence-intent/v0.1|owner-expansion=individually-authorized-full-membership+context-ordered-caller-limit/v0.3|feedback-alias=observed-owner-mean/v0.1|relevance-lookup-chunk=100000|rrf-k=60|query-semantic-weight=1|context-semantic-weight=1|lens-rerank-only"
 	compactChunkingIdentity                    = "document-projection=record-source+unique-current-resource+authorization-evidence-alias-v0.10|chunk-runes=2000|chunk-overlap=200|max-chunks=8"
 	compactResourceDocumentPrefix              = "compact-resource:"
 	maximumCompactDocumentIDRunes              = 128
@@ -258,6 +258,9 @@ func (retriever ContextRetriever) SearchCompact(request SearchRequest) (CompactC
 	rawHits, rankedCandidateCount = usableCompactHits(
 		rawHits, policy, calibrationID, projection, freezeScopedMembership,
 	)
+	if freezeScopedMembership {
+		rawHits = compactQueryOnlySupportSet(request.Query, rawHits)
+	}
 	hits, selectedResources, err := expandCompactHits(
 		rawHits, projection, callerLimit, freezeScopedMembership,
 	)
@@ -335,25 +338,18 @@ func (retriever ContextRetriever) GetScopedAtLibraryFingerprint(
 		if source.SourceID != record.RecordID || source.ContentHash != record.ContentHash {
 			return HydratedCapture{}, errors.New("scoped record source binding changed")
 		}
-		capture.Record.URLs = nil
-		capture.Record.ResourceIDs = nil
+		capture.Record = scopedRecordSourceProjection(record)
 	case "current_resource":
-		if !containsExactValue(record.ResourceIDs, source.SourceID) {
-			return HydratedCapture{}, errors.New("scoped resource is not owned by record")
-		}
-		var resource ResourceContext
-		found := false
+		resourcesByID := make(map[string]ResourceContext, len(library.Resources))
 		for _, current := range library.Resources {
-			if current.ResourceID == source.SourceID {
-				resource, found = current, true
-				break
-			}
+			resourcesByID[current.ResourceID] = current
 		}
+		resource, found := reachableCurrentResource(record, resourcesByID, source.SourceID)
 		if !found || resource.ContentHash != source.ContentHash {
 			return HydratedCapture{}, errors.New("scoped resource source binding changed")
 		}
-		capture.Record.URLs = []string{resource.CanonicalURL}
-		capture.Record.ResourceIDs = []string{resource.ResourceID}
+		resource = scopedCurrentResourceProjection(resource)
+		capture.Record = scopedCurrentResourceOwnerProjection(record.RecordID, resource.ResourceID)
 		capture.Resources = []ResourceContext{resource}
 		if resource.Content != nil {
 			content, err := retriever.repository.LoadContent(*resource.Content)
@@ -366,15 +362,6 @@ func (retriever ContextRetriever) GetScopedAtLibraryFingerprint(
 		return HydratedCapture{}, errors.New("unsupported scoped source binding")
 	}
 	return capture, nil
-}
-
-func containsExactValue(values []string, expected string) bool {
-	for _, value := range values {
-		if value == expected {
-			return true
-		}
-	}
-	return false
 }
 
 func (retriever ContextRetriever) getAtLibraryFingerprint(recordID, expectedFingerprint string) (HydratedCapture, error) {
@@ -640,10 +627,12 @@ func expandCompactHits(
 	limit int,
 	freezeScopedMembership bool,
 ) ([]RankedHit, map[string]string, error) {
-	// Freeze the actual record/citation membership from query-only authorization
-	// before contextual order is applied. A resource document can expand to
-	// several Slack saves, so freezing only retrieval-document membership would
-	// still let lenses change which owner records survive the caller limit.
+	// Freeze every query-authorized record and its exact qualifying source before
+	// contextual order is applied. The caller limit is applied only afterwards:
+	// a lens may reorder the unchanged eligible pool, but it cannot make a record
+	// or an alternate source eligible. A resource document can expand to several
+	// retained saves, so the frozen unit is the record/source pair rather than the
+	// retrieval-document identity alone.
 	authorizationOrder := append([]RankedHit(nil), rawHits...)
 	if freezeScopedMembership {
 		sort.Slice(authorizationOrder, func(i, j int) bool {
@@ -655,7 +644,7 @@ func expandCompactHits(
 			return left > right
 		})
 	}
-	authorizedSource := make(map[string]string, limit)
+	authorizedSource := make(map[string]string, len(projection.recordsByID))
 	for _, rawHit := range authorizationOrder {
 		owners, exists := projection.ownersByDocumentID[rawHit.DocumentID]
 		if !exists {
@@ -666,15 +655,9 @@ func expandCompactHits(
 				continue
 			}
 			authorizedSource[recordID] = rawHit.DocumentID
-			if len(authorizedSource) == limit {
-				break
-			}
-		}
-		if len(authorizedSource) == limit {
-			break
 		}
 	}
-	hits := make([]RankedHit, 0, len(authorizedSource))
+	hits := make([]RankedHit, 0, min(limit, len(authorizedSource)))
 	selectedResources := map[string]string{}
 	for _, rawHit := range rawHits {
 		owners, exists := projection.ownersByDocumentID[rawHit.DocumentID]
@@ -700,7 +683,7 @@ func expandCompactHits(
 			if resourceID != "" {
 				selectedResources[recordID] = resourceID
 			}
-			if len(hits) == len(authorizedSource) {
+			if len(hits) == limit {
 				return hits, selectedResources, nil
 			}
 		}
@@ -1165,14 +1148,78 @@ func assembleCompactContextPacket(
 }
 
 func compactCitation(document evidenceDocument, hit RankedHit) CompactCitation {
-	author := document.record.AuthorName
-	if author == "" {
-		author = document.record.AuthorID
+	qualifyingSource := CompactSourceBinding{
+		SchemaVersion: CompactSourceBindingSchemaVersion,
+		SourceKind:    "record_source", SourceID: document.record.RecordID,
+		ContentHash: document.record.ContentHash,
 	}
-	references := evidenceReferences(document, hit.MatchedTerms)
-	compactReferences := make([]CompactEvidenceReference, 0, len(references))
+	citation := CompactCitation{
+		RecordID: hit.DocumentID, LogicalRecordID: document.record.RecordID,
+		VersionState: document.versionState, SourceRef: document.record.SourceRef,
+		OccurredAt: document.record.OccurredAt, Author: compactRecordAuthor(document.record),
+		Snippet:      boundedCompactSnippet(document.record.RawText, MaximumCompactSnippetRunes),
+		MatchedTerms: append([]string(nil), hit.MatchedTerms...), Score: hit.Score,
+		ComponentScores: copyScores(hit.Components), ContentHash: document.record.ContentHash,
+		ContextState: document.record.ContextState,
+		Missingness:  append([]string(nil), document.record.Missingness...),
+		EvidenceRefs: []CompactEvidenceReference{}, ResourceStates: []ResourceStateSummary{},
+		QualifyingSource: qualifyingSource,
+		AuthorityClass:   AuthorityClass,
+	}
+	if document.authorizedResourceID == "" {
+		return citation
+	}
+	resource, content, found := scopedCitationResource(document)
+	if !found {
+		return citation
+	}
+	resource = scopedCurrentResourceProjection(resource)
+	citation.SourceRef = resource.CanonicalURL
+	citation.OccurredAt = resource.Metadata.PublishedAt
+	citation.Author = resource.Metadata.Author
+	citation.ContentHash = resource.ContentHash
+	citation.ContextState = ""
+	citation.Missingness = append([]string(nil), resource.Missingness...)
+	citation.ResourceStates = []ResourceStateSummary{{
+		ResourceID: resource.ResourceID, State: resource.State,
+		AccessClass: resource.AccessClass, ContentHash: resource.ContentHash,
+		Missingness:    append([]string(nil), resource.Missingness...),
+		AuthorityClass: resource.AuthorityClass,
+	}}
+	references := referencesForResource(resource, content, hit.MatchedTerms, "current", "")
+	if len(references) == 0 {
+		references = []EvidenceReference{semanticResourceReference(resource, content, "current", "")}
+	}
+	citation.EvidenceRefs = compactEvidenceReferences(references)
+	if len(citation.EvidenceRefs) > 0 && strings.TrimSpace(citation.EvidenceRefs[0].MatchedSnippet) != "" {
+		citation.Snippet = citation.EvidenceRefs[0].MatchedSnippet
+	} else {
+		citation.Snippet = boundedCompactSnippet(
+			compactResourceSearchText(resource, content), MaximumCompactSnippetRunes,
+		)
+	}
+	citation.QualifyingSource = CompactSourceBinding{
+		SchemaVersion: CompactSourceBindingSchemaVersion,
+		SourceKind:    "current_resource", SourceID: resource.ResourceID,
+		ContentHash: resource.ContentHash,
+	}
+	return citation
+}
+
+func compactRecordAuthor(record CaptureRecord) string {
+	if record.AuthorName != "" {
+		return record.AuthorName
+	}
+	return record.AuthorID
+}
+
+func compactEvidenceReferences(references []EvidenceReference) []CompactEvidenceReference {
+	compact := make([]CompactEvidenceReference, 0, len(references))
 	for _, reference := range references {
-		compactReferences = append(compactReferences, CompactEvidenceReference{
+		if len(compact) == MaximumCitationEvidenceRefs {
+			break
+		}
+		compact = append(compact, CompactEvidenceReference{
 			ResourceID: reference.ResourceID, ResourceHash: reference.ResourceHash,
 			ResourceVersionState: reference.ResourceVersionState,
 			ResourceRevisionID:   reference.ResourceRevisionID,
@@ -1183,51 +1230,16 @@ func compactCitation(document evidenceDocument, hit RankedHit) CompactCitation {
 			),
 		})
 	}
-	states := make([]ResourceStateSummary, 0, len(document.resources))
+	return compact
+}
+
+func scopedCitationResource(document evidenceDocument) (ResourceContext, ExtractedContentArtifact, bool) {
 	for _, resource := range document.resources {
-		if len(states) == MaximumCompactResourceStates {
-			break
-		}
-		states = append(states, ResourceStateSummary{
-			ResourceID: resource.ResourceID, State: resource.State,
-			AccessClass: resource.AccessClass, ContentHash: resource.ContentHash,
-			Missingness:    append([]string(nil), resource.Missingness...),
-			AuthorityClass: resource.AuthorityClass,
-		})
-	}
-	sourceSnippet := boundedCompactSnippet(document.record.RawText, MaximumCompactSnippetRunes)
-	if len(compactReferences) > 0 &&
-		strings.TrimSpace(compactReferences[0].MatchedSnippet) != "" {
-		sourceSnippet = compactReferences[0].MatchedSnippet
-	}
-	qualifyingSource := CompactSourceBinding{
-		SchemaVersion: CompactSourceBindingSchemaVersion,
-		SourceKind:    "record_source", SourceID: document.record.RecordID,
-		ContentHash: document.record.ContentHash,
-	}
-	if document.authorizedResourceID != "" {
-		qualifyingSource.SourceKind = "current_resource"
-		qualifyingSource.SourceID = document.authorizedResourceID
-		qualifyingSource.ContentHash = ""
-		for _, resource := range document.resources {
-			if resource.ResourceID == document.authorizedResourceID {
-				qualifyingSource.ContentHash = resource.ContentHash
-				break
-			}
+		if resource.ResourceID == document.authorizedResourceID {
+			return resource, document.contents[resource.ResourceID], true
 		}
 	}
-	return CompactCitation{
-		RecordID: hit.DocumentID, LogicalRecordID: document.record.RecordID,
-		VersionState: document.versionState, SourceRef: document.record.SourceRef,
-		OccurredAt: document.record.OccurredAt, Author: author, Snippet: sourceSnippet,
-		MatchedTerms: append([]string(nil), hit.MatchedTerms...), Score: hit.Score,
-		ComponentScores: copyScores(hit.Components), ContentHash: document.record.ContentHash,
-		ContextState: document.record.ContextState, Missingness: citationMissingness(document),
-		EvidenceRefs: compactReferences, ResourceStates: states,
-		ResourceStatesTruncated: len(document.resources) > len(states),
-		QualifyingSource:        qualifyingSource,
-		AuthorityClass:          AuthorityClass,
-	}
+	return ResourceContext{}, ExtractedContentArtifact{}, false
 }
 
 func boundedCompactSnippet(value string, maximum int) string {
@@ -1507,6 +1519,56 @@ func compactHitQueryAnchorsAuthorized(hit RankedHit) bool {
 		return true
 	}
 	return requiredOK && matchedOK && required >= 0 && matched >= required
+}
+
+// compactQueryOnlySupportSet removes supplementary candidates when the exact
+// query has one unambiguous winner across both local word and meaning signals.
+// Explicit comparison/synthesis requests keep the complete eligible pool
+// because their user intent calls for several supporting perspectives. This
+// decision reads the query and query-only components only; scope, lens, agent,
+// feedback, contextual scores, and caller limit cannot affect eligibility.
+func compactQueryOnlySupportSet(query string, hits []RankedHit) []RankedHit {
+	if len(hits) < 2 || explicitlyRequestsMultipleEvidence(query) {
+		return hits
+	}
+	semanticRanks := compactRankCounts(hits, "semantic_rank")
+	lexicalRanks := compactRankCounts(hits, "lexical_rank")
+	if semanticRanks[1] != 1 || lexicalRanks[1] != 1 {
+		return hits
+	}
+	winnerIndex := -1
+	for index, hit := range hits {
+		semanticRank, semanticOK := finiteComponent(hit, "semantic_rank")
+		lexicalRank, lexicalOK := finiteComponent(hit, "lexical_rank")
+		if semanticOK && lexicalOK && semanticRank == 1 && lexicalRank == 1 {
+			if winnerIndex >= 0 {
+				return hits
+			}
+			winnerIndex = index
+		}
+	}
+	if winnerIndex < 0 {
+		return hits
+	}
+	return []RankedHit{hits[winnerIndex]}
+}
+
+func explicitlyRequestsMultipleEvidence(query string) bool {
+	terms := tokenize(query)
+	present := make(map[string]bool, len(terms))
+	for _, term := range terms {
+		present[term] = true
+	}
+	for _, term := range []string{
+		"balance", "compare", "comparison", "contrast", "tradeoff", "tradeoffs",
+		"versus", "vs",
+	} {
+		if present[term] {
+			return true
+		}
+	}
+	return (present["trade"] && present["off"]) ||
+		(present["pros"] && present["cons"])
 }
 
 func compactRankCounts(hits []RankedHit, component string) map[int]int {
@@ -1973,6 +2035,59 @@ func currentResourceBundleForRecord(
 		queue = append(queue, uniqueSorted(relatedIDs)...)
 	}
 	return resources
+}
+
+// reachableCurrentResource is the canonical qualifying-resource reachability
+// rule shared by scoped search and scoped hydration. A current resource may be
+// selected when it is directly referenced by the retained record or reached
+// through an explicitly curated current-resource relation.
+func reachableCurrentResource(
+	record CaptureRecord,
+	resourcesByID map[string]ResourceContext,
+	resourceID string,
+) (ResourceContext, bool) {
+	for _, resource := range currentResourceBundleForRecord(record, resourcesByID) {
+		if resource.ResourceID == resourceID {
+			return resource, true
+		}
+	}
+	return ResourceContext{}, false
+}
+
+func scopedRecordSourceProjection(record CaptureRecord) CaptureRecord {
+	projected := record
+	projected.URLs = []string{}
+	projected.ResourceIDs = []string{}
+	return projected
+}
+
+func scopedCurrentResourceOwnerProjection(recordID, resourceID string) CaptureRecord {
+	return CaptureRecord{
+		RecordID:       recordID,
+		URLs:           []string{},
+		ResourceIDs:    []string{resourceID},
+		Missingness:    []string{},
+		AuthorityClass: AuthorityClass,
+	}
+}
+
+func scopedCurrentResourceProjection(resource ResourceContext) ResourceContext {
+	projected := resource
+	relationEvidence := make(map[string]bool, len(resource.RelatedURLs))
+	for _, related := range resource.RelatedURLs {
+		if evidenceRef := strings.TrimSpace(related.DiscoveryEvidenceRef); evidenceRef != "" {
+			relationEvidence[evidenceRef] = true
+		}
+	}
+	projected.Excerpts = make([]ResourceExcerpt, 0, len(resource.Excerpts))
+	for _, excerpt := range resource.Excerpts {
+		if relationEvidence[excerpt.ExcerptID] || GenericExtractorReferenceExcerpt(excerpt) {
+			continue
+		}
+		projected.Excerpts = append(projected.Excerpts, excerpt)
+	}
+	projected.RelatedURLs = []RelatedResource{}
+	return projected
 }
 
 func resourceFirst(resources []ResourceContext, resourceID string) ([]ResourceContext, error) {

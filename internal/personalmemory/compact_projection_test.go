@@ -322,6 +322,122 @@ func TestCompactResourceHitSupportsExactCanonicalGet(t *testing.T) {
 	}
 }
 
+func TestScopedQualifyingProjectionUsesFollowUpReachabilityAndHidesEveryOtherSource(t *testing.T) {
+	parentURL := "https://example.invalid/parent-source"
+	followUpURL := "https://example.invalid/follow-up-source"
+	siblingURL := "https://example.invalid/hidden-sibling-source"
+	parentID := stableResourceID(parentURL)
+	followUpID := stableResourceID(followUpURL)
+	siblingID := stableResourceID(siblingURL)
+	followUpDocumentID, err := compactResourceDocumentID(followUpID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := CaptureRecord{
+		RecordID: "record-follow-up", SourceRef: "slack://fixture/PARENT-SOURCE-REF",
+		RawText: "PARENT-RAW-MARKER", URLs: []string{parentURL, siblingURL},
+		ResourceIDs: []string{parentID, siblingID}, ContentHash: strings.Repeat("a", 64),
+		Missingness: []string{"PARENT-MISSINGNESS"},
+	}
+	selectedHash := strings.Repeat("b", 64)
+	siblingHash := strings.Repeat("c", 64)
+	repository := &compactRepository{library: Library{
+		SchemaVersion: LibrarySchemaVersion,
+		Revision:      15,
+		Fingerprint:   strings.Repeat("d", 64),
+		Records:       []CaptureRecord{record},
+		Resources: []ResourceContext{
+			{
+				ResourceID: parentID, CanonicalURL: parentURL,
+				Metadata: ResourceMetadata{Title: "PARENT-TITLE-MARKER"},
+				Excerpts: []ResourceExcerpt{{
+					ExcerptID: "curated-follow-up", Text: followUpURL, Locator: "outbound",
+				}},
+				RelatedURLs: []RelatedResource{{
+					URL: followUpURL, Relation: "source_links_to",
+					DiscoveryEvidenceRef: "curated-follow-up", SemanticallyRelevant: true,
+				}},
+				ContentHash: strings.Repeat("e", 64),
+			},
+			{
+				ResourceID: followUpID, CanonicalURL: followUpURL,
+				Metadata: ResourceMetadata{Title: "SELECTED-FOLLOW-UP-TITLE"},
+				Excerpts: []ResourceExcerpt{
+					{ExcerptID: "selected", Text: "selected follow up evidence marker", Locator: "body"},
+					{ExcerptID: "curated-sibling", Text: siblingURL, Locator: "outbound"},
+				},
+				RelatedURLs: []RelatedResource{{
+					URL: siblingURL, Relation: "source_links_to",
+					DiscoveryEvidenceRef: "curated-sibling", SemanticallyRelevant: true,
+				}},
+				Missingness: []string{"SELECTED-MISSINGNESS"},
+				ContentHash: selectedHash, AuthorityClass: AuthorityClass,
+			},
+			{
+				ResourceID: siblingID, CanonicalURL: siblingURL,
+				Metadata:    ResourceMetadata{Title: "FORBIDDEN-SIBLING-TITLE"},
+				Excerpts:    []ResourceExcerpt{{ExcerptID: "sibling", Text: "FORBIDDEN-SIBLING-MARKER"}},
+				ContentHash: siblingHash,
+			},
+		},
+		ResourceRevisions: []ResourceRevision{{
+			RevisionID: "FORBIDDEN-HISTORY-ID",
+			Resource: ResourceContext{
+				ResourceID: followUpID, CanonicalURL: followUpURL,
+				Metadata:    ResourceMetadata{Title: "FORBIDDEN-HISTORY-MARKER"},
+				ContentHash: strings.Repeat("f", 64),
+			},
+		}},
+	}}
+	backend := &compactProjectionBackend{hits: []RankedHit{
+		authorizedProjectionHit(followUpDocumentID, "selected", "follow", "evidence"),
+	}}
+	retriever := NewRetriever(repository, backend)
+	packet, err := retriever.SearchCompact(SearchRequest{
+		Query: "selected follow evidence", Limit: 1, ScopeID: "scope",
+		LensID: "lens", AgentID: "agent",
+	})
+	if err != nil || len(packet.Citations) != 1 {
+		t.Fatalf("follow-up search packet=%+v err=%v", packet, err)
+	}
+	citation := packet.Citations[0]
+	if citation.QualifyingSource.SourceKind != "current_resource" ||
+		citation.QualifyingSource.SourceID != followUpID ||
+		citation.QualifyingSource.ContentHash != selectedHash ||
+		citation.SourceRef != followUpURL || len(citation.ResourceStates) != 1 ||
+		citation.ResourceStates[0].ResourceID != followUpID {
+		t.Fatalf("follow-up qualifying projection=%+v", citation)
+	}
+	capture, err := retriever.GetScopedAtLibraryFingerprint(
+		record.RecordID, repository.library.Fingerprint, citation.QualifyingSource,
+	)
+	if err != nil || len(capture.Resources) != 1 ||
+		capture.Resources[0].ResourceID != followUpID || len(capture.ResourceRevisions) != 0 ||
+		capture.Record.RawText != "" || capture.Record.SourceRef != "" ||
+		len(capture.Record.ResourceIDs) != 1 || capture.Record.ResourceIDs[0] != followUpID {
+		t.Fatalf("follow-up scoped hydration=%+v err=%v", capture, err)
+	}
+	packetJSON, err := json.Marshal(packet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	captureJSON, err := json.Marshal(capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for surface, data := range map[string][]byte{"search": packetJSON, "get": captureJSON} {
+		for _, forbidden := range []string{
+			"PARENT-RAW-MARKER", "PARENT-SOURCE-REF", "PARENT-TITLE-MARKER",
+			siblingURL, siblingID, siblingHash, "FORBIDDEN-SIBLING-MARKER",
+			"FORBIDDEN-SIBLING-TITLE", "FORBIDDEN-HISTORY-ID", "FORBIDDEN-HISTORY-MARKER",
+		} {
+			if strings.Contains(string(data), forbidden) {
+				t.Fatalf("%s projection exposed %q: %s", surface, forbidden, data)
+			}
+		}
+	}
+}
+
 func TestCompactProjectionAbstainsForAbsentTopicWithoutHydratingUnselectedRecords(t *testing.T) {
 	referenceA := ContentArtifactRef{ArtifactID: "artifact-a", ByteLength: 20}
 	referenceB := ContentArtifactRef{ArtifactID: "artifact-b", ByteLength: 20}
